@@ -117,6 +117,8 @@ export interface ThihyApi {
   app: {
     /** Pop the native application menu at the cursor (title-bar 菜单 button). */
     popupMenu(): Promise<IpcResponse<'app.popupMenu'>>;
+    /** Pop a single category's submenu (flat topbar buttons). */
+    popupMenuCategory(category: '文件' | '编辑' | '视图' | '窗口' | '帮助'): Promise<IpcResponse<'app.popupMenuCategory'>>;
     /** User-menu actions (bottom-left chip). */
     action(a: 'about' | 'checkUpdate' | 'quit'): Promise<IpcResponse<'app.action'>>;
   };

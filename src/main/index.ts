@@ -21,7 +21,7 @@ import { CaptureController } from './shortcuts/capture';
 import { TrayController } from './tray/tray';
 import { ClipboardWatcher } from './clipboard/watcher';
 import { installAutoUpdater } from './updater/updater';
-import { installAppMenu, showAbout } from './menu';
+import { installAppMenu, showAbout, popupCategory } from './menu';
 import {
   DB_FILENAME,
   TODOS_SUBDIR,
@@ -424,6 +424,16 @@ function registerAppHandlers(): void {
       const menu = Menu.getApplicationMenu();
       const win = BrowserWindow.getFocusedWindow() ?? undefined;
       menu?.popup({ window: win });
+      return okResult(undefined);
+    } catch (err) {
+      return failResult('popup_menu_failed', (err as Error).message);
+    }
+  });
+  // Flat topbar category buttons: pop a single category's submenu.
+  register('app.popupMenuCategory', async (_e, req) => {
+    try {
+      const win = BrowserWindow.getFocusedWindow() ?? undefined;
+      popupCategory(req.category as never, win);
       return okResult(undefined);
     } catch (err) {
       return failResult('popup_menu_failed', (err as Error).message);

@@ -207,6 +207,9 @@ export interface IpcRegistry {
 
   // Pop the native application menu at the cursor (title-bar 菜单 button).
   'app.popupMenu': IpcChannel<undefined, IpcResult<void>>;
+  // Pop a single category's submenu (flat topbar buttons). `category` is one
+  // of 文件/编辑/视图/窗口/帮助.
+  'app.popupMenuCategory': IpcChannel<{ category: string }, IpcResult<void>>;
 
   // User-menu actions (bottom-left chip): about dialog, check-for-update, quit.
   'app.action': IpcChannel<AppActionReq, IpcResult<void>>;

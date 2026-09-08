@@ -42,6 +42,7 @@ const DECLARED_CHANNELS: ReadonlySet<string> = new Set([
   'settings.chooseDataDir',
   'capture.submit',
   'app.popupMenu',
+  'app.popupMenuCategory',
   'app.action',
 ]);
 

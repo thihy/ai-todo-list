@@ -1,10 +1,13 @@
 // Topbar — the frameless title bar. Left: brand (drag). Tools (no-drag):
-// [过滤][搜索] 菜单. Then a drag spacer; native min/max/close sit in the
-// titleBarOverlay region reserved by the topbar's env() right padding.
+// [过滤][搜索] then flat menu-category buttons 文件/编辑/视图/窗口/帮助
+// (each pops its native submenu). Then a drag spacer; native min/max/close
+// sit in the titleBarOverlay region reserved by the topbar's env() right padding.
 
 import React from 'react';
 import { FilterButton } from '../components/FilterPopover';
 import type { ListFilter } from '../router';
+
+const MENU_CATEGORIES = ['文件', '编辑', '视图', '窗口', '帮助'] as const;
 
 export const Topbar: React.FC<{
   onOpenPalette: () => void;
@@ -29,13 +32,19 @@ export const Topbar: React.FC<{
         >
           <SearchIcon />
         </button>
-        <button
-          type="button"
-          className="btn-secondary topbar__menu"
-          onClick={() => void window.thihy.app.popupMenu()}
-        >
-          菜单
-        </button>
+        <div className="topbar__menu" role="menubar" aria-label="应用菜单">
+          {MENU_CATEGORIES.map((cat) => (
+            <button
+              key={cat}
+              type="button"
+              className="topbar__menu-item"
+              role="menuitem"
+              onClick={() => void window.thihy.app.popupMenuCategory(cat)}
+            >
+              {cat}
+            </button>
+          ))}
+        </div>
       </div>
 
       <div className="topbar__spacer" />
