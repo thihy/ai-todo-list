@@ -282,6 +282,25 @@ export interface IpcRegistry {
   // of 文件/编辑/视图/窗口/帮助.
   'app.popupMenuCategory': IpcChannel<{ category: string }, IpcResult<void>>;
 
+  // Native file picker. The renderer asks the main process to show
+  // dialog.showOpenDialog; on confirm, main reads up to `maxBytes` of the
+  // file as utf-8 text and returns both the raw text and the metadata.
+  // Binary / oversized files return ok=false with code `not_text` /
+  // `too_large` so the renderer can surface a clear message instead of
+  // silently truncating. Returns ok=true with canceled=true when the user
+  // dismisses the dialog.
+  'app.pickFile': IpcChannel<
+    { maxBytes?: number },
+    IpcResult<{
+      canceled: boolean;
+      path?: string;
+      name?: string;
+      mime?: string;
+      size?: number;
+      text?: string;
+    }>
+  >;
+
   // User-menu actions (bottom-left chip): about dialog, check-for-update, quit.
   'app.action': IpcChannel<AppActionReq, IpcResult<void>>;
 }

@@ -1,10 +1,10 @@
 // Single source of truth for IPC handlers wiring, window factory, lifecycle.
 
-import { app, BrowserWindow, shell, protocol, net, Menu } from 'electron';
+import { app, BrowserWindow, shell, protocol, net, Menu, dialog } from 'electron';
 import { join } from 'node:path';
-import { mkdirSync, copyFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, copyFileSync, writeFileSync, readFileSync, statSync } from 'node:fs';
 import { cpSync } from 'node:fs';
-import { basename } from 'node:path';
+import { basename, extname } from 'node:path';
 import { installRouter, okResult, failResult, register } from './ipc/router';
 import { registerTodoHandlers } from './ipc/todo-handlers';
 import { registerContentHandlers } from './ipc/content-handlers';
@@ -363,6 +363,75 @@ function sanitizeName(s: string): string {
   return s.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 40);
 }
 
+/** Best-effort mime-type from extension. Returns 'application/octet-stream'
+ *  for unknown extensions so callers can branch on a known set. */
+function mimeFromExt(ext: string): string {
+  const map: Record<string, string> = {
+    '.txt': 'text/plain',
+    '.md': 'text/markdown',
+    '.markdown': 'text/markdown',
+    '.json': 'application/json',
+    '.jsonl': 'application/jsonl',
+    '.log': 'text/plain',
+    '.csv': 'text/csv',
+    '.tsv': 'text/tab-separated-values',
+    '.xml': 'application/xml',
+    '.yaml': 'application/yaml',
+    '.yml': 'application/yaml',
+    '.html': 'text/html',
+    '.htm': 'text/html',
+    '.css': 'text/css',
+    '.js': 'text/javascript',
+    '.mjs': 'text/javascript',
+    '.cjs': 'text/javascript',
+    '.ts': 'text/typescript',
+    '.tsx': 'text/typescript',
+    '.jsx': 'text/javascript',
+    '.py': 'text/x-python',
+    '.rb': 'text/x-ruby',
+    '.rs': 'text/x-rust',
+    '.go': 'text/x-go',
+    '.java': 'text/x-java',
+    '.kt': 'text/x-kotlin',
+    '.swift': 'text/x-swift',
+    '.c': 'text/x-c',
+    '.h': 'text/x-c',
+    '.cpp': 'text/x-c++',
+    '.hpp': 'text/x-c++',
+    '.sh': 'text/x-shellscript',
+    '.bash': 'text/x-shellscript',
+    '.zsh': 'text/x-shellscript',
+    '.sql': 'text/x-sql',
+    '.toml': 'application/toml',
+    '.ini': 'text/plain',
+    '.conf': 'text/plain',
+    '.env': 'text/plain',
+  };
+  return map[ext] ?? 'application/octet-stream';
+}
+
+/** Heuristic text/binary check. Treat the file as binary if any of the
+ *  first 8 KiB is a NUL byte or a high ratio of bytes are outside printable
+ *  ASCII + common whitespace. */
+function looksLikeText(buf: Buffer): boolean {
+  const sample = buf.subarray(0, Math.min(buf.length, 8 * 1024));
+  if (sample.length === 0) return true;
+  let bad = 0;
+  for (let i = 0; i < sample.length; i++) {
+    const b = sample[i]!;
+    if (b === 0) return false;
+    // Allow printable ASCII (0x20-0x7E), tab, LF, CR, and high-bit bytes
+    // (UTF-8 multibyte sequences). Anything else (e.g. 0x01-0x08, 0x0B,
+    // 0x0C, 0x0E-0x1F) is suspicious but only counts toward the ratio.
+    const printable =
+      (b >= 0x20 && b <= 0x7e) ||
+      b === 0x09 || b === 0x0a || b === 0x0d ||
+      b >= 0x80;
+    if (!printable) bad++;
+  }
+  return bad / sample.length < 0.05;
+}
+
 function registerSettingsHandlers(
   store: SettingsStore,
   handle: DbHandle,
@@ -471,6 +540,47 @@ function registerAppHandlers(): void {
       return okResult(undefined);
     } catch (err) {
       return failResult('popup_menu_failed', (err as Error).message);
+    }
+  });
+  // Native file picker for the AI composer. Reads up to `maxBytes` (default
+  // 256 KiB) of the chosen file as utf-8 text and returns both the path and
+  // the body so the renderer can inline it into the prompt. Binary / over-
+  // limit files return ok=false with a precise code so the renderer can
+  // surface a clear message instead of silently truncating.
+  const PICK_TEXT_LIMIT_DEFAULT = 256 * 1024;
+  register('app.pickFile', async (_e, req) => {
+    try {
+      const win = BrowserWindow.getFocusedWindow() ?? undefined;
+      const res = await dialog.showOpenDialog(win as never, {
+        title: '选择要附加的文件',
+        properties: ['openFile'],
+      });
+      if (res.canceled || res.filePaths.length === 0) {
+        return okResult({ canceled: true });
+      }
+      const filePath = res.filePaths[0]!;
+      const stat = statSync(filePath);
+      const limit = req.maxBytes ?? PICK_TEXT_LIMIT_DEFAULT;
+      const ext = extname(filePath).toLowerCase();
+      const mime = mimeFromExt(ext);
+      if (stat.size > limit) {
+        return failResult('too_large', `文件太大 (${stat.size} 字节)，上限 ${limit} 字节`);
+      }
+      const buf = readFileSync(filePath);
+      if (!looksLikeText(buf)) {
+        return failResult('not_text', '文件不是可读文本，请选择代码或文本文件');
+      }
+      const text = buf.toString('utf8');
+      return okResult({
+        canceled: false,
+        path: filePath,
+        name: basename(filePath),
+        mime,
+        size: stat.size,
+        text,
+      });
+    } catch (err) {
+      return failResult('pick_file_failed', (err as Error).message);
     }
   });
   // Bottom-left user menu actions.

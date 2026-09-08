@@ -17,7 +17,7 @@ export const AIPanel: React.FC<{ open: boolean; onToggle: () => void }> = ({ ope
           <div className="ai-panel__grip" role="button" tabIndex={0} aria-label="收起 AI 助手" onClick={onToggle} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onToggle(); } }}>
             <ChevronRight />
           </div>
-          <AIPane onCollapse={onToggle} />
+          <AIPane />
         </>
       ) : (
         <button

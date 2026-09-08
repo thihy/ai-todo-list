@@ -1265,19 +1265,131 @@ a:hover {
   flex-direction: column;
   gap: var(--space-sm);
 }
+/* Composer reflow: input + send button on the SAME row, with a paperclip
+   button on the left for picking a local file. Single horizontal flex
+   keeps the textarea vertically compact (the user has a wide 380px column
+   to play with) and the action button anchored to the right. */
+.aipane__composer-row {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-xs);
+}
+.aipane__composer-row .aipane__input { flex: 1; min-width: 0; }
+.aipane__attach-btn {
+  flex: none;
+  align-self: stretch;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: auto;
+  border-radius: 6px;
+  border: 1px solid var(--border-default);
+  background: var(--surface-muted, #F6F7F9);
+  color: var(--fg-secondary, #4E5969);
+  font-size: var(--font-base);
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+.aipane__attach-btn:hover {
+  background: var(--surface-elev, #FFFFFF);
+  border-color: var(--accent, #4F46E5);
+  color: var(--accent, #4F46E5);
+}
+.aipane__attach-btn:active {
+  background: var(--surface-muted, #F6F7F9);
+}
 .aipane__input {
   resize: none;
   font-size: var(--font-sm);
   line-height: 1.5;
 }
+/* Send button on the right of the same row as the textarea (was previously
+   stacked below at flex-end). */
 .aipane__send {
-  align-self: flex-end;
+  flex: none;
+  align-self: stretch;
+}
+/* Chip row above the composer — shows files the user attached to the next
+   prompt. Allows removal via the × on each chip. The chip itself is just a
+   label; the × is its own focusable button. */
+.aipane__attach-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+}
+.aipane__attach-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 4px 2px 8px;
+  border-radius: 999px;
+  background: var(--surface-muted, #F6F7F9);
+  border: 1px solid var(--border-default);
+  font-size: var(--font-xs);
+  color: var(--fg-secondary, #4E5969);
+  max-width: 100%;
+}
+.aipane__attach-chip-icon {
+  font-size: 11px;
+  opacity: 0.8;
+}
+.aipane__attach-chip-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 160px;
+}
+.aipane__attach-chip-x {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--fg-muted, #6B7280);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.1s ease, color 0.1s ease;
+}
+.aipane__attach-chip-x:hover {
+  background: var(--border-default, #E5E7EB);
+  color: var(--fg-primary, #1F2328);
+}
+/* Per-turn attachment chips rendered above the user bubble when an
+   attached file was part of the prompt. Pure label (no ×) — the turn is
+   already sent, removing it from history would lie about what was sent. */
+.turn__attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 0 0 2px auto;
+  justify-content: flex-end;
+  max-width: 90%;
+}
+.turn__attach-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--surface-muted, #F6F7F9);
+  border: 1px solid var(--border-default);
+  font-size: var(--font-xs);
+  color: var(--fg-secondary, #4E5969);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 /* L3-B: stop button replaces the Send button while a turn is in flight.
    Distinct treatment (subtle warm tint + ⏹ glyph) so it reads as an
    abort, not as "Send, but disabled". Sized to match the Send button. */
 .aipane__stop {
-  align-self: flex-end;
+  align-self: stretch;
   display: inline-flex;
   align-items: center;
   gap: var(--space-xs);

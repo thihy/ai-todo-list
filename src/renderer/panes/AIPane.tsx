@@ -20,6 +20,7 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import { useAiStream } from '../hooks/useThihyApi';
+import { useDataVersion } from '../data-bus';
 import { Markdown } from '../components/Markdown';
 import type { AITokenEvent, AIToolCallEvent, AIReasoningEvent, AIStreamEvent } from '../../shared/ai-types';
 
@@ -30,6 +31,18 @@ interface ToolCard {
   ok: boolean;
 }
 
+/** A file the user picked via the composer's 📎 button. main reads the file
+ *  and gives us the inlined text body so the prompt can carry the content
+ *  directly. Path/name stay around for the chip label and the mention in
+ *  the sent prompt so the model knows which file the body came from. */
+interface AttachedFile {
+  path: string;
+  name: string;
+  mime: string;
+  size: number;
+  text: string;
+}
+
 interface Turn {
   id: string;
   user: string;
@@ -38,6 +51,9 @@ interface Turn {
   tools: ToolCard[];
   status: 'streaming' | 'done' | 'error';
   error?: string;
+  /** Files the user attached to this turn. Rendered as chips above the
+   *  bubble; their text body was inlined into the prompt sent to the model. */
+  attached?: AttachedFile[];
 }
 
 interface ConversationRow {
@@ -64,7 +80,7 @@ interface HistoryTurnLike {
   error?: string;
 }
 
-export const AIPane: React.FC<{ onCollapse?: () => void }> = ({ onCollapse }) => {
+export const AIPane: React.FC = () => {
   const { events, clear } = useAiStream();
 
   const [conversations, setConversations] = useState<ConversationRow[]>([]);
@@ -77,6 +93,14 @@ export const AIPane: React.FC<{ onCollapse?: () => void }> = ({ onCollapse }) =>
   // a streaming turn after the user navigated to another conversation.
   const [streamingConvId, setStreamingConvId] = useState<string | null>(null);
   const [streamingTurnId, setStreamingTurnId] = useState<string | null>(null);
+
+  // L3-D: when DSH's session-title service fires `session/title` (and the
+  // runtime listener bridges it back to the conversations table), main
+  // pushes `app:data-changed { scope: 'conversations' }`. Bumping this
+  // version makes us re-list so the new title appears in the header +
+  // sidebar immediately. We also reuse this for archive/unarchive/delete
+  // changes done by the AI tools (the tool result scope covers it now too).
+  const convVersion = useDataVersion(['conversations']);
 
   const [showSwitcher, setShowSwitcher] = useState(false);
   const [showActions, setShowActions] = useState(false);
@@ -97,9 +121,16 @@ export const AIPane: React.FC<{ onCollapse?: () => void }> = ({ onCollapse }) =>
   const switcherSearchRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
+  // Files the user picked via the composer's 📎 button. We read them as
+  // text in main (app.pickFile), so each entry carries the inlined text
+  // body; the path / name are kept so the prompt can mention which file
+  // the text came from and so the chip can show a meaningful label.
+  const [attachments, setAttachments] = useState<AttachedFile[]>([]);
+
   // Initial load: fetch the conversation list. If non-empty, pick the most
   // recent as current. If empty, leave currentId=null and show the empty
-  // state — the user explicitly creates their first conversation.
+  // state — the user starts typing, and submit() allocates the first
+  // conversation when they press Enter.
   useEffect(() => {
     let alive = true;
     (async () => {
@@ -115,8 +146,12 @@ export const AIPane: React.FC<{ onCollapse?: () => void }> = ({ onCollapse }) =>
     })();
     return () => { alive = false; };
     // currentId intentionally NOT in deps — this is the initial-fetch effect.
+    // convVersion is bumped by main on data-changed {scope:'conversations'}
+    // (DSH session-title rename, AI tool rename/archive/delete) — that's the
+    // signal to re-fetch the list so the header + sidebar reflect the new
+    // titles / archived state without waiting for the user to navigate.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showArchived]);
+  }, [showArchived, convVersion]);
 
   // Close popovers on outside click.
   useEffect(() => {
@@ -227,6 +262,36 @@ export const AIPane: React.FC<{ onCollapse?: () => void }> = ({ onCollapse }) =>
     setShowActions(false);
   };
 
+  // Open the native file picker (main does dialog.showOpenDialog, reads the
+  // file as utf-8 up to a small limit) and append the result to the chip
+  // row above the textarea. Multi-pick is disabled — adding one file at a
+  // time keeps the prompt length predictable; the user can keep clicking
+  // 📎 to add more.
+  const pickAttachment = async (): Promise<void> => {
+    const r = await window.thihy.app.pickFile({ maxBytes: 256 * 1024 });
+    if (!r.ok) {
+      // not_text / too_large — surface the message in the prompt itself so
+      // the user knows what went wrong without leaving the pane.
+      setInput((cur) => cur || `[无法附加文件：${r.message ?? r.code ?? '未知错误'}]`);
+      return;
+    }
+    if (r.data.canceled) return;
+    const a: AttachedFile = {
+      path: r.data.path!,
+      name: r.data.name!,
+      mime: r.data.mime ?? 'application/octet-stream',
+      size: r.data.size ?? (r.data.text?.length ?? 0),
+      // text is typed optional in the IPC schema, but main only returns
+      // !canceled for files that passed the looksLikeText gate — guard
+      // against the (impossible) empty case rather than trust the narrowing.
+      text: r.data.text ?? '',
+    };
+    setAttachments((prev) => [...prev, a]);
+  };
+  const removeAttachment = (path: string): void => {
+    setAttachments((prev) => prev.filter((a) => a.path !== path));
+  };
+
   const switchTo = (id: string): void => {
     setShowSwitcher(false);
     if (id === currentId) return;
@@ -300,7 +365,10 @@ export const AIPane: React.FC<{ onCollapse?: () => void }> = ({ onCollapse }) =>
   const submit = async (): Promise<void> => {
     const prompt = input.trim();
     if (!prompt) return;
-    // Make sure we have a conversation to write to.
+    // Make sure we have a conversation to write to. If the user has zero
+    // conversations, allocating on first send keeps the empty state lightweight
+    // (no auto-created empty thread cluttering the list) while still landing
+    // them straight into a real chat the moment they press Enter.
     let convId = currentId;
     if (!convId) {
       const r = await window.thihy.conversation.create();
@@ -310,6 +378,25 @@ export const AIPane: React.FC<{ onCollapse?: () => void }> = ({ onCollapse }) =>
       setTurnsByConv((prev) => ({ ...prev, [convId!]: [] }));
       setHistoryLoaded((prev) => new Set(prev).add(convId!));
       setCurrentId(convId);
+    }
+
+    // Snapshot attachments and clear them optimistically so the chip row
+    // disappears while the turn is in flight (avoids the user double-sending
+    // the same content if they panic-hit Enter).
+    const attached = attachments;
+    setAttachments([]);
+
+    // Build the wire prompt: the user's text verbatim, followed by each
+    // attachment's text body in a clearly-labeled fenced block. The visible
+    // bubble keeps the user's literal prompt — the chip row above tells them
+    // which files were inlined — so they can audit what was actually sent.
+    let wirePrompt = prompt;
+    if (attached.length > 0) {
+      const blocks = attached.map((a) => {
+        const header = `[attached: ${a.name} (${a.mime}, ${a.size} 字节)]`;
+        return `${header}\n${a.text}`;
+      });
+      wirePrompt = `${prompt}\n\n---\n\n${blocks.join('\n\n---\n\n')}`;
     }
 
     // Snapshot completed prior turns as multi-turn context for the model.
@@ -325,14 +412,14 @@ export const AIPane: React.FC<{ onCollapse?: () => void }> = ({ onCollapse }) =>
       ...prev,
       [convId!]: [
         ...(prev[convId!] ?? []),
-        { id, user: prompt, reasoning: '', assistant: '', tools: [], status: 'streaming' },
+        { id, user: prompt, reasoning: '', assistant: '', tools: [], status: 'streaming', attached: attached.length > 0 ? attached : undefined },
       ],
     }));
     setInput('');
     clear();
     setStreamingConvId(convId);
     setStreamingTurnId(id);
-    const res = await window.thihy.ai.ask({ prompt, conversationId: convId, invocationId: id, history: priorTurns, tools: undefined });
+    const res = await window.thihy.ai.ask({ prompt: wirePrompt, conversationId: convId, invocationId: id, history: priorTurns, tools: undefined });
     if (!res.ok) {
       setTurnsByConv((prev) => {
         const list = prev[convId!] ?? [];
@@ -546,12 +633,6 @@ export const AIPane: React.FC<{ onCollapse?: () => void }> = ({ onCollapse }) =>
             </div>
           )}
         </div>
-
-        {onCollapse && (
-          <button type="button" className="icon-btn" onClick={onCollapse} aria-label="收起" title="收起">
-            ‹
-          </button>
-        )}
       </header>
 
       <div className="aipane__body" role="log" aria-live="polite" ref={scrollRef}>
@@ -562,13 +643,7 @@ export const AIPane: React.FC<{ onCollapse?: () => void }> = ({ onCollapse }) =>
         )}
         {!bootError && !current && conversations.length === 0 && (
           <div className="aipane__empty">
-            <p>开始与 AI 助手对话：</p>
-            <ul>
-              <li>今天我应该先做什么？</li>
-              <li>把第 3 条 TODO 拆成 3 个子任务</li>
-              <li>总结这周所有高优完成情况</li>
-            </ul>
-            <p className="aipane__hint">点右上角 <strong>+</strong> 创建第一条对话</p>
+            <p>直接在下方输入问题，回车即创建第一条对话。</p>
           </div>
         )}
         {!bootError && current && currentTurns.length === 0 && (
@@ -580,55 +655,85 @@ export const AIPane: React.FC<{ onCollapse?: () => void }> = ({ onCollapse }) =>
       </div>
 
       <div className="aipane__composer">
-        <textarea
-          aria-label="向 AI 提问"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-              e.preventDefault();
-              void submit();
-              return;
-            }
-            // L3-B: Esc while focused on the composer cancels the in-flight
-            // turn. Skipped when nothing is in flight so Esc can still be
-            // used normally (e.g. to clear the textarea in the future).
-            if (e.key === 'Escape' && busy) {
-              e.preventDefault();
-              void stop();
-            }
-          }}
-          placeholder={current ? '输入问题，回车发送…（Shift+Enter 换行，Esc 停止）' : '先创建一条对话再发送'}
-          rows={2}
-          className="aipane__input"
-          disabled={!current && conversations.length === 0}
-        />
-        {busy ? (
-          // L3-B: ⏹ stops the in-flight turn. Distinct visual treatment
-          // (danger-tone + stop glyph) so it doesn't read as a Send button
-          // that happens to be disabled — the affordance is "abort", not
-          // "wait". The textarea stays editable so the user can compose
-          // the next prompt while the model winds down.
-          <button
-            type="button"
-            className="aipane__stop"
-            onClick={() => void stop()}
-            title="停止生成（Esc）"
-            aria-label="停止生成"
-          >
-            <span className="aipane__stop-glyph" aria-hidden="true">■</span>
-            <span>停止</span>
-          </button>
-        ) : (
-          <button
-            type="button"
-            className="btn-primary aipane__send"
-            onClick={() => void submit()}
-            disabled={!input.trim() || !current}
-          >
-            发送
-          </button>
+        {attachments.length > 0 && (
+          <div className="aipane__attach-row" role="list" aria-label="已附加的文件">
+            {attachments.map((a) => (
+              <span key={a.path} className="aipane__attach-chip" role="listitem" title={`${a.path}\n${a.mime} · ${a.size} 字节`}>
+                <span className="aipane__attach-chip-icon" aria-hidden="true">📎</span>
+                <span className="aipane__attach-chip-name">{a.name}</span>
+                <button
+                  type="button"
+                  className="aipane__attach-chip-x"
+                  onClick={() => removeAttachment(a.path)}
+                  aria-label={`移除 ${a.name}`}
+                  title="移除"
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+          </div>
         )}
+        <div className="aipane__composer-row">
+          <button
+            type="button"
+            className="aipane__attach-btn"
+            onClick={() => void pickAttachment()}
+            title="附加本地文件"
+            aria-label="附加本地文件"
+          >
+            📎
+          </button>
+          <textarea
+            aria-label="向 AI 提问"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                void submit();
+                return;
+              }
+              // L3-B: Esc while focused on the composer cancels the in-flight
+              // turn. Skipped when nothing is in flight so Esc can still be
+              // used normally (e.g. to clear the textarea in the future).
+              if (e.key === 'Escape' && busy) {
+                e.preventDefault();
+                void stop();
+              }
+            }}
+            placeholder={current ? '输入问题，回车发送…（Shift+Enter 换行，Esc 停止）' : '输入第一条问题，回车即创建对话…'}
+            rows={2}
+            className="aipane__input"
+          />
+          {busy ? (
+            // L3-B: ⏹ stops the in-flight turn. Distinct visual treatment
+            // (danger-tone + stop glyph) so it doesn't read as a Send button
+            // that happens to be disabled — the affordance is "abort", not
+            // "wait". The textarea stays editable so the user can compose
+            // the next prompt while the model winds down.
+            <button
+              type="button"
+              className="aipane__stop"
+              onClick={() => void stop()}
+              title="停止生成（Esc）"
+              aria-label="停止生成"
+            >
+              <span className="aipane__stop-glyph" aria-hidden="true">■</span>
+              <span>停止</span>
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="btn-primary aipane__send"
+              onClick={() => void submit()}
+              disabled={!input.trim()}
+              title={current ? '发送（Enter）' : '发送并创建对话'}
+            >
+              发送
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -665,6 +770,15 @@ const TurnView: React.FC<{ turn: Turn }> = ({ turn }) => {
   const thinking = streaming && !turn.assistant && turn.tools.length === 0 && !turn.reasoning;
   return (
     <div className="turn">
+      {turn.attached && turn.attached.length > 0 && (
+        <div className="turn__attachments" aria-label="已附加的文件">
+          {turn.attached.map((a) => (
+            <span key={a.path} className="turn__attach-chip" title={`${a.path}\n${a.mime} · ${a.size} 字节`}>
+              <span aria-hidden="true">📎</span> {a.name}
+            </span>
+          ))}
+        </div>
+      )}
       {turn.user && <div className="bubble bubble--user">{turn.user}</div>}
       {turn.reasoning && <ReasoningView text={turn.reasoning} streaming={streaming} />}
       {turn.tools.map((tc, i) => (
