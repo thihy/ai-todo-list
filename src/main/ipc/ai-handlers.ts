@@ -14,7 +14,7 @@ import type { DshHandle } from '../dsh/types';
 import { resolveEndpoint, healthCheck } from '../dsh/client';
 import { getDshRuntime } from '../dsh/dsh-runtime';
 import { SettingsStore } from '../settings/store';
-import { BrowserWindow } from 'electron';
+import { BrowserWindow, dialog } from 'electron';
 import { logger } from '../logger';
 import type { AIStreamEvent } from '../../shared/ai-types';
 import type { DataScope } from '../../shared/thihy-api';
@@ -284,6 +284,33 @@ export function registerAiHandlers(dsh: DshHandle): void {
       return okResult({ deleted });
     } catch (err) {
       return failResult('delete_failed', (err as Error).message);
+    }
+  });
+
+  // L3-F: themed delete confirmation via dialog.showMessageBox. Replaces
+  // the previous window.confirm() which renders an unthemed browser dialog
+  // on Win11 — jarring against the rest of the app's chrome. The native
+  // dialog inherits the OS theme (light/dark/high-contrast) and uses the
+  // platform's standard warning presentation. Buttons are localised and
+  // the destructive option is positioned second per platform convention
+  // (Windows + macOS show destructive actions on the right).
+  register('ai.conversation.confirmDelete', async (_e, req) => {
+    try {
+      if (!req?.id || !req?.title) return failResult('bad_request', 'id and title required');
+      const win = BrowserWindow.getFocusedWindow() ?? undefined;
+      const result = await dialog.showMessageBox(win as never, {
+        type: 'warning',
+        buttons: ['取消', '删除'],
+        defaultId: 0,
+        cancelId: 0,
+        title: '删除对话',
+        message: `删除对话"${req.title}"？`,
+        detail: '对话本身将从侧栏移除。其 AI 历史日志会保留在本地供后续清理（设置 → 数据目录）。',
+        noLink: true,
+      });
+      return okResult({ confirmed: result.response === 1 });
+    } catch (err) {
+      return failResult('confirm_failed', (err as Error).message);
     }
   });
 

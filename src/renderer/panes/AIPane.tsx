@@ -238,9 +238,13 @@ export const AIPane: React.FC<{ onCollapse?: () => void }> = ({ onCollapse }) =>
 
   const deleteCurrent = async (): Promise<void> => {
     if (!current) return;
-    const ok = window.confirm(`删除对话"${current.title}"？历史记录将一并移除。`);
-    if (!ok) return;
+    // L3-F: native themed confirm via dialog.showMessageBox (main). The
+    // dialog title + message explain what "delete" actually does here
+    // (row removal + JSONL kept on disk for later cleanup) so the user
+    // isn't surprised by lingering on-disk logs.
     setShowActions(false);
+    const confirm = await window.thihy.conversation.confirmDelete(current.id, current.title);
+    if (!confirm.ok || !confirm.data.confirmed) return;
     await window.thihy.conversation.delete(current.id);
     // Drop its turns locally and pick another.
     setTurnsByConv((prev) => {

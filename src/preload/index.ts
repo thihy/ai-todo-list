@@ -126,6 +126,7 @@ const api: ThihyApi = {
     archive: (id) => invoke('ai.conversation.archive', { id }),
     unarchive: (id) => invoke('ai.conversation.unarchive', { id }),
     delete: (id) => invoke('ai.conversation.delete', { id }),
+    confirmDelete: (id, title) => invoke('ai.conversation.confirmDelete', { id, title }),
     history: (id) => invoke('ai.conversation.history', { id }),
   },
   on: onAppEvent,

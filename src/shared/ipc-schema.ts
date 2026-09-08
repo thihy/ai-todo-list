@@ -156,6 +156,13 @@ export interface AIConversationDeleteReq { id: string }
 
 export interface AIConversationDeleteRes { /** True if the row existed and was deleted. */ deleted: boolean }
 
+/** L3-F: native themed confirmation before deleting a conversation.
+ *  Returns { confirmed } from dialog.showMessageBox so the AIPane can
+ *  branch without a blocking window.confirm() (which renders unthemed
+ *  on Win11 and breaks the visual flow). */
+export interface AIConversationConfirmDeleteReq { id: string; title: string }
+export interface AIConversationConfirmDeleteRes { confirmed: boolean }
+
 export interface AIConversationHistoryReq { id: string }
 /** Mirrors DshRuntime.HistoryTurn — see src/main/dsh/dsh-runtime.ts. */
 export type AIConversationHistoryTurn =
@@ -246,6 +253,7 @@ export interface IpcRegistry {
   'ai.conversation.archive': IpcChannel<AIConversationArchiveReq, IpcResult<{ ok: boolean }>>;
   'ai.conversation.unarchive': IpcChannel<AIConversationUnarchiveReq, IpcResult<{ ok: boolean }>>;
   'ai.conversation.delete': IpcChannel<AIConversationDeleteReq, IpcResult<AIConversationDeleteRes>>;
+  'ai.conversation.confirmDelete': IpcChannel<AIConversationConfirmDeleteReq, IpcResult<AIConversationConfirmDeleteRes>>;
   'ai.conversation.history': IpcChannel<AIConversationHistoryReq, IpcResult<AIConversationHistoryRes>>;
 
   'permission.prompt': IpcChannel<PermissionPromptReq, IpcResult<void>>;

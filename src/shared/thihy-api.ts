@@ -175,6 +175,9 @@ export interface ThihyApi {
     archive(id: string): Promise<IpcResponse<'ai.conversation.archive'>>;
     unarchive(id: string): Promise<IpcResponse<'ai.conversation.unarchive'>>;
     delete(id: string): Promise<IpcResponse<'ai.conversation.delete'>>;
+    /** L3-F: themed delete confirmation. Returns whether the user confirmed.
+     *  Replaces window.confirm() — native dialog respects the OS theme. */
+    confirmDelete(id: string, title: string): Promise<IpcResponse<'ai.conversation.confirmDelete'>>;
     /** Load decoded history turns from the persistence backend. */
     history(id: string): Promise<IpcResponse<'ai.conversation.history'>>;
   };
