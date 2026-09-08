@@ -2,14 +2,17 @@
 
 import { app, BrowserWindow, shell, protocol, net, Menu } from 'electron';
 import { join } from 'node:path';
-import { mkdirSync, copyFileSync } from 'node:fs';
+import { mkdirSync, copyFileSync, writeFileSync } from 'node:fs';
+import { cpSync } from 'node:fs';
 import { basename } from 'node:path';
 import { installRouter, okResult, failResult, register } from './ipc/router';
 import { registerTodoHandlers } from './ipc/todo-handlers';
 import { registerContentHandlers } from './ipc/content-handlers';
+import { registerGroupHandlers } from './ipc/group-handlers';
 import { logger } from './logger';
-import { openDb, newId } from './db/schema';
+import { openDb, newId, type DbHandle } from './db/schema';
 import { TodoRepo } from './db/todo-repo';
+import { GroupRepo } from './db/group-repo';
 import { MarkdownStore } from './files/markdown';
 import { DrawingStore } from './files/drawings';
 import { SettingsStore } from './settings/store';
@@ -23,6 +26,7 @@ import {
   TODOS_SUBDIR,
   DRAWINGS_SUBDIR,
   ATTACHMENTS_SUBDIR,
+  APP_NAME,
 } from '../shared/constants';
 import type Database from 'better-sqlite3';
 
@@ -38,6 +42,10 @@ if (!gotLock) {
       all[0].focus();
     }
   });
+  // Set the AppUserModelId BEFORE app.ready so the Windows taskbar shows our
+  // own icon (icon.png) and groups windows under the app — without this an
+  // unpackaged `pnpm dev` run shows the default Electron icon in the taskbar.
+  app.setAppUserModelId(APP_NAME);
   bootstrap();
 }
 
@@ -91,6 +99,7 @@ function bootstrap(): void {
 
     const handle = openDb(dbPath);
     const repo = new TodoRepo(handle.db);
+    const groups = new GroupRepo(handle.db);
     const md = new MarkdownStore(handle.db, todosDir);
     const drawings = new DrawingStore(handle.db, drawingsDir);
 
@@ -98,8 +107,9 @@ function bootstrap(): void {
     installRouter();
     registerTodoHandlers(repo, md);
     registerContentHandlers(md, drawings);
+    registerGroupHandlers(groups);
     registerInboxHandlers(handle.db, attachmentsDir);
-    registerSettingsHandlers(settings);
+    registerSettingsHandlers(settings, handle, rootDir);
     registerAppHandlers();
     registerCaptureHandlers(repo, md);
 
@@ -259,10 +269,57 @@ function registerInboxHandlers(db: Database.Database, attachmentsDir: string): v
       return failResult('attach_failed', (err as Error).message);
     }
   });
+
+  // Pasted image from the renderer arrives as a data: URL. Decode + persist.
+  register('inbox.attachBlob', async (_e, req) => {
+    try {
+      const id = newId();
+      mkdirSync(attachmentsDir, { recursive: true });
+      const comma = req.dataUrl.indexOf(',');
+      const header = req.dataUrl.slice(0, comma);
+      const isBase64 = /;base64/i.test(header);
+      const payload = req.dataUrl.slice(comma + 1);
+      const buf = isBase64
+        ? Buffer.from(payload, 'base64')
+        : Buffer.from(decodeURIComponent(payload), 'utf8');
+      const ext = mimeExt(req.mime);
+      const filename = `${id}-${sanitizeName(req.filename) || 'pasted'}.${ext}`;
+      const target = join(attachmentsDir, filename);
+      writeFileSync(target, buf);
+      const now = Date.now();
+      db.prepare(
+        'INSERT INTO inbox_attachments (id, todo_id, file_path, mime, created_at) VALUES (?, ?, ?, ?, ?)',
+      ).run(id, req.todoId, target, req.mime, now);
+      return okResult({
+        id,
+        todoId: req.todoId,
+        filePath: target,
+        mime: req.mime,
+        createdAt: now,
+      });
+    } catch (err) {
+      return failResult('attach_blob_failed', (err as Error).message);
+    }
+  });
   logger.info('inbox.* handlers registered');
 }
 
-function registerSettingsHandlers(store: SettingsStore): void {
+function mimeExt(mime: string): string {
+  const m = /image\/([a-z0-9.+-]+)/i.exec(mime);
+  if (!m) return 'bin';
+  if (m[1] === 'jpeg') return 'jpg';
+  return m[1];
+}
+
+function sanitizeName(s: string): string {
+  return s.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 40);
+}
+
+function registerSettingsHandlers(
+  store: SettingsStore,
+  handle: DbHandle,
+  oldRootDir: string,
+): void {
   register('settings.get', () => Promise.resolve(okResult(store.publicView())));
   register('settings.set', (_e, req) => {
     store.patch({
@@ -276,10 +333,11 @@ function registerSettingsHandlers(store: SettingsStore): void {
     });
     return Promise.resolve(okResult(store.publicView()));
   });
-  // Native folder picker. On confirm, persist the new dataDir and relaunch so
-  // the DB / stores reopen from the new location. The reply is only meaningful
-  // when the user cancels; on confirm the process exits before the renderer
-  // can act on it.
+  // Native folder picker. On confirm: checkpoint + close the DB so the SQLite
+  // file (and WAL) are consistent, recursively copy the old data dir into the
+  // new location (DB + markdown + drawings + attachments), persist the new
+  // dataDir, then relaunch from the migrated copy. The config.json lives in
+  // userData (stable), so it survives untouched.
   register('settings.chooseDataDir', async () => {
     try {
       const { dialog, app: electronApp } = await import('electron');
@@ -293,9 +351,31 @@ function registerSettingsHandlers(store: SettingsStore): void {
         return okResult({ path: null });
       }
       const chosen = res.filePaths[0];
+
+      // Refuse a no-op or nested-in-source move that would recurse forever.
+      if (chosen === oldRootDir || oldRootDir.startsWith(chosen + '\\') || oldRootDir.startsWith(chosen + '/')) {
+        return failResult('invalid_data_dir', '新数据目录不能是当前目录的父目录或其本身');
+      }
+
+      mkdirSync(chosen, { recursive: true });
+      // Flush WAL into the main db file and close the handle so the on-disk
+      // snapshot is consistent before we copy it.
+      try {
+        handle.db.pragma('wal_checkpoint(TRUNCATE)');
+      } catch {
+        // best-effort; copy still works on the live file
+      }
+      handle.close();
+
+      cpSync(oldRootDir, chosen, {
+        recursive: true,
+        force: true,
+        errorOnExist: false,
+        dereference: true,
+      });
+
       store.patch({ dataDir: chosen });
-      logger.info(`dataDir relocated to ${chosen}; relaunching`);
-      // Let the reply flush, then restart.
+      logger.info(`dataDir migrated ${oldRootDir} → ${chosen}; relaunching`);
       setImmediate(() => {
         electronApp.relaunch();
         electronApp.exit(0);

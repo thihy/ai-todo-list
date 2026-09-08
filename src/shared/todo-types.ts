@@ -22,6 +22,8 @@ export interface Todo {
   tags: string[];
   attachmentIds: ULID[];
   drawingIds: ULID[];
+  /** Group (directory) this task belongs to, or null for the root/unfiled area. */
+  groupId: ULID | null;
 }
 
 export interface TodoCreate {
@@ -31,6 +33,8 @@ export interface TodoCreate {
   project?: string | null;
   dueAt?: number | null;
   tags?: string[];
+  /** Group to file this task under; null/omitted = unfiled. */
+  groupId?: ULID | null;
 }
 
 export interface TodoPatch {
@@ -40,6 +44,8 @@ export interface TodoPatch {
   project?: string | null;
   dueAt?: number | null;
   tags?: string[];
+  /** Move the task to a different group; null = unfiled. */
+  groupId?: ULID | null;
 }
 
 export interface TodoFilter {
@@ -47,9 +53,35 @@ export interface TodoFilter {
   priority?: Priority[];
   project?: string[];
   tag?: string[];
+  /** Restrict to tasks in any of these groups (no descendant expansion — caller resolves). */
+  groupIds?: ULID[];
   dueBefore?: number | null;
   dueAfter?: number | null;
   search?: string;
+}
+
+// ----- Groups (hand-edited directory tree; tasks are "files" in a group) -----
+
+export interface Group {
+  id: ULID;
+  name: string;
+  parentId: ULID | null;
+  sortOrder: number;
+  createdAt: number;
+}
+
+/** Task counts per group, keyed by group id (null key = unfiled). */
+export type GroupCounts = Record<string, number>;
+
+export interface GroupCreate {
+  name: string;
+  parentId?: ULID | null;
+}
+
+export interface GroupPatch {
+  name?: string;
+  parentId?: ULID | null;
+  sortOrder?: number;
 }
 
 export interface TodoStats {

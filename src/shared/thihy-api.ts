@@ -9,6 +9,7 @@ import type { AIModel, AIProvider, AIStreamEvent, PermissionRequest } from './ai
 import type { Todo, TodoCreate, TodoPatch, TodoFilter, SearchHit, TodoStats } from './todo-types';
 import type { ContentVersionEntry } from './todo-types';
 import type { DrawingMeta, DrawingScene } from './todo-types';
+import type { Group, GroupCreate, GroupPatch } from './todo-types';
 
 // --- App events pushed from main ---
 
@@ -41,6 +42,13 @@ export interface CaptureSubmitArgs {
 export interface InboxAttachArgs {
   id: string;
   filePath: string;
+  mime: string;
+}
+
+export interface InboxAttachBlobArgs {
+  todoId: string;
+  dataUrl: string;
+  filename: string;
   mime: string;
 }
 
@@ -91,6 +99,13 @@ export interface ThihyApi {
   };
   inbox: {
     attach(args: InboxAttachArgs): Promise<IpcResponse<'inbox.attach'>>;
+    attachBlob(args: InboxAttachBlobArgs): Promise<IpcResponse<'inbox.attachBlob'>>;
+  };
+  group: {
+    list(): Promise<IpcResponse<'group.list'>>;
+    create(input: GroupCreate): Promise<IpcResponse<'group.create'>>;
+    update(id: string, patch: GroupPatch): Promise<IpcResponse<'group.update'>>;
+    delete(id: string): Promise<IpcResponse<'group.delete'>>;
   };
   settings: {
     get(): Promise<IpcResponse<'settings.get'>>;
@@ -119,5 +134,6 @@ export interface ThihyApi {
 export type { Todo, TodoCreate, TodoPatch, TodoFilter, SearchHit, TodoStats };
 export type { ContentVersionEntry };
 export type { DrawingMeta, DrawingScene };
+export type { Group, GroupCreate, GroupPatch };
 export type { AIModel, AIProvider, AIStreamEvent, PermissionRequest };
 export type { IpcChannelName, IpcRequest, IpcResponse };

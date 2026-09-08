@@ -7,7 +7,7 @@ const { ulid } = ulidPkg;
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 const MIGRATIONS: ReadonlyArray<{ version: number; sql: string }> = [
   {
@@ -126,6 +126,27 @@ const MIGRATIONS: ReadonlyArray<{ version: number; sql: string }> = [
       BEGIN
         UPDATE todos SET updated_at = CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER) WHERE id = NEW.id;
       END;
+    `,
+  },
+  {
+    version: 2,
+    // Groups are a hand-edited directory TREE — distinct from the `project`
+    // field / tags. Tasks (todos) are "files" filed under a group. A task's
+    // group_id may be null (= unfiled / root). Deleting a group un-files its
+    // tasks rather than deleting them, and cascades to child groups.
+    sql: `
+      CREATE TABLE groups (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        parent_id TEXT,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL,
+        FOREIGN KEY (parent_id) REFERENCES groups(id) ON DELETE CASCADE
+      );
+      CREATE INDEX idx_groups_parent ON groups(parent_id);
+
+      ALTER TABLE todos ADD COLUMN group_id TEXT;
+      CREATE INDEX idx_todos_group ON todos(group_id);
     `,
   },
 ];

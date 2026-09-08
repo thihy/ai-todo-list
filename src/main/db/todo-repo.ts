@@ -25,6 +25,7 @@ interface TodoRow {
   created_at: number;
   updated_at: number;
   done_at: number | null;
+  group_id: string | null;
 }
 
 function rowToTodo(row: TodoRow, tags: string[], drawingIds: string[]): Todo {
@@ -42,6 +43,7 @@ function rowToTodo(row: TodoRow, tags: string[], drawingIds: string[]): Todo {
     tags,
     attachmentIds: [],
     drawingIds,
+    groupId: row.group_id,
   };
 }
 
@@ -65,6 +67,10 @@ export class TodoRepo {
     if (filter.project?.length) {
       where.push(`project IN (${filter.project.map(() => '?').join(',')})`);
       params.push(...filter.project);
+    }
+    if (filter.groupIds?.length) {
+      where.push(`group_id IN (${filter.groupIds.map(() => '?').join(',')})`);
+      params.push(...filter.groupIds);
     }
     if (filter.dueBefore != null) {
       where.push('due_at IS NOT NULL AND due_at <= ?');
@@ -101,14 +107,15 @@ export class TodoRepo {
     const priority = input.priority ?? 'none';
     const project = input.project ?? null;
     const dueAt = input.dueAt ?? null;
+    const groupId = input.groupId ?? null;
 
     const tx = this.db.transaction(() => {
       this.db
         .prepare(
-          `INSERT INTO todos (id, title, status, priority, project, due_at, body_path, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO todos (id, title, status, priority, project, due_at, body_path, created_at, updated_at, group_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
-        .run(id, input.title, status, priority, project, dueAt, bodyPath, now, now);
+        .run(id, input.title, status, priority, project, dueAt, bodyPath, now, now, groupId);
       if (input.tags?.length) {
         const stmt = this.db.prepare('INSERT OR IGNORE INTO tags(todo_id, tag) VALUES (?, ?)');
         for (const t of input.tags) stmt.run(id, t);
@@ -128,6 +135,7 @@ export class TodoRepo {
       priority: 'priority',
       project: 'project',
       dueAt: 'due_at',
+      groupId: 'group_id',
     };
     for (const [k, v] of Object.entries(patch)) {
       if (v === undefined) continue;
@@ -198,6 +206,7 @@ export class TodoRepo {
       created_at: number;
       updated_at: number;
       done_at: number | null;
+      group_id: string | null;
       snippet: string;
       score: number;
     };

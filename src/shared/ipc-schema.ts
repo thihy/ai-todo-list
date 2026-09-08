@@ -4,6 +4,10 @@
 import type {
   ContentVersionEntry,
   DrawingMeta,
+  Group,
+  GroupCounts,
+  GroupCreate,
+  GroupPatch,
   InboxAttachment,
   SearchHit,
   Todo,
@@ -67,6 +71,22 @@ export interface DrawingThumbSetReq { id: ULID; dataUrl: string }
 // ----- inbox.* -----
 
 export interface InboxAttachReq { id: ULID; filePath: string; mime: string }
+export interface InboxAttachBlobReq {
+  todoId: ULID;
+  /** data: URL (e.g. `data:image/png;base64,...`) of the pasted image. */
+  dataUrl: string;
+  filename: string;
+  mime: string;
+}
+
+// ----- group.* -----
+
+export interface GroupListRes {
+  groups: Group[];
+  counts: GroupCounts;
+}
+export interface GroupCreateReq { input: GroupCreate }
+export interface GroupUpdateReq { id: ULID; patch: GroupPatch }
 
 // ----- ai.* -----
 
@@ -145,6 +165,12 @@ export interface IpcRegistry {
   'drawing.setThumb': IpcChannel<DrawingThumbSetReq, IpcResult<void>>;
 
   'inbox.attach': IpcChannel<InboxAttachReq, IpcResult<InboxAttachment>>;
+  'inbox.attachBlob': IpcChannel<InboxAttachBlobReq, IpcResult<InboxAttachment>>;
+
+  'group.list': IpcChannel<undefined, IpcResult<GroupListRes>>;
+  'group.create': IpcChannel<GroupCreateReq, IpcResult<Group>>;
+  'group.update': IpcChannel<GroupUpdateReq, IpcResult<Group>>;
+  'group.delete': IpcChannel<{ id: ULID }, IpcResult<void>>;
 
   'ai.invoke': IpcChannel<{ prompt: string; model?: AIModel; tools?: string[] }, IpcResult<{ invocationId: string }>>;
   'ai.cancel': IpcChannel<AIStreamCancelReq, IpcResult<{ ok: boolean }>>;
