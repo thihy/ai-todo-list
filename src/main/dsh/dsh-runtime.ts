@@ -85,6 +85,31 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
   const { boot } = bootMod;
   const ctx: DshContext = await boot('thihy', cfg, undefined, undefined, bareBase);
 
+  // Surface the durable session layer: list what's already persisted under
+  // <DSH_SESSIONS_ROOT> (see src/main/index.ts for the env var setup) so the
+  // user can see in the log how many prior conversations survive. The plugin
+  // returns a header per stored session; we only count + log the ids.
+  // Safe to call on every boot — list() walks the on-disk directory and
+  // returns immutable metadata without loading full event logs.
+  try {
+    const persistence = ctx.get('sessionPersistence') as {
+      list?: (signal?: AbortSignal) => Promise<Array<{ id: string; createdAt: number }>>;
+    } | undefined;
+    if (persistence?.list) {
+      const stored = await persistence.list();
+      if (stored.length === 0) {
+        logger.info('DSH persistence: 0 sessions stored under DSH_SESSIONS_ROOT');
+      } else {
+        const ids = stored.map((s) => s.id).join(', ');
+        logger.info(`DSH persistence: ${stored.length} session(s) stored: ${ids}`);
+      }
+    }
+  } catch (err) {
+    // Don't fail boot on a list error — the persistence layer is best-effort
+    // observability here, not a load-bearing dependency.
+    logger.warn(`DSH persistence list failed (non-fatal): ${(err as Error).message}`);
+  }
+
   // 1. Register our LLM adapter for the 'thihy' route.
   const llm = ctx.get('llm') as { registerAdapter(providers: string[], adapter: unknown): () => void } | undefined;
   if (!llm) throw new Error('DSH booted but ctx.llm is absent');
