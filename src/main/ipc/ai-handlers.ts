@@ -15,6 +15,7 @@ import { resolveEndpoint, healthCheck } from '../dsh/client';
 import { getDshRuntime } from '../dsh/dsh-runtime';
 import { SettingsStore } from '../settings/store';
 import { BrowserWindow } from 'electron';
+import { logger } from '../logger';
 import type { AIStreamEvent } from '../../shared/ai-types';
 import type { DataScope } from '../../shared/thihy-api';
 import { TodoRepo } from '../db/todo-repo';
@@ -174,6 +175,28 @@ export function registerAiHandlers(dsh: DshHandle): void {
       // Cheap: a single UPDATE; no event broadcasting needed (the renderer
       // can re-list when it next focuses the conversation list).
       deps.conversations.touch(req.conversationId);
+
+      // L3-D: auto-name on first turn. If the row is still on its default
+      // title (create's `新对话 <timestamp>` OR the migration fallback
+      // `未命名对话`), derive a title from the first user prompt and rename.
+      // Only fires once — after the rename, the title no longer matches the
+      // default pattern so subsequent turns are no-ops. This avoids the
+      // "every conversation is called 新对话 2026/9/8 ..." pile-up the
+      // previous default produced.
+      const convRow = deps.conversations.get(req.conversationId);
+      if (convRow && isDefaultTitle(convRow.title)) {
+        const derived = autoTitleFromPrompt(req.prompt);
+        if (derived && derived !== convRow.title) {
+          try {
+            deps.conversations.rename(req.conversationId, derived);
+            logger.info(`auto-named conversation ${req.conversationId}: "${convRow.title}" → "${derived}"`);
+          } catch (err) {
+            // Non-fatal: the user can rename manually. Log and continue.
+            logger.warn(`auto-rename failed for ${req.conversationId}: ${(err as Error).message}`);
+          }
+        }
+      }
+
       return okResult({ invocationId, costUsd: 0 });
     } catch (err) {
       const message = (err as Error).message;
@@ -306,4 +329,26 @@ function mutatingScope(name: string): DataScope | null {
     default:
       return null;
   }
+}
+
+// --- L3-D helpers ---
+
+/** Recognize the default titles ConversationRepo.create / migration emit,
+ *  so we only auto-rename on the FIRST turn — subsequent turns see a
+ *  user-chosen (or already-derived) title and leave it alone. */
+function isDefaultTitle(title: string): boolean {
+  return title.startsWith('新对话 ') || title === '未命名对话';
+}
+
+const AUTO_TITLE_MAX = 16;
+
+/** Derive a conversation title from the user's first prompt. We don't ask
+ *  the model — that's a round trip we'd burn for a UI nicety. Instead we
+ *  take the first AUTO_TITLE_MAX visible characters and append "…" when
+ *  truncated. Newlines collapsed to spaces; whitespace trimmed. */
+function autoTitleFromPrompt(prompt: string): string {
+  const flat = prompt.replace(/\s+/g, ' ').trim();
+  if (!flat) return '';
+  if (flat.length <= AUTO_TITLE_MAX) return flat;
+  return flat.slice(0, AUTO_TITLE_MAX - 1) + '…';
 }
