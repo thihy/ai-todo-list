@@ -46,13 +46,17 @@ export const AIPane: React.FC<{ onCollapse?: () => void }> = ({ onCollapse }) =>
   const submit = async (): Promise<void> => {
     const prompt = input.trim();
     if (!prompt || busy) return;
+    // Snapshot prior turns (all complete user/assistant pairs from earlier
+    // messages) so the model gets multi-turn context. The new user message +
+    // empty assistant placeholder are appended to local history separately.
+    const priorTurns = history.map((m) => ({ role: m.role, content: m.text }));
     setHistory((h) => [...h, { role: 'user', text: prompt }, { role: 'assistant', text: '' }]);
     setInput('');
     setBusy(true);
     clear();
     const id = crypto.randomUUID();
     setInvocationId(id);
-    const res = await window.thihy.ai.ask({ prompt, invocationId: id, tools: undefined });
+    const res = await window.thihy.ai.ask({ prompt, invocationId: id, history: priorTurns, tools: undefined });
     if (!res.ok) {
       setHistory((h) => {
         const next = [...h];

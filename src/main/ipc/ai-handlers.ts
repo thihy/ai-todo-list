@@ -100,12 +100,17 @@ export function registerAiHandlers(dsh: DshHandle): void {
 
     try {
       const systemPrompt = makeSystemPrompt();
+      // Build the full conversation: prior turns (multi-turn context) followed
+      // by the newest user message. Without history, each message is an
+      // independent one-shot — the model forgets everything said before, which
+      // is why the assistant felt "crude".
+      const messages = [...(req.history ?? []), { role: 'user' as const, content: req.prompt }];
       const result = await invokeChat(
         ep,
         {
           invocationId,
           model,
-          messages: [{ role: 'user', content: req.prompt }],
+          messages,
           tools: req.tools ?? [],
           systemPrompt,
         },

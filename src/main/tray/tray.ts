@@ -63,7 +63,11 @@ export class TrayController {
       this.tray = new Tray(this.iconPath);
       this.refreshMenu();
       this.tray.setToolTip('thihy-todolist');
-      this.tray.on('click', () => this.onCapture());
+      // Clicking the tray icon shows the main window — it must NOT trigger quick
+      // capture, because the user expects the tray icon to behave like every
+      // other app's tray icon (show/restore the app). Quick capture stays
+      // reachable via the context menu item and the global hotkey.
+      this.tray.on('click', () => this.focusInbox());
       logger.info('tray installed');
     } catch (err) {
       logger.error(`tray install failed: ${(err as Error).message}`);

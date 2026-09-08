@@ -100,6 +100,9 @@ export interface AIAskReq {
    *  before the IPC response resolves. Main falls back to generating one if
    *  omitted — but then the renderer can't correlate early stream events. */
   invocationId?: string;
+  /** Prior conversation turns (user/assistant) sent so the model has multi-turn
+   *  context. `prompt` is the newest user message, appended after these. */
+  history?: { role: 'user' | 'assistant'; content: string }[];
 }
 export interface AIAskRes {
   invocationId: string;
