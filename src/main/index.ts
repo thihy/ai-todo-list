@@ -9,6 +9,7 @@ import { installRouter, okResult, failResult, register } from './ipc/router';
 import { registerTodoHandlers } from './ipc/todo-handlers';
 import { registerContentHandlers } from './ipc/content-handlers';
 import { registerGroupHandlers } from './ipc/group-handlers';
+import { registerCapturePreviewHandler } from './ipc/capture-preview-handler';
 import { logger } from './logger';
 import { openDb, newId, type DbHandle } from './db/schema';
 import { TodoRepo } from './db/todo-repo';
@@ -112,6 +113,7 @@ function bootstrap(): void {
     registerSettingsHandlers(settings, handle, rootDir);
     registerAppHandlers();
     registerCaptureHandlers(repo, md);
+    registerCapturePreviewHandler();
 
     // DSH container (AI runtime) — lazy imported so app launches even if DSH init fails
     try {

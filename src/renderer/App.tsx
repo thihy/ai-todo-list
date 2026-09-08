@@ -12,6 +12,7 @@ import { AIPanel } from './layout/AIPanel';
 import { ToastHost, useToastBus } from './components/Toast';
 import { CommandPaletteHost } from './components/CommandPalette';
 import { SettingsModal } from './components/SettingsModal';
+import { Composer } from './components/Composer';
 import { TodoListPane } from './panes/TodoListPane';
 import { TodoEditorPane } from './panes/TodoEditorPane';
 import { InboxPane } from './panes/InboxPane';
@@ -42,6 +43,7 @@ export const App: React.FC = () => {
   const toast = useToastBus();
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [composing, setComposing] = useState(false);
   const [listFilter, setListFilter] = useState<ListFilter>({ kind: 'all' });
   const [aiOpen, setAiOpen] = useState<boolean>(() => {
     try {
@@ -131,8 +133,14 @@ export const App: React.FC = () => {
                   selectedId={selectedId}
                   onSelect={(id) => navigate(routeToHash({ name: 'todo', id }))}
                   onOpenSettings={() => setSettingsOpen(true)}
+                  onCompose={() => setComposing(true)}
                 />
-                <TaskDetail todoId={selectedId} navigate={navigate} />
+                <TaskDetail
+                  todoId={selectedId}
+                  composing={composing}
+                  onCloseCompose={() => setComposing(false)}
+                  navigate={navigate}
+                />
               </div>
             )}
             {view === 'inbox' && <InboxPane />}
@@ -152,14 +160,26 @@ export const App: React.FC = () => {
   );
 };
 
-const TaskDetail: React.FC<{ todoId: string | null; navigate: (to: string) => void }> = ({ todoId, navigate }) => {
+const TaskDetail: React.FC<{
+  todoId: string | null;
+  composing: boolean;
+  onCloseCompose: () => void;
+  navigate: (to: string) => void;
+}> = ({ todoId, composing, onCloseCompose, navigate }) => {
+  if (composing) {
+    return (
+      <div className="task-detail task-detail--compose">
+        <Composer onClose={onCloseCompose} navigate={navigate} />
+      </div>
+    );
+  }
   if (!todoId) {
     return (
       <div className="task-detail task-detail--empty">
         <div className="task-detail__empty-glyph" aria-hidden="true">✓</div>
         <div className="task-detail__empty-title">未选择任务</div>
         <div className="task-detail__empty-hint">
-          从左侧列表选择一个任务查看详情，或在上方新建任务。
+          从左侧列表选择一个任务查看详情，或点击上方「新建任务」。
         </div>
       </div>
     );

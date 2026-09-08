@@ -5,6 +5,7 @@ import type { ThihyApi, AppEvent, AppEventMap, SettingsPatchArgs } from '../../s
 import type { Todo, TodoFilter, SearchHit, TodoStats } from '../../shared/todo-types';
 import type { ContentVersionEntry } from '../../shared/todo-types';
 import type { DrawingMeta, DrawingScene } from '../../shared/todo-types';
+import type { Group } from '../../shared/todo-types';
 import type { AIModel, AIStreamEvent } from '../../shared/ai-types';
 import type { SettingsGetRes } from '../../shared/ipc-schema';
 
@@ -200,6 +201,62 @@ export function useSettings(): {
     void refresh();
   }, [refresh]);
   return { data, patch, chooseDataDir };
+}
+
+export function useGroups(): {
+  groups: Group[];
+  counts: Record<string, number>;
+  refresh: () => Promise<void>;
+  create: (name: string, parentId?: string | null) => Promise<void>;
+  rename: (id: string, name: string) => Promise<void>;
+  move: (id: string, parentId: string | null) => Promise<void>;
+  remove: (id: string) => Promise<void>;
+} {
+  const [groups, setGroups] = useState<Group[]>([]);
+  const [counts, setCounts] = useState<Record<string, number>>({});
+
+  const refresh = useCallback(async () => {
+    const res = await window.thihy.group.list();
+    if (res.ok) {
+      setGroups(res.data.groups);
+      setCounts(res.data.counts);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  const create = useCallback(
+    async (name: string, parentId: string | null = null) => {
+      await window.thihy.group.create({ name, parentId });
+      await refresh();
+    },
+    [refresh],
+  );
+  const rename = useCallback(
+    async (id: string, name: string) => {
+      await window.thihy.group.update(id, { name });
+      await refresh();
+    },
+    [refresh],
+  );
+  const move = useCallback(
+    async (id: string, parentId: string | null) => {
+      await window.thihy.group.update(id, { parentId });
+      await refresh();
+    },
+    [refresh],
+  );
+  const remove = useCallback(
+    async (id: string) => {
+      await window.thihy.group.delete(id);
+      await refresh();
+    },
+    [refresh],
+  );
+
+  return { groups, counts, refresh, create, rename, move, remove };
 }
 
 export function useAppEvent<E extends AppEvent>(

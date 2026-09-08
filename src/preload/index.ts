@@ -113,6 +113,7 @@ const api: ThihyApi = {
     models: () => invoke('ai.models', undefined as never),
     cancel: (invocationId) => invoke('ai.cancel', { invocationId }),
     ask: (req) => invoke('ai.ask', req),
+    parseCapturePreview: (text) => invoke('ai.parseCapturePreview', { text }),
   },
   on: onAppEvent,
 };

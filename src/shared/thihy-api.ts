@@ -126,6 +126,8 @@ export interface ThihyApi {
     models(): Promise<IpcResponse<'ai.models'>>;
     cancel(invocationId: string): Promise<IpcResponse<'ai.cancel'>>;
     ask(req: { prompt: string; model?: AIModel; tools?: string[] }): Promise<IpcResponse<'ai.ask'>>;
+    /** Rule-based NL capture preview (works offline; returns structured fields). */
+    parseCapturePreview(text: string): Promise<IpcResponse<'ai.parseCapturePreview'>>;
   };
   on<E extends AppEvent>(event: E, cb: (payload: AppEventMap[E]) => void): () => void;
 }
