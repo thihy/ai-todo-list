@@ -1,0 +1,2 @@
+# Minimal in-process boot spike: mount nothing, just prove boot() returns a Context.
+[]
