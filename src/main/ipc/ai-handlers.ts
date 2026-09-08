@@ -4,7 +4,7 @@
 import { register, okResult, failResult } from './router';
 import type { DshHandle } from '../dsh/types';
 import { tierFor } from '../dsh/tools';
-import { invokeDeepSeek, makeSystemPrompt, healthCheck } from '../dsh/client';
+import { resolveEndpoint, invokeChat, makeSystemPrompt, healthCheck } from '../dsh/client';
 import { SettingsStore } from '../settings/store';
 import { BrowserWindow } from 'electron';
 import type { AIStreamEvent } from '../../shared/ai-types';
@@ -29,12 +29,18 @@ export function registerAiHandlers(dsh: DshHandle): void {
 
   register('ai.health', async () => {
     try {
-      const apiKey = deps?.settings.get().apiKey ?? null;
-      if (!apiKey) return okResult({ ok: false, mode: dsh.health().mode, error: 'no_api_key' });
-      const started = Date.now();
-      await healthCheck(apiKey);
-      deps?.settings.recordHeartbeat();
-      return okResult({ ok: true, mode: dsh.health().mode, latencyMs: Date.now() - started });
+      if (!deps) return okResult({ ok: false, mode: dsh.health().mode, error: 'not_ready' });
+      const s = deps.settings.get();
+      const ep = resolveEndpoint(s);
+      // Ollama (local) has no API key but is still reachable — treat a resolved
+      // endpoint as sufficient. Shim / unconfigured custom → no_api_key.
+      if (!ep) return okResult({ ok: false, mode: dsh.health().mode, error: 'no_api_key' });
+      if (ep.protocol !== 'openai' || s.provider !== 'ollama') {
+        if (!ep.apiKey) return okResult({ ok: false, mode: dsh.health().mode, error: 'no_api_key' });
+      }
+      const hc = await healthCheck(ep);
+      if (hc.ok) deps.settings.recordHeartbeat();
+      return okResult({ ok: hc.ok, mode: dsh.health().mode, latencyMs: hc.latencyMs, error: hc.error });
     } catch (err) {
       return failResult('health_failed', (err as Error).message);
     }
@@ -50,11 +56,15 @@ export function registerAiHandlers(dsh: DshHandle): void {
   // Streaming "ask AI" used by the AIPane submit; main pushes stream events.
   register('ai.ask', async (_e, req) => {
     if (!deps) return failResult('ai_not_ready', 'DSH not initialised');
-    const apiKey = deps.settings.get().apiKey;
-    if (!apiKey) return failResult('no_api_key', 'Set API key in settings first');
+    const s = deps.settings.get();
+    const ep = resolveEndpoint(s);
+    if (!ep) return failResult('no_api_key', 'Set API key / baseURL in settings first');
+    if (ep.protocol !== 'openai' || s.provider !== 'ollama') {
+      if (!ep.apiKey) return failResult('no_api_key', 'Set API key in settings first');
+    }
 
     const invocationId = crypto.randomUUID();
-    const model = req.model ?? deps.settings.get().model;
+    const model = req.model ?? ep.model;
 
     const send = (event: AIStreamEvent): void => {
       for (const w of BrowserWindow.getAllWindows()) {
@@ -88,8 +98,8 @@ export function registerAiHandlers(dsh: DshHandle): void {
 
     try {
       const systemPrompt = makeSystemPrompt();
-      const result = await invokeDeepSeek(
-        apiKey,
+      const result = await invokeChat(
+        ep,
         {
           invocationId,
           model,

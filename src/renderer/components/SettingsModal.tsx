@@ -11,7 +11,10 @@ import {
   AI_PROVIDERS,
   PROVIDER_LABELS,
   PROVIDER_MODELS,
+  CUSTOM_PROTOCOLS,
+  PROTOCOL_LABELS,
   type AIProvider,
+  type AICustomProtocol,
 } from '../../shared/ai-types';
 
 type Category = 'general' | 'model' | 'data' | 'hotkeys' | 'about';
@@ -112,17 +115,23 @@ const GeneralPane: React.FC<PaneProps> = ({ data, patch }) => (
 const ModelPane: React.FC<PaneProps> = ({ data, patch }) => {
   const [apiKey, setApiKey] = useState('');
   const [showKey, setShowKey] = useState(false);
+  const [baseUrl, setBaseUrl] = useState('');
+  const [customModel, setCustomModel] = useState('');
 
   useEffect(() => {
     setApiKey('');
+    setBaseUrl(data.baseUrl ?? '');
+    setCustomModel(data.provider === 'custom' ? data.model : '');
   }, [data]);
 
+  const isCustom = data.provider === 'custom';
   const models = PROVIDER_MODELS[data.provider] ?? [];
+  const noKeyNeeded = data.provider === 'ollama' || data.provider === 'shim';
 
   const onProviderChange = async (p: AIProvider): Promise<void> => {
     await patch({ provider: p });
     const nextModels = PROVIDER_MODELS[p] ?? [];
-    if (!nextModels.includes(data.model)) {
+    if (p !== 'custom' && !nextModels.includes(data.model)) {
       await patch({ model: nextModels[0] });
     }
   };
@@ -143,24 +152,90 @@ const ModelPane: React.FC<PaneProps> = ({ data, patch }) => {
         </select>
       </Field>
 
-      <Field label="模型">
-        <select
-          className="input"
-          value={data.model}
-          onChange={(e) => void patch({ model: e.target.value })}
-        >
-          {models.map((m) => (
-            <option key={m} value={m}>
-              {m}
-            </option>
-          ))}
-        </select>
-      </Field>
+      {isCustom ? (
+        <>
+          <Field
+            label="API 协议"
+            hint="自定义提供商使用的接口协议：OpenAI（/chat/completions）、OpenAI Responses（/responses）或 Anthropic（/messages）。"
+          >
+            <select
+              className="input"
+              value={data.protocol}
+              onChange={(e) => void patch({ protocol: e.target.value as AICustomProtocol })}
+            >
+              {CUSTOM_PROTOCOLS.map((p) => (
+                <option key={p} value={p}>
+                  {PROTOCOL_LABELS[p]}
+                </option>
+              ))}
+            </select>
+          </Field>
+
+          <Field
+            label="Base URL"
+            hint="服务根地址，通常包含版本号，例如 https://api.openai.com/v1 或 https://api.anthropic.com。"
+          >
+            <div className="row">
+              <input
+                type="text"
+                className="input mono"
+                value={baseUrl}
+                onChange={(e) => setBaseUrl(e.target.value)}
+                placeholder="https://api.example.com/v1"
+                autoComplete="off"
+              />
+              <button
+                type="button"
+                className="btn-primary"
+                disabled={!baseUrl.trim() || baseUrl === data.baseUrl}
+                onClick={() => void patch({ baseUrl })}
+              >
+                保存
+              </button>
+            </div>
+          </Field>
+
+          <Field label="模型名称" hint="自定义提供商下的模型标识，自由填写，例如 gpt-4o、claude-3-5-sonnet-20241022。">
+            <div className="row">
+              <input
+                type="text"
+                className="input mono"
+                value={customModel}
+                onChange={(e) => setCustomModel(e.target.value)}
+                placeholder="模型 ID"
+                autoComplete="off"
+              />
+              <button
+                type="button"
+                className="btn-primary"
+                disabled={!customModel.trim() || customModel === data.model}
+                onClick={() => void patch({ model: customModel })}
+              >
+                保存
+              </button>
+            </div>
+          </Field>
+        </>
+      ) : (
+        <Field label="模型">
+          <select
+            className="input"
+            value={data.model}
+            onChange={(e) => void patch({ model: e.target.value })}
+          >
+            {models.map((m) => (
+              <option key={m} value={m}>
+                {m}
+              </option>
+            ))}
+          </select>
+        </Field>
+      )}
 
       <Field
         label="API Key"
         hint={`${
-          data.provider === 'ollama' || data.provider === 'shim'
+          noKeyNeeded
             ? '本地 / 离线提供商通常无需 API Key。'
             : '仅保存在本地；渲染层永远只看到脱敏后的版本。'
         }`}

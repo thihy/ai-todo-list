@@ -10,7 +10,7 @@ import { app } from 'electron';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { DEFAULT_CAPTURE_HOTKEY, ROOT_DIR_NAME, CONFIG_FILENAME, DEFAULT_PROVIDER } from '../../shared/constants';
-import type { AIModel, AIProvider } from '../../shared/ai-types';
+import type { AIModel, AIProvider, AICustomProtocol } from '../../shared/ai-types';
 
 export interface PersistedSettings {
   provider: AIProvider;
@@ -23,6 +23,10 @@ export interface PersistedSettings {
   monthlyCostUsd: number;
   /** Absolute path to the data directory, or null for the default location. */
   dataDir: string | null;
+  /** Wire protocol for the `custom` provider. */
+  protocol: AICustomProtocol;
+  /** Base URL for the `custom` provider (e.g. https://api.openai.com/v1). */
+  baseUrl: string;
 }
 
 const DEFAULTS: PersistedSettings = {
@@ -35,6 +39,8 @@ const DEFAULTS: PersistedSettings = {
   lastHeartbeatAt: null,
   monthlyCostUsd: 0,
   dataDir: null,
+  protocol: 'openai',
+  baseUrl: '',
 };
 
 /** Default data root when the user has not picked a directory. */
@@ -97,6 +103,8 @@ export class SettingsStore {
       captureHotkey: v.captureHotkey,
       theme: v.theme,
       dataDir: this.getDataDir(),
+      protocol: v.protocol,
+      baseUrl: v.baseUrl,
     };
   }
 

@@ -332,6 +332,8 @@ function registerSettingsHandlers(
       ...(req.theme ? { theme: req.theme } : {}),
       ...(typeof req.apiKey === 'string' ? { apiKey: req.apiKey } : {}),
       ...(typeof req.dataDir === 'string' ? { dataDir: req.dataDir } : {}),
+      ...(req.protocol ? { protocol: req.protocol } : {}),
+      ...(typeof req.baseUrl === 'string' ? { baseUrl: req.baseUrl } : {}),
     });
     return Promise.resolve(okResult(store.publicView()));
   });

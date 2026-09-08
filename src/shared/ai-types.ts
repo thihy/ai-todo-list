@@ -7,8 +7,8 @@ export type AIModel = string;
 export const AI_MODELS: readonly AIModel[] = ['deepseek-chat', 'deepseek-reasoner'];
 
 /** Model provider — determines base URL / auth shape. Persisted in settings. */
-export type AIProvider = 'deepseek' | 'openai' | 'anthropic' | 'ollama' | 'shim';
-export const AI_PROVIDERS: readonly AIProvider[] = ['deepseek', 'openai', 'anthropic', 'ollama', 'shim'];
+export type AIProvider = 'deepseek' | 'openai' | 'anthropic' | 'ollama' | 'shim' | 'custom';
+export const AI_PROVIDERS: readonly AIProvider[] = ['deepseek', 'openai', 'anthropic', 'ollama', 'shim', 'custom'];
 
 export const PROVIDER_LABELS: Record<AIProvider, string> = {
   deepseek: 'DeepSeek',
@@ -16,15 +16,32 @@ export const PROVIDER_LABELS: Record<AIProvider, string> = {
   anthropic: 'Anthropic',
   ollama: 'Ollama（本地）',
   shim: '内置 Shim（离线）',
+  custom: '自定义',
 };
 
-/** Models offered per provider in the settings UI. */
+/**
+ * Wire protocol for a `custom` provider. Determines the request shape + SSE
+ * event parsing. Built-in providers derive their protocol implicitly.
+ *  - openai        : /chat/completions (OpenAI-compatible; used by DeepSeek/Ollama)
+ *  - openresponses : /responses (OpenAI Responses API)
+ *  - anthropic     : /messages (Anthropic Messages API)
+ */
+export type AICustomProtocol = 'openai' | 'openresponses' | 'anthropic';
+export const CUSTOM_PROTOCOLS: readonly AICustomProtocol[] = ['openai', 'openresponses', 'anthropic'];
+export const PROTOCOL_LABELS: Record<AICustomProtocol, string> = {
+  openai: 'OpenAI（/chat/completions）',
+  openresponses: 'OpenAI Responses（/responses）',
+  anthropic: 'Anthropic（/messages）',
+};
+
+/** Models offered per provider in the settings UI. `custom` is free-form. */
 export const PROVIDER_MODELS: Record<AIProvider, string[]> = {
   deepseek: ['deepseek-chat', 'deepseek-reasoner'],
   openai: ['gpt-4o', 'gpt-4o-mini', 'gpt-4.1', 'o3-mini'],
   anthropic: ['claude-sonnet-5', 'claude-haiku-4-5', 'claude-opus-5'],
   ollama: ['llama3.1', 'qwen2.5', 'deepseek-r1'],
   shim: ['shim-mock'],
+  custom: [],
 };
 
 export interface ParsedTodo {
@@ -131,4 +148,8 @@ export interface AISettings {
   connected: boolean;
   lastHeartbeatAt: number | null;
   monthlyCostUsd: number;
+  /** Wire protocol — meaningful when provider === 'custom'. */
+  protocol: AICustomProtocol;
+  /** Base URL — meaningful when provider === 'custom'. */
+  baseUrl: string;
 }
