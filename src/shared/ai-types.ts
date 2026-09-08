@@ -113,6 +113,11 @@ export interface AITokenEvent extends AIStreamEventBase {
   token: string;
 }
 
+export interface AIReasoningEvent extends AIStreamEventBase {
+  type: 'reasoning';
+  text: string;
+}
+
 export interface AIToolCallEvent extends AIStreamEventBase {
   type: 'toolCall';
   toolName: string;
@@ -142,6 +147,7 @@ export interface AIErrorEvent extends AIStreamEventBase {
 export type AIStreamEvent =
   | AIStartEvent
   | AITokenEvent
+  | AIReasoningEvent
   | AIToolCallEvent
   | AIPermissionRequestEvent
   | AIDoneEvent

@@ -58,17 +58,22 @@ async function main() {
   log('runtime booted');
 
   let tokens = 0;
+  let reasoningChunks = 0;
+  let reasoningText = '';
   let toolCalls = 0;
   let toolResults = 0;
   let sawArgs = false;
   let fullText = '';
 
   const res = await runtime.runTurn({
-    prompt: '列出我所有的 todo。如果没有，就告诉我列表是空的。',
+    // Exercises both a SAVE tool (todo.create) AND reasoning (glm-5.2 thinks
+    // before deciding which tool to call) in one turn.
+    prompt: '帮我创建一个 todo：买牛奶。创建后告诉我它的 id 和标题。',
     invocationId: 'live-rt-1',
     onEvent: (e: TurnEvent) => {
       switch (e.type) {
         case 'token': tokens++; fullText += e.text; break;
+        case 'reasoning': reasoningChunks++; reasoningText += e.text; break;
         case 'toolCall': toolCalls++; log(`toolCall name=${e.name} args=${JSON.stringify(e.args)}`); break;
         case 'toolResult':
           toolResults++;
@@ -82,13 +87,15 @@ async function main() {
   });
 
   log(`result content=${JSON.stringify(res.content).slice(0, 120)}`);
-  log(`tokens=${tokens} toolCalls=${toolCalls} toolResults=${toolResults} sawArgs=${sawArgs}`);
+  log(`tokens=${tokens} reasoningChunks=${reasoningChunks} reasoningLen=${reasoningText.length} toolCalls=${toolCalls} toolResults=${toolResults} sawArgs=${sawArgs}`);
+  if (reasoningChunks > 0) log(`reasoning preview=${JSON.stringify(reasoningText.slice(0, 160))}`);
 
   await runtime.dispose();
 
   const pass = tokens >= 1 && toolResults === toolCalls && toolCalls >= 1 && sawArgs;
-  log(pass ? 'PASS: production runTurn live — tools called, args forwarded, text streamed'
-           : `FAIL: tokens=${tokens} toolCalls=${toolCalls} toolResults=${toolResults} sawArgs=${sawArgs}`);
+  log(pass
+    ? `PASS: production runTurn live — tools called, args forwarded, text streamed, reasoning=${reasoningChunks > 0 ? 'YES' : 'none'}`
+    : `FAIL: tokens=${tokens} toolCalls=${toolCalls} toolResults=${toolResults} sawArgs=${sawArgs}`);
   process.exit(pass ? 0 : 1);
 }
 

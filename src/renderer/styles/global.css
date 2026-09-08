@@ -900,6 +900,45 @@ a:hover {
   white-space: pre;
 }
 
+/* Collapsible reasoning / "思考过程" panel — shown above the assistant bubble
+ * for reasoning models (glm-5.2 / deepseek-reasoner). Collapsed by default;
+ * the header pulses while the model is still thinking. */
+.reasoning {
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--fg-muted) 4%, var(--bg-surface));
+  margin-bottom: var(--space-xs);
+}
+.reasoning__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  width: 100%;
+  padding: var(--space-xs) var(--space-sm);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: var(--fg-muted);
+  font-size: var(--font-xs);
+  text-align: left;
+}
+.reasoning__head:hover { background: color-mix(in srgb, var(--fg-primary) 4%, transparent); }
+.reasoning__icon { font-size: var(--font-sm); }
+.reasoning__label {
+  color: var(--fg-secondary);
+  font-style: italic;
+}
+.reasoning__chevron { margin-left: auto; color: var(--fg-muted); }
+.reasoning__body {
+  border-top: 1px solid var(--border-default);
+  padding: var(--space-xs) var(--space-sm);
+  color: var(--fg-secondary);
+  font-size: var(--font-xs);
+  max-height: 280px;
+  overflow: auto;
+}
+.reasoning__body .markdown { color: var(--fg-secondary); }
+
 /* Markdown content inside assistant bubbles. */
 .markdown > :first-child { margin-top: 0; }
 .markdown > :last-child { margin-bottom: 0; }

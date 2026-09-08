@@ -117,6 +117,9 @@ export class ThihyLlmAdapter extends LlmAdapter {
     const toolAcc = new Map<number, { id: string; name: string; args: string; started: boolean }>();
     let blockSeq = 0; // next block index for text
     let textOpen = false;
+    let reasoningOpen = false;
+    let reasoningText = '';
+    let reasoningIdx = -1;
     let promptTokens = 0;
     let completionTokens = 0;
     let finishKind: 'stop' | 'tool-calls' = 'stop';
@@ -125,7 +128,7 @@ export class ThihyLlmAdapter extends LlmAdapter {
       if (data === '[DONE]') continue;
       let parsed: {
         choices?: Array<{
-          delta?: { content?: string; tool_calls?: Array<{ index: number; id?: string; function?: { name?: string; arguments?: string } }> };
+          delta?: { content?: string; reasoning_content?: string; tool_calls?: Array<{ index: number; id?: string; function?: { name?: string; arguments?: string } }> };
           finish_reason?: string | null;
         }>;
         usage?: { prompt_tokens?: number; completion_tokens?: number };
@@ -141,6 +144,35 @@ export class ThihyLlmAdapter extends LlmAdapter {
       }
       const choice = parsed.choices?.[0];
       if (!choice) continue;
+
+      // Reasoning (thinking) — glm-5.2 / deepseek-reasoner emit reasoning_content
+      // BEFORE the visible answer. Stream it as a distinct reasoning block so the
+      // UI can show a collapsible "思考过程" panel separate from the answer.
+      const reasoning = choice.delta?.reasoning_content;
+      if (reasoning) {
+        if (!reasoningOpen) {
+          // Close any open text block first (defensive; reasoning normally leads).
+          if (textOpen) {
+            yield { type: 'block-end', index: blockSeq, block: { type: 'text', text: '' } };
+            textOpen = false;
+            blockSeq++;
+          }
+          reasoningIdx = blockSeq;
+          yield { type: 'block-start', index: reasoningIdx, blockType: 'reasoning' };
+          reasoningOpen = true;
+        }
+        reasoningText += reasoning;
+        yield { type: 'reasoning-delta', index: reasoningIdx, text: reasoning };
+        // A delta carrying reasoning rarely also carries content; keep them
+        // mutually exclusive per-chunk for clean block boundaries.
+        continue;
+      }
+      // Transitioning away from reasoning (or never reasoned) — close the block.
+      if (reasoningOpen) {
+        yield { type: 'block-end', index: reasoningIdx, block: { type: 'reasoning', text: reasoningText } };
+        reasoningOpen = false;
+        blockSeq = reasoningIdx + 1;
+      }
 
       // Text delta — open a text block lazily on first non-empty content.
       const text = choice.delta?.content;

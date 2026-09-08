@@ -41,6 +41,7 @@ export interface DshRuntimeDeps {
 
 export type TurnEvent =
   | { type: 'token'; text: string }
+  | { type: 'reasoning'; text: string }
   | { type: 'toolCall'; name: string; args: unknown }
   | { type: 'toolResult'; name: string; args?: unknown; ok: boolean; data?: unknown; error?: string }
   | { type: 'done'; content: string }
@@ -137,6 +138,11 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
           if (chunk?.type === 'text-delta' && chunk.text) {
             fullText += chunk.text;
             onEvent({ type: 'token', text: chunk.text });
+          } else if (chunk?.type === 'reasoning-delta' && chunk.text) {
+            // The model's thinking stream (glm-5.2 / deepseek-reasoner
+            // reasoning_content). Forwarded separately so the UI can render a
+            // collapsible "思考过程" panel distinct from the answer.
+            onEvent({ type: 'reasoning', text: chunk.text });
           }
         } else if (t === 'tool/call') {
           // data: { turn, step, callId, name, arguments(raw JSON string) }

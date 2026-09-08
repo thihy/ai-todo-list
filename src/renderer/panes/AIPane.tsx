@@ -14,7 +14,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useAiStream, useModels } from '../hooks/useThihyApi';
 import { Markdown } from '../components/Markdown';
-import type { AITokenEvent, AIToolCallEvent, AIStreamEvent } from '../../shared/ai-types';
+import type { AITokenEvent, AIToolCallEvent, AIReasoningEvent, AIStreamEvent } from '../../shared/ai-types';
 
 interface ToolCard {
   name: string;
@@ -26,6 +26,7 @@ interface ToolCard {
 interface Turn {
   id: string;
   user: string;
+  reasoning: string;
   assistant: string;
   tools: ToolCard[];
   status: 'streaming' | 'done' | 'error';
@@ -46,6 +47,7 @@ export const AIPane: React.FC<{ onCollapse?: () => void }> = ({ onCollapse }) =>
     const mine = events.filter((e) => e.invocationId === activeId);
     if (mine.length === 0) return;
     const tokens = mine.filter((e): e is AITokenEvent => e.type === 'token');
+    const reasoning = mine.filter((e): e is AIReasoningEvent => e.type === 'reasoning');
     const calls = mine.filter((e): e is AIToolCallEvent => e.type === 'toolCall');
     const done = mine.some((e) => e.type === 'done');
     const errEvt = mine.find((e): e is Extract<AIStreamEvent, { type: 'error' }> => e.type === 'error');
@@ -55,6 +57,7 @@ export const AIPane: React.FC<{ onCollapse?: () => void }> = ({ onCollapse }) =>
           ? t
           : {
               ...t,
+              reasoning: reasoning.map((r) => r.text).join(''),
               assistant: tokens.map((tk) => tk.token).join(''),
               tools: calls.map((c) => ({ name: c.toolName, args: c.args, result: c.result, ok: c.ok })),
               status: errEvt ? 'error' : done ? 'done' : 'streaming',
@@ -81,7 +84,7 @@ export const AIPane: React.FC<{ onCollapse?: () => void }> = ({ onCollapse }) =>
         { role: 'assistant' as const, content: t.assistant },
       ]);
     const id = crypto.randomUUID();
-    setTurns((prev) => [...prev, { id, user: prompt, assistant: '', tools: [], status: 'streaming' }]);
+    setTurns((prev) => [...prev, { id, user: prompt, reasoning: '', assistant: '', tools: [], status: 'streaming' }]);
     setInput('');
     clear();
     setActiveId(id);
@@ -158,10 +161,11 @@ export const AIPane: React.FC<{ onCollapse?: () => void }> = ({ onCollapse }) =>
 
 const TurnView: React.FC<{ turn: Turn }> = ({ turn }) => {
   const streaming = turn.status === 'streaming';
-  const thinking = streaming && !turn.assistant && turn.tools.length === 0;
+  const thinking = streaming && !turn.assistant && turn.tools.length === 0 && !turn.reasoning;
   return (
     <div className="turn">
       <div className="bubble bubble--user">{turn.user}</div>
+      {turn.reasoning && <ReasoningView text={turn.reasoning} streaming={streaming} />}
       {turn.tools.map((tc, i) => (
         <ToolCardView key={i} card={tc} />
       ))}
@@ -173,6 +177,27 @@ const TurnView: React.FC<{ turn: Turn }> = ({ turn }) => {
       )}
       {turn.status === 'error' && (
         <div className="bubble bubble--error">⚠ {turn.error}</div>
+      )}
+    </div>
+  );
+};
+
+const ReasoningView: React.FC<{ text: string; streaming: boolean }> = ({ text, streaming }) => {
+  // Collapsed by default — the reasoning is verbose; expand to inspect. While
+  // streaming, show a live "思考中…" hint in the header so the user sees the
+  // model is thinking even before any answer token lands.
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="reasoning">
+      <button type="button" className="reasoning__head" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
+        <span className="reasoning__icon" aria-hidden="true">💭</span>
+        <span className="reasoning__label">{streaming ? '思考中…' : '思考过程'}</span>
+        <span className="reasoning__chevron" aria-hidden="true">{open ? '▾' : '▸'}</span>
+      </button>
+      {open && (
+        <div className="reasoning__body">
+          <Markdown text={streaming ? `${text} ▍` : text} />
+        </div>
       )}
     </div>
   );
