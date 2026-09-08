@@ -43,3 +43,26 @@
   name: '@deepseek-ai/dsh-agent-loop'
   config:
     agents: []
+
+# Token measurement service. Inject: sessionProjections (already mounted above).
+# Injects `tokenMeter` onto ctx for any service that wants to budget context
+# (compaction, pruner, agent-loop). Zero config — defaults are fine.
+- id: token-meter
+  name: '@deepseek-ai/dsh-token-meter'
+
+# Deterministic tool-result pruning: when a tool result exceeds thresholdChars,
+# keep headChars + marker + tailChars so the model still sees the framing and
+# the most recent lines but the middle is dropped. Pairs with token-meter.
+# Defaults: threshold 8192, head 4096, tail 1024 — fine for our use.
+- id: tool-result-pruner
+  name: '@deepseek-ai/dsh-compaction-tool-result-pruner'
+
+# Automatic between-step compaction: when pressure > thresholdRatio (0.8 of
+# model context) it asks the LLM to summarize the head, retaining the verbatim
+# tail so the active work isn't lost. Inject: llm, tokenMeter, sessions — all
+# present above. auto: true engages the pressure-driven path; without it the
+# engine only runs when the session/compact event fires explicitly.
+- id: compaction-basic
+  name: '@deepseek-ai/dsh-compaction-basic'
+  config:
+    auto: true
