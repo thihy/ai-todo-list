@@ -186,9 +186,14 @@ export function openDb(filePath: string): DbHandle {
     }
   }
 
+  // close() is idempotent: the data-migration path closes the DB early, and
+  // before-quit calls close() again — double-close on better-sqlite3 throws.
+  let closed = false;
   return {
     db,
     close() {
+      if (closed) return;
+      closed = true;
       db.close();
     },
   };

@@ -153,7 +153,7 @@ export const App: React.FC = () => {
         </div>
         <Statusbar route={route} />
         <ToastHost bus={toast} />
-        <CommandPaletteHost open={paletteOpen} onClose={() => setPaletteOpen(false)} navigate={navigate} />
+        <CommandPaletteHost open={paletteOpen} onClose={() => setPaletteOpen(false)} navigate={navigate} onCompose={() => { setPaletteOpen(false); setComposing(true); }} />
         <SettingsModal open={settingsOpen} onClose={closeSettings} />
       </div>
     </ErrorBoundary>

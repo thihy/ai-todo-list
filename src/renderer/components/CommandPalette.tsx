@@ -7,7 +7,8 @@ export const CommandPaletteHost: React.FC<{
   open: boolean;
   onClose: () => void;
   navigate: (to: string) => void;
-}> = ({ open, onClose, navigate }) => {
+  onCompose: () => void;
+}> = ({ open, onClose, navigate, onCompose }) => {
   const [q, setQ] = useState('');
   const [todos, setTodos] = useState<Todo[]>([]);
 
@@ -21,7 +22,7 @@ export const CommandPaletteHost: React.FC<{
 
   const cmds = useMemo(
     () => [
-      { label: '新建 TODO', run: () => focusNewTodo() },
+      { label: '新建 TODO', run: () => onCompose() },
       { label: '收件箱', run: () => navigate('#/list/inbox') },
       { label: '今天', run: () => navigate('#/list/today') },
       { label: '未来 7 天', run: () => navigate('#/list/next7') },
@@ -29,7 +30,7 @@ export const CommandPaletteHost: React.FC<{
       { label: '设置', run: () => navigate('#/settings') },
       { label: 'AI 助手', run: () => navigate('#/ai') },
     ],
-    [navigate],
+    [navigate, onCompose],
   );
 
   const filteredCmds = cmds.filter((c) => c.label.toLowerCase().includes(q.toLowerCase()));
@@ -100,10 +101,6 @@ export const CommandPaletteHost: React.FC<{
     </div>
   );
 };
-
-function focusNewTodo(): void {
-  document.dispatchEvent(new CustomEvent('thihy:new-todo'));
-}
 
 function fuzzyMatch(haystack: string, needle: string): boolean {
   const h = haystack.toLowerCase();
