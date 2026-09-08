@@ -1,0 +1,35 @@
+# Dependencies
+node_modules/
+.pnp.*
+
+# Build output
+out/
+dist/
+release/
+
+# Electron / Vite caches
+.electron-vite/
+*.tsbuildinfo
+
+# Data (runtime DB + content) — never commit user data
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+.thihy-todolist/
+data/
+
+# Logs
+npm-debug.log*
+*.log
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# CodeGraph
+.codegraph/
+
+# OpenSpec generated
+.claude/skills/openspec/generated/

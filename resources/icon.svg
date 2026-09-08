@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" role="img" aria-label="thihy-todolist">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#34D399"/>
+      <stop offset="1" stop-color="#047857"/>
+    </linearGradient>
+  </defs>
+  <rect x="12" y="12" width="232" height="232" rx="56" fill="url(#bg)"/>
+  <!-- list lines -->
+  <g stroke="#FFFFFF" stroke-width="12" stroke-linecap="round" opacity="0.92">
+    <line x1="74" y1="86" x2="180" y2="86"/>
+    <line x1="74" y1="128" x2="180" y2="128"/>
+    <line x1="74" y1="170" x2="140" y2="170"/>
+  </g>
+  <!-- check dots -->
+  <g fill="#FFFFFF">
+    <circle cx="58" cy="86" r="9"/>
+    <circle cx="58" cy="128" r="9"/>
+    <circle cx="58" cy="170" r="9"/>
+  </g>
+</svg>

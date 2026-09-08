@@ -1,0 +1,127 @@
+{
+  "name": "thihy-todolist",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AI-native Electron TODO list with Markdown content and Excalidraw drawings, built on DeepSeek Harness (DSH)",
+  "appId": "com.thihy.todolist",
+  "productName": "thihy-todolist",
+  "author": "thihy",
+  "copyright": "Copyright © 2026 thihy",
+  "main": "out/main/index.js",
+  "type": "module",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "preview": "electron-vite preview",
+    "start": "electron-vite preview",
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "lint": "eslint . --ext .ts,.tsx",
+    "format": "prettier --write \"src/**/*.{ts,tsx,md,json}\"",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:cov": "vitest run --coverage",
+    "e2e": "playwright test",
+    "assets": "node resources/build-icons.mjs",
+    "dist": "electron-builder",
+    "dist:win": "electron-builder --win",
+    "dist:mac": "electron-builder --mac",
+    "dist:linux": "electron-builder --linux",
+    "dist:dir": "electron-builder --dir",
+    "rebuild": "electron-rebuild -f -w better-sqlite3",
+    "audit": "pnpm audit --prod"
+  },
+  "dependencies": {
+    "@excalidraw/excalidraw": "^0.18.0",
+    "better-sqlite3": "^11.5.0",
+    "electron-updater": "^6.8.9",
+    "gray-matter": "^4.0.3",
+    "nanoid": "^5.0.9",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "ulid": "^2.3.0",
+    "zod": "^3.23.8",
+    "zustand": "^5.0.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.0",
+    "@types/better-sqlite3": "^7.6.11",
+    "@types/node": "^22.10.0",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "@vitest/coverage-v8": "^2.1.6",
+    "@electron/rebuild": "^3.7.0",
+    "electron": "^33.2.0",
+    "electron-builder": "^26.16.0",
+    "dmg-builder": "^26.16.0",
+    "electron-builder-squirrel-windows": "^26.16.0",
+    "electron-vite": "^2.3.0",
+    "eslint": "^10.10.0",
+    "happy-dom": "^15.11.6",
+    "playwright": "^1.49.0",
+    "prettier": "^3.4.1",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.11",
+    "vitest": "^2.1.6"
+  },
+  "engines": {
+    "node": ">=20.19.0",
+    "pnpm": ">=9"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "better-sqlite3",
+      "electron",
+      "esbuild",
+      "electron-winstaller"
+    ]
+  },
+  "build": {
+    "appId": "com.thihy.todolist",
+    "productName": "thihy-todolist",
+    "directories": {
+      "output": "dist",
+      "buildResources": "resources"
+    },
+    "files": [
+      "out/**",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "resources/tray.png",
+        "to": "tray.png"
+      },
+      {
+        "from": "resources/icon.png",
+        "to": "icon.png"
+      }
+    ],
+    "win": {
+      "icon": "resources/icon.png",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ],
+      "artifactName": "${productName} Setup ${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "thihy-todolist"
+    },
+    "mac": {
+      "target": ["dmg"],
+      "category": "public.app-category.productivity"
+    },
+    "linux": {
+      "target": ["AppImage"],
+      "category": "Office"
+    }
+  }
+}

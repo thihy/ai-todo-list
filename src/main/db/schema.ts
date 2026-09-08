@@ -1,0 +1,177 @@
+// SQLite schema + migrations. Sole authority for runtime state.
+// Files (Markdown, Excalidraw JSON) are projected FROM this DB; DB is the truth.
+
+import Database from 'better-sqlite3';
+import ulidPkg from 'ulid';
+const { ulid } = ulidPkg;
+import { mkdirSync } from 'node:fs';
+import { dirname } from 'node:path';
+
+export const SCHEMA_VERSION = 1;
+
+const MIGRATIONS: ReadonlyArray<{ version: number; sql: string }> = [
+  {
+    version: 1,
+    sql: `
+      CREATE TABLE schema_meta (
+        version INTEGER PRIMARY KEY
+      );
+
+      CREATE TABLE todos (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('inbox','next','doing','blocked','done')),
+        priority TEXT NOT NULL CHECK (priority IN ('none','low','medium','high')),
+        project TEXT,
+        due_at INTEGER,
+        body_path TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        done_at INTEGER
+      );
+      CREATE INDEX idx_todos_status ON todos(status);
+      CREATE INDEX idx_todos_due_at ON todos(due_at);
+      CREATE INDEX idx_todos_project ON todos(project);
+      CREATE INDEX idx_todos_updated_at ON todos(updated_at DESC);
+
+      CREATE TABLE tags (
+        todo_id TEXT NOT NULL,
+        tag TEXT NOT NULL,
+        PRIMARY KEY(todo_id, tag),
+        FOREIGN KEY(todo_id) REFERENCES todos(id) ON DELETE CASCADE
+      );
+      CREATE INDEX idx_tags_tag ON tags(tag);
+
+      CREATE TABLE drawings (
+        id TEXT PRIMARY KEY,
+        todo_id TEXT NOT NULL,
+        title TEXT,
+        path TEXT NOT NULL,
+        thumb_path TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        FOREIGN KEY(todo_id) REFERENCES todos(id) ON DELETE CASCADE
+      );
+      CREATE INDEX idx_drawings_todo ON drawings(todo_id);
+
+      CREATE TABLE content_versions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        todo_id TEXT NOT NULL,
+        body TEXT NOT NULL,
+        saved_at INTEGER NOT NULL,
+        FOREIGN KEY(todo_id) REFERENCES todos(id) ON DELETE CASCADE
+      );
+      CREATE INDEX idx_versions_todo ON content_versions(todo_id, saved_at DESC);
+
+      CREATE TABLE link_index (
+        from_id TEXT NOT NULL,
+        to_id TEXT NOT NULL,
+        kind TEXT NOT NULL CHECK (kind IN ('body','drawing')),
+        PRIMARY KEY(from_id, to_id, kind)
+      );
+      CREATE INDEX idx_link_to ON link_index(to_id);
+
+      CREATE TABLE inbox_attachments (
+        id TEXT PRIMARY KEY,
+        todo_id TEXT NOT NULL,
+        file_path TEXT NOT NULL,
+        mime TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        FOREIGN KEY(todo_id) REFERENCES todos(id) ON DELETE CASCADE
+      );
+      CREATE INDEX idx_attach_todo ON inbox_attachments(todo_id);
+
+      CREATE TABLE ai_memory (
+        id TEXT PRIMARY KEY,
+        kind TEXT NOT NULL CHECK (kind IN ('preference','fact','context')),
+        text TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        source_invocation_id TEXT
+      );
+      CREATE INDEX idx_memory_created ON ai_memory(created_at DESC);
+
+      CREATE TABLE ai_cost_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        invocation_id TEXT NOT NULL,
+        skill_id TEXT NOT NULL,
+        model TEXT NOT NULL,
+        duration_ms INTEGER NOT NULL,
+        tokens_in INTEGER,
+        tokens_out INTEGER,
+        cost_usd REAL NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+      CREATE INDEX idx_cost_created ON ai_cost_log(created_at DESC);
+
+      CREATE VIRTUAL TABLE todos_fts USING fts5(
+        title,
+        body,
+        content='todos',
+        content_rowid='rowid',
+        tokenize='unicode61 remove_diacritics 2'
+      );
+
+      CREATE TRIGGER todos_fts_insert AFTER INSERT ON todos BEGIN
+        INSERT INTO todos_fts(rowid, title, body) VALUES (new.rowid, new.title, '');
+      END;
+      CREATE TRIGGER todos_fts_delete AFTER DELETE ON todos BEGIN
+        INSERT INTO todos_fts(todos_fts, rowid, title, body) VALUES('delete', old.rowid, old.title, '');
+      END;
+      CREATE TRIGGER todos_fts_update AFTER UPDATE ON todos BEGIN
+        INSERT INTO todos_fts(todos_fts, rowid, title, body) VALUES('delete', old.rowid, old.title, '');
+        INSERT INTO todos_fts(rowid, title, body) VALUES (new.rowid, new.title, '');
+      END;
+
+      CREATE TRIGGER trg_touch_updated_at AFTER UPDATE ON todos
+      BEGIN
+        UPDATE todos SET updated_at = CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER) WHERE id = NEW.id;
+      END;
+    `,
+  },
+];
+
+export interface DbHandle {
+  db: Database.Database;
+  close(): void;
+}
+
+export function openDb(filePath: string): DbHandle {
+  mkdirSync(dirname(filePath), { recursive: true });
+  const db = new Database(filePath);
+  db.pragma('journal_mode = WAL');
+  db.pragma('foreign_keys = ON');
+  db.pragma('synchronous = NORMAL');
+
+  // Fresh DB has no schema_meta; the query fails with "no such table" until
+  // the first migration creates it. Treat any error as v0 and let the loop
+  // below run all migrations.
+  let currentVersion = 0;
+  try {
+    const row = db
+      .prepare<[], { version: number | null }>('SELECT MAX(version) as version FROM schema_meta')
+      .get();
+    currentVersion = row?.version ?? 0;
+  } catch {
+    currentVersion = 0;
+  }
+
+  for (const m of MIGRATIONS) {
+    if (m.version > currentVersion) {
+      const tx = db.transaction(() => {
+        db.exec(m.sql);
+        db.prepare('INSERT OR REPLACE INTO schema_meta(version) VALUES (?)').run(m.version);
+      });
+      tx();
+    }
+  }
+
+  return {
+    db,
+    close() {
+      db.close();
+    },
+  };
+}
+
+/** Generate a new ULID. Exposed for tests and the repo. */
+export const newId = ulid;
