@@ -10,6 +10,25 @@ describe('IPC channel registry', () => {
     expect(isKnownChannel('capture.submit')).toBe(true);
   });
 
+  it('accepts the full ai.conversation.* set (L4 regression guard)', () => {
+    // channels.ts and ipc-schema.ts must agree on every conversation
+    // channel — if DECLARED_CHANNELS forgets one, the renderer's
+    // window.thihy.conversation.* calls fail with unknown_channel.
+    const set = [
+      'ai.conversation.list',
+      'ai.conversation.create',
+      'ai.conversation.rename',
+      'ai.conversation.archive',
+      'ai.conversation.unarchive',
+      'ai.conversation.delete',
+      'ai.conversation.confirmDelete',
+      'ai.conversation.history',
+    ];
+    for (const c of set) {
+      expect(isKnownChannel(c)).toBe(true);
+    }
+  });
+
   it('rejects unknown channels', () => {
     expect(isKnownChannel('todo.explode')).toBe(false);
     expect(isKnownChannel('foo.bar')).toBe(false);
