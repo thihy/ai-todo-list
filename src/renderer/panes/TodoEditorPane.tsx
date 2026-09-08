@@ -1,4 +1,27 @@
-// TODO editor — title, metadata, markdown body, drawing list, history drawer.
+// TodoEditorPane — TODO detail surface. Two-band layout:
+//
+//   ┌──────────────────────────────┬─────────────────────────────┐
+//   │ summary band (chrome)        │ body band (workspace)       │
+//   │  ─ title (large, editable)   │  ┌─────────────────────┐    │
+//   │  ─ meta row                  │  │                     │    │
+//   │      [priority] [due]        │  │  markdown editor    │    │
+//   │      [status]   [tags]       │  │  (fills space)      │    │
+//   │  ─ drawing strip             │  │                     │    │
+//   │                              │  └─────────────────────┘    │
+//   │                              │  ▾ history drawer (inline)  │
+//   └──────────────────────────────┴─────────────────────────────┘
+//
+// Summary is dense chrome that recedes; body is the work surface.
+//
+// Why this split:
+//   - The summary holds "what is this task?" (identity) — title, status,
+//     priority, due date, tags. It should be glanceable, not scrollable.
+//   - The body holds "what's happening with this task?" — free-form notes,
+//     history. The user scrolls here, the summary stays put via grid
+//     placement (top row is `auto`, bottom row is `1fr` + overflow auto).
+//   - The drawing strip stays in the summary because drawings ARE part of
+//     the task's identity (a sketch attached to a TODO reads as the
+//     task, not as a footnote to it).
 
 import React, { useEffect, useState } from 'react';
 import { useBody, useHistory, useTodo, useDrawings } from '../hooks/useThihyApi';
@@ -9,6 +32,17 @@ import { TagInput } from '../components/TagInput';
 import { DatePicker } from '../components/DatePicker';
 import { DrawingStrip } from '../components/DrawingStrip';
 import type { Priority, TodoStatus } from '../../shared/todo-types';
+
+// Status labels centralised so the <select> options and the future
+// StatusPicker render the same vocabulary. Single source of truth —
+// don't write status display strings in two places.
+const STATUS_OPTIONS: { value: TodoStatus; label: string }[] = [
+  { value: 'inbox', label: '收件箱' },
+  { value: 'next', label: '待办' },
+  { value: 'doing', label: '进行中' },
+  { value: 'blocked', label: '阻塞' },
+  { value: 'done', label: '已完成' },
+];
 
 export const TodoEditorPane: React.FC<{
   todoId: string;
@@ -49,57 +83,33 @@ export const TodoEditorPane: React.FC<{
   };
 
   if (loading || !todo) {
-    return (
-      <div style={{ padding: 'var(--space-lg)', color: 'var(--fg-muted)' }}>加载中…</div>
-    );
+    return <div className="editor-pane__loading">加载中…</div>;
   }
 
   return (
-    <div
-      style={{
-        display: 'grid',
-        gridTemplateRows: 'auto 1fr',
-        height: '100%',
-        overflow: 'hidden',
-      }}
-    >
-      <header
-        style={{
-          padding: 'var(--space-md) var(--space-lg)',
-          borderBottom: '1px solid var(--border-default)',
-          background: 'var(--bg-surface)',
-        }}
-      >
+    <div className="editor-pane">
+      {/* ===== Summary band ===== */}
+      <header className="editor-pane__summary">
         <input
+          className="editor-pane__title"
           aria-label="TODO 标题"
           value={titleDraft}
           onChange={(e) => setTitleDraft(e.target.value)}
           onBlur={commitTitle}
           placeholder="标题"
-          style={{
-            width: '100%',
-            border: 0,
-            background: 'transparent',
-            fontSize: 'var(--font-2xl)',
-            fontWeight: 600,
-            padding: 0,
-          }}
         />
-        <div
-          style={{
-            display: 'flex',
-            gap: 'var(--space-md)',
-            alignItems: 'center',
-            marginTop: 'var(--space-sm)',
-            flexWrap: 'wrap',
-          }}
-        >
-          <PriorityPicker value={priority} onChange={(p) => { setPriority(p); void commitMeta({ priority: p }); }} />
+
+        <div className="editor-pane__meta">
+          <PriorityPicker
+            value={priority}
+            onChange={(p) => { setPriority(p); void commitMeta({ priority: p }); }}
+          />
           <DatePicker
             value={dueAt}
             onChange={(d) => { setDueAt(d); void commitMeta({ dueAt: d }); }}
           />
           <select
+            className="editor-pane__status"
             aria-label="状态"
             value={status}
             onChange={(e) => {
@@ -107,16 +117,17 @@ export const TodoEditorPane: React.FC<{
               setStatus(v);
               void commitMeta({ status: v });
             }}
-            style={{ padding: 'var(--space-xs) var(--space-sm)' }}
           >
-            <option value="inbox">收件箱</option>
-            <option value="next">待办</option>
-            <option value="doing">进行中</option>
-            <option value="blocked">阻塞</option>
-            <option value="done">已完成</option>
+            {STATUS_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>{opt.label}</option>
+            ))}
           </select>
-          <TagInput value={tagDraft} onChange={(tags) => { setTagDraft(tags); void commitMeta({ tags }); }} />
+          <TagInput
+            value={tagDraft}
+            onChange={(tags) => { setTagDraft(tags); void commitMeta({ tags }); }}
+          />
         </div>
+
         <DrawingStrip
           drawings={drawings}
           onAdd={() => navigate(routeToHash({ name: 'todo-drawing', id: todo.id }))}
@@ -125,7 +136,8 @@ export const TodoEditorPane: React.FC<{
         />
       </header>
 
-      <div style={{ overflow: 'auto', padding: 'var(--space-lg)' }}>
+      {/* ===== Body band ===== */}
+      <div className="editor-pane__body">
         <MarkdownEditor
           value={body}
           version={version}
@@ -133,30 +145,23 @@ export const TodoEditorPane: React.FC<{
           saving={saving}
           error={error}
         />
+
         {versions.length > 0 && (
-          <details style={{ marginTop: 'var(--space-xl)' }}>
-            <summary style={{ cursor: 'pointer', color: 'var(--fg-secondary)' }}>
-              历史版本 ({versions.length})
+          <details className="editor-pane__history">
+            <summary className="editor-pane__history-head">
+              <span>历史版本</span>
+              <span className="editor-pane__history-count">{versions.length}</span>
             </summary>
-            <ul style={{ listStyle: 'none', padding: 0, marginTop: 'var(--space-md)' }}>
+            <ul className="editor-pane__history-list">
               {versions.map((v) => (
-                <li
-                  key={v.id}
-                  style={{
-                    padding: 'var(--space-sm) 0',
-                    borderBottom: '1px solid var(--border-default)',
-                  }}
-                >
-                  <span style={{ color: 'var(--fg-muted)' }}>
+                <li key={v.id} className="editor-pane__history-item">
+                  <span className="editor-pane__history-time">
                     {new Date(v.savedAt).toLocaleString()}
                   </span>
                   <button
                     type="button"
+                    className="editor-pane__history-restore"
                     onClick={() => window.thihy.content.restoreVersion(todo.id, String(v.id))}
-                    style={{
-                      marginLeft: 'var(--space-md)',
-                      color: 'var(--accent-primary)',
-                    }}
                   >
                     还原
                   </button>

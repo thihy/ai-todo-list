@@ -2438,3 +2438,161 @@ a:hover {
   opacity: 0.85;
 }
 
+/* ===== L5: TodoEditorPane two-band layout ===== */
+
+/*
+  Two-band layout. The outer grid splits the pane into:
+    - summary row (auto, fits its content) — title + meta + drawings
+    - body row    (1fr, fills remaining space, scrolls internally)
+  The summary stays put while the user scrolls the markdown body. The
+  bottom row has `overflow: auto` so long bodies / long history drawers
+  scroll inside the band, not the whole pane.
+*/
+.editor-pane {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg-canvas);
+}
+.editor-pane__loading {
+  padding: var(--space-lg);
+  color: var(--fg-muted);
+}
+
+/* --- summary band: dense chrome that recedes --- */
+
+.editor-pane__summary {
+  padding: var(--space-md) var(--space-lg);
+  border-bottom: 1px solid var(--border-default);
+  background: var(--bg-surface);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  /* The summary contains the title input + meta row + drawing strip;
+     column layout reads as a card with three sub-rows. */
+}
+.editor-pane__title {
+  /* Override base input styling — title reads as a heading, not a form
+     field. No border, no padding, large type, weight 600. */
+  width: 100%;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  font-size: var(--font-2xl);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--fg-primary);
+}
+.editor-pane__title:hover,
+.editor-pane__title:focus-visible {
+  border: 0;
+  box-shadow: none;
+}
+.editor-pane__title::placeholder {
+  color: var(--fg-muted);
+}
+.editor-pane__meta {
+  /* Single row of controls; wraps to a second line on narrow widths
+     instead of crowding. Gap is tighter than default so 4 controls fit. */
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+}
+.editor-pane__status {
+  /* Native select — inherits base input/select styling (radius-md,
+     border, hover/focus states) so it matches PriorityPicker / DatePicker
+     visually. Compact padding keeps it aligned with the neighbouring
+     pickers which sit on a single row. */
+  padding: var(--space-xs) var(--space-sm);
+}
+
+/* --- body band: workspace, scrolls --- */
+
+.editor-pane__body {
+  overflow: auto;
+  padding: var(--space-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xl);
+  /* Background gradient fade at top so the body reads as a continuation
+     of the summary, not a hard cut. */
+  background:
+    linear-gradient(
+      to bottom,
+      color-mix(in srgb, var(--bg-surface) 70%, transparent),
+      transparent 24px
+    );
+}
+
+/* --- history drawer (lives at the bottom of the body band) --- */
+
+.editor-pane__history {
+  border-top: 1px solid var(--border-subtle, #EDEFF2);
+  padding-top: var(--space-md);
+  color: var(--fg-secondary);
+}
+.editor-pane__history-head {
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+  user-select: none;
+  /* Sit a touch to the right so the disclosure triangle has space. */
+  list-style: none;
+  font-size: var(--font-sm);
+  font-weight: 500;
+}
+.editor-pane__history-head::-webkit-details-marker {
+  display: none;
+}
+.editor-pane__history-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 9px;
+  background: var(--bg-surface-elev);
+  color: var(--fg-secondary);
+  font-size: var(--font-xs);
+  font-variant-numeric: tabular-nums;
+}
+.editor-pane__history-list {
+  list-style: none;
+  padding: 0;
+  margin: var(--space-md) 0 0;
+  display: flex;
+  flex-direction: column;
+}
+.editor-pane__history-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-sm) 0;
+  border-bottom: 1px solid var(--border-subtle, #EDEFF2);
+}
+.editor-pane__history-item:last-child {
+  border-bottom: 0;
+}
+.editor-pane__history-time {
+  color: var(--fg-muted);
+  font-size: var(--font-sm);
+  font-variant-numeric: tabular-nums;
+}
+.editor-pane__history-restore {
+  background: transparent;
+  border: 0;
+  padding: var(--space-xs) var(--space-sm);
+  color: var(--accent-primary);
+  cursor: pointer;
+  font: inherit;
+  border-radius: var(--radius-md);
+  transition: background-color var(--dur-fast) var(--ease-out);
+}
+.editor-pane__history-restore:hover {
+  background: color-mix(in srgb, var(--accent-primary) 12%, transparent);
+}
+
