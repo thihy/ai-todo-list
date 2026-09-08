@@ -210,6 +210,11 @@ export function useSettings(): {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+  // L4-E: re-fetch when the AI turns add cost. Without this the SettingsPane
+  // shows stale `monthlyCostUsd` until the user reopens it.
+  useEffect(() => {
+    return window.thihy.on('app:settings-changed', () => { void refresh(); });
+  }, [refresh]);
   return { data, patch, chooseDataDir };
 }
 

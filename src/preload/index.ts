@@ -45,6 +45,7 @@ const APP_EVENTS: AppEvent[] = [
   'app:update-downloaded',
   'app:toggle-ai',
   'app:data-changed',
+  'app:settings-changed',
   'ai:stream',
   'ai:permission-request',
 ];

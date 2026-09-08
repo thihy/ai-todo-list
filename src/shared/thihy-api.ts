@@ -20,6 +20,7 @@ export type AppEvent =
   | 'app:update-downloaded'
   | 'app:toggle-ai'
   | 'app:data-changed'
+  | 'app:settings-changed'
   | 'ai:stream'
   | 'ai:permission-request';
 
@@ -35,6 +36,7 @@ export interface AppEventMap {
   'app:update-downloaded': { version: string };
   'app:toggle-ai': Record<string, never>;
   'app:data-changed': { scope: DataScope };
+  'app:settings-changed': Record<string, never>;
   'ai:stream': AIStreamEvent;
   'ai:permission-request': PermissionRequest;
 }

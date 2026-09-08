@@ -14,6 +14,7 @@ import { register, okResult, failResult } from './router';
 import type { DshHandle } from '../dsh/types';
 import { resolveEndpoint, healthCheck } from '../dsh/endpoints';
 import { getDshRuntime } from '../dsh/dsh-runtime';
+import { costForUsage } from '../dsh/pricing';
 import { SettingsStore } from '../settings/store';
 import { BrowserWindow, dialog } from 'electron';
 import { logger } from '../logger';
@@ -122,6 +123,16 @@ export function registerAiHandlers(dsh: DshHandle): void {
 
     send({ type: 'start', invocationId });
 
+    // L4-E: model id for pricing is resolved from the same endpoint the runtime
+    // will use; pricing lives in ../dsh/pricing.ts and is null for unknown
+    // models (costUsd collapses to 0 — never fabricated).
+    const pricingModel = ep.model ?? 'deepseek-chat';
+    // Narrowed local: the early `if (!deps)` guards above have already proven
+    // this is non-null for the rest of the handler, but TS doesn't carry that
+    // into nested callbacks. Using a const alias keeps the narrowing local and
+    // lets the `case 'done'` branch call `d.settings.addCost(...)` safely.
+    const d = deps!;
+
     // DSH agent-loop path is the SOLE AI path (tool-calling). There is no
     // text-only client.ts fallback: if the runtime did not boot, surface the
     // error to the renderer instead of silently degrading. A null runtime means
@@ -137,6 +148,11 @@ export function registerAiHandlers(dsh: DshHandle): void {
       send({ type: 'error', invocationId, message });
       return failResult('dsh_unavailable', message);
     }
+
+    // L4-E: running cost for this turn. Updated in the `done` branch when
+    // tokens arrive from the runtime. Falls back to 0 if the adapter never
+    // reported usage (the legacy behavior).
+    let costUsd = 0;
 
     try {
       await runtime.runTurn({
@@ -162,7 +178,22 @@ export function registerAiHandlers(dsh: DshHandle): void {
               }
               break;
             case 'done':
-              send({ type: 'done', invocationId, content: e.content, costUsd: 0 });
+              // L4-E: compute real cost from accumulated token counts.
+              costUsd = costForUsage(pricingModel, {
+                inputTokens: e.tokensIn ?? 0,
+                outputTokens: e.tokensOut ?? 0,
+              });
+              if (costUsd > 0) {
+                d.settings.addCost(costUsd);
+                logger.info(`turn cost: $${costUsd.toFixed(6)} (${e.tokensIn ?? 0}↑ / ${e.tokensOut ?? 0}↓ ${pricingModel})`);
+                // Notify any open SettingsPane / Statusbar to re-fetch
+                // monthlyCostUsd. Without this the UI shows stale cost
+                // until the user reopens settings.
+                for (const w of BrowserWindow.getAllWindows()) {
+                  if (!w.isDestroyed()) w.webContents.send('app:settings-changed', {});
+                }
+              }
+              send({ type: 'done', invocationId, content: e.content, costUsd });
               break;
             case 'error':
               send({ type: 'error', invocationId, message: e.message });
@@ -198,7 +229,7 @@ export function registerAiHandlers(dsh: DshHandle): void {
         }
       }
 
-      return okResult({ invocationId, costUsd: 0 });
+      return okResult({ invocationId, costUsd });
     } catch (err) {
       const message = (err as Error).message;
       send({ type: 'error', invocationId, message });

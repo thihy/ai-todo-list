@@ -64,7 +64,7 @@ export type TurnEvent =
   | { type: 'reasoning'; text: string }
   | { type: 'toolCall'; name: string; args: unknown }
   | { type: 'toolResult'; name: string; args?: unknown; ok: boolean; data?: unknown; error?: string }
-  | { type: 'done'; content: string }
+  | { type: 'done'; content: string; tokensIn?: number; tokensOut?: number }
   | { type: 'error'; message: string };
 
 export interface DshRuntime {
@@ -377,6 +377,10 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
     callMeta: Map<string, { name: string; args: string }>;
     /** When true, no live consumer is reading events (e.g. between turns). */
     dormant: boolean;
+    /** L4-E: token totals for the in-flight turn, summed across steps from
+     *  the assistant/message events. Reset at attachLiveListener() time. */
+    turnTokensIn: number;
+    turnTokensOut: number;
   }
 
   const conversations = new Map<string, ConversationEntry>();
@@ -398,6 +402,8 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
       fullText: '',
       callMeta: new Map(),
       dormant: true,
+      turnTokensIn: 0,
+      turnTokensOut: 0,
     };
     conversations.set(conversationId, entry);
     return entry;
@@ -418,6 +424,8 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
   ): () => void {
     entry.fullText = '';
     entry.callMeta.clear();
+    entry.turnTokensIn = 0;
+    entry.turnTokensOut = 0;
     const off = ctx.on('session/event', (session: unknown, event: { type: string; data?: unknown }) => {
       // session.id is a branded string; conversationId is a plain string.
       // String compare is the safe check.
@@ -435,6 +443,15 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
           // reasoning_content). Forwarded separately so the UI can render a
           // collapsible "思考过程" panel distinct from the answer.
           onEvent({ type: 'reasoning', text: chunk.text });
+        }
+      } else if (t === 'assistant/message') {
+        // The assembled message for one step carries `usage` when the
+        // adapter reported token accounting. We sum across steps so the
+        // final `done` event reflects the whole turn.
+        const d = event.data as { usage?: { inputTokens?: number; outputTokens?: number } } | undefined;
+        if (d?.usage) {
+          entry.turnTokensIn  += d.usage.inputTokens  ?? 0;
+          entry.turnTokensOut += d.usage.outputTokens ?? 0;
         }
       } else if (t === 'tool/call') {
         const d = event.data as { callId?: unknown; name?: string; arguments?: string } | undefined;
@@ -493,8 +510,9 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
           try { entry.agent.cancel({ kind: 'user' }); } catch { /* noop */ }
         });
         await entry.agent.whenIdle();
-        onEvent({ type: 'done', content: entry.fullText });
-        return { content: entry.fullText };
+        // L4-E: read accumulated token counts from the entry, attach to done.
+        onEvent({ type: 'done', content: entry.fullText, tokensIn: entry.turnTokensIn, tokensOut: entry.turnTokensOut });
+        return { content: entry.fullText, tokensIn: entry.turnTokensIn, tokensOut: entry.turnTokensOut };
       } finally {
         try { off(); } catch { /* noop */ }
         entry.dormant = true;
