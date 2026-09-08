@@ -1,71 +1,102 @@
-// AI pane — chat-style conversation. Rendered inside the resident right
-// AIPanel; designed for a ~380px column.
+// AI pane — chat-style conversation with rich rendering. Rendered inside the
+// resident right AIPanel; designed for a ~380px column.
+//
+// What makes this better than a plain text bubble:
+// - assistant output renders as markdown (lists, code blocks, tables, links)
+// - tool calls + their args/result show as inline cards so the user sees the
+//   agent "acting", not just final prose
+// - a thinking indicator before the first token + a streaming cursor while text
+//   arrives
+//
+// The backend streams AIStreamEvent (token / toolCall / done / error) over the
+// 'ai:stream' channel; this hook re-derives the active turn from its events.
 
 import React, { useEffect, useRef, useState } from 'react';
 import { useAiStream, useModels } from '../hooks/useThihyApi';
-import type { AITokenEvent } from '../../shared/ai-types';
+import { Markdown } from '../components/Markdown';
+import type { AITokenEvent, AIToolCallEvent, AIStreamEvent } from '../../shared/ai-types';
+
+interface ToolCard {
+  name: string;
+  args?: unknown;
+  result?: unknown;
+  ok: boolean;
+}
+
+interface Turn {
+  id: string;
+  user: string;
+  assistant: string;
+  tools: ToolCard[];
+  status: 'streaming' | 'done' | 'error';
+  error?: string;
+}
 
 export const AIPane: React.FC<{ onCollapse?: () => void }> = ({ onCollapse }) => {
   const { events, clear } = useAiStream();
   const { models } = useModels();
   const [input, setInput] = useState('');
-  const [history, setHistory] = useState<Array<{ role: 'user' | 'assistant'; text: string }>>([]);
-  const [invocationId, setInvocationId] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [turns, setTurns] = useState<Turn[]>([]);
+  const [activeId, setActiveId] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  // Assemble assistant text from streamed tokens for the current invocation.
+  // Re-derive the active turn from its stream events (cheap; events capped at 200).
   useEffect(() => {
-    if (events.length === 0) return;
-    const last = events[events.length - 1];
-    if (last.type === 'done' && last.invocationId === invocationId) {
-      setHistory((h) => {
-        const lastEntry = h[h.length - 1];
-        if (lastEntry?.role === 'assistant') return h;
-        return [...h, { role: 'assistant', text: '' }];
-      });
-    }
-    setHistory((h) => {
-      const next = [...h];
-      const cur = next[next.length - 1];
-      if (!cur || cur.role !== 'assistant') return next;
-      const tokens = events.filter(
-        (e): e is AITokenEvent => e.type === 'token' && e.invocationId === invocationId,
-      );
-      next[next.length - 1] = { ...cur, text: tokens.map((t) => t.token).join('') };
-      return next;
-    });
-  }, [events, invocationId]);
+    if (!activeId) return;
+    const mine = events.filter((e) => e.invocationId === activeId);
+    if (mine.length === 0) return;
+    const tokens = mine.filter((e): e is AITokenEvent => e.type === 'token');
+    const calls = mine.filter((e): e is AIToolCallEvent => e.type === 'toolCall');
+    const done = mine.some((e) => e.type === 'done');
+    const errEvt = mine.find((e): e is Extract<AIStreamEvent, { type: 'error' }> => e.type === 'error');
+    setTurns((prev) =>
+      prev.map((t) =>
+        t.id !== activeId
+          ? t
+          : {
+              ...t,
+              assistant: tokens.map((tk) => tk.token).join(''),
+              tools: calls.map((c) => ({ name: c.toolName, args: c.args, result: c.result, ok: c.ok })),
+              status: errEvt ? 'error' : done ? 'done' : 'streaming',
+              error: errEvt?.message,
+            },
+      ),
+    );
+  }, [events, activeId]);
 
   // Keep the latest message in view while streaming.
   useEffect(() => {
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [history]);
+  }, [turns]);
 
   const submit = async (): Promise<void> => {
     const prompt = input.trim();
-    if (!prompt || busy) return;
-    // Snapshot prior turns (all complete user/assistant pairs from earlier
-    // messages) so the model gets multi-turn context. The new user message +
-    // empty assistant placeholder are appended to local history separately.
-    const priorTurns = history.map((m) => ({ role: m.role, content: m.text }));
-    setHistory((h) => [...h, { role: 'user', text: prompt }, { role: 'assistant', text: '' }]);
-    setInput('');
-    setBusy(true);
-    clear();
+    if (!prompt) return;
+    // Snapshot prior completed turns as multi-turn context for the model.
+    const priorTurns = turns
+      .filter((t) => t.status === 'done' && t.assistant)
+      .flatMap((t) => [
+        { role: 'user' as const, content: t.user },
+        { role: 'assistant' as const, content: t.assistant },
+      ]);
     const id = crypto.randomUUID();
-    setInvocationId(id);
+    setTurns((prev) => [...prev, { id, user: prompt, assistant: '', tools: [], status: 'streaming' }]);
+    setInput('');
+    clear();
+    setActiveId(id);
     const res = await window.thihy.ai.ask({ prompt, invocationId: id, history: priorTurns, tools: undefined });
     if (!res.ok) {
-      setHistory((h) => {
-        const next = [...h];
-        next[next.length - 1] = { role: 'assistant', text: `⚠ ${res.message ?? 'AI 调用失败'}` };
-        return next;
-      });
+      setTurns((prev) =>
+        prev.map((t) =>
+          t.id === id ? { ...t, status: 'error', error: res.message ?? 'AI 调用失败' } : t,
+        ),
+      );
     }
-    setBusy(false);
+    setActiveId((cur) => (cur === id ? null : cur));
   };
+
+  const busy = activeId !== null;
 
   return (
     <div className="aipane">
@@ -83,7 +114,7 @@ export const AIPane: React.FC<{ onCollapse?: () => void }> = ({ onCollapse }) =>
       </header>
 
       <div className="aipane__body" role="log" aria-live="polite" ref={scrollRef}>
-        {history.length === 0 ? (
+        {turns.length === 0 ? (
           <div className="aipane__empty">
             <p>问任何关于 TODO 的问题：</p>
             <ul>
@@ -93,7 +124,7 @@ export const AIPane: React.FC<{ onCollapse?: () => void }> = ({ onCollapse }) =>
             </ul>
           </div>
         ) : (
-          history.map((m, i) => <Bubble key={i} role={m.role} text={m.text} />)
+          turns.map((t) => <TurnView key={t.id} turn={t} />)
         )}
       </div>
 
@@ -108,7 +139,7 @@ export const AIPane: React.FC<{ onCollapse?: () => void }> = ({ onCollapse }) =>
               void submit();
             }
           }}
-          placeholder="输入问题，回车发送…"
+          placeholder="输入问题，回车发送…（Shift+Enter 换行）"
           rows={2}
           className="aipane__input"
         />
@@ -125,8 +156,81 @@ export const AIPane: React.FC<{ onCollapse?: () => void }> = ({ onCollapse }) =>
   );
 };
 
-const Bubble: React.FC<{ role: 'user' | 'assistant'; text: string }> = ({ role, text }) => (
-  <div className={`bubble bubble--${role}`}>
-    {text || (role === 'assistant' ? '▍' : '')}
-  </div>
-);
+const TurnView: React.FC<{ turn: Turn }> = ({ turn }) => {
+  const streaming = turn.status === 'streaming';
+  const thinking = streaming && !turn.assistant && turn.tools.length === 0;
+  return (
+    <div className="turn">
+      <div className="bubble bubble--user">{turn.user}</div>
+      {turn.tools.map((tc, i) => (
+        <ToolCardView key={i} card={tc} />
+      ))}
+      {thinking && <div className="aipane__thinking"><span className="aipane__dot" />思考中…</div>}
+      {turn.assistant && (
+        <div className="bubble bubble--assistant">
+          <Markdown text={streaming ? `${turn.assistant} ▍` : turn.assistant} />
+        </div>
+      )}
+      {turn.status === 'error' && (
+        <div className="bubble bubble--error">⚠ {turn.error}</div>
+      )}
+    </div>
+  );
+};
+
+const ToolCardView: React.FC<{ card: ToolCard }> = ({ card }) => {
+  const [open, setOpen] = useState(false);
+  const argsText = formatValue(card.args);
+  const resultText = formatValue(card.result);
+  return (
+    <div className={`toolcard${card.ok ? '' : ' toolcard--error'}`}>
+      <button type="button" className="toolcard__head" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
+        <span className="toolcard__icon" aria-hidden="true">{card.ok ? '🔧' : '⚠'}</span>
+        <span className="toolcard__name">{card.name || 'tool'}</span>
+        <span className="toolcard__chevron" aria-hidden="true">{open ? '▾' : '▸'}</span>
+      </button>
+      {open && (argsText || resultText) && (
+        <div className="toolcard__body">
+          {argsText && (
+            <div className="toolcard__section">
+              <div className="toolcard__label">参数</div>
+              <pre className="toolcard__pre">{argsText}</pre>
+            </div>
+          )}
+          {resultText && (
+            <div className="toolcard__section">
+              <div className="toolcard__label">{card.ok ? '结果' : '错误'}</div>
+              <pre className="toolcard__pre">{resultText}</pre>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
+/** Pretty-print a tool arg/result value for the card body. */
+function formatValue(v: unknown): string {
+  if (v === undefined || v === null) return '';
+  if (typeof v === 'string') {
+    // The model's args arrive as a raw JSON string; try to pretty-print it.
+    try {
+      return JSON.stringify(JSON.parse(v), null, 2);
+    } catch {
+      return v;
+    }
+  }
+  // DSH tool results are ContentBlock[]; extract text when possible.
+  if (Array.isArray(v)) {
+    const texts = v
+      .filter((b): b is { type: string; text?: string } => typeof b === 'object' && b !== null && (b as { type?: string }).type === 'text')
+      .map((b) => b.text ?? '');
+    if (texts.length === v.length && texts.length > 0) return texts.join('');
+    return JSON.stringify(v, null, 2);
+  }
+  try {
+    return JSON.stringify(v, null, 2);
+  } catch {
+    return String(v);
+  }
+}

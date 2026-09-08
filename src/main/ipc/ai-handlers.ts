@@ -103,7 +103,7 @@ export function registerAiHandlers(dsh: DshHandle): void {
             case 'toolResult':
               // The renderer's AIToolCallEvent carries the completed call +
               // its result together; DSH splits call/result, so emit on result.
-              send({ type: 'toolCall', invocationId, toolName: e.name, args: undefined, result: e.ok ? e.data : e.error });
+              send({ type: 'toolCall', invocationId, toolName: e.name, args: e.args, result: e.ok ? e.data : e.error, ok: e.ok });
               break;
             case 'done':
               send({ type: 'done', invocationId, content: e.content, costUsd: 0 });

@@ -42,7 +42,7 @@ export interface DshRuntimeDeps {
 export type TurnEvent =
   | { type: 'token'; text: string }
   | { type: 'toolCall'; name: string; args: unknown }
-  | { type: 'toolResult'; name: string; ok: boolean; data?: unknown; error?: string }
+  | { type: 'toolResult'; name: string; args?: unknown; ok: boolean; data?: unknown; error?: string }
   | { type: 'done'; content: string }
   | { type: 'error'; message: string };
 
@@ -125,8 +125,9 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
       //
       // DSH session/event signature is (session, event): the 2nd arg carries
       // .type and .data. tool/result carries no tool name — only callId — so we
-      // remember callId→name from the tool/call events to label results.
-      const callNames = new Map<string, string>();
+      // remember callId→{name, arguments} from the tool/call events to label
+      // results and forward the args the model produced.
+      const callMeta = new Map<string, { name: string; args: string }>();
       const off = ctx.on('session/event', (_session: unknown, event: { type: string; data?: unknown }) => {
         const t = event?.type;
         if (t === 'assistant/chunk') {
@@ -140,7 +141,7 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
         } else if (t === 'tool/call') {
           // data: { turn, step, callId, name, arguments(raw JSON string) }
           const d = event.data as { callId?: unknown; name?: string; arguments?: string } | undefined;
-          if (d?.callId != null && d.name) callNames.set(String(d.callId), d.name);
+          if (d?.callId != null && d.name) callMeta.set(String(d.callId), { name: d.name, args: d.arguments ?? '' });
           onEvent({ type: 'toolCall', name: d?.name ?? '', args: d?.arguments });
         } else if (t === 'tool/result') {
           // data: { turn, step, message: ToolResultMessage, error?, meta? }
@@ -153,11 +154,12 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
             };
           } | undefined;
           const callId = d?.message?.source?.callId;
-          const name = callId != null ? (callNames.get(String(callId)) ?? '') : '';
+          const meta = callId != null ? callMeta.get(String(callId)) : undefined;
           const block = d?.message?.content?.[0];
           onEvent({
             type: 'toolResult',
-            name,
+            name: meta?.name ?? '',
+            args: meta?.args,
             ok: !block?.isError,
             data: block?.content,
           });

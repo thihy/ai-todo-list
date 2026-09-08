@@ -118,6 +118,7 @@ export interface AIToolCallEvent extends AIStreamEventBase {
   toolName: string;
   args: unknown;
   result: unknown;
+  ok: boolean;
 }
 
 export interface AIPermissionRequestEvent extends AIStreamEventBase {
