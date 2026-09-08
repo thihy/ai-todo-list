@@ -12,7 +12,7 @@
 // 'ai:stream' channel; this hook re-derives the active turn from its events.
 
 import React, { useEffect, useRef, useState } from 'react';
-import { useAiStream, useModels } from '../hooks/useThihyApi';
+import { useAiStream, useSettings } from '../hooks/useThihyApi';
 import { Markdown } from '../components/Markdown';
 import type { AITokenEvent, AIToolCallEvent, AIReasoningEvent, AIStreamEvent } from '../../shared/ai-types';
 
@@ -35,7 +35,7 @@ interface Turn {
 
 export const AIPane: React.FC<{ onCollapse?: () => void }> = ({ onCollapse }) => {
   const { events, clear } = useAiStream();
-  const { models } = useModels();
+  const { data: settings } = useSettings();
   const [input, setInput] = useState('');
   const [turns, setTurns] = useState<Turn[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -108,7 +108,10 @@ export const AIPane: React.FC<{ onCollapse?: () => void }> = ({ onCollapse }) =>
           <span className="aipane__glyph" aria-hidden="true">✦</span>
           <span>AI 助手</span>
         </div>
-        <div className="aipane__meta">{models.join(', ') || '—'}</div>
+        <div className="aipane__meta" title={settings?.connected ? 'AI 已连接' : 'AI 未连接'}>
+          <span className={`dot${settings?.connected ? ' dot--on' : ''}`} aria-hidden="true" />
+          {settings?.model || '未配置'}
+        </div>
         {onCollapse && (
           <button type="button" className="icon-btn" onClick={onCollapse} aria-label="收起" title="收起">
             ‹

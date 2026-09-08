@@ -8,6 +8,7 @@ import { getDshRuntime } from '../dsh/dsh-runtime';
 import { SettingsStore } from '../settings/store';
 import { BrowserWindow } from 'electron';
 import type { AIStreamEvent } from '../../shared/ai-types';
+import type { DataScope } from '../../shared/thihy-api';
 import { TodoRepo } from '../db/todo-repo';
 import { MarkdownStore } from '../files/markdown';
 import { DrawingStore } from '../files/drawings';
@@ -72,6 +73,15 @@ export function registerAiHandlers(dsh: DshHandle): void {
         if (!w.isDestroyed()) w.webContents.send('ai:stream', event);
       }
     };
+    // Push a coarse-grained data-changed event so the renderer's task list /
+    // sidebar / inbox / stats re-fetch after the AI mutates the DB in the main
+    // process. The AI tools run on the real repo (deps.repo), so without this
+    // the left pane stays stale until the user navigates.
+    const broadcastDataChanged = (scope: DataScope): void => {
+      for (const w of BrowserWindow.getAllWindows()) {
+        if (!w.isDestroyed()) w.webContents.send('app:data-changed', { scope });
+      }
+    };
 
     send({ type: 'start', invocationId });
 
@@ -107,6 +117,11 @@ export function registerAiHandlers(dsh: DshHandle): void {
               // The renderer's AIToolCallEvent carries the completed call +
               // its result together; DSH splits call/result, so emit on result.
               send({ type: 'toolCall', invocationId, toolName: e.name, args: e.args, result: e.ok ? e.data : e.error, ok: e.ok });
+              // If the tool mutated data, tell the renderer to refresh its stores.
+              {
+                const scope = mutatingScope(e.name);
+                if (scope) broadcastDataChanged(scope);
+              }
               break;
             case 'done':
               send({ type: 'done', invocationId, content: e.content, costUsd: 0 });
@@ -133,3 +148,22 @@ export function bindAiDeps(d: HandlerDeps): void {
 }
 
 export type { HandlerDeps };
+
+/** Map an AI tool name to the data scope it mutates (null = read-only/no refresh). */
+function mutatingScope(name: string): DataScope | null {
+  switch (name) {
+    case 'todo.create':
+    case 'todo.update':
+    case 'todo.delete':
+      return 'todos';
+    case 'content.writeBody':
+    case 'content.restoreVersion':
+      return 'content';
+    case 'drawing.save':
+    case 'drawing.delete':
+    case 'drawing.setThumb':
+      return 'drawings';
+    default:
+      return null;
+  }
+}

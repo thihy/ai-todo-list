@@ -8,6 +8,7 @@ import type { DrawingMeta, DrawingScene } from '../../shared/todo-types';
 import type { Group } from '../../shared/todo-types';
 import type { AIModel, AIStreamEvent } from '../../shared/ai-types';
 import type { SettingsGetRes } from '../../shared/ipc-schema';
+import { useDataVersion } from '../data-bus';
 
 declare global {
   interface Window {
@@ -29,6 +30,9 @@ export function useTodos(filter: TodoFilter): {
   const [loading, setLoading] = useState(true);
   const filterRef = useRef(filter);
   filterRef.current = filter;
+  // Re-fetch when the AI (or any background process) mutates todos — otherwise
+  // the left list stays stale after the AI creates/updates/deletes a task.
+  const dataVersion = useDataVersion(['todos']);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -39,7 +43,7 @@ export function useTodos(filter: TodoFilter): {
 
   useEffect(() => {
     void refresh();
-  }, [refresh, JSON.stringify(filter)]);
+  }, [refresh, JSON.stringify(filter), dataVersion]);
 
   return { data, loading, refresh };
 }
@@ -47,6 +51,7 @@ export function useTodos(filter: TodoFilter): {
 export function useTodo(id: string | null): { todo: Todo | null; loading: boolean } {
   const [todo, setTodo] = useState<Todo | null>(null);
   const [loading, setLoading] = useState(false);
+  const dataVersion = useDataVersion(['todos']);
   useEffect(() => {
     if (!id) {
       setTodo(null);
@@ -57,7 +62,7 @@ export function useTodo(id: string | null): { todo: Todo | null; loading: boolea
       setTodo(unwrap(res, null as Todo | null));
       setLoading(false);
     });
-  }, [id]);
+  }, [id, dataVersion]);
   return { todo, loading };
 }
 
@@ -78,9 +83,10 @@ export function useSearch(q: string, limit = 50): { hits: SearchHit[] } {
 
 export function useStats(windowDays = 7): { stats: TodoStats | null } {
   const [stats, setStats] = useState<TodoStats | null>(null);
+  const dataVersion = useDataVersion(['todos']);
   useEffect(() => {
     window.thihy.todo.stats(windowDays).then((res) => setStats(unwrap(res, null as TodoStats | null)));
-  }, [windowDays]);
+  }, [windowDays, dataVersion]);
   return { stats };
 }
 
@@ -95,6 +101,9 @@ export function useBody(id: string | null): {
   const [version, setVersion] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Re-read when the AI writes the body (content.writeBody) so the editor
+  // reflects the model's edit live.
+  const dataVersion = useDataVersion(['content']);
 
   useEffect(() => {
     if (!id) {
@@ -107,7 +116,7 @@ export function useBody(id: string | null): {
       setBody(d.markdown);
       setVersion(d.version);
     });
-  }, [id]);
+  }, [id, dataVersion]);
 
   const save = useCallback(
     async (markdown: string, expectVersion?: number) => {
@@ -146,6 +155,7 @@ export function useDrawings(todoId: string | null): {
   refresh: () => Promise<void>;
 } {
   const [drawings, setDrawings] = useState<DrawingMeta[]>([]);
+  const dataVersion = useDataVersion(['drawings']);
   const refresh = useCallback(async () => {
     if (!todoId) {
       setDrawings([]);
@@ -156,7 +166,7 @@ export function useDrawings(todoId: string | null): {
   }, [todoId]);
   useEffect(() => {
     void refresh();
-  }, [refresh]);
+  }, [refresh, dataVersion]);
   return { drawings, refresh };
 }
 
@@ -214,6 +224,8 @@ export function useGroups(): {
 } {
   const [groups, setGroups] = useState<Group[]>([]);
   const [counts, setCounts] = useState<Record<string, number>>({});
+  // Groups/counts shift when todos move groups or groups are edited.
+  const dataVersion = useDataVersion(['groups', 'todos']);
 
   const refresh = useCallback(async () => {
     const res = await window.thihy.group.list();
@@ -225,7 +237,7 @@ export function useGroups(): {
 
   useEffect(() => {
     void refresh();
-  }, [refresh]);
+  }, [refresh, dataVersion]);
 
   const create = useCallback(
     async (name: string, parentId: string | null = null) => {

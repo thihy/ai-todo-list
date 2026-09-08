@@ -20,6 +20,7 @@ import { StatsPane } from './panes/StatsPane';
 import { DrawingPane } from './panes/DrawingPane';
 import { parseHash, routeToHash, type Route, type ListFilter } from './router';
 import { useAppEvent } from './hooks/useThihyApi';
+import { emitDataChanged } from './data-bus';
 
 const AI_OPEN_KEY = 'thihy.aiOpen';
 
@@ -88,6 +89,9 @@ export const App: React.FC = () => {
   useAppEvent('app:navigate', ({ route }) => {
     if (route) location.hash = route.startsWith('#') ? route : `#/${route}`;
   });
+  // Bridge main→renderer data-changed pushes (AI tools mutate the DB in the
+  // main process) to the renderer data bus, which re-fetches affected hooks.
+  useAppEvent('app:data-changed', ({ scope }) => emitDataChanged(scope));
 
   // 'settings' is a modal: open it when the route matches (deep link / menu).
   useEffect(() => {

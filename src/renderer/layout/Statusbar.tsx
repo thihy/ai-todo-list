@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import type { Route } from '../router';
 import type { Todo } from '../../shared/todo-types';
+import { useDataVersion } from '../data-bus';
 
 const ROUTE_LABEL: Record<string, string> = {
   home: '全部',
@@ -18,6 +19,7 @@ const ROUTE_LABEL: Record<string, string> = {
 export const Statusbar: React.FC<{ route: Route }> = ({ route }) => {
   const [counts, setCounts] = useState<{ open: number; total: number }>({ open: 0, total: 0 });
   const [connected, setConnected] = useState(false);
+  const dataVersion = useDataVersion(['todos']);
   useEffect(() => {
     window.thihy.todo.list({}).then((res) => {
       if (res.ok) {
@@ -31,7 +33,7 @@ export const Statusbar: React.FC<{ route: Route }> = ({ route }) => {
     window.thihy.settings.get().then((res) => {
       if (res.ok) setConnected((res.data as { connected: boolean }).connected);
     });
-  }, [route.name, route.name === 'list' ? route.filter.kind : '']);
+  }, [route.name, route.name === 'list' ? route.filter.kind : '', dataVersion]);
 
   return (
     <footer className="statusbar">

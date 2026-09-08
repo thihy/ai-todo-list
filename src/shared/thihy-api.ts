@@ -19,8 +19,14 @@ export type AppEvent =
   | 'app:update-available'
   | 'app:update-downloaded'
   | 'app:toggle-ai'
+  | 'app:data-changed'
   | 'ai:stream'
   | 'ai:permission-request';
+
+/** Coarse-grained scope of a data mutation, so the renderer can re-fetch only
+ *  the stores that actually changed (e.g. the AI's todo.create tool mutating
+ *  the DB in the main process). */
+export type DataScope = 'todos' | 'groups' | 'content' | 'drawings';
 
 export interface AppEventMap {
   'app:todo-created': { id: string };
@@ -28,6 +34,7 @@ export interface AppEventMap {
   'app:update-available': { version: string };
   'app:update-downloaded': { version: string };
   'app:toggle-ai': Record<string, never>;
+  'app:data-changed': { scope: DataScope };
   'ai:stream': AIStreamEvent;
   'ai:permission-request': PermissionRequest;
 }

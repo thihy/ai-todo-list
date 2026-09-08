@@ -4,17 +4,19 @@
 import React, { useEffect, useState } from 'react';
 import type { Route } from '../router';
 import type { Todo } from '../../shared/todo-types';
+import { useDataVersion } from '../data-bus';
 
 export const Sidebar: React.FC<{
   route: Route;
   onNavigate: (to: string) => void;
 }> = ({ onNavigate }) => {
   const [todos, setTodos] = useState<Todo[]>([]);
+  const dataVersion = useDataVersion(['todos']);
   useEffect(() => {
     window.thihy.todo.list({}).then((res) => {
       if (res.ok) setTodos(res.data as Todo[]);
     });
-  }, []);
+  }, [dataVersion]);
 
   const isActive = (target: string): boolean => location.hash === target;
 

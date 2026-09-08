@@ -3,14 +3,16 @@
 import React, { useEffect, useState } from 'react';
 import type { Todo } from '../../shared/todo-types';
 import { routeToHash } from '../router';
+import { useDataVersion } from '../data-bus';
 
 export const InboxPane: React.FC = () => {
   const [items, setItems] = useState<Todo[]>([]);
+  const dataVersion = useDataVersion(['todos']);
   useEffect(() => {
     window.thihy.todo.list({ status: ['inbox'] }).then((res) => {
       if (res.ok) setItems(res.data as Todo[]);
     });
-  }, []);
+  }, [dataVersion]);
   return (
     <div style={{ padding: 'var(--space-lg)' }}>
       <h1 style={{ marginTop: 0 }}>📥 收件箱</h1>

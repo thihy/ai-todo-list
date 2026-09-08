@@ -22,6 +22,8 @@ import type { ResolvedEndpoint } from './client';
 import type { TodoRepo } from '../db/todo-repo';
 import type { MarkdownStore } from '../files/markdown';
 import type { DrawingStore } from '../files/drawings';
+import type { TodoFilter, TodoStatus } from '../../shared/todo-types';
+import { TODO_STATUSES } from '../../shared/todo-types';
 
 // DSH is imported dynamically so the main bundle stays buildable even before
 // the packages are installed, and so a boot failure degrades to the client.ts
@@ -211,31 +213,53 @@ function registerDomainTools(
   const { repo, md, drawings } = deps;
   const reg = (def: unknown) => disposers.push(tools.register(def));
 
+  // DSH's `output.render(args, value)` produces the MODEL-FACING content for a
+  // tool result. Returning a placeholder token (e.g. '[todo.list]') hides the
+  // real data from the model — it would then fabricate answers (claim the list
+  // is empty, invent a created todo's id). Serialize the actual JSON value so
+  // the model grounds its answer in real data.
+  const renderJson = (_args: unknown, value: unknown): { type: 'text'; text: string }[] => [
+    { type: 'text', text: value === undefined ? '(no result)' : JSON.stringify(value, null, 2) },
+  ];
+  const jsonOutput = { schema: { type: 'json' }, render: renderJson };
+
   reg(defineTool({
     name: 'todo.list',
-    description: 'List TODO items, optionally filtered by status/project/priority.',
+    description: 'List TODO items, optionally filtered. Omit all filters to return every todo. The model may pass status as a single string or comma-separated list; "all" means no filter.',
     parameters: {
-      status: { type: 'string', description: 'Filter: todo | done | cancelled | all' },
+      status: { type: 'string', description: 'Filter by status: inbox | next | doing | blocked | done | all' },
       project: { type: 'string', description: 'Filter by project path id' },
-      limit: { type: 'number', description: 'Max items to return' },
+      limit: { type: 'number', description: 'Max items to return (default: all)' },
     },
-    output: { schema: { type: 'json' }, render: () => [{ type: 'text', text: '[todo.list]' }] },
+    output: jsonOutput,
     async execute(args: { status?: string; project?: string; limit?: number }) {
-      return repo.list(args as never);
+      // Normalize the model's status (string / comma-list / "all") into the
+      // TodoStatus[] the repo expects; 'all' and unknown values mean no filter
+      // so a full list is returned instead of erroring on `.map`.
+      const filter: TodoFilter = {};
+      const st = args.status;
+      if (st) {
+        const arr = String(st).split(',').map((s) => s.trim()).filter(Boolean);
+        const valid = arr.filter((s): s is TodoStatus => (TODO_STATUSES as readonly string[]).includes(s));
+        if (valid.length) filter.status = valid;
+      }
+      if (args.project) filter.project = [args.project];
+      const all = repo.list(filter as never);
+      return args.limit && args.limit > 0 ? all.slice(0, args.limit) : all;
     },
   }));
   reg(defineTool({
     name: 'todo.get',
     description: 'Get a single TODO by id.',
     parameters: { id: { type: 'string', required: true, description: 'TODO id (ULID)' } },
-    output: { schema: { type: 'json' }, render: () => [{ type: 'text', text: '[todo.get]' }] },
+    output: jsonOutput,
     async execute(args: { id: string }) { return repo.get(args.id as never); },
   }));
   reg(defineTool({
     name: 'todo.create',
     description: 'Create a new TODO with a title. Returns the created item.',
     parameters: { title: { type: 'string', required: true, description: 'TODO title' }, priority: { type: 'string', description: 'none | low | medium | high' } },
-    output: { schema: { type: 'json' }, render: () => [{ type: 'text', text: '[todo.create]' }] },
+    output: jsonOutput,
     async execute(args: { title: string; priority?: string }) {
       const todo = repo.create({ title: args.title, priority: args.priority ?? 'none' } as never, md.filePathFor('placeholder' as never));
       md.writeBody(todo.id as never, '');
@@ -245,8 +269,8 @@ function registerDomainTools(
   reg(defineTool({
     name: 'todo.update',
     description: 'Update fields of an existing TODO (title, status, priority, dueAt, project).',
-    parameters: { id: { type: 'string', required: true, description: 'TODO id' }, title: { type: 'string' }, status: { type: 'string', description: 'todo | done | cancelled' }, priority: { type: 'string' } },
-    output: { schema: { type: 'json' }, render: () => [{ type: 'text', text: '[todo.update]' }] },
+    parameters: { id: { type: 'string', required: true, description: 'TODO id' }, title: { type: 'string' }, status: { type: 'string', description: 'inbox | next | doing | blocked | done' }, priority: { type: 'string', description: 'none | low | medium | high' } },
+    output: jsonOutput,
     async execute(args: { id: string; [k: string]: unknown }) {
       const { id, ...patch } = args;
       return repo.update(id as never, patch as never);
@@ -256,21 +280,21 @@ function registerDomainTools(
     name: 'todo.delete',
     description: 'Permanently delete a TODO. Destructive — confirm with the user first.',
     parameters: { id: { type: 'string', required: true, description: 'TODO id to delete' } },
-    output: { schema: { type: 'json' }, render: () => [{ type: 'text', text: '[todo.delete]' }] },
+    output: jsonOutput,
     async execute(args: { id: string }) { repo.delete(args.id as never); return { ok: true }; },
   }));
   reg(defineTool({
     name: 'todo.search',
     description: 'Full-text search across TODO titles and markdown bodies.',
     parameters: { query: { type: 'string', required: true, description: 'Search query' }, limit: { type: 'number', description: 'Max hits (default 20)' } },
-    output: { schema: { type: 'json' }, render: () => [{ type: 'text', text: '[todo.search]' }] },
+    output: jsonOutput,
     async execute(args: { query: string; limit?: number }) { return repo.search(args.query, args.limit ?? 20); },
   }));
   reg(defineTool({
     name: 'todo.stats',
     description: 'Aggregate stats: counts by status, recent activity.',
     parameters: {},
-    output: { schema: { type: 'json' }, render: () => [{ type: 'text', text: '[todo.stats]' }] },
+    output: jsonOutput,
     async execute() { return repo.stats(7); },
   }));
 
@@ -278,28 +302,28 @@ function registerDomainTools(
     name: 'content.readBody',
     description: 'Read the markdown body of a TODO (current version).',
     parameters: { id: { type: 'string', required: true, description: 'TODO id' } },
-    output: { schema: { type: 'json' }, render: () => [{ type: 'text', text: '[content.readBody]' }] },
+    output: jsonOutput,
     async execute(args: { id: string }) { return md.readBody(args.id as never); },
   }));
   reg(defineTool({
     name: 'content.writeBody',
     description: 'Write/replace the markdown body of a TODO. Creates a new version.',
     parameters: { id: { type: 'string', required: true, description: 'TODO id' }, markdown: { type: 'string', required: true, description: 'New markdown content' } },
-    output: { schema: { type: 'json' }, render: () => [{ type: 'text', text: '[content.writeBody]' }] },
+    output: jsonOutput,
     async execute(args: { id: string; markdown: string }) { return md.writeBody(args.id as never, args.markdown); },
   }));
   reg(defineTool({
     name: 'content.history',
     description: 'List saved markdown versions for a TODO.',
     parameters: { id: { type: 'string', required: true, description: 'TODO id' } },
-    output: { schema: { type: 'json' }, render: () => [{ type: 'text', text: '[content.history]' }] },
+    output: jsonOutput,
     async execute(args: { id: string }) { return md.history(args.id as never); },
   }));
   reg(defineTool({
     name: 'content.restoreVersion',
     description: 'Restore a previous markdown version. Destructive — confirm first.',
     parameters: { id: { type: 'string', required: true }, versionId: { type: 'number', required: true, description: 'Version number to restore' } },
-    output: { schema: { type: 'json' }, render: () => [{ type: 'text', text: '[content.restoreVersion]' }] },
+    output: jsonOutput,
     async execute(args: { id: string; versionId: number }) { md.restoreVersion(args.id as never, args.versionId); return { ok: true }; },
   }));
 
@@ -307,21 +331,21 @@ function registerDomainTools(
     name: 'drawing.list',
     description: 'List Excalidraw drawings attached to a TODO.',
     parameters: { todoId: { type: 'string', required: true, description: 'TODO id' } },
-    output: { schema: { type: 'json' }, render: () => [{ type: 'text', text: '[drawing.list]' }] },
+    output: jsonOutput,
     async execute(args: { todoId: string }) { return drawings.list(args.todoId as never); },
   }));
   reg(defineTool({
     name: 'drawing.read',
     description: 'Read an Excalidraw drawing scene by id.',
     parameters: { id: { type: 'string', required: true, description: 'Drawing id' } },
-    output: { schema: { type: 'json' }, render: () => [{ type: 'text', text: '[drawing.read]' }] },
+    output: jsonOutput,
     async execute(args: { id: string }) { return drawings.read(args.id as never); },
   }));
   reg(defineTool({
     name: 'drawing.save',
     description: 'Save (create or update) an Excalidraw drawing for a TODO.',
     parameters: { todoId: { type: 'string', required: true }, scene: { type: 'json', required: true, description: 'Excalidraw scene JSON' }, id: { type: 'string', description: 'Existing drawing id to update' }, title: { type: 'string' } },
-    output: { schema: { type: 'json' }, render: () => [{ type: 'text', text: '[drawing.save]' }] },
+    output: jsonOutput,
     async execute(args: { todoId: string; scene: unknown; id?: string; title?: string }) {
       return drawings.save(args.todoId as never, args.scene as never, args.id as never, args.title);
     },
@@ -330,7 +354,7 @@ function registerDomainTools(
     name: 'drawing.delete',
     description: 'Permanently delete a drawing. Destructive — confirm first.',
     parameters: { id: { type: 'string', required: true, description: 'Drawing id' } },
-    output: { schema: { type: 'json' }, render: () => [{ type: 'text', text: '[drawing.delete]' }] },
+    output: jsonOutput,
     async execute(args: { id: string }) { drawings.delete(args.id as never); return { ok: true }; },
   }));
 
