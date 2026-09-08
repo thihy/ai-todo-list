@@ -352,18 +352,35 @@ export const AIPane: React.FC<{ onCollapse?: () => void }> = ({ onCollapse }) =>
               aria-label="重命名对话"
             />
           ) : (
-            <button
-              type="button"
-              className="aipane__switcher-btn"
-              onClick={() => { setShowSwitcher((s) => !s); setShowActions(false); }}
-              disabled={conversations.length === 0 && !current}
-              title={current?.title ?? '选择对话'}
-            >
-              <span className="aipane__switcher-title">
+            // L3-E: split the switcher into two click targets. Clicking the
+            // title text enters rename mode (the common-case one-click
+            // affordance); clicking the caret still opens the switcher
+            // dropdown. The 2-click rename (⋯ → 重命名) is preserved as a
+            // keyboard / discoverability fallback via the actions menu.
+            <div className="aipane__switcher-btn" data-disabled={conversations.length === 0 && !current}>
+              <button
+                type="button"
+                className="aipane__switcher-title"
+                onClick={() => { if (current) beginRename(); }}
+                disabled={!current}
+                title={current ? `重命名：${current.title}` : '选择对话'}
+                aria-label={current ? `重命名对话：${current.title}` : '选择对话'}
+              >
                 {current?.title ?? '选择对话…'}
-              </span>
-              <span aria-hidden="true" className="aipane__switcher-caret">▾</span>
-            </button>
+              </button>
+              <button
+                type="button"
+                className="aipane__switcher-caret-btn"
+                onClick={() => { setShowSwitcher((s) => !s); setShowActions(false); }}
+                disabled={conversations.length === 0 && !current}
+                title="切换对话"
+                aria-label="切换对话"
+                aria-haspopup="listbox"
+                aria-expanded={showSwitcher}
+              >
+                <span aria-hidden="true">▾</span>
+              </button>
+            </div>
           )}
           {showSwitcher && (
             <div className="aipane__menu aipane__menu--left" role="listbox">

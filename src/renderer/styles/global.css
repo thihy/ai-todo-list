@@ -760,32 +760,66 @@ a:hover {
 .aipane__switcher-btn {
   display: inline-flex;
   align-items: center;
-  gap: var(--space-xs);
+  gap: 0;
   max-width: 160px;
-  padding: 4px 8px;
   border-radius: var(--radius-md);
   color: var(--fg-secondary);
   font-size: var(--font-sm);
   font-weight: 600;
   transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
 }
-.aipane__switcher-btn:hover:not(:disabled) {
-  background: var(--bg-hover);
-  color: var(--fg-primary);
-}
-.aipane__switcher-btn:disabled {
+/* L3-E: the wrapper now contains TWO buttons (title + caret). Hover the
+   wrapper, hover both — keeps the existing affordance while letting
+   each click target have its own visual focus state. */
+.aipane__switcher-btn[data-disabled='true'] {
   opacity: 0.5;
-  cursor: not-allowed;
 }
 .aipane__switcher-title {
+  /* L3-E: title text is now its own button (click → rename). */
+  display: inline-block;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   max-width: 130px;
+  padding: 4px 8px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  border-radius: var(--radius-md);
+  cursor: pointer;
 }
-.aipane__switcher-caret {
-  font-size: 10px;
+.aipane__switcher-title:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--fg-primary);
+}
+.aipane__switcher-title:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.aipane__switcher-caret-btn {
+  /* L3-E: the dropdown caret is its own button. Padding shrunk so the
+     two buttons together don't grow wider than the old single-button
+     footprint. */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 6px;
+  border: none;
+  background: transparent;
   color: var(--fg-muted);
+  font: inherit;
+  font-size: 10px;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+.aipane__switcher-caret-btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--fg-primary);
+}
+.aipane__switcher-caret-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .aipane__rename {
