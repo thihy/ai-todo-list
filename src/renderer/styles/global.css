@@ -873,6 +873,35 @@ a:hover {
   font-size: var(--font-sm);
   color: var(--fg-muted);
 }
+/* L3-H: search box pinned to the top of the switcher dropdown. Separated
+   from the list by a subtle border so it reads as "filter input", not
+   "another row". Sized to match the menu items so the dropdown stays
+   visually tight. */
+.aipane__search {
+  padding: var(--space-xs) var(--space-sm);
+  border-bottom: 1px solid var(--border-subtle, #EDEFF2);
+  margin-bottom: var(--space-xs);
+}
+.aipane__search-input {
+  width: 100%;
+  padding: 4px 8px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-sm);
+  background: var(--bg-canvas, #FFFFFF);
+  color: var(--fg-primary);
+  outline: none;
+  transition: border-color var(--dur-fast) var(--ease-out);
+}
+.aipane__search-input:focus {
+  border-color: var(--accent, #4F8AF7);
+}
+.aipane__menu-hint {
+  padding: 2px var(--space-sm) var(--space-xs);
+  font-size: var(--font-xs);
+  color: var(--fg-muted);
+  font-variant-numeric: tabular-nums;
+}
 .aipane__menu-item {
   display: flex;
   align-items: center;

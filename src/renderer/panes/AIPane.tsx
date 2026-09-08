@@ -80,10 +80,16 @@ export const AIPane: React.FC<{ onCollapse?: () => void }> = ({ onCollapse }) =>
   const [historyLoaded, setHistoryLoaded] = useState<Set<string>>(new Set());
   const [bootError, setBootError] = useState<string | null>(null);
   const [input, setInput] = useState('');
+  // L3-H: search/filter for the switcher dropdown. Only matches by title
+  // (not message body — that'd need to load every conversation's history
+  // to filter, which is wasteful). Cleared on dropdown close so the next
+  // open starts from the full list.
+  const [switcherQuery, setSwitcherQuery] = useState('');
 
   const switcherRef = useRef<HTMLDivElement>(null);
   const actionsRef = useRef<HTMLDivElement>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
+  const switcherSearchRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // Initial load: fetch the conversation list. If non-empty, pick the most
@@ -117,6 +123,21 @@ export const AIPane: React.FC<{ onCollapse?: () => void }> = ({ onCollapse }) =>
     document.addEventListener('mousedown', onDocClick);
     return () => document.removeEventListener('mousedown', onDocClick);
   }, [showSwitcher, showActions]);
+
+  // L3-H: when the switcher opens, focus the search input so the user can
+  // type immediately. When it closes, clear the query so the next open
+  // starts from the full list (filter state would otherwise survive and
+  // confuse the next session).
+  useEffect(() => {
+    if (showSwitcher) {
+      // Focus on next tick — the input isn't in the DOM until React renders
+      // the dropdown div.
+      const t = setTimeout(() => switcherSearchRef.current?.focus(), 0);
+      return () => clearTimeout(t);
+    }
+    setSwitcherQuery('');
+    return;
+  }, [showSwitcher]);
 
   // When currentId changes, lazy-load history (only once per conversation).
   useEffect(() => {
@@ -174,6 +195,15 @@ export const AIPane: React.FC<{ onCollapse?: () => void }> = ({ onCollapse }) =>
   const current = conversations.find((c) => c.id === currentId) ?? null;
   const currentTurns: Turn[] = currentId ? turnsByConv[currentId] ?? [] : [];
   const busy = streamingTurnId !== null;
+  // L3-H: case-insensitive substring filter on title. Empty query = full
+  // list. We don't try to be smarter (fuzzy, token-aware) — the list is
+  // short enough that an exact substring match is enough to land on the
+  // right row in 1-2 keystrokes. Matches against the title only (not
+  // archived flag) so an archived conversation whose title matches is
+  // still surfaced; the archived tag in the row shows the state.
+  const filteredConversations: ConversationRow[] = switcherQuery
+    ? conversations.filter((c) => c.title.toLowerCase().includes(switcherQuery.toLowerCase()))
+    : conversations;
 
   const refreshList = async (): Promise<void> => {
     const res = await window.thihy.conversation.list({ includeArchived: showArchived });
@@ -388,10 +418,49 @@ export const AIPane: React.FC<{ onCollapse?: () => void }> = ({ onCollapse }) =>
           )}
           {showSwitcher && (
             <div className="aipane__menu aipane__menu--left" role="listbox">
-              {conversations.length === 0 && (
+              {/* L3-H: search/filter input. Type to narrow the list by
+                  title; matches are case-insensitive substring. Esc clears
+                  the filter; Enter selects the first match (or no-op if
+                  none). The search box is always present when the dropdown
+                  is open — even with 0 conversations, so users have a hint
+                  that filter is available. */}
+              <div className="aipane__search">
+                <input
+                  ref={switcherSearchRef}
+                  type="search"
+                  className="aipane__search-input"
+                  placeholder="搜索对话标题…"
+                  value={switcherQuery}
+                  onChange={(e) => setSwitcherQuery(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Escape') {
+                      e.preventDefault();
+                      if (switcherQuery) setSwitcherQuery('');
+                      else setShowSwitcher(false);
+                      return;
+                    }
+                    if (e.key === 'Enter' && filteredConversations.length > 0) {
+                      e.preventDefault();
+                      switchTo(filteredConversations[0]!.id);
+                    }
+                  }}
+                  aria-label="搜索对话"
+                />
+              </div>
+              {filteredConversations.length === 0 && conversations.length === 0 && (
                 <div className="aipane__menu-empty">还没有对话</div>
               )}
-              {conversations.map((c) => (
+              {filteredConversations.length === 0 && conversations.length > 0 && switcherQuery && (
+                <div className="aipane__menu-empty">
+                  没有匹配“{switcherQuery}”的对话
+                </div>
+              )}
+              {filteredConversations.length > 0 && switcherQuery && (
+                <div className="aipane__menu-hint">
+                  {filteredConversations.length} / {conversations.length} 个匹配
+                </div>
+              )}
+              {filteredConversations.map((c) => (
                 <button
                   key={c.id}
                   type="button"
