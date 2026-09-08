@@ -31,17 +31,24 @@ import {
 } from '../shared/constants';
 import type Database from 'better-sqlite3';
 
-// Single-instance lock
-const gotLock = app.requestSingleInstanceLock();
+// Single-instance lock. In PROD this ensures only one app instance runs (the
+// tray app: close hides to tray, so a relaunch should surface the existing
+// window, not start a second). In DEV we SKIP the lock entirely: when a
+// `pnpm dev` process is Ctrl+C'd on Windows the electron child is often
+// orphaned and keeps holding the lock, so the next `pnpm dev` would get
+// gotLock=false, call app.quit(), and open NO window — the #1 cause of
+// "pnpm dev 没有打开主窗口". Skipping the lock in dev lets a fresh dev
+// instance come up regardless of stale orphans.
+const isDev = !app.isPackaged;
+const gotLock = isDev ? true : app.requestSingleInstanceLock();
 if (!gotLock) {
   app.quit();
 } else {
   app.on('second-instance', () => {
-    // A second instance tried to launch (e.g. the user ran `pnpm dev` again
-    // while this one is alive). The existing window is likely hidden to tray
-    // (close hides rather than quits), so we must .show() it — restore()+focus()
-    // alone leave a hidden window hidden, which from the user's side looks like
-    // "the app won't come up".
+    // PROD path: a second launch tried to start while this one is alive
+    // (likely hidden to tray). Surface the existing window — restore()+focus()
+    // alone leave a hidden window hidden, which looks like "the app won't come
+    // up" to the user.
     const all = BrowserWindow.getAllWindows();
     if (all[0]) {
       if (all[0].isMinimized()) all[0].restore();
