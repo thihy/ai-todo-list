@@ -28,10 +28,12 @@
 - id: sessions
   name: '@deepseek-ai/dsh-session'
 
-- id: session-persistence
-  name: '@deepseek-ai/dsh-session-persistence-jsonl'
-  config:
-    root: !!js process.cwd() + '/.thihy-todolist/dsh-sessions'
+# NOTE: dsh-session-persistence-jsonl is deliberately NOT mounted. It statically
+# imports `createZstdDecompress` etc. from node:zlib, which only exists on
+# Node 22.15+ — Electron 33 ships Node 20.18 and throws a SyntaxError on that
+# import, failing the whole boot. Sessions run in-memory instead, which is
+# fine here: runTurn creates a fresh agent per invocation and never resumes a
+# session by id across restarts, so on-disk persistence is unused.
 
 - id: agents
   name: '@deepseek-ai/dsh-agent'
