@@ -207,9 +207,13 @@ function bootstrap(): void {
 
 function createMainWindow(): BrowserWindow {
   const isDev = !app.isPackaged;
+  // Windows taskbar reliably shows the window icon only from a real .ico — a
+  // bare .png falls back to the electron.exe default in `pnpm dev` (no .ico is
+  // generated there because electron-builder only makes one at packaging).
+  const iconName = process.platform === 'win32' ? 'icon.ico' : 'icon.png';
   const iconPath = isDev
-    ? join(__dirname, '../../resources/icon.png')
-    : join(process.resourcesPath, 'icon.png');
+    ? join(__dirname, '../../resources/', iconName)
+    : join(process.resourcesPath, iconName);
   const win = new BrowserWindow({
     width: 1280,
     height: 800,

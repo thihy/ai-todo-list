@@ -95,10 +95,14 @@
       {
         "from": "resources/icon.png",
         "to": "icon.png"
+      },
+      {
+        "from": "resources/icon.ico",
+        "to": "icon.ico"
       }
     ],
     "win": {
-      "icon": "resources/icon.png",
+      "icon": "resources/icon.ico",
       "target": [
         {
           "target": "nsis",

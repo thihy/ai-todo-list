@@ -196,5 +196,47 @@ function writeIcon(name, size) {
   console.log(`wrote ${out} (${png.length} bytes, ${size}x${size})`);
 }
 
+// Encode a multi-size .ico from pre-rendered PNG bytes. Windows shows the
+// taskbar/window icon from the .ico; a bare .png does not reliably apply to
+// the taskbar in `pnpm dev` (no .ico exists there because electron-builder
+// only generates one for packaged builds), so we ship one ourselves.
+function writeIco(name, sizes) {
+  const entries = sizes.map((s) => {
+    const rgba = render(s, 4);
+    const png = encodePng(rgba, s, s);
+    return { size: s, png };
+  });
+  const dirHeader = 6; // reserved(2) + type(2) + count(2)
+  const entryLen = 16;
+  const dataOffset = dirHeader + entries.length * entryLen;
+  let offset = dataOffset;
+  const dirBufs = [];
+  const dataBufs = [];
+  for (const e of entries) {
+    const w = e.size >= 256 ? 0 : e.size; // 256 → 0 in ICO field
+    const entry = Buffer.alloc(entryLen);
+    entry.writeUInt8(w, 0); // width
+    entry.writeUInt8(w, 1); // height
+    entry.writeUInt8(0, 2); // palette (0 for >8bpp)
+    entry.writeUInt8(0, 3); // reserved
+    entry.writeUInt16LE(1, 4); // planes
+    entry.writeUInt16LE(32, 6); // bpp
+    entry.writeUInt32LE(e.png.length, 8); // image size
+    entry.writeUInt32LE(offset, 12); // offset
+    dirBufs.push(entry);
+    dataBufs.push(e.png);
+    offset += e.png.length;
+  }
+  const header = Buffer.alloc(dirHeader);
+  header.writeUInt16LE(0, 0); // reserved
+  header.writeUInt16LE(1, 2); // type = icon
+  header.writeUInt16LE(entries.length, 4); // count
+  const ico = Buffer.concat([header, ...dirBufs, ...dataBufs]);
+  const out = join(here, name);
+  writeFileSync(out, ico);
+  console.log(`wrote ${out} (${ico.length} bytes, ${entries.length} sizes)`);
+}
+
 writeIcon('icon.png', 256);
 writeIcon('tray.png', 64);
+writeIco('icon.ico', [16, 24, 32, 48, 64, 128, 256]);
