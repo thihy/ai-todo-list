@@ -75,8 +75,9 @@ export interface DshRuntime {
     signal?: AbortSignal;
   }): Promise<{ content: string }>;
   /** Abort the in-flight turn on a conversation (no-op if idle/missing).
-   *  Disposes the cached agent handle; the next ask() re-creates it from
-   *  the persisted session JSONL, so history is preserved. */
+   *  L3-A: this is a SOFT cancel — the cached agent handle survives, so the
+   *  next runTurn() reuses the same agent + persisted session JSONL without
+   *  re-resuming from disk. Use disposeConversation() for hard removal. */
   cancel(conversationId: string): Promise<void>;
   /** Load this conversation's persisted history as a flat list of turns. */
   loadHistory(opts: { conversationId: string; signal?: AbortSignal }): Promise<HistoryTurn[]>;
@@ -164,6 +165,17 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
       agent: {
         followup(m: unknown): void;
         whenIdle(): Promise<void>;
+        /**
+         * Soft cancel — abort the active turn without disposing the agent.
+         * Per `@deepseek-ai/dsh-agent` runtime-types.d.ts (line 77-83):
+         * "Clear queued and steering work — unless `keepInbox` — and abort the
+         * active turn or between-turn task. The first cause wins for that
+         * activity. With no active activity, cancellation is a no-op and does
+         * not arm later work." This is exactly the L3-A contract: the agent
+         * handle survives so the next followup() runs on the same agent and
+         * the same persisted session JSONL.
+         */
+        cancel(cause: { kind: 'user' } | { kind: 'parent' } | { kind: 'hook'; reason: string } | { kind: 'disposed' }, options?: { keepInbox?: boolean }): void;
         id: unknown;
       };
       dispose(): Promise<void>;
@@ -190,6 +202,7 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
     agent: {
       followup(m: unknown): void;
       whenIdle(): Promise<void>;
+      cancel(cause: { kind: 'user' } | { kind: 'parent' } | { kind: 'hook'; reason: string } | { kind: 'disposed' }, options?: { keepInbox?: boolean }): void;
       id: unknown;
     };
     disposeHandle: () => Promise<void>;
@@ -307,11 +320,14 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
           source: { kind: 'user' },
         });
         entry.agent.followup(userMsg);
-        // Cooperative cancellation: if the renderer cancels, abort the agent.
+        // Cooperative cancellation: if the renderer cancels, soft-abort the
+        // agent. L3-A: prefer `agent.cancel({kind:'user'})` over disposing the
+        // handle — the agent survives so the next followup() reuses the same
+        // session without a re-resume cost. whenIdle() will then resolve as
+        // the aborted turn converges to idle. Without an active turn the call
+        // is a no-op (per DSH docs), which is safe for spurious abort signals.
         signal?.addEventListener('abort', () => {
-          // agent.cancel requires the Agent handle; we only have followup/whenIdle
-          // via the narrow type. Disposing the handle stops the driver.
-          void entry.disposeHandle();
+          try { entry.agent.cancel({ kind: 'user' }); } catch { /* noop */ }
         });
         await entry.agent.whenIdle();
         onEvent({ type: 'done', content: entry.fullText });
@@ -325,12 +341,21 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
     async cancel(conversationId) {
       const entry = conversations.get(conversationId);
       if (!entry) return;
-      // Cooperative: just dispose the agent. runTurn's signal handler would
-      // do the same thing; here we don't have a signal to abort, so we go
-      // directly. The conversation's JSONL is still on disk so the next
-      // ask() on this id gets a fresh agent that reads its history.
-      try { await entry.disposeHandle(); } catch { /* noop */ }
-      conversations.delete(conversationId);
+      // L3-A: SOFT cancel. The agent handle stays alive in the cache, so the
+      // next followup() (a new turn on this conversation) resumes on the
+      // same agent + persisted session. Hard dispose is reserved for explicit
+      // `disposeConversation()` (called from ai.conversation.delete).
+      //
+      // - If a turn is in flight: agent.cancel({kind:'user'}) aborts it and
+      //   whenIdle() resolves quickly. Pending text/tool events may have
+      //   already streamed — those are part of the durable session log so
+      //   loadHistory() still returns them honestly.
+      // - If idle: cancel is a no-op (per DSH docs), so calling it on a
+      //   quiet agent is safe.
+      try { entry.agent.cancel({ kind: 'user' }); } catch { /* noop */ }
+      // We do NOT conversations.delete() — that would force a re-resume on
+      // the next ask() and lose the agent's internal caches (pre-step
+      // decisions, resolved system prompts) we just paid to build.
     },
 
     async loadHistory({ conversationId }) {
