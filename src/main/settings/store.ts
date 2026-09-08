@@ -45,7 +45,21 @@ const DEFAULTS: PersistedSettings = {
 
 /** Default data root when the user has not picked a directory. */
 export function defaultDataDir(): string {
-  return join(app.getPath('userData'), '..', ROOT_DIR_NAME);
+  return join(safeUserDataDir(), '..', ROOT_DIR_NAME);
+}
+
+/** Resolve the userData directory without throwing under vitest (where
+ *  electron's `app` is undefined). Falls back to a stable per-process tmp
+ *  directory in non-electron environments so the production constructor
+ *  still works without a dir argument. */
+function safeUserDataDir(): string {
+  try {
+    return app.getPath('userData');
+  } catch {
+    const { tmpdir } = require('node:os') as typeof import('node:os');
+    const { join } = require('node:path') as typeof import('node:path');
+    return join(tmpdir(), 'thihy-test-userData');
+  }
 }
 
 export class SettingsStore {
@@ -53,10 +67,11 @@ export class SettingsStore {
   private path: string;
   private cache: PersistedSettings;
 
-  constructor() {
+  constructor(dir?: string) {
     // Config is read during bootstrap before any window or DB exists; we must
-    // not depend on a pre-created data directory.
-    const userData = app.getPath('userData');
+    // not depend on a pre-created data directory. Tests pass a tmp dir; the
+    // production path falls through to electron's userData.
+    const userData = dir ?? safeUserDataDir();
     this.path = join(userData, CONFIG_FILENAME);
     this.cache = this.load();
   }

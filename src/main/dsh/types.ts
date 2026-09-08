@@ -1,54 +1,20 @@
 // DSH container — shared types.
 
+import type { AIModel } from '../../shared/ai-types';
+
 // Model is a free string so the user can configure arbitrary providers/models
 // via settings; DSH forwards it to whichever provider is selected.
-export type AIModel = string;
+export type { AIModel };
 
-export interface DshInvocationRequest {
-  /** Model identifier (deepseek-chat / deepseek-reasoner). */
-  model: AIModel;
-  /** System prompt; user role handled by DSH internals. */
-  systemPrompt?: string;
-  /** Conversation messages, the latest one being the prompt. */
-  messages: Array<{ role: 'user' | 'assistant' | 'system'; content: string }>;
-  /** Tool names the agent may call. Empty list = pure chat. */
-  tools: string[];
-  /** Optional budget in USD; DSH refuses to spend beyond. */
-  budgetUsd?: number;
-  /** Invocation id; client-generated UUID. */
-  invocationId: string;
-}
-
-export interface DshInvocationResult {
-  invocationId: string;
-  content: string;
-  toolCalls: Array<{ name: string; args: unknown }>;
-  costUsd: number;
-  usage: { promptTokens: number; completionTokens: number };
-}
-
-export interface DshContainer {
-  invoke(req: DshInvocationRequest): Promise<DshInvocationResult>;
-  cancel(invocationId: string): void;
-  models(): AIModel[];
-  health(): { ok: boolean; mode: 'real' | 'shim' };
-  /** Shim-only: register a tool at runtime. Real DSH uses plugins / providers instead. */
-  registerTool?(name: string, fn: (args: unknown) => Promise<unknown>): void;
-}
-
+/** Eagerly-bootstrapped handle answering the non-streaming AI IPC calls.
+ *
+ *  The real agent loop (boot + adapter + tools + runTurn) lives in
+ *  `dsh-runtime.ts getDshRuntime()` and is invoked lazily on the first
+ *  `ai.ask` because it needs a resolved endpoint. This handle needs no
+ *  creds — `ai.health` then probes the real endpoint on demand. */
 export interface DshHandle {
-  container: DshContainer;
-  invoke(req: DshInvocationRequest): Promise<DshInvocationResult>;
-  cancel(id: string): void;
-  models(): AIModel[];
   health(): { ok: boolean; mode: 'real' | 'shim' };
+  /** Hint list shown in the model picker. Real usage flows through DSH
+   *  agent + adapter; this is just a UI fallback for `ai.models`. */
+  models(): AIModel[];
 }
-
-export type DshStreamEvent =
-  | { type: 'start'; invocationId: string }
-  | { type: 'token'; invocationId: string; text: string }
-  | { type: 'toolCall'; invocationId: string; name: string; args: unknown }
-  | { type: 'toolResult'; invocationId: string; name: string; ok: boolean; data?: unknown; error?: string }
-  | { type: 'permissionRequest'; invocationId: string; tool: string; preview: string; tier: 'auto' | 'notify-undo' | 'block' }
-  | { type: 'done'; invocationId: string; content: string; costUsd: number }
-  | { type: 'error'; invocationId: string; message: string };

@@ -1,7 +1,7 @@
 // DSH runtime — boots the in-process agent tree, registers our ThihyLlmAdapter
-// (wrapping client.ts invokeChat) for the 'thihy' provider route, registers
-// our typed todo/content/drawing tool handlers, and exposes runTurn() to drive
-// an agent turn and stream tokens + tool activity back to the renderer.
+// for the 'thihy' provider route, registers our typed todo/content/drawing
+// tool handlers, and exposes runTurn() to drive an agent turn and stream
+// tokens + tool activity back to the renderer.
 //
 // Multi-conversation model (L2): each user-controlled conversation maps 1:1
 // to a DSH session (persisted by dsh-session-persistence-jsonl) and to a
@@ -25,7 +25,7 @@ import { resolve, dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { existsSync, readdirSync, rmSync } from 'node:fs';
 import { logger } from '../logger';
-import type { ResolvedEndpoint } from './client';
+import type { ResolvedEndpoint } from './endpoints';
 import type { TodoRepo } from '../db/todo-repo';
 import type { MarkdownStore } from '../files/markdown';
 import type { DrawingStore } from '../files/drawings';
@@ -34,8 +34,8 @@ import type { TodoFilter, TodoStatus } from '../../shared/todo-types';
 import { TODO_STATUSES } from '../../shared/todo-types';
 
 // DSH is imported dynamically so the main bundle stays buildable even before
-// the packages are installed, and so a boot failure degrades to the client.ts
-// path instead of crashing the app on import.
+// the packages are installed, and so a boot failure surfaces as an explicit
+// "DSH unavailable" error to the renderer instead of crashing the app on import.
 type DshContext = {
   get(key: string): unknown;
   on(event: string, handler: (...args: any[]) => void): () => void;
@@ -99,8 +99,8 @@ let runtimePromise: Promise<DshRuntime | null> | null = null;
  * <DSH_SESSIONS_ROOT> but have no entry in the `conversations` table.
  *
  * Why: pre-L2 the renderer didn't have a multi-conversation model, so
- * sessions were created on disk by `client.ts` (and the early DSH boot
- * of the app) without ever writing a row in `conversations`. After L2
+ * sessions were created on disk by the early DSH runtime / test-adapter
+ * smoke runs without ever writing a row in `conversations`. After L2
  * those orphans would be invisible to the new AIPane sidebar — the JSONL
  * log survives, but no row means no UI affordance to load it.
  *
@@ -250,11 +250,12 @@ async function bootPersistenceOnly(): Promise<{
   }
 }
 
-/** Lazily boot DSH once; returns null if boot fails (caller falls back to client.ts). */
+/** Lazily boot DSH once; returns null if boot fails (the renderer surfaces
+ *  this as an explicit "DSH unavailable" error — there is no fallback path). */
 export function getDshRuntime(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
   if (!runtimePromise) {
     runtimePromise = bootDsh(deps).catch((err) => {
-      logger.warn(`DSH boot failed, falling back to client.ts: ${(err as Error).message}`);
+      logger.warn(`DSH boot failed; ai.ask will report dsh_unavailable: ${(err as Error).message}`);
       runtimePromise = null;
       return null;
     });

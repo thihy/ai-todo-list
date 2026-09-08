@@ -32,7 +32,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { getDshRuntime } from '../src/main/dsh/dsh-runtime';
-import type { ResolvedEndpoint } from '../src/main/dsh/client';
+import type { ResolvedEndpoint } from '../src/main/dsh/endpoints';
 import type { TurnEvent } from '../src/main/dsh/dsh-runtime';
 
 const BASE = process.env.THIHY_LIVE_BASE ?? 'http://127.0.0.1:9999/v1';

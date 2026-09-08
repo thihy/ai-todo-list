@@ -7,7 +7,7 @@ const { ulid } = ulidPkg;
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 const MIGRATIONS: ReadonlyArray<{ version: number; sql: string }> = [
   {
@@ -174,6 +174,35 @@ const MIGRATIONS: ReadonlyArray<{ version: number; sql: string }> = [
       );
       CREATE INDEX idx_conversations_updated ON conversations(updated_at DESC);
       CREATE INDEX idx_conversations_archived ON conversations(archived);
+    `,
+  },
+  {
+    version: 4,
+    // Cache markdown body on the todos row itself so FTS5 snippet() can
+    // find something to highlight. The external-content FTS5 table reads
+    // the `body` column directly from `todos`, so storing the markdown
+    // here is what makes search() snippets non-empty. content_versions
+    // remains the authoritative history (only the latest body is mirrored).
+    sql: `
+      ALTER TABLE todos ADD COLUMN body TEXT NOT NULL DEFAULT '';
+
+      DROP TRIGGER IF EXISTS todos_fts_insert;
+      DROP TRIGGER IF EXISTS todos_fts_delete;
+      DROP TRIGGER IF EXISTS todos_fts_update;
+
+      CREATE TRIGGER todos_fts_insert AFTER INSERT ON todos BEGIN
+        INSERT INTO todos_fts(rowid, title, body) VALUES (new.rowid, new.title, new.body);
+      END;
+      CREATE TRIGGER todos_fts_delete AFTER DELETE ON todos BEGIN
+        INSERT INTO todos_fts(todos_fts, rowid, title, body)
+          VALUES('delete', old.rowid, old.title, old.body);
+      END;
+      CREATE TRIGGER todos_fts_update AFTER UPDATE ON todos BEGIN
+        INSERT INTO todos_fts(todos_fts, rowid, title, body)
+          VALUES('delete', old.rowid, old.title, old.body);
+        INSERT INTO todos_fts(rowid, title, body)
+          VALUES (new.rowid, new.title, new.body);
+      END;
     `,
   },
 ];

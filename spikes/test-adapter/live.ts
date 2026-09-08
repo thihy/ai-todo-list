@@ -15,7 +15,7 @@
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { ThihyLlmAdapter } from '../../src/main/dsh/llm-adapter';
-import type { ResolvedEndpoint } from '../../src/main/dsh/client';
+import type { ResolvedEndpoint } from '../../src/main/dsh/endpoints';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const projectRoot = resolve(here, '..', '..');

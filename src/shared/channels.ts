@@ -26,7 +26,6 @@ const DECLARED_CHANNELS: ReadonlySet<string> = new Set([
   'group.create',
   'group.update',
   'group.delete',
-  'ai.invoke',
   'ai.cancel',
   'ai.ask',
   'ai.health',

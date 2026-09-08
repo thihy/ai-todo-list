@@ -116,6 +116,11 @@ export class MarkdownStore {
            )`,
         )
         .run(id, id, MAX_BODY_VERSIONS);
+      // Mirror current body onto the todos row so the FTS5 external-content
+      // table has non-empty body text for snippet() to highlight.
+      this.db
+        .prepare(`UPDATE todos SET body = ?, updated_at = ? WHERE id = ?`)
+        .run(markdown, now, id);
     });
     tx();
 

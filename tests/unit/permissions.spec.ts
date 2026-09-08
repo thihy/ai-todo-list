@@ -7,7 +7,7 @@ import {
   NOTIFY_UNDO_TOOLS,
   DESTRUCTIVE_TOOLS,
   tierFor,
-} from '../../src/main/dsh/tools';
+} from '../../src/shared/permission-tiers';
 
 describe('Permission tiers', () => {
   it('safe tools are auto', () => {

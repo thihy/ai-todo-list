@@ -1,5 +1,6 @@
 // IPC handlers for AI channels.
-// ai.invoke streams events via 'ai:stream'; ai.health / ai.models / ai.cancel are non-streaming.
+// ai.ask streams events via 'ai:stream'; ai.health / ai.models / ai.cancel
+// (and ai.conversation.*) are non-streaming.
 //
 // L2 multi-conversation architecture:
 //   - Each user-controlled conversation maps 1:1 to a DSH SessionId (persisted
@@ -11,7 +12,7 @@
 
 import { register, okResult, failResult } from './router';
 import type { DshHandle } from '../dsh/types';
-import { resolveEndpoint, healthCheck } from '../dsh/client';
+import { resolveEndpoint, healthCheck } from '../dsh/endpoints';
 import { getDshRuntime } from '../dsh/dsh-runtime';
 import { SettingsStore } from '../settings/store';
 import { BrowserWindow, dialog } from 'electron';

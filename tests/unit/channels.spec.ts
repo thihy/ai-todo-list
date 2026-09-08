@@ -5,7 +5,7 @@ describe('IPC channel registry', () => {
   it('accepts declared channels', () => {
     expect(isKnownChannel('todo.list')).toBe(true);
     expect(isKnownChannel('todo.create')).toBe(true);
-    expect(isKnownChannel('ai.invoke')).toBe(true);
+    expect(isKnownChannel('ai.ask')).toBe(true);
     expect(isKnownChannel('settings.set')).toBe(true);
     expect(isKnownChannel('capture.submit')).toBe(true);
   });

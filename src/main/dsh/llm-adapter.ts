@@ -24,7 +24,8 @@ import type {
   Message,
   ContentBlock,
 } from '@deepseek-ai/dsh-llm';
-import type { ResolvedEndpoint } from './client';
+import type { ResolvedEndpoint } from './endpoints';
+import { openAIHeaders, sseData, safeText, httpError } from './http';
 import { logger } from '../logger';
 
 /** Provider-native tool spec derived from DSH's neutral ToolSchema. */
@@ -341,55 +342,7 @@ export class ThihyLlmAdapter extends LlmAdapter {
   }
 }
 
-// ---------- shared helpers ----------
-
-function openAIHeaders(ep: ResolvedEndpoint): Record<string, string> {
-  const h: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (ep.apiKey) h.Authorization = `Bearer ${ep.apiKey}`;
-  return h;
-}
-
-async function* sseData(body: ReadableStream<Uint8Array>): AsyncGenerator<string> {
-  const reader = body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      let nl: number;
-      while ((nl = buffer.indexOf('\n')) !== -1) {
-        const line = buffer.slice(0, nl).trim();
-        buffer = buffer.slice(nl + 1);
-        if (!line.startsWith('data:')) continue;
-        const data = line.slice(5).trim();
-        if (data) yield data;
-      }
-    }
-    const tail = buffer.trim();
-    if (tail.startsWith('data:')) {
-      const data = tail.slice(5).trim();
-      if (data) yield data;
-    }
-  } finally {
-    reader.releaseLock();
-  }
-}
-
-async function safeText(res: Response): Promise<string> {
-  try {
-    return await res.text();
-  } catch {
-    return '';
-  }
-}
-
-function httpError(label: string, res: Response, text: string): Error {
-  return new Error(`${label} ${res.status}: ${text || res.statusText}`);
-}
-
-// ---------- message + tool translation (DSH neutral → provider wire) ----------
+// ---------- shared message + tool translation (DSH neutral → provider wire) ----------
 
 /** Extract plain text from a DSH Message's content blocks. */
 function messageText(msg: Message): string {

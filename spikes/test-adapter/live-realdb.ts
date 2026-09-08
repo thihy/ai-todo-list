@@ -16,7 +16,7 @@
 
 import { app } from 'electron';
 import { getDshRuntime } from '../../src/main/dsh/dsh-runtime';
-import type { ResolvedEndpoint } from '../../src/main/dsh/client';
+import type { ResolvedEndpoint } from '../../src/main/dsh/endpoints';
 import type { TurnEvent } from '../../src/main/dsh/dsh-runtime';
 import type { Todo, TodoFilter } from '../../src/shared/todo-types';
 

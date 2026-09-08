@@ -33,29 +33,7 @@ export const SKILL_DRAFT_PROGRESS = 'draftProgress';
 export const SKILL_SUMMARIZE = 'summarize';
 export const SKILL_DATA_ANALYSIS = 'dataAnalysis';
 
-// Destructive tool names that require permission gate (Block tier)
-export const DESTRUCTIVE_TOOLS: ReadonlySet<string> = new Set([
-  'todo_delete',
-  'content_overwrite_body',
-  'drawing_delete',
-]);
-
-// Read-only / safe tools (Auto tier)
-export const SAFE_TOOLS: ReadonlySet<string> = new Set([
-  'todo_list',
-  'todo_get',
-  'todo_search',
-  'todo_stats',
-  'content_read_body',
-  'content_history',
-  'drawing_list',
-  'drawing_read',
-]);
-
-// Notify+undo tier (non-destructive write)
-export const NOTIFY_UNDO_TOOLS: ReadonlySet<string> = new Set([
-  'todo_create',
-  'todo_update',
-  'content_write_body',
-  'drawing_save',
-]);
+// AI tool permission tiers live in ./permission-tiers.ts (dotted tool names
+// matching the registry in src/main/dsh/dsh-runtime.ts). The snake_case
+// names that used to live here drifted from the registry; they were never
+// imported by any production code.

@@ -246,7 +246,6 @@ export interface IpcRegistry {
   'group.update': IpcChannel<GroupUpdateReq, IpcResult<Group>>;
   'group.delete': IpcChannel<{ id: ULID }, IpcResult<void>>;
 
-  'ai.invoke': IpcChannel<{ prompt: string; model?: AIModel; tools?: string[] }, IpcResult<{ invocationId: string }>>;
   'ai.cancel': IpcChannel<AIStreamCancelReq, IpcResult<{ ok: boolean }>>;
   'ai.ask': IpcChannel<AIAskReq, IpcResult<AIAskRes>>;
   'ai.health': IpcChannel<undefined, IpcResult<AIHealthRes>>;

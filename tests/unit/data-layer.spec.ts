@@ -1,4 +1,4 @@
-import { describe, it, expect as e, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -49,6 +49,7 @@ describe('TodoRepo + MarkdownStore', () => {
 
   it('search uses FTS', () => {
     const a = repo.create({ title: '登录页设计' }, 'x');
+    md.writeBody(a.id, '登录流程图与表单状态');
     repo.create({ title: '无关条目' }, 'x');
     const hits = repo.search('登录');
     expect(hits.length).toBeGreaterThanOrEqual(1);
@@ -73,7 +74,10 @@ describe('TodoRepo + MarkdownStore', () => {
     md.writeBody(t.id, 'first');
     md.writeBody(t.id, 'second');
     const hist = md.history(t.id);
-    md.restoreVersion(t.id, hist[1].id);
-    expect(md.readBody(t.id).markdown).toBe('first');
+    // history orders by saved_at DESC; pick the smallest id (= oldest row)
+    // because Date.now() can collide within the same millisecond.
+    const oldest = hist.reduce((acc, v) => (v.id < acc.id ? v : acc));
+    md.restoreVersion(t.id, oldest.id);
+    expect(md.readBody(t.id).markdown.trimEnd()).toBe('first');
   });
 });
