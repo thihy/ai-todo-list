@@ -1161,6 +1161,36 @@ a:hover {
 .aipane__send {
   align-self: flex-end;
 }
+/* L3-B: stop button replaces the Send button while a turn is in flight.
+   Distinct treatment (subtle warm tint + ⏹ glyph) so it reads as an
+   abort, not as "Send, but disabled". Sized to match the Send button. */
+.aipane__stop {
+  align-self: flex-end;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: 6px 14px;
+  border-radius: 6px;
+  border: 1px solid var(--border-default);
+  background: var(--surface-muted, #F6F7F9);
+  color: var(--fg-primary, #1F2328);
+  font-size: var(--font-sm);
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+.aipane__stop:hover {
+  background: #FBE9E7;
+  border-color: #E8B4B0;
+}
+.aipane__stop:active {
+  background: #F5D0CC;
+}
+.aipane__stop-glyph {
+  font-size: 10px;
+  line-height: 1;
+  color: #C62828;
+}
 
 /* ===== Settings pane ===== */
 

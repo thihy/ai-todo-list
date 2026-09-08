@@ -311,6 +311,25 @@ export const AIPane: React.FC<{ onCollapse?: () => void }> = ({ onCollapse }) =>
     void refreshList();
   };
 
+  // L3-B: stop the in-flight turn. Soft-cancel the conversation's agent via
+  // main; partial tokens/tool results already in flight stay on the screen
+  // because the streaming turn remains in turnsByConv (its status flips to
+  // 'done' once the cancel-issued done/error event arrives). The button is
+  // a normal <button> — the user can also press Esc while focused on the
+  // composer to stop (wired below).
+  const stop = async (): Promise<void> => {
+    if (!streamingConvId) return;
+    const conv = streamingConvId;
+    const inv = streamingTurnId ?? undefined;
+    // Optimistic UI: clear streaming state so the Send button re-enables.
+    // The runtime's `done` event will still arrive and turn the turn to
+    // 'done' with whatever partial text streamed before cancel.
+    setStreamingConvId(null);
+    setStreamingTurnId(null);
+    await window.thihy.ai.cancel(conv, inv);
+    void refreshList();
+  };
+
   return (
     <div className="aipane">
       <header className="aipane__header">
@@ -455,21 +474,47 @@ export const AIPane: React.FC<{ onCollapse?: () => void }> = ({ onCollapse }) =>
             if (e.key === 'Enter' && !e.shiftKey) {
               e.preventDefault();
               void submit();
+              return;
+            }
+            // L3-B: Esc while focused on the composer cancels the in-flight
+            // turn. Skipped when nothing is in flight so Esc can still be
+            // used normally (e.g. to clear the textarea in the future).
+            if (e.key === 'Escape' && busy) {
+              e.preventDefault();
+              void stop();
             }
           }}
-          placeholder={current ? '输入问题，回车发送…（Shift+Enter 换行）' : '先创建一条对话再发送'}
+          placeholder={current ? '输入问题，回车发送…（Shift+Enter 换行，Esc 停止）' : '先创建一条对话再发送'}
           rows={2}
           className="aipane__input"
           disabled={!current && conversations.length === 0}
         />
-        <button
-          type="button"
-          className="btn-primary aipane__send"
-          onClick={() => void submit()}
-          disabled={busy || !input.trim() || !current}
-        >
-          {busy ? '生成中…' : '发送'}
-        </button>
+        {busy ? (
+          // L3-B: ⏹ stops the in-flight turn. Distinct visual treatment
+          // (danger-tone + stop glyph) so it doesn't read as a Send button
+          // that happens to be disabled — the affordance is "abort", not
+          // "wait". The textarea stays editable so the user can compose
+          // the next prompt while the model winds down.
+          <button
+            type="button"
+            className="aipane__stop"
+            onClick={() => void stop()}
+            title="停止生成（Esc）"
+            aria-label="停止生成"
+          >
+            <span className="aipane__stop-glyph" aria-hidden="true">■</span>
+            <span>停止</span>
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="btn-primary aipane__send"
+            onClick={() => void submit()}
+            disabled={!input.trim() || !current}
+          >
+            发送
+          </button>
+        )}
       </div>
     </div>
   );
