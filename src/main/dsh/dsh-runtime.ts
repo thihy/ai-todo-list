@@ -28,7 +28,7 @@ import type { DrawingStore } from '../files/drawings';
 // path instead of crashing the app on import.
 type DshContext = {
   get(key: string): unknown;
-  on(event: string, handler: (...args: never[]) => unknown): () => void;
+  on(event: string, handler: (...args: any[]) => void): () => void;
   fiber?: { dispose?(): Promise<void> };
 };
 
@@ -122,25 +122,44 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
       // Stream durable session events to the renderer. assistant/chunk text
       // deltas are the live token stream; tool/call + tool/result are the
       // agent's tool activity.
-      const off = ctx.on('session/event', (e: { type: string; data?: unknown }) => {
-        const t = e.type;
+      //
+      // DSH session/event signature is (session, event): the 2nd arg carries
+      // .type and .data. tool/result carries no tool name — only callId — so we
+      // remember callId→name from the tool/call events to label results.
+      const callNames = new Map<string, string>();
+      const off = ctx.on('session/event', (_session: unknown, event: { type: string; data?: unknown }) => {
+        const t = event?.type;
         if (t === 'assistant/chunk') {
-          const d = e.data as { type?: string; text?: string } | undefined;
-          if (d?.type === 'text-delta' && d.text) {
-            fullText += d.text;
-            onEvent({ type: 'token', text: d.text });
+          // data: { turn, step, chunk: StreamChunk }
+          const d = event.data as { chunk?: { type?: string; text?: string } } | undefined;
+          const chunk = d?.chunk;
+          if (chunk?.type === 'text-delta' && chunk.text) {
+            fullText += chunk.text;
+            onEvent({ type: 'token', text: chunk.text });
           }
         } else if (t === 'tool/call') {
-          const d = e.data as { name?: string; arguments?: unknown } | undefined;
+          // data: { turn, step, callId, name, arguments(raw JSON string) }
+          const d = event.data as { callId?: unknown; name?: string; arguments?: string } | undefined;
+          if (d?.callId != null && d.name) callNames.set(String(d.callId), d.name);
           onEvent({ type: 'toolCall', name: d?.name ?? '', args: d?.arguments });
         } else if (t === 'tool/result') {
-          const d = e.data as { name?: string; isError?: boolean; value?: unknown; error?: { message?: string } } | undefined;
+          // data: { turn, step, message: ToolResultMessage, error?, meta? }
+          // ToolResultMessage.source.callId pairs with tool/call; the result
+          // block (message.content[0]) carries isError + the value content.
+          const d = event.data as {
+            message?: {
+              source?: { callId?: unknown };
+              content?: Array<{ isError?: boolean; content?: unknown[] }>;
+            };
+          } | undefined;
+          const callId = d?.message?.source?.callId;
+          const name = callId != null ? (callNames.get(String(callId)) ?? '') : '';
+          const block = d?.message?.content?.[0];
           onEvent({
             type: 'toolResult',
-            name: d?.name ?? '',
-            ok: !d?.isError,
-            data: d?.value,
-            error: d?.error?.message,
+            name,
+            ok: !block?.isError,
+            data: block?.content,
           });
         }
       });
