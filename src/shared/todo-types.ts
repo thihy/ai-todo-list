@@ -24,6 +24,10 @@ export interface Todo {
   drawingIds: ULID[];
   /** Group (directory) this task belongs to, or null for the root/unfiled area. */
   groupId: ULID | null;
+  /** Parent todo id (SubTask support). null = top-level task. Cycles are
+   *  rejected at the API boundary; deleting a parent sets this to NULL on
+   *  its former children (ON DELETE SET NULL on the self-FK). */
+  parentId: ULID | null;
 }
 
 export interface TodoCreate {
@@ -35,6 +39,8 @@ export interface TodoCreate {
   tags?: string[];
   /** Group to file this task under; null/omitted = unfiled. */
   groupId?: ULID | null;
+  /** Parent todo id for SubTask creation; null/omitted = top-level. */
+  parentId?: ULID | null;
 }
 
 export interface TodoPatch {
@@ -46,6 +52,9 @@ export interface TodoPatch {
   tags?: string[];
   /** Move the task to a different group; null = unfiled. */
   groupId?: ULID | null;
+  /** Re-parent the task (make it a subtask of another task); null = promote
+   *  to top-level. Cycles are rejected at the API boundary. */
+  parentId?: ULID | null;
 }
 
 export interface TodoFilter {
@@ -58,6 +67,8 @@ export interface TodoFilter {
   dueBefore?: number | null;
   dueAfter?: number | null;
   search?: string;
+  /** Restrict to direct children of this parent id; null = top-level tasks only. */
+  parentId?: ULID | null;
 }
 
 // ----- Groups (hand-edited directory tree; tasks are "files" in a group) -----

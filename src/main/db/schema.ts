@@ -7,7 +7,7 @@ const { ulid } = ulidPkg;
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 
 const MIGRATIONS: ReadonlyArray<{ version: number; sql: string }> = [
   {
@@ -203,6 +203,24 @@ const MIGRATIONS: ReadonlyArray<{ version: number; sql: string }> = [
         INSERT INTO todos_fts(rowid, title, body)
           VALUES (new.rowid, new.title, new.body);
       END;
+    `,
+  },
+  {
+    version: 5,
+    // SubTask support: a todo can now have a parent todo (parent_id).
+    // The model is "tasks can have sub-tasks, but groups can NOT be children
+    // of tasks" (a group is a directory; a task is a file). Self-FK with
+    // ON DELETE SET NULL so deleting a parent promotes its subtasks to
+    // top-level rather than cascading — subtasks are independent units of
+    // work that should survive the parent's deletion.
+    //
+    // We do NOT use a CYCLE prevention check (SQLite supports it via WITH
+    // RECURSIVE but the cost is high for a common query). Instead the
+    // application layer (todo.update) refuses to set parent_id to a
+    // descendant of the current todo before issuing the UPDATE.
+    sql: `
+      ALTER TABLE todos ADD COLUMN parent_id TEXT;
+      CREATE INDEX idx_todos_parent ON todos(parent_id);
     `,
   },
 ];

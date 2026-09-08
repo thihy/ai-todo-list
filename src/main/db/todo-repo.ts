@@ -26,6 +26,7 @@ interface TodoRow {
   updated_at: number;
   done_at: number | null;
   group_id: string | null;
+  parent_id: string | null;
 }
 
 function rowToTodo(row: TodoRow, tags: string[], drawingIds: string[]): Todo {
@@ -44,6 +45,7 @@ function rowToTodo(row: TodoRow, tags: string[], drawingIds: string[]): Todo {
     attachmentIds: [],
     drawingIds,
     groupId: row.group_id,
+    parentId: row.parent_id,
   };
 }
 
@@ -87,6 +89,16 @@ export class TodoRepo {
       const term = `%${filter.search}%`;
       params.push(term, term);
     }
+    // SubTask filter: parentId === null = top-level only; a string id =
+    // direct children of that parent. Omitting the field (or undefined)
+    // returns all todos regardless of nesting — used by the AI tool
+    // surface when it doesn't care about hierarchy.
+    if (filter.parentId === null) {
+      where.push('parent_id IS NULL');
+    } else if (typeof filter.parentId === 'string') {
+      where.push('parent_id = ?');
+      params.push(filter.parentId);
+    }
 
     const sql = `SELECT * FROM todos ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY updated_at DESC`;
     const rows = this.db.prepare<typeof params, TodoRow>(sql).all(...params);
@@ -108,14 +120,23 @@ export class TodoRepo {
     const project = input.project ?? null;
     const dueAt = input.dueAt ?? null;
     const groupId = input.groupId ?? null;
+    const parentId = input.parentId ?? null;
+
+    // Validate parent exists when set. We don't enforce a "depth" limit —
+    // the renderer (and the user) can nest arbitrarily deep; the data model
+    // doesn't care.
+    if (parentId !== null) {
+      const exists = this.db.prepare('SELECT 1 FROM todos WHERE id = ?').get(parentId);
+      if (!exists) throw new Error(`parent_not_found: ${parentId}`);
+    }
 
     const tx = this.db.transaction(() => {
       this.db
         .prepare(
-          `INSERT INTO todos (id, title, status, priority, project, due_at, body_path, created_at, updated_at, group_id)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO todos (id, title, status, priority, project, due_at, body_path, created_at, updated_at, group_id, parent_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
-        .run(id, input.title, status, priority, project, dueAt, bodyPath, now, now, groupId);
+        .run(id, input.title, status, priority, project, dueAt, bodyPath, now, now, groupId, parentId);
       if (input.tags?.length) {
         const stmt = this.db.prepare('INSERT OR IGNORE INTO tags(todo_id, tag) VALUES (?, ?)');
         for (const t of input.tags) stmt.run(id, t);
@@ -136,6 +157,7 @@ export class TodoRepo {
       project: 'project',
       dueAt: 'due_at',
       groupId: 'group_id',
+      parentId: 'parent_id',
     };
     for (const [k, v] of Object.entries(patch)) {
       if (v === undefined) continue;
@@ -147,6 +169,21 @@ export class TodoRepo {
     }
     if (fields.length === 0 && !patch.tags) {
       return this.get(id)!;
+    }
+
+    // Cycle prevention: when re-parenting, refuse to set parent_id to a
+    // descendant of the current todo (would create a cycle). Walking
+    // descendants is O(n) but n is the size of the user's todo list, and
+    // a reparent is a rare admin op — fine to do synchronously.
+    if (patch.parentId !== undefined && patch.parentId !== null && patch.parentId !== id) {
+      if (this.isDescendant(patch.parentId, id)) {
+        throw new Error('不能将任务移动到它自己的子任务中（会形成循环）');
+      }
+      const exists = this.db.prepare('SELECT 1 FROM todos WHERE id = ?').get(patch.parentId);
+      if (!exists) throw new Error(`parent_not_found: ${patch.parentId}`);
+    }
+    if (patch.parentId === id) {
+      throw new Error('不能将任务设置为自己的父任务');
     }
 
     const tx = this.db.transaction(() => {
@@ -171,6 +208,24 @@ export class TodoRepo {
     });
     tx();
     return this.get(id)!;
+  }
+
+  /** Walk the parent_id chain from `candidate` to see if it eventually
+   *  reaches `target` (i.e. candidate is a descendant of target). Used
+   *  to reject cyclic re-parenting in update(). */
+  private isDescendant(candidate: ULID, target: ULID): boolean {
+    let cur: string | null = candidate;
+    const seen = new Set<string>();
+    while (cur !== null) {
+      if (cur === target) return true;
+      if (seen.has(cur)) return false; // defensive against pre-existing cycles
+      seen.add(cur);
+      const row = this.db
+        .prepare<[string], { parent_id: string | null }>('SELECT parent_id FROM todos WHERE id = ?')
+        .get(cur);
+      cur = row?.parent_id ?? null;
+    }
+    return false;
   }
 
   delete(id: ULID): void {
