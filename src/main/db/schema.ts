@@ -7,7 +7,7 @@ const { ulid } = ulidPkg;
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 const MIGRATIONS: ReadonlyArray<{ version: number; sql: string }> = [
   {
@@ -147,6 +147,33 @@ const MIGRATIONS: ReadonlyArray<{ version: number; sql: string }> = [
 
       ALTER TABLE todos ADD COLUMN group_id TEXT;
       CREATE INDEX idx_todos_group ON todos(group_id);
+    `,
+  },
+  {
+    version: 3,
+    // Conversations are independent AI threads the user controls (new /
+    // rename / delete / switch). Each conversation maps 1:1 to a DSH session
+    // persisted as <DSH_SESSIONS_ROOT>/<sanitized-cwd>/<id>/session.jsonl.zstd.
+    // The DB row holds only user-visible metadata (title, timestamps); the
+    // event log lives in the JSONL backend so the AI sees its prior turns.
+    //
+    // archived is a soft-delete flag so the user can recover deleted threads.
+    // Hard delete (DROP) would also remove the JSONL file on the persistence
+    // backend, but the user-facing model is "archive, not destroy" — you
+    // can always bring it back. Permanent delete is a future operation.
+    //
+    // updated_at is bumped on every turn so the sidebar can sort "most
+    // recent first" without re-querying the persistence layer.
+    sql: `
+      CREATE TABLE conversations (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        archived INTEGER NOT NULL DEFAULT 0
+      );
+      CREATE INDEX idx_conversations_updated ON conversations(updated_at DESC);
+      CREATE INDEX idx_conversations_archived ON conversations(archived);
     `,
   },
 ];
