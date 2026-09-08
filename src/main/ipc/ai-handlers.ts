@@ -276,7 +276,17 @@ export function registerAiHandlers(dsh: DshHandle): void {
           md: deps.md,
           drawings: deps.drawings,
         });
-        if (runtime) await runtime.disposeConversation(req.id);
+        if (runtime) {
+          await runtime.disposeConversation(req.id);
+          // L3-G: also drop the on-disk JSONL log so a deleted conversation
+          // doesn't leave a ghost under <DSH_SESSIONS_ROOT>. This is the
+          // "and cleans JSONL" half of the L3-G contract. The previous
+          // implementation left the log for later cleanup via Settings →
+          // Data Directory; that was confusing — the user explicitly chose
+          // delete, so honor it.
+          const r = await runtime.removeSession(req.id);
+          if (r.removed) logger.info(`conversation delete: also removed JSONL for ${req.id}`);
+        }
       } catch (err) {
         // Non-fatal — the agent will be dropped on next dispose() anyway.
         console.warn('[ai.conversation.delete] runtime dispose failed:', (err as Error).message);

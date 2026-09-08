@@ -23,7 +23,7 @@
 import { app } from 'electron';
 import { resolve, dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { existsSync } from 'node:fs';
+import { existsSync, readdirSync, rmSync } from 'node:fs';
 import { logger } from '../logger';
 import type { ResolvedEndpoint } from './client';
 import type { TodoRepo } from '../db/todo-repo';
@@ -84,6 +84,11 @@ export interface DshRuntime {
   loadHistory(opts: { conversationId: string; signal?: AbortSignal }): Promise<HistoryTurn[]>;
   /** Drop the cached agent for one conversation (no-op if absent). */
   disposeConversation(conversationId: string): Promise<void>;
+  /** L3-G: delete the on-disk JSONL log for a conversation (no-op if absent).
+   *  Walks <DSH_SESSIONS_ROOT>/<project>/<id>/ recursively and removes it.
+   *  The DB row is the renderer's concern (ConversationRepo.delete); we only
+   *  own the durable log. Safe to call on an unknown id — returns silently. */
+  removeSession(conversationId: string): Promise<{ removed: boolean }>;
   dispose(): Promise<void>;
 }
 
@@ -534,6 +539,31 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
       conversations.delete(conversationId);
       try { entry.offSession(); } catch { /* noop */ }
       try { await entry.disposeHandle(); } catch { /* noop */ }
+    },
+
+    async removeSession(conversationId) {
+      // The JSONL plugin doesn't expose a delete method (it's append-only
+      // by design) — we walk the persistence root and rm the per-session
+      // directory. Layout is <root>/<sanitized-project>/<sessionId>/.
+      const root = process.env['DSH_SESSIONS_ROOT'];
+      if (!root || !existsSync(root)) return { removed: false };
+      let removed = false;
+      try {
+        const projects = readdirSync(root, { withFileTypes: true });
+        for (const p of projects) {
+          if (!p.isDirectory()) continue;
+          const target = join(root, p.name, conversationId);
+          if (!existsSync(target)) continue;
+          rmSync(target, { recursive: true, force: true });
+          logger.info(`removeSession(${conversationId}): removed ${target}`);
+          removed = true;
+          // Multiple project dirs in principle (different cwd contexts);
+          // remove them all so the conversation is fully purged.
+        }
+      } catch (err) {
+        logger.warn(`removeSession(${conversationId}) failed: ${(err as Error).message}`);
+      }
+      return { removed };
     },
 
     async dispose() {
