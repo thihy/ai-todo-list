@@ -65,6 +65,32 @@
   config:
     agents: []
 
+# Log-backed session-title service. Owns the deterministic fallback (first
+# eligible user message, capped) and accepts one optional provider for async
+# AI-generated titles. Without a provider, titles stay on the fallback path.
+# All three caps are required — no defaults supplied by the package.
+- id: session-title
+  name: '@deepseek-ai/dsh-session-title'
+  config:
+    fallbackMaxWords: 8
+    fallbackMaxBytes: 96
+    maxTitleBytes: 120
+
+# LLM-backed title provider. Uses the FIRST eligible user message as the
+# summarization input — short, bounded by maxInputBytes / maxOutputTokens,
+# with a 15s deadline. The provider inherits the main request's route by
+# default (omit provider/model) so title generation uses the same model
+# the user configured for the conversation. The result supersedes the
+# fallback asynchronously; the main agent run is never delayed by it.
+- id: session-title-first-prompt-llm
+  name: '@deepseek-ai/dsh-session-title-first-prompt-llm'
+  config:
+    targetWords: 6
+    targetCjkCharacters: 10
+    maxInputBytes: 4096
+    maxOutputTokens: 64
+    timeoutMs: 15000
+
 # Token measurement service. Inject: sessionProjections (already mounted above).
 # Injects `tokenMeter` onto ctx for any service that wants to budget context
 # (compaction, pruner, agent-loop). Zero config — defaults are fine.

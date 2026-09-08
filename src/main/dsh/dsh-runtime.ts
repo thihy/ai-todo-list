@@ -20,7 +20,7 @@
 // sessions, so each cached agent's listener filters by session.id and
 // only forwards events for its own conversation. See ensureAgent().
 
-import { app } from 'electron';
+import { app, BrowserWindow } from 'electron';
 import { resolve, dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { existsSync, readdirSync, rmSync } from 'node:fs';
@@ -47,6 +47,10 @@ export interface DshRuntimeDeps {
   repo: TodoRepo;
   md: MarkdownStore;
   drawings: DrawingStore;
+  /** Required so the DSH session-title service can sync AI-generated titles
+   *  back into the renderer's conversation list. Without this, titles stay
+   *  in the session log and never appear in the sidebar. */
+  conversations: ConversationRepo;
 }
 
 // One rendered conversation item. Loaded from the JSONL backend via
@@ -345,6 +349,44 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
     }>;
   } | undefined;
   if (!agentsApi) throw new Error('ctx.agents absent');
+
+  // Permanent listener: every `session/title` event flowing through the DSH
+  // runtime gets reflected into the local conversations DB so the renderer's
+  // sidebar and switcher stay in sync. The DSH session-title service emits
+  // these events in two cases:
+  //   1. The deterministic fallback is created after the first eligible user
+  //      message (truncated first-prompt snippet).
+  //   2. The optional LLM provider (dsh-session-title-first-prompt-llm)
+  //      completes its async summary — last event wins.
+  // Both flow through here; we just rename whatever's in the DB to whatever
+  // arrived, and broadcast app:data-changed { scope: 'conversations' } so the
+  // AIPane / sidebar refresh without a manual re-list.
+  ctx.on('session/event', (session: unknown, event: { type: string; data?: unknown }) => {
+    if (event?.type !== 'session/title') return;
+    const sid = (session as { id?: unknown } | undefined)?.id;
+    if (sid == null) return;
+    const conversationId = String(sid);
+    const d = event.data as { title?: unknown; source?: { kind?: string } } | undefined;
+    const title = typeof d?.title === 'string' ? d.title.trim() : '';
+    if (!title) return;
+    const existing = deps.conversations.get(conversationId);
+    if (!existing) {
+      // Session exists but no DB row yet — the renderer hasn't created it
+      // (or migrateOrphanSessions is still in flight). Skip; the next
+      // create() / migration will pick up the title from the session log.
+      return;
+    }
+    if (existing.title === title) return;
+    try {
+      deps.conversations.rename(conversationId, title);
+      logger.info(`DSH title sync ${conversationId}: "${existing.title}" → "${title}" (source=${d?.source?.kind ?? 'unknown'})`);
+      for (const w of BrowserWindow.getAllWindows()) {
+        if (!w.isDestroyed()) w.webContents.send('app:data-changed', { scope: 'conversations' });
+      }
+    } catch (err) {
+      logger.warn(`DSH title rename failed for ${conversationId}: ${(err as Error).message}`);
+    }
+  });
 
   const persistenceApi = ctx.get('sessionPersistence') as {
     load: (id: string, signal?: AbortSignal) => Promise<{

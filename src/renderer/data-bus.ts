@@ -10,7 +10,7 @@
 import { useSyncExternalStore } from 'react';
 import type { DataScope } from '../shared/thihy-api';
 
-const SCOPES: readonly DataScope[] = ['todos', 'groups', 'content', 'drawings'];
+const SCOPES: readonly DataScope[] = ['todos', 'groups', 'content', 'drawings', 'conversations'];
 const scopeVersions = new Map<DataScope, number>(SCOPES.map((s) => [s, 0]));
 const subscribers = new Set<() => void>();
 

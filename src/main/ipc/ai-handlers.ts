@@ -73,6 +73,7 @@ export function registerAiHandlers(dsh: DshHandle): void {
         repo: deps.repo,
         md: deps.md,
         drawings: deps.drawings,
+        conversations: deps.conversations,
       });
       if (runtime) await runtime.cancel(req.conversationId);
       return okResult({ ok: true });
@@ -142,6 +143,7 @@ export function registerAiHandlers(dsh: DshHandle): void {
       repo: deps.repo,
       md: deps.md,
       drawings: deps.drawings,
+      conversations: deps.conversations,
     });
     if (!runtime) {
       const message = 'DSH runtime unavailable — agent loop did not boot. Check logs (main process).';
@@ -208,26 +210,12 @@ export function registerAiHandlers(dsh: DshHandle): void {
       // can re-list when it next focuses the conversation list).
       deps.conversations.touch(req.conversationId);
 
-      // L3-D: auto-name on first turn. If the row is still on its default
-      // title (create's `新对话 <timestamp>` OR the migration fallback
-      // `未命名对话`), derive a title from the first user prompt and rename.
-      // Only fires once — after the rename, the title no longer matches the
-      // default pattern so subsequent turns are no-ops. This avoids the
-      // "every conversation is called 新对话 2026/9/8 ..." pile-up the
-      // previous default produced.
-      const convRow = deps.conversations.get(req.conversationId);
-      if (convRow && isDefaultTitle(convRow.title)) {
-        const derived = autoTitleFromPrompt(req.prompt);
-        if (derived && derived !== convRow.title) {
-          try {
-            deps.conversations.rename(req.conversationId, derived);
-            logger.info(`auto-named conversation ${req.conversationId}: "${convRow.title}" → "${derived}"`);
-          } catch (err) {
-            // Non-fatal: the user can rename manually. Log and continue.
-            logger.warn(`auto-rename failed for ${req.conversationId}: ${(err as Error).message}`);
-          }
-        }
-      }
+      // L3-D auto-rename is now handled by the DSH session-title service
+      // (mounted via @deepseek-ai/dsh-session-title + the
+      // @deepseek-ai/dsh-session-title-first-prompt-llm provider in
+      // resources/dsh/cordis.yml). dsh-runtime.ts bridges the resulting
+      // `session/title` events back into the conversations table; see the
+      // permanent listener at the top of bootDsh().
 
       return okResult({ invocationId, costUsd });
     } catch (err) {
@@ -257,6 +245,7 @@ export function registerAiHandlers(dsh: DshHandle): void {
             repo: deps!.repo,
             md: deps!.md,
             drawings: deps!.drawings,
+            conversations: deps!.conversations,
           });
           if (!runtime) return conv;
           const turns = await runtime.loadHistory({ conversationId: conv.id });
@@ -344,6 +333,7 @@ export function registerAiHandlers(dsh: DshHandle): void {
           repo: deps.repo,
           md: deps.md,
           drawings: deps.drawings,
+          conversations: deps.conversations,
         });
         if (runtime) {
           await runtime.disposeConversation(req.id);
@@ -402,6 +392,7 @@ export function registerAiHandlers(dsh: DshHandle): void {
         repo: deps.repo,
         md: deps.md,
         drawings: deps.drawings,
+        conversations: deps.conversations,
       });
       if (!runtime) return okResult({ turns: [] });
       const turns = await runtime.loadHistory({ conversationId: req.id });
@@ -418,7 +409,10 @@ export function bindAiDeps(d: HandlerDeps): void {
 
 export type { HandlerDeps };
 
-/** Map an AI tool name to the data scope it mutates (null = read-only/no refresh). */
+/** Map an AI tool name to the data scope it mutates (null = read-only/no refresh).
+ *  The `conversations` scope is updated by the DSH session-title listener in
+ *  dsh-runtime.ts (it pushes app:data-changed directly), not by an AI tool
+ *  call — so no `conversation.*` entry here. */
 function mutatingScope(name: string): DataScope | null {
   switch (name) {
     case 'todo.create':
@@ -435,34 +429,4 @@ function mutatingScope(name: string): DataScope | null {
     default:
       return null;
   }
-}
-
-// --- L3-D helpers ---
-// Exported for unit tests in tests/unit/ai-handlers-helpers.spec.ts —
-// the auto-rename heuristic is pure and tiny, but it's the gate that
-// decides whether a conversation gets renamed or keeps its default
-// title, so a regression here would silently revert every chat to
-// "新对话 <timestamp>".
-
-// exported for tests
-export const __testing = { isDefaultTitle, autoTitleFromPrompt };
-
-/** Recognize the default titles ConversationRepo.create / migration emit,
- *  so we only auto-rename on the FIRST turn — subsequent turns see a
- *  user-chosen (or already-derived) title and leave it alone. */
-function isDefaultTitle(title: string): boolean {
-  return title.startsWith('新对话 ') || title === '未命名对话';
-}
-
-const AUTO_TITLE_MAX = 16;
-
-/** Derive a conversation title from the user's first prompt. We don't ask
- *  the model — that's a round trip we'd burn for a UI nicety. Instead we
- *  take the first AUTO_TITLE_MAX visible characters and append "…" when
- *  truncated. Newlines collapsed to spaces; whitespace trimmed. */
-function autoTitleFromPrompt(prompt: string): string {
-  const flat = prompt.replace(/\s+/g, ' ').trim();
-  if (!flat) return '';
-  if (flat.length <= AUTO_TITLE_MAX) return flat;
-  return flat.slice(0, AUTO_TITLE_MAX - 1) + '…';
 }

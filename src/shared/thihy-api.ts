@@ -27,7 +27,7 @@ export type AppEvent =
 /** Coarse-grained scope of a data mutation, so the renderer can re-fetch only
  *  the stores that actually changed (e.g. the AI's todo.create tool mutating
  *  the DB in the main process). */
-export type DataScope = 'todos' | 'groups' | 'content' | 'drawings';
+export type DataScope = 'todos' | 'groups' | 'content' | 'drawings' | 'conversations';
 
 export interface AppEventMap {
   'app:todo-created': { id: string };
@@ -128,6 +128,14 @@ export interface ThihyApi {
     popupMenu(): Promise<IpcResponse<'app.popupMenu'>>;
     /** Pop a single category's submenu (flat topbar buttons). */
     popupMenuCategory(category: '文件' | '编辑' | '视图' | '窗口' | '帮助'): Promise<IpcResponse<'app.popupMenuCategory'>>;
+    /**
+     * Show a native file picker. On confirm, main reads up to `maxBytes` of
+     * the file as utf-8 text and returns `{ canceled:false, text, name, ... }`.
+     * Returns `{ canceled:true }` if the user dismisses the dialog. Returns
+     * `ok:false` with code `not_text` / `too_large` if the file is binary or
+     * over the byte limit, so the renderer can surface a clear message.
+     */
+    pickFile(opts?: { maxBytes?: number }): Promise<IpcResponse<'app.pickFile'>>;
     /** User-menu actions (bottom-left chip). */
     action(a: 'about' | 'checkUpdate' | 'quit'): Promise<IpcResponse<'app.action'>>;
   };
