@@ -1597,48 +1597,24 @@ function registerDomainTools(
   }));
 
   // ---------------------------------------------------------------------------
-  // ask_user_question / ask_user_approval — model-facing HITL primitives.
+  // ask_user_approval — model-facing HITL primitive.
   //
-  // The renderer-facing side (UserQuestionCard / UserApprovalCard) is the
-  // answerer; these are the CALLER side. When the model wants to ask a
-  // multi-choice question or get a binary OK, it invokes one of these and
-  // receives the user's answer. 90s timeout — if the user doesn't answer
-  // in 90s, the call rejects and the agent loop proceeds.
+  // NOTE: ask_user_question is NOT registered here. It is owned by
+  // @deepseek-ai/dsh-tool-ask-user (mounted in cordis.yml), which
+  // dispatches via ctx.userQuestions.ask() through the user-questions
+  // waterfall. If we register it here as well, DSH boot fails with
+  // "tool 'ask_user_question' is already registered" — see commit
+  // 27de656… and the bug fixed when switching conversations used to
+  // trip this on every switch.
   //
-  // Wiring: the runtime listener installed earlier in bootDsh() bridges
-  // ctx.userQuestions.ask() / ctx.approval.request() to the renderer via
-  // IPC (see dsh-runtime.ts: ctx.on('user-questions/request', ...) and
-  // ctx.on('approval/request', ...)).
+  // ask_user_approval is ours: DSH does not ship a built-in approval
+  // tool, so we register it here and bridge via the 'approval/request'
+  // waterfall (the listener installed in bootDsh() forwards to the
+  // renderer via IPC, where UserApprovalCard renders the gate).
+  //
+  // 90s timeout — if the user doesn't answer in 90s, the call rejects
+  // and the agent loop proceeds.
   // ---------------------------------------------------------------------------
-
-  reg(defineTool({
-    name: 'ask_user_question',
-    description: 'Pause the agent loop and ask the user a multi-choice question (or several). Returns the user\'s selection as { answers: [{ id, selected: string[], custom? }] }. Prefer this over open-ended text questions when the choices are enumerable — it\'s faster for the user and gives the model structured input. Auto-cancels after 90s if the user doesn\'t answer.',
-    parameters: {
-      questions: { type: 'json', required: true, description: 'Array of questions, each { id, question, detail?, header?, options?: [{label, description?}], multiSelect? }. 1-4 questions per call.' },
-    },
-    output: jsonOutput,
-    async execute(args: { questions: unknown }) {
-      // Validate the shape — DSH\'s listener will validate too, but a
-      // clear error here saves a wasted waterfall call.
-      if (!Array.isArray(args.questions) || args.questions.length === 0) {
-        throw new Error('ask_user_question: `questions` must be a non-empty array');
-      }
-      if (args.questions.length > 4) {
-        throw new Error('ask_user_question: at most 4 questions per call');
-      }
-      // DSH\'s upstream user-questions handler dispatches via
-      // `ctx.waterfall(\'user-questions/request\', request, noAnswerer)`.
-      // The listener we installed in bootDsh() (ctx.on(\'user-questions/request\', ...))
-      // mints a reqId, broadcasts to the renderer, and resolves the
-      // returned promise with the user\'s answer. Passing a noAnswerer
-      // as the final arg signals "no upstream fallback" so the listener
-      // is the sole answerer.
-      const noAnswerer = (): unknown => { throw new Error('no upstream answerer available'); };
-      const result = await ctx.waterfall('user-questions/request', { questions: args.questions }, noAnswerer);
-      return result as UserQuestionAnswer;
-    },
-  }));
 
   reg(defineTool({
     name: 'ask_user_approval',
