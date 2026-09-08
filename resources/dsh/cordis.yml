@@ -81,3 +81,27 @@
   name: '@deepseek-ai/dsh-tool-todo'
   config:
     allowParallelInProgress: false
+
+# Web access seam. Provides ctx.web (a `searchProvider`+`fetchProvider` seam)
+# over which dsh-tool-web registers model-facing web_search + web_fetch tools.
+# fetchProvider: "http" — resolved to dsh-web-fetch-http below (id:"http").
+# searchProvider: "deepseek-official" — dsh-web-search-deepseek is NOT mounted
+# (it requires the real DeepSeek Anthropic-compatible Messages endpoint with
+# the `web_search_20250305` server tool + dsh-credentials). dsh-web stores the
+# id at boot and only resolves it at call time, so an unknown id boots clean
+# and the model gets a WebError when (if) it tries web_search.
+- id: web
+  name: '@deepseek-ai/dsh-web'
+  config:
+    fetchProvider: http
+    searchProvider: deepseek-official
+
+# Public HTTP(S) fetch provider. Address-pinned transport (no DNS-rebind to
+# private ranges), 5 MiB cap, 30s timeout, 5 redirects. Defaults are sensible.
+- id: web-fetch-http
+  name: '@deepseek-ai/dsh-web-fetch-http'
+
+# Model-facing web_search + web_fetch over ctx.web. Inject: [tools, web,
+# systemPrompt] — all present. Default tool-call timeouts are fine.
+- id: tool-web
+  name: '@deepseek-ai/dsh-tool-web'
