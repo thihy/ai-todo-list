@@ -20,10 +20,10 @@ import type {
 import type {
   AIModel,
   AIProvider,
-  AICustomProtocol,
   AIMemoryEntry,
   AISettings,
   AIStreamEvent,
+  CustomProviderInput,
   ParsedTodo,
   PermissionRequest,
   PermissionResponse,
@@ -131,8 +131,10 @@ export interface SettingsSetReq {
   theme?: 'system' | 'light' | 'dark';
   apiKey?: string; // write-only; reading returns redacted form
   dataDir?: string; // absolute path to data directory; relocates on next launch
-  protocol?: AICustomProtocol; // wire protocol for the `custom` provider
-  baseUrl?: string; // base URL for the `custom` provider
+  // Replace the whole custom-providers list (apiKey-preserved merge server-side).
+  customProviders?: CustomProviderInput[];
+  // Select which custom instance is active when provider==='custom'.
+  customProviderId?: string | null;
 }
 export interface SettingsGetRes extends AISettings {
   captureHotkey: string;

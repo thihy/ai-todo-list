@@ -5,7 +5,7 @@ import type {
   IpcRequest,
   IpcResponse,
 } from './ipc-schema';
-import type { AIModel, AIProvider, AICustomProtocol, AIStreamEvent, PermissionRequest } from './ai-types';
+import type { AIModel, AIProvider, AICustomProtocol, CustomProviderInput, CustomProviderView, AIStreamEvent, PermissionRequest } from './ai-types';
 import type { Todo, TodoCreate, TodoPatch, TodoFilter, SearchHit, TodoStats } from './todo-types';
 import type { ContentVersionEntry } from './todo-types';
 import type { DrawingMeta, DrawingScene } from './todo-types';
@@ -60,8 +60,8 @@ export interface SettingsPatchArgs {
   captureHotkey?: string;
   theme?: 'system' | 'light' | 'dark';
   dataDir?: string;
-  protocol?: AICustomProtocol;
-  baseUrl?: string;
+  customProviders?: CustomProviderInput[];
+  customProviderId?: string | null;
 }
 
 // --- ThihyApi ---
@@ -139,5 +139,5 @@ export type { Todo, TodoCreate, TodoPatch, TodoFilter, SearchHit, TodoStats };
 export type { ContentVersionEntry };
 export type { DrawingMeta, DrawingScene };
 export type { Group, GroupCreate, GroupPatch };
-export type { AIModel, AIProvider, AICustomProtocol, AIStreamEvent, PermissionRequest };
+export type { AIModel, AIProvider, AICustomProtocol, CustomProviderInput, CustomProviderView, AIStreamEvent, PermissionRequest };
 export type { IpcChannelName, IpcRequest, IpcResponse };

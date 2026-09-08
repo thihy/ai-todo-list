@@ -336,9 +336,11 @@ function registerSettingsHandlers(
       ...(req.theme ? { theme: req.theme } : {}),
       ...(typeof req.apiKey === 'string' ? { apiKey: req.apiKey } : {}),
       ...(typeof req.dataDir === 'string' ? { dataDir: req.dataDir } : {}),
-      ...(req.protocol ? { protocol: req.protocol } : {}),
-      ...(typeof req.baseUrl === 'string' ? { baseUrl: req.baseUrl } : {}),
+      ...(req.customProviderId !== undefined ? { customProviderId: req.customProviderId } : {}),
     });
+    if (req.customProviders) {
+      store.mergeCustomProviders(req.customProviders);
+    }
     return Promise.resolve(okResult(store.publicView()));
   });
   // Native folder picker. On confirm: checkpoint + close the DB so the SQLite

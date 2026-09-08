@@ -10,7 +10,7 @@ import { app } from 'electron';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { DEFAULT_CAPTURE_HOTKEY, ROOT_DIR_NAME, CONFIG_FILENAME, DEFAULT_PROVIDER } from '../../shared/constants';
-import type { AIModel, AIProvider, AICustomProtocol } from '../../shared/ai-types';
+import type { AIModel, AIProvider, CustomProviderConfig, CustomProviderInput } from '../../shared/ai-types';
 
 export interface PersistedSettings {
   provider: AIProvider;
@@ -23,10 +23,10 @@ export interface PersistedSettings {
   monthlyCostUsd: number;
   /** Absolute path to the data directory, or null for the default location. */
   dataDir: string | null;
-  /** Wire protocol for the `custom` provider. */
-  protocol: AICustomProtocol;
-  /** Base URL for the `custom` provider (e.g. https://api.openai.com/v1). */
-  baseUrl: string;
+  /** User-defined custom provider instances. */
+  customProviders: CustomProviderConfig[];
+  /** Active custom instance id when provider==='custom'; null = none. */
+  customProviderId: string | null;
 }
 
 const DEFAULTS: PersistedSettings = {
@@ -39,8 +39,8 @@ const DEFAULTS: PersistedSettings = {
   lastHeartbeatAt: null,
   monthlyCostUsd: 0,
   dataDir: null,
-  protocol: 'openai',
-  baseUrl: '',
+  customProviders: [],
+  customProviderId: null,
 };
 
 /** Default data root when the user has not picked a directory. */
@@ -103,9 +103,42 @@ export class SettingsStore {
       captureHotkey: v.captureHotkey,
       theme: v.theme,
       dataDir: this.getDataDir(),
-      protocol: v.protocol,
-      baseUrl: v.baseUrl,
+      customProviders: v.customProviders.map((c) => ({
+        id: c.id,
+        name: c.name,
+        protocol: c.protocol,
+        baseUrl: c.baseUrl,
+        apiKeyRedacted: c.apiKey
+          ? `${c.apiKey.slice(0, 4)}${'*'.repeat(Math.max(c.apiKey.length - 8, 0))}${c.apiKey.slice(-4)}`
+          : '',
+        model: c.model,
+      })),
+      customProviderId: v.customProviderId,
     };
+  }
+
+  /**
+   * Replace the custom-providers list from a writable input. For entries that
+   * omit `apiKey` (the renderer never re-types keys it isn't editing), the
+   * previously stored key is preserved. Entries whose id no longer appears in
+   * the input are dropped. If the active id is dropped, it is cleared.
+   */
+  mergeCustomProviders(input: CustomProviderInput[]): PersistedSettings {
+    const prevById = new Map(this.cache.customProviders.map((c) => [c.id, c]));
+    const next: CustomProviderConfig[] = input.map((c) => ({
+      id: c.id,
+      name: c.name,
+      protocol: c.protocol,
+      baseUrl: c.baseUrl,
+      apiKey: c.apiKey && c.apiKey.length > 0 ? c.apiKey : prevById.get(c.id)?.apiKey ?? '',
+      model: c.model,
+    }));
+    this.patch({ customProviders: next });
+    const ids = new Set(next.map((c) => c.id));
+    if (this.cache.customProviderId && !ids.has(this.cache.customProviderId)) {
+      this.patch({ customProviderId: null });
+    }
+    return this.cache;
   }
 
   patch(patch: Partial<PersistedSettings>): PersistedSettings {

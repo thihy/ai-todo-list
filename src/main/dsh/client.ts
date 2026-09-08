@@ -6,7 +6,7 @@
 
 import { logger } from '../logger';
 import type { DshInvocationRequest, DshInvocationResult } from './types';
-import type { AIProvider, AICustomProtocol } from '../../shared/ai-types';
+import type { AIProvider, AICustomProtocol, CustomProviderConfig } from '../../shared/ai-types';
 
 /** Built-in provider → default endpoint. */
 const BUILTIN_ENDPOINTS: Record<
@@ -28,24 +28,29 @@ export interface ResolvedEndpoint {
 
 /**
  * Resolve the concrete endpoint from persisted settings. Returns null for the
- * `shim` provider (no real call) or when `custom` lacks a baseURL.
+ * `shim` provider (no real call) or when `custom` has no usable instance.
  */
 export function resolveEndpoint(s: {
   provider: AIProvider;
-  protocol: AICustomProtocol;
-  baseUrl: string;
+  customProviders: CustomProviderConfig[];
+  customProviderId: string | null;
   apiKey: string | null;
   model: string;
 }): ResolvedEndpoint | null {
   if (s.provider === 'shim') return null;
   if (s.provider === 'custom') {
-    const baseUrl = (s.baseUrl ?? '').trim().replace(/\/+$/, '');
+    // Active instance by id, else the first one as a fallback. No instance at
+    // all → not configured.
+    const inst =
+      s.customProviders.find((c) => c.id === s.customProviderId) ?? s.customProviders[0];
+    if (!inst) return null;
+    const baseUrl = inst.baseUrl.trim().replace(/\/+$/, '');
     if (!baseUrl) return null;
     return {
-      protocol: s.protocol,
+      protocol: inst.protocol,
       baseUrl,
-      apiKey: s.apiKey ?? '',
-      model: s.model,
+      apiKey: inst.apiKey,
+      model: inst.model,
     };
   }
   const built = BUILTIN_ENDPOINTS[s.provider];

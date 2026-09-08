@@ -34,6 +34,35 @@ export const PROTOCOL_LABELS: Record<AICustomProtocol, string> = {
   anthropic: 'Anthropic（/messages）',
 };
 
+/**
+ * A user-defined custom provider instance. The user can create arbitrarily
+ * many (e.g. "OpenRouter", "公司网关", "本地 Ollama 兼容层"), each with its own
+ * protocol / baseURL / API key / model. `customProviderId` in settings selects
+ * which one is active when `provider === 'custom'`.
+ *
+ * `apiKey` is the stored plaintext — server-side only; the renderer always
+ * receives a redacted form (`CustomProviderView.apiKeyRedacted`).
+ */
+export interface CustomProviderConfig {
+  id: string;
+  name: string;
+  protocol: AICustomProtocol;
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+}
+
+/** Writable shape: apiKey is optional so the renderer can send back the list
+ *  without re-typing keys; the store preserves keys for entries that omit it. */
+export type CustomProviderInput = Omit<CustomProviderConfig, 'apiKey'> & {
+  apiKey?: string;
+};
+
+/** Redacted renderer-facing form. */
+export type CustomProviderView = Omit<CustomProviderConfig, 'apiKey'> & {
+  apiKeyRedacted: string;
+};
+
 /** Models offered per provider in the settings UI. `custom` is free-form. */
 export const PROVIDER_MODELS: Record<AIProvider, string[]> = {
   deepseek: ['deepseek-chat', 'deepseek-reasoner'],
@@ -148,8 +177,8 @@ export interface AISettings {
   connected: boolean;
   lastHeartbeatAt: number | null;
   monthlyCostUsd: number;
-  /** Wire protocol — meaningful when provider === 'custom'. */
-  protocol: AICustomProtocol;
-  /** Base URL — meaningful when provider === 'custom'. */
-  baseUrl: string;
+  /** User-defined custom provider instances (meaningful when provider==='custom'). */
+  customProviders: CustomProviderView[];
+  /** Active custom instance id when provider==='custom'; null = none selected. */
+  customProviderId: string | null;
 }
