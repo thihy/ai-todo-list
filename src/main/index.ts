@@ -149,6 +149,20 @@ function bootstrap(): void {
       registerAiHandlers(dsh);
       bindAiDeps({ dsh, settings, repo, conversations, md, drawings });
       logger.info('DSH AI handlers registered');
+
+      // L3-C: backfill DB rows for sessions that exist on disk but have no
+      // conversations row. Runs once per boot, idempotent — safe to re-run.
+      // We don't await: the migration is best-effort and the renderer's
+      // first conversation.list() call will pick up whatever rows are ready.
+      // A slow migration on a large sessions dir shouldn't block window open.
+      try {
+        const { migrateOrphanSessions } = await import('./dsh/dsh-runtime');
+        void migrateOrphanSessions(conversations).catch((err) => {
+          logger.warn(`migrateOrphanSessions: ${(err as Error).message}`);
+        });
+      } catch (err) {
+        logger.warn(`migrateOrphanSessions import failed: ${(err as Error).message}`);
+      }
     } catch (err) {
       logger.error(`DSH init skipped: ${(err as Error).message}`);
     }

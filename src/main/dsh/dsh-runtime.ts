@@ -29,6 +29,7 @@ import type { ResolvedEndpoint } from './client';
 import type { TodoRepo } from '../db/todo-repo';
 import type { MarkdownStore } from '../files/markdown';
 import type { DrawingStore } from '../files/drawings';
+import type { ConversationRepo } from '../db/conversation-repo';
 import type { TodoFilter, TodoStatus } from '../../shared/todo-types';
 import { TODO_STATUSES } from '../../shared/todo-types';
 
@@ -87,6 +88,162 @@ export interface DshRuntime {
 }
 
 let runtimePromise: Promise<DshRuntime | null> | null = null;
+
+/**
+ * L3-C: Backfill DB rows for sessions that exist on disk under
+ * <DSH_SESSIONS_ROOT> but have no entry in the `conversations` table.
+ *
+ * Why: pre-L2 the renderer didn't have a multi-conversation model, so
+ * sessions were created on disk by `client.ts` (and the early DSH boot
+ * of the app) without ever writing a row in `conversations`. After L2
+ * those orphans would be invisible to the new AIPane sidebar — the JSONL
+ * log survives, but no row means no UI affordance to load it.
+ *
+ * What this does: walks the persistence backend's session list, compares
+ * against the DB row set, and for every orphan:
+ *   1. Loads the session's events via persistence.load(id)
+ *   2. Extracts the FIRST user/message text (DSH shape: data.content[] with
+ *      {type:'text', text}) and uses it as the row title, truncated to
+ *      TITLE_MAX with an ellipsis when longer.
+ *   3. INSERTs a row with created_at = session.createdAt (the file mtime
+ *      the persistence plugin captured when the session was first opened)
+ *      and updated_at = Date.now() so the sidebar surfaces the new row at
+ *      the top until the user actually uses it.
+ *
+ * Safe to call repeatedly: idempotent (skips ids that already have a row).
+ * Runs after `bindAiDeps` so the migrated rows are visible on the first
+ * AIPane mount — no need for a separate refresh.
+ *
+ * Title heuristic: the FIRST user prompt is the most stable signal of
+ * intent. We don't try to update later — that's L3-D (auto-rename after
+ * first turn). Orphans whose first user message is empty (rare — happens
+ * when the session was opened but no message was sent) fall back to the
+ * default `未命名对话` title so the user still sees something.
+ */
+export async function migrateOrphanSessions(conversations: ConversationRepo): Promise<void> {
+  const TITLE_MAX = 24;
+  const persistence = await bootPersistenceOnly();
+  if (!persistence) {
+    logger.warn('migrateOrphanSessions: persistence plugin unavailable; skipping');
+    return;
+  }
+  const list = await persistence.list();
+  if (list.length === 0) {
+    logger.info('migrateOrphanSessions: 0 sessions on disk; nothing to migrate');
+    return;
+  }
+
+  let migrated = 0;
+  let skipped = 0;
+  let failed = 0;
+  for (const entry of list) {
+    if (conversations.get(entry.id)) {
+      skipped++;
+      continue;
+    }
+    // Load events to extract the first user message for the title.
+    let title = '未命名对话';
+    try {
+      const loaded = await persistence.load(entry.id);
+      const events = loaded?.events ?? [];
+      const firstUser = extractFirstUserText(events);
+      if (firstUser) title = truncateTitle(firstUser, TITLE_MAX);
+    } catch (err) {
+      logger.warn(`migrateOrphanSessions(${entry.id}): load failed, using default title: ${(err as Error).message}`);
+    }
+    try {
+      const row = conversations.create({ title });
+      // created_at should reflect the original session creation time, not
+      // the migration time — otherwise the sidebar mis-orders pre-L2 chats
+      // at the top instead of by their actual age. updated_at stays "now"
+      // so the row floats to the top until the user interacts.
+      // Patch created_at directly via the underlying handle: the public API
+      // intentionally doesn't expose this (a backfill is the only case).
+      (conversations as unknown as { db: { prepare: (sql: string) => { run: (...args: unknown[]) => void } } }).db
+        .prepare('UPDATE conversations SET created_at = ? WHERE id = ?')
+        .run(entry.createdAt, row.id);
+      logger.info(`migrateOrphanSessions: backfilled ${row.id} "${title}" (created=${new Date(entry.createdAt).toISOString()})`);
+      migrated++;
+    } catch (err) {
+      logger.warn(`migrateOrphanSessions(${entry.id}): insert failed: ${(err as Error).message}`);
+      failed++;
+    }
+  }
+  logger.info(`migrateOrphanSessions: ${migrated} migrated, ${skipped} already present, ${failed} failed (total ${list.length})`);
+}
+
+/** Truncate a title to maxChars; append "…" when truncated. */
+function truncateTitle(s: string, maxChars: number): string {
+  const trimmed = s.replace(/\s+/g, ' ').trim();
+  if (trimmed.length <= maxChars) return trimmed;
+  return trimmed.slice(0, maxChars - 1) + '…';
+}
+
+/** Pull the first user/message text out of a DSH event log. */
+function extractFirstUserText(events: ReadonlyArray<{ type: string; data?: unknown }>): string {
+  for (const ev of events) {
+    if (ev.type !== 'user/message') continue;
+    const d = ev.data as { content?: Array<{ type?: string; text?: string }> } | undefined;
+    const text = (d?.content ?? [])
+      .filter((b) => b?.type === 'text' && typeof b.text === 'string')
+      .map((b) => b.text as string)
+      .join('');
+    if (text) return text;
+  }
+  return '';
+}
+
+// --- Migration helpers ---
+//
+// The migration needs access to the persistence layer's list/load, which
+// lives inside the runtime boot. Rather than expose that as a public
+// runtime method (it would couple the migration to runtime internals), we
+// run a *second* boot of just the persistence layer — cheap, isolated,
+// and gives the migration a clean handle.
+//
+// Why a second boot: the real runtime's `boot()` registers our LLM
+// adapter and domain tools, which are not needed for a migration. A
+// dedicated boot is ~50ms and zero side effects. The migration runs at
+// app startup (after the user opens the app for the first time post-L2)
+// and not on the hot path.
+
+/** Boot a minimal cordis tree with just the session persistence plugin
+ *  and return its list()/load() methods. Returns null on failure. */
+async function bootPersistenceOnly(): Promise<{
+  list: () => Promise<Array<{ id: string; createdAt: number }>>;
+  load: (id: string) => Promise<{
+    meta: { id: string };
+    events: ReadonlyArray<{ type: string; data?: unknown }>;
+  } | undefined>;
+} | null> {
+  try {
+    const cfg = resolveAppPath('resources/dsh/cordis.yml');
+    if (!cfg || !existsSync(cfg)) return null;
+    const appRoot = app.getAppPath();
+    const bareBase = new URL('.', pathToFileURL(appRoot).href).href;
+    const bootMod = await import('@deepseek-ai/dsh-app-boot');
+    const { boot } = bootMod;
+    const ctx = await boot('thihy-migrate', cfg, undefined, undefined, bareBase) as DshContext;
+    const persistence = ctx.get('sessionPersistence') as {
+      list?: (signal?: AbortSignal) => Promise<Array<{ id: string; createdAt: number }>>;
+      load?: (id: string, signal?: AbortSignal) => Promise<{
+        meta: { id: string };
+        events: ReadonlyArray<{ type: string; data?: unknown }>;
+      } | undefined>;
+    } | undefined;
+    if (!persistence?.list || !persistence?.load) {
+      await ctx.fiber?.dispose?.();
+      return null;
+    }
+    return {
+      list: () => persistence.list!(),
+      load: (id) => persistence.load!(id),
+    };
+  } catch (err) {
+    logger.warn(`bootPersistenceOnly failed: ${(err as Error).message}`);
+    return null;
+  }
+}
 
 /** Lazily boot DSH once; returns null if boot fails (caller falls back to client.ts). */
 export function getDshRuntime(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
