@@ -11,7 +11,7 @@
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { deflateRawSync, crc32 } from 'node:zlib';
+import { deflateSync, crc32 } from 'node:zlib';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -163,7 +163,11 @@ function encodePng(rgba, w, h) {
       raw[di + 3] = rgba[si + 3];
     }
   }
-  const idat = deflateRawSync(raw);
+  // PNG IDAT requires zlib-wrapped deflate (RFC 1950), NOT raw deflate —
+  // raw deflate produces a structurally invalid PNG that Chromium/nativeImage
+  // reject ("Failed to load image from path"), which is why the tray icon and
+  // the dev window/taskbar icon silently fell back to the Electron default.
+  const idat = deflateSync(raw);
 
   function chunk(type, data) {
     const len = Buffer.alloc(4);
