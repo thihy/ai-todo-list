@@ -37,9 +37,15 @@ if (!gotLock) {
   app.quit();
 } else {
   app.on('second-instance', () => {
+    // A second instance tried to launch (e.g. the user ran `pnpm dev` again
+    // while this one is alive). The existing window is likely hidden to tray
+    // (close hides rather than quits), so we must .show() it — restore()+focus()
+    // alone leave a hidden window hidden, which from the user's side looks like
+    // "the app won't come up".
     const all = BrowserWindow.getAllWindows();
     if (all[0]) {
       if (all[0].isMinimized()) all[0].restore();
+      all[0].show();
       all[0].focus();
     }
   });
@@ -185,9 +191,11 @@ function bootstrap(): void {
     // Auto-update
     installAutoUpdater();
 
-    // Close main = hide to tray (don't quit)
+    // Close main = hide to tray (don't quit) — but in dev, quit instead so the
+    // dev process dies and the single-instance lock releases; otherwise the
+    // hidden instance blocks every subsequent `pnpm dev` from coming up.
     main.on('close', (e) => {
-      if (!isQuitting) {
+      if (!isQuitting && !isDev) {
         e.preventDefault();
         main.hide();
       }
