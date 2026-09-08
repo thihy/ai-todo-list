@@ -105,3 +105,28 @@
 # systemPrompt] — all present. Default tool-call timeouts are fine.
 - id: tool-web
   name: '@deepseek-ai/dsh-tool-web'
+
+# Skill registry: providers register reusable agent behaviors (named prompt
+# fragments / scripts / tool packs) on `ctx.skills`; the model can load any
+# scoped skill via the dsh-tool-skill loader below. Config has only one
+# optional knob (collectCacheMaxEntries) — default is fine.
+- id: skill
+  name: '@deepseek-ai/dsh-skill'
+
+# Filesystem skill provider: watches `~/.dsh/skills` and `~/.agents/skills` (and
+# any customSkillDirs) via chokidar, registers each discovered skill on
+# ctx.skills. dshHome/agentsHome are required by the schema; empty strings fall
+# through to defaults — `resolveDshHome('')` → `~/.dsh`, agentsHome → `~/.agents`.
+# If those dirs don't exist chokidar just sits on them silently (no events).
+# Add `customSkillDirs: ['<path>']` to ship a private app-owned skill catalog.
+- id: skill-filesystem
+  name: '@deepseek-ai/dsh-skill-filesystem'
+  config:
+    dshHome: ''
+    agentsHome: ''
+
+# Model-facing skill loader: registers the tool that lets the agent pick +
+# load a skill at runtime, plus a durable session catalog projection so
+# skill picks are replay-stable. Inject: [agents, tools, skills] — all present.
+- id: tool-skill
+  name: '@deepseek-ai/dsh-tool-skill'
