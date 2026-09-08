@@ -66,3 +66,18 @@
   name: '@deepseek-ai/dsh-compaction-basic'
   config:
     auto: true
+
+# Agent's INTERNAL task plan. Registers a `todo_write` tool on ctx.tools that
+# lets the model maintain a structured list of its own sub-steps for multi-step
+# work, plus a `todos` projection on ctx.sessionProjections so the list is
+# replay-stable. Distinct from our app-level todo.* tools (those manage the
+# USER's persistent TODO list in the left pane); this is the agent's scratch
+# plan for the current turn.
+#
+# allowParallelInProgress: false → "exactly one in_progress at a time" matches
+# our sequential persona. Flip to true if the model needs to coordinate
+# concurrent subagents / background work.
+- id: todo
+  name: '@deepseek-ai/dsh-tool-todo'
+  config:
+    allowParallelInProgress: false
