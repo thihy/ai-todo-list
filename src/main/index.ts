@@ -14,6 +14,7 @@ import { logger } from './logger';
 import { openDb, newId, type DbHandle } from './db/schema';
 import { TodoRepo } from './db/todo-repo';
 import { GroupRepo } from './db/group-repo';
+import { ConversationRepo } from './db/conversation-repo';
 import { MarkdownStore } from './files/markdown';
 import { DrawingStore } from './files/drawings';
 import { SettingsStore } from './settings/store';
@@ -114,6 +115,7 @@ function bootstrap(): void {
     const handle = openDb(dbPath);
     const repo = new TodoRepo(handle.db);
     const groups = new GroupRepo(handle.db);
+    const conversations = new ConversationRepo(handle.db);
     const md = new MarkdownStore(handle.db, todosDir);
     const drawings = new DrawingStore(handle.db, drawingsDir);
 
@@ -145,7 +147,7 @@ function bootstrap(): void {
       const dsh = await initDshContainer({ repo, md, drawings, settings, db: handle.db });
       const { registerAiHandlers, bindAiDeps } = await import('./ipc/ai-handlers');
       registerAiHandlers(dsh);
-      bindAiDeps({ dsh, settings, repo, md, drawings });
+      bindAiDeps({ dsh, settings, repo, conversations, md, drawings });
       logger.info('DSH AI handlers registered');
     } catch (err) {
       logger.error(`DSH init skipped: ${(err as Error).message}`);

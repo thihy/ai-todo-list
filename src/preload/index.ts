@@ -113,9 +113,20 @@ const api: ThihyApi = {
     // These methods are reserved for non-streaming admin ops.
     health: () => invoke('ai.health', undefined as never),
     models: () => invoke('ai.models', undefined as never),
-    cancel: (invocationId) => invoke('ai.cancel', { invocationId }),
+    /** Cancel the in-flight turn on a conversation. */
+    cancel: (conversationId, invocationId) =>
+      invoke('ai.cancel', { conversationId, invocationId }),
     ask: (req) => invoke('ai.ask', req),
     parseCapturePreview: (text) => invoke('ai.parseCapturePreview', { text }),
+  },
+  conversation: {
+    list: (opts) => invoke('ai.conversation.list', opts ?? {}),
+    create: (input) => invoke('ai.conversation.create', input ?? {}),
+    rename: (id, title) => invoke('ai.conversation.rename', { id, title }),
+    archive: (id) => invoke('ai.conversation.archive', { id }),
+    unarchive: (id) => invoke('ai.conversation.unarchive', { id }),
+    delete: (id) => invoke('ai.conversation.delete', { id }),
+    history: (id) => invoke('ai.conversation.history', { id }),
   },
   on: onAppEvent,
 };

@@ -1,5 +1,13 @@
 // IPC handlers for AI channels.
 // ai.invoke streams events via 'ai:stream'; ai.health / ai.models / ai.cancel are non-streaming.
+//
+// L2 multi-conversation architecture:
+//   - Each user-controlled conversation maps 1:1 to a DSH SessionId (persisted
+//     by dsh-session-persistence-jsonl) and to a cached agent handle in
+//     src/main/dsh/dsh-runtime.ts.
+//   - ai.ask REQUIRES conversationId; main validates the row exists in the
+//     conversations table (DB v3) before touching the runtime.
+//   - ai.conversation.* handle the user-facing CRUD + history load.
 
 import { register, okResult, failResult } from './router';
 import type { DshHandle } from '../dsh/types';
@@ -10,6 +18,7 @@ import { BrowserWindow } from 'electron';
 import type { AIStreamEvent } from '../../shared/ai-types';
 import type { DataScope } from '../../shared/thihy-api';
 import { TodoRepo } from '../db/todo-repo';
+import { ConversationRepo } from '../db/conversation-repo';
 import { MarkdownStore } from '../files/markdown';
 import { DrawingStore } from '../files/drawings';
 
@@ -17,6 +26,7 @@ interface HandlerDeps {
   dsh: DshHandle;
   settings: SettingsStore;
   repo: TodoRepo;
+  conversations: ConversationRepo;
   md: MarkdownStore;
   drawings: DrawingStore;
 }
@@ -49,14 +59,39 @@ export function registerAiHandlers(dsh: DshHandle): void {
 
   register('ai.models', () => Promise.resolve(okResult({ models: dsh.models() })));
 
-  register('ai.cancel', (_e, req) => {
-    dsh.cancel(req.invocationId);
-    return Promise.resolve(okResult({ ok: true }));
+  register('ai.cancel', async (_e, req) => {
+    // L2: cancel by conversationId. The runtime aborts the in-flight turn on
+    // the cached agent for that conversation; no-op if no agent is alive.
+    if (!deps) return failResult('ai_not_ready', 'DSH not initialised');
+    if (!req.conversationId) return failResult('no_conversation_id', 'conversationId required');
+    try {
+      const runtime = await getDshRuntime({
+        getEndpoint: () => resolveEndpoint(deps!.settings.get()),
+        repo: deps.repo,
+        md: deps.md,
+        drawings: deps.drawings,
+      });
+      if (runtime) await runtime.cancel(req.conversationId);
+      return okResult({ ok: true });
+    } catch (err) {
+      return failResult('cancel_failed', (err as Error).message);
+    }
   });
 
   // Streaming "ask AI" used by the AIPane submit; main pushes stream events.
   register('ai.ask', async (_e, req) => {
     if (!deps) return failResult('ai_not_ready', 'DSH not initialised');
+    if (!req.conversationId) {
+      return failResult('no_conversation_id', 'conversationId required (call ai.conversation.create first)');
+    }
+    // Validate the conversation row exists. The DB row is the user-visible
+    // truth; if the renderer tries to write to an id without a row, fail
+    // loudly rather than silently creating one. Archived conversations are
+    // NOT writable (the user can unarchive first).
+    const conv = deps.conversations.get(req.conversationId);
+    if (!conv) return failResult('unknown_conversation', `no conversation row for ${req.conversationId}`);
+    if (conv.archived) return failResult('conversation_archived', `conversation ${req.conversationId} is archived`);
+
     const s = deps.settings.get();
     const ep = resolveEndpoint(s);
     if (!ep) return failResult('no_api_key', 'Set API key / baseURL in settings first');
@@ -104,6 +139,7 @@ export function registerAiHandlers(dsh: DshHandle): void {
     try {
       await runtime.runTurn({
         prompt: req.prompt,
+        conversationId: req.conversationId,
         invocationId,
         onEvent: (e) => {
           switch (e.type) {
@@ -134,11 +170,115 @@ export function registerAiHandlers(dsh: DshHandle): void {
           }
         },
       });
+      // Bump updated_at so the sidebar sorts this conversation to the top.
+      // Cheap: a single UPDATE; no event broadcasting needed (the renderer
+      // can re-list when it next focuses the conversation list).
+      deps.conversations.touch(req.conversationId);
       return okResult({ invocationId, costUsd: 0 });
     } catch (err) {
       const message = (err as Error).message;
       send({ type: 'error', invocationId, message });
       return failResult('invoke_failed', message);
+    }
+  });
+
+  // ----- ai.conversation.* -----
+
+  register('ai.conversation.list', (_e, req) => {
+    if (!deps) return Promise.resolve(failResult('ai_not_ready', 'DSH not initialised'));
+    try {
+      const list = deps.conversations.list(req?.includeArchived === true);
+      return Promise.resolve(okResult({ conversations: list }));
+    } catch (err) {
+      return Promise.resolve(failResult('list_failed', (err as Error).message));
+    }
+  });
+
+  register('ai.conversation.create', (_e, req) => {
+    if (!deps) return Promise.resolve(failResult('ai_not_ready', 'DSH not initialised'));
+    try {
+      const conv = deps.conversations.create({ title: req?.title });
+      return Promise.resolve(okResult({ conversation: conv }));
+    } catch (err) {
+      return Promise.resolve(failResult('create_failed', (err as Error).message));
+    }
+  });
+
+  register('ai.conversation.rename', (_e, req) => {
+    if (!deps) return Promise.resolve(failResult('ai_not_ready', 'DSH not initialised'));
+    if (!req?.id) return Promise.resolve(failResult('no_conversation_id', 'id required'));
+    try {
+      const ok = deps.conversations.rename(req.id, req.title);
+      if (!ok) return Promise.resolve(failResult('not_found', `conversation ${req.id} not found`));
+      const conv = deps.conversations.get(req.id)!;
+      return Promise.resolve(okResult({ conversation: conv }));
+    } catch (err) {
+      return Promise.resolve(failResult('rename_failed', (err as Error).message));
+    }
+  });
+
+  register('ai.conversation.archive', (_e, req) => {
+    if (!deps) return Promise.resolve(failResult('ai_not_ready', 'DSH not initialised'));
+    if (!req?.id) return Promise.resolve(failResult('no_conversation_id', 'id required'));
+    try {
+      const ok = deps.conversations.archive(req.id);
+      return Promise.resolve(okResult({ ok }));
+    } catch (err) {
+      return Promise.resolve(failResult('archive_failed', (err as Error).message));
+    }
+  });
+
+  register('ai.conversation.unarchive', (_e, req) => {
+    if (!deps) return Promise.resolve(failResult('ai_not_ready', 'DSH not initialised'));
+    if (!req?.id) return Promise.resolve(failResult('no_conversation_id', 'id required'));
+    try {
+      const ok = deps.conversations.unarchive(req.id);
+      return Promise.resolve(okResult({ ok }));
+    } catch (err) {
+      return Promise.resolve(failResult('unarchive_failed', (err as Error).message));
+    }
+  });
+
+  register('ai.conversation.delete', async (_e, req) => {
+    if (!deps) return failResult('ai_not_ready', 'DSH not initialised');
+    if (!req?.id) return failResult('no_conversation_id', 'id required');
+    try {
+      const deleted = deps.conversations.delete(req.id);
+      // Best-effort: dispose the runtime's cached agent for this conversation
+      // so we don't keep an idle handle on a deleted row.
+      try {
+        const runtime = await getDshRuntime({
+          getEndpoint: () => resolveEndpoint(deps!.settings.get()),
+          repo: deps.repo,
+          md: deps.md,
+          drawings: deps.drawings,
+        });
+        if (runtime) await runtime.disposeConversation(req.id);
+      } catch (err) {
+        // Non-fatal — the agent will be dropped on next dispose() anyway.
+        console.warn('[ai.conversation.delete] runtime dispose failed:', (err as Error).message);
+      }
+      return okResult({ deleted });
+    } catch (err) {
+      return failResult('delete_failed', (err as Error).message);
+    }
+  });
+
+  register('ai.conversation.history', async (_e, req) => {
+    if (!deps) return failResult('ai_not_ready', 'DSH not initialised');
+    if (!req?.id) return failResult('no_conversation_id', 'id required');
+    try {
+      const runtime = await getDshRuntime({
+        getEndpoint: () => resolveEndpoint(deps!.settings.get()),
+        repo: deps.repo,
+        md: deps.md,
+        drawings: deps.drawings,
+      });
+      if (!runtime) return okResult({ turns: [] });
+      const turns = await runtime.loadHistory({ conversationId: req.id });
+      return okResult({ turns });
+    } catch (err) {
+      return failResult('history_failed', (err as Error).message);
     }
   });
 }

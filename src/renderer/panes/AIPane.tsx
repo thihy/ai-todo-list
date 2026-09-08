@@ -38,6 +38,11 @@ export const AIPane: React.FC<{ onCollapse?: () => void }> = ({ onCollapse }) =>
   const [input, setInput] = useState('');
   const [turns, setTurns] = useState<Turn[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
+  // L2: the current conversation id. Created lazily on first send so the
+  // pane works without the user explicitly hitting "new conversation". The
+  // full multi-conversation switcher UI is a follow-up (see L2-D task).
+  const [conversationId, setConversationId] = useState<string | null>(null);
+  const [conversationTitle, setConversationTitle] = useState<string>('');
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // Re-derive the active turn from its stream events (cheap; events capped at 200).
@@ -82,12 +87,22 @@ export const AIPane: React.FC<{ onCollapse?: () => void }> = ({ onCollapse }) =>
         { role: 'user' as const, content: t.user },
         { role: 'assistant' as const, content: t.assistant },
       ]);
+    // L2: ensure we have a conversation row to write to. Created lazily so a
+    // user who never sends doesn't accumulate empty rows.
+    let convId = conversationId;
+    if (!convId) {
+      const r = await window.thihy.conversation.create();
+      if (!r.ok) return;
+      convId = r.data.conversation.id;
+      setConversationId(convId);
+      setConversationTitle(r.data.conversation.title);
+    }
     const id = crypto.randomUUID();
     setTurns((prev) => [...prev, { id, user: prompt, reasoning: '', assistant: '', tools: [], status: 'streaming' }]);
     setInput('');
     clear();
     setActiveId(id);
-    const res = await window.thihy.ai.ask({ prompt, invocationId: id, history: priorTurns, tools: undefined });
+    const res = await window.thihy.ai.ask({ prompt, conversationId: convId, invocationId: id, history: priorTurns, tools: undefined });
     if (!res.ok) {
       setTurns((prev) =>
         prev.map((t) =>
@@ -106,6 +121,11 @@ export const AIPane: React.FC<{ onCollapse?: () => void }> = ({ onCollapse }) =>
         <div className="aipane__title">
           <span className="aipane__glyph" aria-hidden="true">✦</span>
           <span>AI 助手</span>
+          {conversationTitle && (
+            <span className="aipane__conv" title={conversationTitle}>
+              · {conversationTitle}
+            </span>
+          )}
         </div>
         {onCollapse && (
           <button type="button" className="icon-btn" onClick={onCollapse} aria-label="收起" title="收起">

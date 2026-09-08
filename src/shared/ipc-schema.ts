@@ -94,6 +94,12 @@ export interface GroupUpdateReq { id: ULID; patch: GroupPatch }
 /** Renderer -> main: kick off a streaming AI invocation. */
 export interface AIAskReq {
   prompt: string;
+  /** Required: the user-controlled conversation this turn belongs to. Main
+   *  uses it 1:1 as the DSH SessionId and the key for the per-conversation
+   *  agent handle cache. Two ai.ask calls on different conversationIds run in
+   *  parallel on independent agents; two on the same id serialize onto the
+   *  same handle. Passing an id with no DB row fails as "unknown_conversation". */
+  conversationId: string;
   model?: AIModel;
   tools?: string[];
   /** Caller-generated id so the renderer can match streamed token/done events
@@ -108,7 +114,9 @@ export interface AIAskRes {
   invocationId: string;
   costUsd: number;
 }
-export interface AIStreamCancelReq { invocationId: string }
+/** Cancel the in-flight turn on a conversation. The renderer should pass the
+ *  same conversationId it used for ai.ask. */
+export interface AIStreamCancelReq { conversationId: string; invocationId?: string }
 export interface AIHealthRes {
   ok: boolean;
   mode: 'real' | 'shim';
@@ -118,6 +126,43 @@ export interface AIHealthRes {
 export interface AIModelsRes { models: AIModel[] }
 export interface AIGetMemoryReq {}
 export interface AIForgetMemoryReq { id: ULID }
+
+// ----- ai.conversation.* -----
+//
+// User-facing control surface over the `conversations` table (DB v3). Each
+// conversation maps 1:1 to a DSH SessionId; the JSONL event log lives in
+// <DSH_SESSIONS_ROOT>/<id>/ and is decoded on-demand by ai.conversation.history.
+
+export interface AIConversation {
+  id: string;
+  title: string;
+  createdAt: number;
+  updatedAt: number;
+  archived: boolean;
+}
+
+export interface AIConversationListReq { includeArchived?: boolean }
+export interface AIConversationListRes { conversations: AIConversation[] }
+
+export interface AIConversationCreateReq { title?: string }
+export interface AIConversationCreateRes { conversation: AIConversation }
+
+export interface AIConversationRenameReq { id: string; title: string }
+export interface AIConversationRenameRes { conversation: AIConversation }
+
+export interface AIConversationArchiveReq { id: string }
+export interface AIConversationUnarchiveReq { id: string }
+export interface AIConversationDeleteReq { id: string }
+
+export interface AIConversationDeleteRes { /** True if the row existed and was deleted. */ deleted: boolean }
+
+export interface AIConversationHistoryReq { id: string }
+/** Mirrors DshRuntime.HistoryTurn — see src/main/dsh/dsh-runtime.ts. */
+export type AIConversationHistoryTurn =
+  | { type: 'user'; text: string }
+  | { type: 'assistant'; text: string; reasoning?: string }
+  | { type: 'tool'; name: string; args?: unknown; ok: boolean; data?: unknown; error?: string };
+export interface AIConversationHistoryRes { turns: AIConversationHistoryTurn[] }
 
 // ----- permission.* -----
 
@@ -193,6 +238,15 @@ export interface IpcRegistry {
   'ai.forgetMemory': IpcChannel<AIForgetMemoryReq, IpcResult<void>>;
   'ai.event': IpcChannel<{ event: AIStreamEvent }, IpcResult<void>>; // push main -> renderer
   'ai.parseCapturePreview': IpcChannel<{ text: string }, IpcResult<ParsedTodo>>;
+
+  // ----- ai.conversation.* -----
+  'ai.conversation.list': IpcChannel<AIConversationListReq, IpcResult<AIConversationListRes>>;
+  'ai.conversation.create': IpcChannel<AIConversationCreateReq, IpcResult<AIConversationCreateRes>>;
+  'ai.conversation.rename': IpcChannel<AIConversationRenameReq, IpcResult<AIConversationRenameRes>>;
+  'ai.conversation.archive': IpcChannel<AIConversationArchiveReq, IpcResult<{ ok: boolean }>>;
+  'ai.conversation.unarchive': IpcChannel<AIConversationUnarchiveReq, IpcResult<{ ok: boolean }>>;
+  'ai.conversation.delete': IpcChannel<AIConversationDeleteReq, IpcResult<AIConversationDeleteRes>>;
+  'ai.conversation.history': IpcChannel<AIConversationHistoryReq, IpcResult<AIConversationHistoryRes>>;
 
   'permission.prompt': IpcChannel<PermissionPromptReq, IpcResult<void>>;
   'permission.respond': IpcChannel<{ response: PermissionResponse }, IpcResult<void>>;

@@ -3,15 +3,22 @@
 // our typed todo/content/drawing tool handlers, and exposes runTurn() to drive
 // an agent turn and stream tokens + tool activity back to the renderer.
 //
-// This is the production counterpart of the proven spike at
-// spikes/dsh-fulltree/boot-mock.ts. The runtime is additive: ai-handlers falls
-// back to the text-only client.ts invokeChat path when boot fails or DSH is
-// disabled, so the app keeps working even if the RC agent tree breaks.
+// Multi-conversation model (L2): each user-controlled conversation maps 1:1
+// to a DSH session (persisted by dsh-session-persistence-jsonl) and to a
+// cached agent handle. Different conversations run in parallel — the agent
+// handle is cached for the conversation's lifetime, not created per turn.
+// This gives the renderer three affordances the prior single-agent design
+// couldn't:
+//   1. User can switch conversations without losing prior turns (history
+//      loads from the JSONL backend).
+//   2. User can submit a new turn to conversation A while conversation B's
+//      turn is still in flight — each agent has its own state and event
+//      stream.
+//   3. Deleting a conversation tears down its agent (no zombie handles).
 //
-// Packaging: the cordis.yml lives at resources/dsh/cordis.yml and the DSH
-// ESM packages load from node_modules via bareModuleBaseUrl anchored to the
-// app root. In a packaged asar the node_modules must be unpacked for the
-// dynamic Loader resolution to find them (electron-builder asarUnpack).
+// Event routing: ctx.on('session/event', ...) fires globally for ALL
+// sessions, so each cached agent's listener filters by session.id and
+// only forwards events for its own conversation. See ensureAgent().
 
 import { app } from 'electron';
 import { resolve, dirname, join } from 'node:path';
@@ -41,6 +48,16 @@ export interface DshRuntimeDeps {
   drawings: DrawingStore;
 }
 
+// One rendered conversation item. Loaded from the JSONL backend via
+// loadHistory() and also produced live by runTurn's onEvent callback.
+// Designed to be the same shape the AIPane already renders (turn text +
+// tool call/result chips + optional reasoning block), so the UI can treat
+// "live turn" and "loaded history turn" identically.
+export type HistoryTurn =
+  | { type: 'user'; text: string }
+  | { type: 'assistant'; text: string; reasoning?: string }
+  | { type: 'tool'; name: string; args?: unknown; ok: boolean; data?: unknown; error?: string };
+
 export type TurnEvent =
   | { type: 'token'; text: string }
   | { type: 'reasoning'; text: string }
@@ -50,7 +67,21 @@ export type TurnEvent =
   | { type: 'error'; message: string };
 
 export interface DshRuntime {
-  runTurn(opts: { prompt: string; invocationId: string; onEvent: (e: TurnEvent) => void; signal?: AbortSignal }): Promise<{ content: string }>;
+  runTurn(opts: {
+    prompt: string;
+    conversationId: string;
+    invocationId: string;
+    onEvent: (e: TurnEvent) => void;
+    signal?: AbortSignal;
+  }): Promise<{ content: string }>;
+  /** Abort the in-flight turn on a conversation (no-op if idle/missing).
+   *  Disposes the cached agent handle; the next ask() re-creates it from
+   *  the persisted session JSONL, so history is preserved. */
+  cancel(conversationId: string): Promise<void>;
+  /** Load this conversation's persisted history as a flat list of turns. */
+  loadHistory(opts: { conversationId: string; signal?: AbortSignal }): Promise<HistoryTurn[]>;
+  /** Drop the cached agent for one conversation (no-op if absent). */
+  disposeConversation(conversationId: string): Promise<void>;
   dispose(): Promise<void>;
 }
 
@@ -124,110 +155,302 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
   const { defineTool } = await import('@deepseek-ai/dsh-tools');
   const disposeTools = registerDomainTools(tools, defineTool, deps);
 
-  // 3. Expose runTurn.
-  const runtime: DshRuntime = {
-    async runTurn({ prompt, invocationId, onEvent, signal }) {
-      const { createUserMessage } = await import('@deepseek-ai/dsh-llm');
-      const { SessionId } = await import('@deepseek-ai/dsh-session');
-      const agents = ctx.get('agents') as {
-        create(o: unknown): Promise<{
-          agent: {
-            followup(m: unknown): void;
-            whenIdle(): Promise<void>;
-            id: unknown;
-          };
-          dispose(): Promise<void>;
-        }>;
-      } | undefined;
-      if (!agents) throw new Error('ctx.agents absent');
+  // 3. Conversation registry. One agent handle per conversation, cached for
+  //    the conversation's lifetime. ensureAgent() idempotent: a second call
+  //    for the same id returns the existing entry without recreating.
+  const { SessionId } = await import('@deepseek-ai/dsh-session');
+  const agentsApi = ctx.get('agents') as {
+    create(o: unknown): Promise<{
+      agent: {
+        followup(m: unknown): void;
+        whenIdle(): Promise<void>;
+        id: unknown;
+      };
+      dispose(): Promise<void>;
+    }>;
+  } | undefined;
+  if (!agentsApi) throw new Error('ctx.agents absent');
 
+  const persistenceApi = ctx.get('sessionPersistence') as {
+    load: (id: string, signal?: AbortSignal) => Promise<{
+      meta: { id: string };
+      inheritedEventCount: number;
+      events: ReadonlyArray<{
+        type: string;
+        seq?: number;
+        time?: number;
+        data?: unknown;
+      }>;
+    } | undefined>;
+    config?: { root?: string };
+  } | undefined;
+
+  interface ConversationEntry {
+    id: string;
+    agent: {
+      followup(m: unknown): void;
+      whenIdle(): Promise<void>;
+      id: unknown;
+    };
+    disposeHandle: () => Promise<void>;
+    /** Unsubscribe from the per-conversation session/event listener. */
+    offSession: () => void;
+    /** Latest fullText accumulated for the in-flight turn (for the 'done' event). */
+    fullText: string;
+    /** callId→{name, args} for this conversation, used to label tool/result events. */
+    callMeta: Map<string, { name: string; args: string }>;
+    /** When true, no live consumer is reading events (e.g. between turns). */
+    dormant: boolean;
+  }
+
+  const conversations = new Map<string, ConversationEntry>();
+
+  async function ensureAgent(conversationId: string, model: string): Promise<ConversationEntry> {
+    const existing = conversations.get(conversationId);
+    if (existing) return existing;
+
+    const handle = await agentsApi!.create({
+      sessionId: SessionId(conversationId),
+      agentOptions: { provider: 'thihy', model },
+    });
+
+    const entry: ConversationEntry = {
+      id: conversationId,
+      agent: handle.agent,
+      disposeHandle: () => handle.dispose(),
+      offSession: () => {},
+      fullText: '',
+      callMeta: new Map(),
+      dormant: true,
+    };
+    conversations.set(conversationId, entry);
+    return entry;
+  }
+
+  // Returns a fresh unsubscribe function — sets entry.fullText/callMeta and
+  // wires the onEvent delivery for THIS call's invocationId. We do not
+  // attach a permanent listener: between turns we have no live consumer, so
+  // persisting the listener would just leak onEvent callables.
+  //
+  // Filtering: ctx.on('session/event', ...) fires for every active session,
+  // so we filter by session.id === conversationId. This is what keeps
+  // parallel conversations' event streams independent.
+  function attachLiveListener(
+    entry: ConversationEntry,
+    invocationId: string,
+    onEvent: (e: TurnEvent) => void,
+  ): () => void {
+    entry.fullText = '';
+    entry.callMeta.clear();
+    const off = ctx.on('session/event', (session: unknown, event: { type: string; data?: unknown }) => {
+      // session.id is a branded string; conversationId is a plain string.
+      // String compare is the safe check.
+      const sid = (session as { id?: unknown } | undefined)?.id;
+      if (String(sid) !== entry.id) return;
+      const t = event?.type;
+      if (t === 'assistant/chunk') {
+        const d = event.data as { chunk?: { type?: string; text?: string } } | undefined;
+        const chunk = d?.chunk;
+        if (chunk?.type === 'text-delta' && chunk.text) {
+          entry.fullText += chunk.text;
+          onEvent({ type: 'token', text: chunk.text });
+        } else if (chunk?.type === 'reasoning-delta' && chunk.text) {
+          // The model's thinking stream (glm-5.2 / deepseek-reasoner
+          // reasoning_content). Forwarded separately so the UI can render a
+          // collapsible "思考过程" panel distinct from the answer.
+          onEvent({ type: 'reasoning', text: chunk.text });
+        }
+      } else if (t === 'tool/call') {
+        const d = event.data as { callId?: unknown; name?: string; arguments?: string } | undefined;
+        if (d?.callId != null && d.name) entry.callMeta.set(String(d.callId), { name: d.name, args: d.arguments ?? '' });
+        onEvent({ type: 'toolCall', name: d?.name ?? '', args: d?.arguments });
+      } else if (t === 'tool/result') {
+        const d = event.data as {
+          message?: {
+            source?: { callId?: unknown };
+            content?: Array<{ isError?: boolean; content?: unknown[] }>;
+          };
+        } | undefined;
+        const callId = d?.message?.source?.callId;
+        const meta = callId != null ? entry.callMeta.get(String(callId)) : undefined;
+        const block = d?.message?.content?.[0];
+        onEvent({
+          type: 'toolResult',
+          name: meta?.name ?? '',
+          args: meta?.args,
+          ok: !block?.isError,
+          data: block?.content,
+        });
+      }
+    });
+    entry.offSession = off;
+    // Track which invocationId owns the live listener. Not strictly needed
+    // today (each runTurn installs + clears its own listener) but useful
+    // for diagnostics and any future "two turns on the same conversation
+    // at once" feature.
+    entry.dormant = false;
+    void invocationId;
+    return off;
+  }
+
+  // 4. Expose the runtime API.
+  const runtime: DshRuntime = {
+    async runTurn({ prompt, conversationId, invocationId, onEvent, signal }) {
+      const { createUserMessage } = await import('@deepseek-ai/dsh-llm');
       const endpoint = deps.getEndpoint();
       const model = endpoint?.model ?? 'deepseek-chat';
-      const handle = await agents.create({
-        sessionId: SessionId(invocationId),
-        agentOptions: { provider: 'thihy', model },
-      });
-
-      let fullText = '';
-      // Stream durable session events to the renderer. assistant/chunk text
-      // deltas are the live token stream; tool/call + tool/result are the
-      // agent's tool activity.
-      //
-      // DSH session/event signature is (session, event): the 2nd arg carries
-      // .type and .data. tool/result carries no tool name — only callId — so we
-      // remember callId→{name, arguments} from the tool/call events to label
-      // results and forward the args the model produced.
-      const callMeta = new Map<string, { name: string; args: string }>();
-      const off = ctx.on('session/event', (_session: unknown, event: { type: string; data?: unknown }) => {
-        const t = event?.type;
-        if (t === 'assistant/chunk') {
-          // data: { turn, step, chunk: StreamChunk }
-          const d = event.data as { chunk?: { type?: string; text?: string } } | undefined;
-          const chunk = d?.chunk;
-          if (chunk?.type === 'text-delta' && chunk.text) {
-            fullText += chunk.text;
-            onEvent({ type: 'token', text: chunk.text });
-          } else if (chunk?.type === 'reasoning-delta' && chunk.text) {
-            // The model's thinking stream (glm-5.2 / deepseek-reasoner
-            // reasoning_content). Forwarded separately so the UI can render a
-            // collapsible "思考过程" panel distinct from the answer.
-            onEvent({ type: 'reasoning', text: chunk.text });
-          }
-        } else if (t === 'tool/call') {
-          // data: { turn, step, callId, name, arguments(raw JSON string) }
-          const d = event.data as { callId?: unknown; name?: string; arguments?: string } | undefined;
-          if (d?.callId != null && d.name) callMeta.set(String(d.callId), { name: d.name, args: d.arguments ?? '' });
-          onEvent({ type: 'toolCall', name: d?.name ?? '', args: d?.arguments });
-        } else if (t === 'tool/result') {
-          // data: { turn, step, message: ToolResultMessage, error?, meta? }
-          // ToolResultMessage.source.callId pairs with tool/call; the result
-          // block (message.content[0]) carries isError + the value content.
-          const d = event.data as {
-            message?: {
-              source?: { callId?: unknown };
-              content?: Array<{ isError?: boolean; content?: unknown[] }>;
-            };
-          } | undefined;
-          const callId = d?.message?.source?.callId;
-          const meta = callId != null ? callMeta.get(String(callId)) : undefined;
-          const block = d?.message?.content?.[0];
-          onEvent({
-            type: 'toolResult',
-            name: meta?.name ?? '',
-            args: meta?.args,
-            ok: !block?.isError,
-            data: block?.content,
-          });
-        }
-      });
-
+      const entry = await ensureAgent(conversationId, model);
+      const off = attachLiveListener(entry, invocationId, onEvent);
       try {
         const userMsg = createUserMessage({
           content: [{ type: 'text', text: prompt }],
           source: { kind: 'user' },
         });
-        handle.agent.followup(userMsg);
+        entry.agent.followup(userMsg);
         // Cooperative cancellation: if the renderer cancels, abort the agent.
         signal?.addEventListener('abort', () => {
           // agent.cancel requires the Agent handle; we only have followup/whenIdle
           // via the narrow type. Disposing the handle stops the driver.
-          void handle.dispose();
+          void entry.disposeHandle();
         });
-        await handle.agent.whenIdle();
-        onEvent({ type: 'done', content: fullText });
-        return { content: fullText };
+        await entry.agent.whenIdle();
+        onEvent({ type: 'done', content: entry.fullText });
+        return { content: entry.fullText };
       } finally {
         try { off(); } catch { /* noop */ }
-        try { await handle.dispose(); } catch { /* noop */ }
+        entry.dormant = true;
       }
     },
+
+    async cancel(conversationId) {
+      const entry = conversations.get(conversationId);
+      if (!entry) return;
+      // Cooperative: just dispose the agent. runTurn's signal handler would
+      // do the same thing; here we don't have a signal to abort, so we go
+      // directly. The conversation's JSONL is still on disk so the next
+      // ask() on this id gets a fresh agent that reads its history.
+      try { await entry.disposeHandle(); } catch { /* noop */ }
+      conversations.delete(conversationId);
+    },
+
+    async loadHistory({ conversationId }) {
+      if (!persistenceApi) return [];
+      let inspection;
+      try {
+        inspection = await persistenceApi.load(conversationId);
+      } catch (err) {
+        logger.warn(`loadHistory(${conversationId}) failed: ${(err as Error).message}`);
+        return [];
+      }
+      if (!inspection) return [];
+      return foldHistory(inspection.events);
+    },
+
+    async disposeConversation(conversationId) {
+      const entry = conversations.get(conversationId);
+      if (!entry) return;
+      conversations.delete(conversationId);
+      try { entry.offSession(); } catch { /* noop */ }
+      try { await entry.disposeHandle(); } catch { /* noop */ }
+    },
+
     async dispose() {
+      // Tear down all conversation handles first (each dispose awaits its
+      // own whenIdle + cleanup), then drop the cordis fiber.
+      const all = Array.from(conversations.values());
+      conversations.clear();
+      await Promise.allSettled(all.map(async (e) => {
+        try { e.offSession(); } catch { /* noop */ }
+        try { await e.disposeHandle(); } catch { /* noop */ }
+      }));
       disposeAdapter();
       disposeTools();
       await ctx.fiber?.dispose?.();
     },
   };
   return runtime;
+}
+
+/**
+ * Fold a session event log into a flat list of HistoryTurn entries.
+ *
+ * - user/message → one user turn (concatenated text blocks)
+ * - assistant/message → one assistant turn (text + optional reasoning)
+ * - tool/call + tool/result → one tool turn (paired by callId; missing
+ *   result is still emitted as a tool turn with ok=false, error="no result")
+ * - assistant/chunk and other granular events are SKIPPED — the final
+ *   assistant/message already carries the full text + tool calls.
+ * - Structural events (turn/start, step/end, etc.) are skipped.
+ */
+function foldHistory(events: ReadonlyArray<{ type: string; data?: unknown }>): HistoryTurn[] {
+  const turns: HistoryTurn[] = [];
+  // Index tool/result by callId so we can pair with tool/call.
+  const pendingResults = new Map<string, { ok: boolean; data?: unknown; error?: string }>();
+  for (const ev of events) {
+    if (ev.type === 'tool/result') {
+      const d = ev.data as {
+        message?: {
+          source?: { callId?: unknown };
+          content?: Array<{ isError?: boolean; content?: unknown[] }>;
+        };
+      } | undefined;
+      const callId = d?.message?.source?.callId;
+      const block = d?.message?.content?.[0];
+      if (callId != null) {
+        pendingResults.set(String(callId), {
+          ok: !block?.isError,
+          data: block?.content,
+          error: block?.isError ? JSON.stringify(block?.content) : undefined,
+        });
+      }
+    }
+  }
+
+  for (const ev of events) {
+    if (ev.type === 'user/message') {
+      const d = ev.data as { message?: { content?: Array<{ type?: string; text?: string }> } } | undefined;
+      const text = (d?.message?.content ?? [])
+        .filter((b) => b?.type === 'text' && typeof b.text === 'string')
+        .map((b) => b.text as string)
+        .join('');
+      if (text) turns.push({ type: 'user', text });
+    } else if (ev.type === 'assistant/message') {
+      const d = ev.data as {
+        message?: {
+          content?: Array<{ type?: string; text?: string }>;
+        };
+      } | undefined;
+      const blocks = d?.message?.content ?? [];
+      const text = blocks
+        .filter((b) => b?.type === 'text' && typeof b.text === 'string')
+        .map((b) => b.text as string)
+        .join('');
+      const reasoning = blocks
+        .filter((b) => b?.type === 'reasoning' && typeof b.text === 'string')
+        .map((b) => b.text as string)
+        .join('');
+      const out: HistoryTurn = reasoning
+        ? { type: 'assistant', text, reasoning }
+        : { type: 'assistant', text };
+      turns.push(out);
+    } else if (ev.type === 'tool/call') {
+      const d = ev.data as { callId?: unknown; name?: string; arguments?: string } | undefined;
+      const callId = d?.callId != null ? String(d.callId) : '';
+      const result = callId ? pendingResults.get(callId) : undefined;
+      turns.push({
+        type: 'tool',
+        name: d?.name ?? '',
+        args: d?.arguments,
+        ok: result?.ok ?? false,
+        data: result?.data,
+        error: result?.error ?? (result ? undefined : 'no result'),
+      });
+    }
+    // Everything else (chunks, structural events, session/end-seed, etc.)
+    // is intentionally skipped — final user/assistant/tool messages
+    // already carry the content.
+  }
+  return turns;
 }
 
 /** Register the domain tools (todo/content/drawing) ported from dsh/tools.ts. */

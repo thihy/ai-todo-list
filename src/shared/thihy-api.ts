@@ -135,10 +135,48 @@ export interface ThihyApi {
   ai: {
     health(): Promise<IpcResponse<'ai.health'>>;
     models(): Promise<IpcResponse<'ai.models'>>;
-    cancel(invocationId: string): Promise<IpcResponse<'ai.cancel'>>;
-    ask(req: { prompt: string; model?: AIModel; tools?: string[]; invocationId?: string; history?: { role: 'user' | 'assistant'; content: string }[] }): Promise<IpcResponse<'ai.ask'>>;
+    /** Cancel the in-flight turn on a conversation. The renderer should pass
+     *  the same conversationId it used for ai.ask; invocationId is optional
+     *  for diagnostics. */
+    cancel(conversationId: string, invocationId?: string): Promise<IpcResponse<'ai.cancel'>>;
+    /**
+     * Submit one user turn on a conversation. conversationId is REQUIRED:
+     * the main process maps it 1:1 to a DSH Session (persisted to JSONL by
+     * dsh-session-persistence-jsonl). Two ai.ask calls with the same
+     * conversationId serialize onto the same agent handle; different
+     * conversationIds run on independent agents in parallel.
+     *
+     * The renderer is expected to call ai.conversation.list() / create() first
+     * to discover / allocate the id it wants to write to. passing a fresh
+     * ULID-shaped id without a corresponding DB row will fail in main as
+     * "unknown conversation".
+     */
+    ask(req: {
+      prompt: string;
+      conversationId: string;
+      model?: AIModel;
+      tools?: string[];
+      invocationId?: string;
+      history?: { role: 'user' | 'assistant'; content: string }[];
+    }): Promise<IpcResponse<'ai.ask'>>;
     /** Rule-based NL capture preview (works offline; returns structured fields). */
     parseCapturePreview(text: string): Promise<IpcResponse<'ai.parseCapturePreview'>>;
+  };
+  /**
+   * Conversation control. Each conversation is an independent AI thread the
+   * user owns — list / create / rename / archive / delete, plus a history
+   * endpoint that loads the persisted event log (decoded from JSONL) for
+   * the AIPane to render prior turns when switching back to a thread.
+   */
+  conversation: {
+    list(opts?: { includeArchived?: boolean }): Promise<IpcResponse<'ai.conversation.list'>>;
+    create(input?: { title?: string }): Promise<IpcResponse<'ai.conversation.create'>>;
+    rename(id: string, title: string): Promise<IpcResponse<'ai.conversation.rename'>>;
+    archive(id: string): Promise<IpcResponse<'ai.conversation.archive'>>;
+    unarchive(id: string): Promise<IpcResponse<'ai.conversation.unarchive'>>;
+    delete(id: string): Promise<IpcResponse<'ai.conversation.delete'>>;
+    /** Load decoded history turns from the persistence backend. */
+    history(id: string): Promise<IpcResponse<'ai.conversation.history'>>;
   };
   on<E extends AppEvent>(event: E, cb: (payload: AppEventMap[E]) => void): () => void;
 }
