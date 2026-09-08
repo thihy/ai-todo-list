@@ -656,7 +656,16 @@ a:hover {
   background: var(--bg-surface);
   border-left: 1px solid var(--border-default);
   position: relative;
-  overflow: hidden;
+  /* The conversation-history dropdown is absolutely positioned INSIDE this
+     panel and extends DOWNWARD/LEFTWARD past the panel's right edge to
+     cover the underlying editor pane. With overflow:hidden it gets clipped
+     at the panel boundary and the user only sees the top edge of the
+     dropdown. We let it overflow instead and rely on z-index ordering +
+     the document-level click-outside handler to keep behavior sane. The
+     panel's own child layout (.aipane) still uses its own scroll
+     containers (body + composer), so removing overflow:hidden here does
+     NOT cause unintended overflow inside the chat itself. */
+  overflow: visible;
 }
 
 .ai-panel__grip {
@@ -722,15 +731,224 @@ a:hover {
   width: var(--ai-panel-w);
 }
 
+/* ===== L5: minimal topbar ===== */
+
+/* The history icon sits in the right-side action cluster of the topbar.
+   "新建对话" (+) lives next to it as a sibling so both topbar affordances
+   live in the same slot. The aipane__history wrapper is just a positioning
+   context for the absolutely-positioned dropdown. */
+.aipane__actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  margin-left: auto;
+}
+.aipane__new-btn,
+.aipane__history-btn {
+  font-size: 18px;
+  padding: 0;
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.aipane__history {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+/* Brand label "AI 助手" on the left of the topbar — re-introduced per the
+   L5 request that the panel always identify itself, since the conversation
+   title moved into the content area. */
+.aipane__brand {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  font-size: var(--font-md);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--fg-primary);
+  white-space: nowrap;
+}
+.aipane__brand-glyph {
+  color: var(--accent-primary, #4F8AF7);
+  font-size: var(--font-lg);
+  line-height: 1;
+}
+
+/* Topbar = brand on the left, action icons on the right. Padding mirrors
+   the original aipane header so the brand sits where the old title block
+   started. */
 .aipane__header {
   display: flex;
   align-items: center;
   gap: var(--space-sm);
   height: var(--topbar-h);
   padding: 0 var(--space-md);
-  padding-right: 28px;
   border-bottom: 1px solid var(--border-default);
   flex: none;
+}
+
+/* ===== L5: conversation title in content area ===== */
+
+/* The current conversation title now lives INSIDE the content area as a
+   sticky heading. It reads as the "section title" for the messages below,
+   which is more natural than the previous topbar placement (the topbar
+   was competing with other controls for horizontal space). */
+.aipane__conv-title {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  margin: 0;
+  padding: var(--space-md) 0 var(--space-sm);
+  font-size: var(--font-lg);
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  color: var(--fg-primary);
+  background: linear-gradient(
+    to bottom,
+    var(--bg-surface) 75%,
+    color-mix(in srgb, var(--bg-surface) 0%, transparent)
+  );
+  /* Single-line truncation with ellipsis so a long title doesn't push the
+     sticky banner out of the viewport. */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.aipane__conv-title .aipane__rename {
+  /* Inline-rename input variant — same control as the dropdown rename,
+     just rendered inside the heading so the user edits in place. */
+  width: 100%;
+  max-width: none;
+  font-size: inherit;
+  font-weight: inherit;
+}
+
+/* ===== L5: sticky "current question" banner ===== */
+
+/* Surfaces the most recent user message above the message stream so the
+   user can always see what was asked — even after scrolling deep into
+   the history to re-read an earlier answer. */
+.aipane__currentq {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-xs);
+  padding: var(--space-sm) var(--space-md);
+  margin: 0 calc(-1 * var(--space-lg)) var(--space-sm);
+  background: color-mix(in srgb, var(--accent-primary, #4F8AF7) 8%, var(--bg-surface));
+  border-top: 1px solid color-mix(in srgb, var(--accent-primary, #4F8AF7) 25%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--accent-primary, #4F8AF7) 18%, transparent);
+  font-size: var(--font-sm);
+  line-height: 1.5;
+  color: var(--fg-primary);
+}
+.aipane__currentq-glyph {
+  color: var(--accent-primary, #4F8AF7);
+  font-size: var(--font-md);
+  line-height: 1.4;
+}
+.aipane__currentq-text {
+  flex: 1;
+  min-width: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  /* Preserve line breaks in the user's question so multi-line prompts
+     still show their structure. */
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.aipane__currentq-attach {
+  color: var(--fg-muted);
+  font-size: var(--font-xs);
+  display: inline-block;
+  margin-left: 4px;
+}
+.aipane__currentq-status {
+  flex: none;
+  align-self: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent-primary, #4F8AF7) 18%, transparent);
+  color: var(--accent-primary, #4F8AF7);
+  font-size: var(--font-xs);
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.aipane__currentq-status::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent-primary, #4F8AF7);
+  animation: aipane-pulse 1.2s ease-in-out infinite;
+}
+
+/* ===== L5: dropdown menu head + per-row actions ===== */
+
+.aipane__menu-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-xs) var(--space-sm);
+  border-bottom: 1px solid var(--border-subtle, #EDEFF2);
+  margin-bottom: var(--space-xs);
+}
+.aipane__menu-head-title {
+  font-size: var(--font-sm);
+  font-weight: 600;
+  color: var(--fg-secondary);
+}
+.aipane__menu-row {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+}
+.aipane__menu-row .aipane__menu-item {
+  flex: 1;
+  min-width: 0;
+}
+.aipane__menu-row-btn {
+  flex: none;
+  width: 26px;
+  align-self: stretch;
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--fg-muted);
+  cursor: pointer;
+  font-size: var(--font-md);
+  line-height: 1;
+  transition: background 0.1s ease, color 0.1s ease;
+}
+.aipane__menu-row-btn:hover {
+  background: var(--bg-hover);
+  color: var(--fg-primary);
+}
+.aipane__menu--row {
+  /* Per-row dropdown anchored to the ⋯ button. Sits to the LEFT of the
+     row's button so it doesn't overflow the panel's right edge. */
+  right: auto;
+  left: 100%;
+  top: 0;
+  margin-left: 4px;
+  min-width: 140px;
+  max-width: 200px;
+}
+.aipane__menu-item--inline {
+  /* Per-row dropdown items: same as regular menu items but without the
+     multi-line layout (they don't need previews). */
+  padding: var(--space-xs) var(--space-md);
+  font-size: var(--font-sm);
 }
 .aipane__title {
   display: flex;
@@ -1265,10 +1483,109 @@ a:hover {
   flex-direction: column;
   gap: var(--space-sm);
 }
-/* Composer reflow: input + send button on the SAME row, with a paperclip
-   button on the left for picking a local file. Single horizontal flex
-   keeps the textarea vertically compact (the user has a wide 380px column
-   to play with) and the action button anchored to the right. */
+
+/* L5 unified composer: ONE card holding the + button (left), textarea
+   (middle, flex-grows + autosizes), and Send/Stop (right). The card has
+   rounded corners + a single border so the whole input reads as a single
+   affordance, not three independent controls. The + button is embedded
+   INSIDE the card so the user sees "this is where I add things to my
+   message". */
+.aipane__composer-card {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-xs);
+  border: 1px solid var(--border-default);
+  border-radius: 12px;
+  background: var(--bg-canvas, #FFFFFF);
+  padding: 8px 8px 8px 4px;
+  transition: border-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out);
+}
+.aipane__composer-card:focus-within {
+  border-color: var(--accent, #4F8AF7);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent, #4F8AF7) 18%, transparent);
+}
+.aipane__composer-card .aipane__input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  padding: 6px 4px;
+  min-height: 28px;
+  outline: none;
+  resize: none;
+  font-size: var(--font-sm);
+  line-height: 1.5;
+  color: var(--fg-primary);
+}
+.aipane__composer-card .aipane__input:focus {
+  outline: none;
+}
+
+/* + button lives INSIDE the composer card (left edge). Visual style is
+   dim-by-default so the user focuses on typing, not the chrome — brightens
+   on hover/focus so it remains discoverable. */
+.aipane__composer-card .aipane__attach-btn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  border: none;
+  background: transparent;
+  color: var(--fg-muted, #6B7280);
+  font-size: 18px;
+  font-weight: 500;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.aipane__composer-card .aipane__attach-btn:hover {
+  background: var(--bg-hover, #EEF0F3);
+  color: var(--fg-primary, #1F2328);
+}
+.aipane__composer-card .aipane__attach-btn:active {
+  background: var(--border-default, #E5E7EB);
+}
+
+/* Send / Stop buttons live INSIDE the composer card (right edge). They
+   retain the brand button look so the primary action stays obvious, but
+   they no longer stretch the full height of the row — they sit at the
+   bottom corner of the card like a chat-app send button. */
+.aipane__composer-card .aipane__send,
+.aipane__composer-card .aipane__stop {
+  flex: none;
+  width: 36px;
+  height: 32px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  font-size: 14px;
+  line-height: 1;
+}
+.aipane__composer-card .aipane__send:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.aipane__composer-card .aipane__stop {
+  background: var(--accent-danger, #DC2626);
+  color: #FFFFFF;
+  border: none;
+  cursor: pointer;
+}
+.aipane__composer-card .aipane__stop:hover {
+  background: color-mix(in srgb, var(--accent-danger, #DC2626) 85%, #000000);
+}
+.aipane__stop-glyph {
+  font-size: 11px;
+}
+
+/* Legacy row layout — kept for backwards compatibility with old markup
+   snapshots in tests, but the active composer markup uses composer-card
+   above. Hides cleanly so nothing breaks if old markup is ever rendered. */
 .aipane__composer-row {
   display: flex;
   align-items: flex-end;
@@ -1276,6 +1593,9 @@ a:hover {
 }
 .aipane__composer-row .aipane__input { flex: 1; min-width: 0; }
 .aipane__attach-btn {
+  /* Legacy standalone attach-button styling. The active composer markup
+     uses .aipane__composer-card .aipane__attach-btn above for the embedded
+     variant; this rule covers any standalone usage. */
   flex: none;
   align-self: stretch;
   display: inline-flex;
@@ -1300,13 +1620,15 @@ a:hover {
   background: var(--surface-muted, #F6F7F9);
 }
 .aipane__input {
+  /* Default textarea styling (single-row entry). The composer-card variant
+     above overrides border/padding since the card provides those. */
   resize: none;
   font-size: var(--font-sm);
   line-height: 1.5;
 }
-/* Send button on the right of the same row as the textarea (was previously
-   stacked below at flex-end). */
 .aipane__send {
+  /* Standalone send button (when not inside composer-card). The card
+     variant above gives it rounded-square dimensions. */
   flex: none;
   align-self: stretch;
 }

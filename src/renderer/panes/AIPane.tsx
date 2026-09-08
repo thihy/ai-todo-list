@@ -1,28 +1,39 @@
 // AI pane — chat-style conversation with rich rendering. Rendered inside the
 // resident right AIPanel; designed for a ~380px column.
 //
-// What makes this better than a plain text bubble:
-// - assistant output renders as markdown (lists, code blocks, tables, links)
-// - tool calls + their args/result show as inline cards so the user sees the
-//   agent "acting", not just final prose
-// - a thinking indicator before the first token + a streaming cursor while text
-//   arrives
+// Layout (L5 redesign):
+//   ┌─ header (minimal): [🗂 history]  [＋ new]                ┐
+//   ├─ content ───────────────────────────────────────────────┤
+//   │  # 当前对话标题  (big sticky heading)                    │
+//   │  ┌─ 当前问题 ────────────────────────────────────────┐  │  ← sticky banner
+//   │  │ "用户问的问题"                                      │  │
+//   │  └────────────────────────────────────────────────────┘  │
+//   │  [message turn 1]                                       │
+//   │  [message turn 2]                                       │
+//   │  ...                                                   │
+//   ├─ composer (unified input box) ───────────────────────────┤
+//   │  + │  [textarea, multi-line, autosize]      [Send/Stop] │
+//   └────────────────────────────────────────────────────────┘
 //
-// L2 multi-conversation model:
-// - The header has a conversation switcher (▼ 当前), a "+ 新对话" button, and
-//   a per-conversation actions menu (⋯). Each user-controlled conversation
-//   is a row in the `conversations` table; its full event log lives in the
-//   dsh-session-persistence-jsonl backend, loaded on-demand when the user
-//   switches back to it.
-// - Each conversation keeps its own turns list in `turnsByConv` so switching
-//   away and back preserves in-flight + completed turns for that thread.
-// - Archived conversations are hidden by default; a menu toggle reveals them.
+// Why these changes:
+// - 历史: collapsed behind ONE icon (🗂) so the header doesn't compete with
+//   the message area for horizontal space.
+// - 当前对话标题: shown as a sticky heading INSIDE the content area so the
+//   user always sees what thread they're reading (the previous header was
+//   dominated by the conversation-switcher buttons).
+// - 悬浮显示当前用户问题: the most recent user message is rendered as a
+//   sticky banner just below the title, so even after scrolling deep into
+//   the history the user can see what was asked.
+// - 统一输入框: composer is one card with the + icon embedded on the left
+//   and the Send/Stop button on the right. Previously the file picker was a
+//   separate left-of-textarea button, which made the affordance feel split.
 
 import React, { useEffect, useRef, useState } from 'react';
 import { useAiStream } from '../hooks/useThihyApi';
 import { useDataVersion } from '../data-bus';
 import { Markdown } from '../components/Markdown';
 import type { AITokenEvent, AIToolCallEvent, AIReasoningEvent, AIStreamEvent } from '../../shared/ai-types';
+import { AI_SUBMIT_EVENT, type ExternalAiSubmitDetail } from '../components/Composer';
 
 interface ToolCard {
   name: string;
@@ -31,7 +42,7 @@ interface ToolCard {
   ok: boolean;
 }
 
-/** A file the user picked via the composer's 📎 button. main reads the file
+/** A file the user picked via the composer's + button. main reads the file
  *  and gives us the inlined text body so the prompt can carry the content
  *  directly. Path/name stay around for the chip label and the mention in
  *  the sent prompt so the model knows which file the body came from. */
@@ -102,26 +113,34 @@ export const AIPane: React.FC = () => {
   // changes done by the AI tools (the tool result scope covers it now too).
   const convVersion = useDataVersion(['conversations']);
 
-  const [showSwitcher, setShowSwitcher] = useState(false);
-  const [showActions, setShowActions] = useState(false);
+  // L5: history is collapsed behind ONE icon (🗂). That single button opens
+  // a dropdown that holds: a search/filter box, the full conversation list,
+  // a toggle for showing archived, and a "new conversation" entry. The
+  // rename / archive / delete actions for the CURRENT conversation moved
+  // into the per-row ⋯ on each list entry (or right-click), so the topbar
+  // doesn't need its own actions menu.
+  const [showHistory, setShowHistory] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [renameDraft, setRenameDraft] = useState('');
   const [historyLoaded, setHistoryLoaded] = useState<Set<string>>(new Set());
   const [bootError, setBootError] = useState<string | null>(null);
   const [input, setInput] = useState('');
-  // L3-H: search/filter for the switcher dropdown. Only matches by title
+  // L3-H: search/filter for the history dropdown. Only matches by title
   // (not message body — that'd need to load every conversation's history
   // to filter, which is wasteful). Cleared on dropdown close so the next
   // open starts from the full list.
   const [switcherQuery, setSwitcherQuery] = useState('');
+  // Per-row actions menu in the history dropdown. Only one row can have it
+  // open at a time (clicking another row's ⋯ closes the previous one).
+  const [rowMenuId, setRowMenuId] = useState<string | null>(null);
 
-  const switcherRef = useRef<HTMLDivElement>(null);
-  const actionsRef = useRef<HTMLDivElement>(null);
+  const historyRef = useRef<HTMLDivElement>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
-  const switcherSearchRef = useRef<HTMLInputElement>(null);
+  const historySearchRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // Files the user picked via the composer's 📎 button. We read them as
+  // Files the user picked via the composer's + button. We read them as
   // text in main (app.pickFile), so each entry carries the inlined text
   // body; the path / name are kept so the prompt can mention which file
   // the text came from and so the chip can show a meaningful label.
@@ -157,27 +176,29 @@ export const AIPane: React.FC = () => {
   useEffect(() => {
     const onDocClick = (e: MouseEvent): void => {
       const t = e.target as Node;
-      if (showSwitcher && switcherRef.current && !switcherRef.current.contains(t)) setShowSwitcher(false);
-      if (showActions && actionsRef.current && !actionsRef.current.contains(t)) setShowActions(false);
+      if (showHistory && historyRef.current && !historyRef.current.contains(t)) {
+        setShowHistory(false);
+        setRowMenuId(null);
+      }
     };
     document.addEventListener('mousedown', onDocClick);
     return () => document.removeEventListener('mousedown', onDocClick);
-  }, [showSwitcher, showActions]);
+  }, [showHistory]);
 
-  // L3-H: when the switcher opens, focus the search input so the user can
-  // type immediately. When it closes, clear the query so the next open
-  // starts from the full list (filter state would otherwise survive and
-  // confuse the next session).
+  // L3-H: when the history dropdown opens, focus the search input so the
+  // user can type immediately. When it closes, clear the query so the next
+  // open starts from the full list (filter state would otherwise survive
+  // and confuse the next session).
   useEffect(() => {
-    if (showSwitcher) {
+    if (showHistory) {
       // Focus on next tick — the input isn't in the DOM until React renders
       // the dropdown div.
-      const t = setTimeout(() => switcherSearchRef.current?.focus(), 0);
+      const t = setTimeout(() => historySearchRef.current?.focus(), 0);
       return () => clearTimeout(t);
     }
     setSwitcherQuery('');
     return;
-  }, [showSwitcher]);
+  }, [showHistory]);
 
   // When currentId changes, lazy-load history (only once per conversation).
   useEffect(() => {
@@ -232,9 +253,30 @@ export const AIPane: React.FC = () => {
     if (el) el.scrollTop = el.scrollHeight;
   }, [turnsByConv, currentId]);
 
+  // Autosize the composer textarea between minHeight and a soft cap. Pure
+  // DOM measurement — no external lib. Resets to minHeight when the input is
+  // cleared so the box doesn't keep its expanded height with empty content.
+  useEffect(() => {
+    const ta = textareaRef.current;
+    if (!ta) return;
+    const maxH = 220;
+    ta.style.height = 'auto';
+    ta.style.height = `${Math.min(ta.scrollHeight, maxH)}px`;
+  }, [input]);
+
   const current = conversations.find((c) => c.id === currentId) ?? null;
   const currentTurns: Turn[] = currentId ? turnsByConv[currentId] ?? [] : [];
   const busy = streamingTurnId !== null;
+  // The "current question" is the most recent user turn in this conversation,
+  // whether it's the in-flight one or the last completed one. The sticky
+  // banner surfaces it so the user always knows what they're waiting on /
+  // just got an answer to, even after scrolling deep into the history.
+  const lastUserTurn: Turn | null = (() => {
+    for (let i = currentTurns.length - 1; i >= 0; i--) {
+      if (currentTurns[i]!.user) return currentTurns[i]!;
+    }
+    return null;
+  })();
   // L3-H: case-insensitive substring filter on title. Empty query = full
   // list. We don't try to be smarter (fuzzy, token-aware) — the list is
   // short enough that an exact substring match is enough to land on the
@@ -258,15 +300,15 @@ export const AIPane: React.FC = () => {
     setTurnsByConv((prev) => ({ ...prev, [conv.id]: [] }));
     setHistoryLoaded((prev) => new Set(prev).add(conv.id));
     setCurrentId(conv.id);
-    setShowSwitcher(false);
-    setShowActions(false);
+    setShowHistory(false);
+    setRowMenuId(null);
   };
 
   // Open the native file picker (main does dialog.showOpenDialog, reads the
   // file as utf-8 up to a small limit) and append the result to the chip
   // row above the textarea. Multi-pick is disabled — adding one file at a
   // time keeps the prompt length predictable; the user can keep clicking
-  // 📎 to add more.
+  // + to add more.
   const pickAttachment = async (): Promise<void> => {
     const r = await window.thihy.app.pickFile({ maxBytes: 256 * 1024 });
     if (!r.ok) {
@@ -293,7 +335,8 @@ export const AIPane: React.FC = () => {
   };
 
   const switchTo = (id: string): void => {
-    setShowSwitcher(false);
+    setShowHistory(false);
+    setRowMenuId(null);
     if (id === currentId) return;
     setCurrentId(id);
   };
@@ -302,7 +345,8 @@ export const AIPane: React.FC = () => {
     if (!current) return;
     setRenameDraft(current.title);
     setRenaming(true);
-    setShowActions(false);
+    setRowMenuId(null);
+    setShowHistory(false);
     setTimeout(() => renameInputRef.current?.focus(), 0);
   };
 
@@ -321,120 +365,43 @@ export const AIPane: React.FC = () => {
     setRenaming(false);
   };
 
-  const toggleArchive = async (): Promise<void> => {
-    if (!current) return;
-    const r = current.archived
-      ? await window.thihy.conversation.unarchive(current.id)
-      : await window.thihy.conversation.archive(current.id);
-    setShowActions(false);
+  const toggleArchive = async (id: string): Promise<void> => {
+    const row = conversations.find((c) => c.id === id);
+    if (!row) return;
+    const r = row.archived
+      ? await window.thihy.conversation.unarchive(id)
+      : await window.thihy.conversation.archive(id);
+    setRowMenuId(null);
     if (!r.ok) return;
     // If the just-archived conversation was current, pick another.
-    if (current.archived === false) {
-      const next = conversations.find((c) => c.id !== current.id && !c.archived);
+    if (id === currentId && row.archived === false) {
+      const next = conversations.find((c) => c.id !== id && !c.archived);
       setCurrentId(next?.id ?? null);
     }
     await refreshList();
   };
 
-  const deleteCurrent = async (): Promise<void> => {
-    if (!current) return;
-    // L3-F: native themed confirm via dialog.showMessageBox (main). The
-    // dialog title + message explain what "delete" actually does here
-    // (row removal + JSONL kept on disk for later cleanup) so the user
-    // isn't surprised by lingering on-disk logs.
-    setShowActions(false);
-    const confirm = await window.thihy.conversation.confirmDelete(current.id, current.title);
+  const deleteConversation = async (id: string): Promise<void> => {
+    const row = conversations.find((c) => c.id === id);
+    if (!row) return;
+    setRowMenuId(null);
+    const confirm = await window.thihy.conversation.confirmDelete(id, row.title);
     if (!confirm.ok || !confirm.data.confirmed) return;
-    await window.thihy.conversation.delete(current.id);
+    await window.thihy.conversation.delete(id);
     // Drop its turns locally and pick another.
     setTurnsByConv((prev) => {
       const next = { ...prev };
-      delete next[current.id];
+      delete next[id];
       return next;
     });
     setHistoryLoaded((prev) => {
       const next = new Set(prev);
-      next.delete(current.id);
+      next.delete(id);
       return next;
     });
-    const remaining = conversations.filter((c) => c.id !== current.id);
+    const remaining = conversations.filter((c) => c.id !== id);
     setConversations(remaining);
-    setCurrentId(remaining[0]?.id ?? null);
-  };
-
-  const submit = async (): Promise<void> => {
-    const prompt = input.trim();
-    if (!prompt) return;
-    // Make sure we have a conversation to write to. If the user has zero
-    // conversations, allocating on first send keeps the empty state lightweight
-    // (no auto-created empty thread cluttering the list) while still landing
-    // them straight into a real chat the moment they press Enter.
-    let convId = currentId;
-    if (!convId) {
-      const r = await window.thihy.conversation.create();
-      if (!r.ok) return;
-      convId = r.data.conversation.id;
-      setConversations((prev) => [r.data.conversation, ...prev]);
-      setTurnsByConv((prev) => ({ ...prev, [convId!]: [] }));
-      setHistoryLoaded((prev) => new Set(prev).add(convId!));
-      setCurrentId(convId);
-    }
-
-    // Snapshot attachments and clear them optimistically so the chip row
-    // disappears while the turn is in flight (avoids the user double-sending
-    // the same content if they panic-hit Enter).
-    const attached = attachments;
-    setAttachments([]);
-
-    // Build the wire prompt: the user's text verbatim, followed by each
-    // attachment's text body in a clearly-labeled fenced block. The visible
-    // bubble keeps the user's literal prompt — the chip row above tells them
-    // which files were inlined — so they can audit what was actually sent.
-    let wirePrompt = prompt;
-    if (attached.length > 0) {
-      const blocks = attached.map((a) => {
-        const header = `[attached: ${a.name} (${a.mime}, ${a.size} 字节)]`;
-        return `${header}\n${a.text}`;
-      });
-      wirePrompt = `${prompt}\n\n---\n\n${blocks.join('\n\n---\n\n')}`;
-    }
-
-    // Snapshot completed prior turns as multi-turn context for the model.
-    const priorTurns = (turnsByConv[convId] ?? [])
-      .filter((t) => t.status === 'done' && t.assistant)
-      .flatMap((t) => [
-        { role: 'user' as const, content: t.user },
-        { role: 'assistant' as const, content: t.assistant },
-      ]);
-
-    const id = crypto.randomUUID();
-    setTurnsByConv((prev) => ({
-      ...prev,
-      [convId!]: [
-        ...(prev[convId!] ?? []),
-        { id, user: prompt, reasoning: '', assistant: '', tools: [], status: 'streaming', attached: attached.length > 0 ? attached : undefined },
-      ],
-    }));
-    setInput('');
-    clear();
-    setStreamingConvId(convId);
-    setStreamingTurnId(id);
-    const res = await window.thihy.ai.ask({ prompt: wirePrompt, conversationId: convId, invocationId: id, history: priorTurns, tools: undefined });
-    if (!res.ok) {
-      setTurnsByConv((prev) => {
-        const list = prev[convId!] ?? [];
-        return {
-          ...prev,
-          [convId!]: list.map((t) =>
-            t.id === id ? { ...t, status: 'error', error: res.message ?? 'AI 调用失败' } : t,
-          ),
-        };
-      });
-    }
-    setStreamingConvId((cur) => (cur === convId ? null : cur));
-    setStreamingTurnId((cur) => (cur === id ? null : cur));
-    // Refresh list so the just-touched conversation bubbles to the top.
-    void refreshList();
+    if (id === currentId) setCurrentId(remaining[0]?.id ?? null);
   };
 
   // L3-B: stop the in-flight turn. Soft-cancel the conversation's agent via
@@ -456,182 +423,294 @@ export const AIPane: React.FC = () => {
     void refreshList();
   };
 
+  // Submit pipeline shared by the inline composer button AND the Composer
+  // modal (which dispatches a window event). Takes an optional override so
+  // the Composer path can supply its own prompt + image attachments without
+  // having to populate the textarea first (the user expects the Composer
+  // modal to close immediately and the AI pane to take over from there).
+  const runSubmit = async (override?: { prompt: string; images: { name: string; mime: string; dataUrl: string }[] }): Promise<void> => {
+    let prompt: string;
+    let attached: AttachedFile[];
+    if (override) {
+      // Composer→AIPane path. The user typed into the modal; we route
+      // their text + attached images here without going through the
+      // inline textarea. The image markdown is built inline so a
+      // multimodal model can see them — DSH's LLM adapter passes image
+      // URLs through to the underlying vision-capable provider.
+      prompt = override.prompt.trim();
+      if (!prompt && override.images.length === 0) return;
+      attached = override.images.map((img) => ({
+        path: `data:${img.mime};name=${img.name}`,
+        name: img.name,
+        mime: img.mime,
+        // For the chip's "size" display we approximate from the data URL
+        // length (base64 carries 4 chars per 3 bytes). It's a label —
+        // exact byte count isn't important.
+        size: Math.floor((img.dataUrl.length * 3) / 4),
+        // Stash the data URL in the `text` field so the AIPane's existing
+        // wire-prompt builder can inlude it as image markdown without a
+        // second code path. main never sees this; only this renderer
+        // uses it for prompt assembly.
+        text: `[image:${img.name}]\n${img.dataUrl}`,
+      }));
+    } else {
+      prompt = input.trim();
+      if (!prompt) return;
+      attached = attachments;
+    }
+
+    // Wrap the user's literal description in a clear "create a task"
+    // instruction so the AI correctly interprets the Composer modal as a
+    // capture surface (not a free-form chat). The user prompt stays
+    // verbatim at the end so the model can ground its decisions in the
+    // exact wording.
+    const SYSTEM_INSTRUCTION =
+      '[系统提示：用户通过"新建任务"界面提交了下面的描述，请使用 todo.create 工具创建一个新的 TODO 任务。' +
+      '自动选择合适的 groupId（根据内容判断应该归入哪个分组；如果没有明显匹配的分组，可以创建新的分组或留空）。' +
+      'priority 根据紧迫程度判断（无/低/中/高）；status 默认 inbox，除非用户明确说"待办"、"进行中"、"已完成"等。' +
+      '如果描述包含截止日期（"明天"、"下周三"、"12-25" 等），解析为 unix 毫秒并填入 dueAt。' +
+      '提取相关 tags。如果描述较长，第一行或核心动词短语作为 title。' +
+      '创建完成后简短回复用户：任务名、分组、优先级，截止日期（如有），不要重复整段描述。]\n\n';
+    const wirePrompt = override
+      ? `${SYSTEM_INSTRUCTION}[用户的描述]:\n${prompt}`
+      : prompt;
+
+    // Make sure we have a conversation to write to. If the user has zero
+    // conversations, allocating on first send keeps the empty state lightweight
+    // (no auto-created empty thread cluttering the list) while still landing
+    // them straight into a real chat the moment they press Enter.
+    let convId = currentId;
+    if (!convId) {
+      const r = await window.thihy.conversation.create();
+      if (!r.ok) return;
+      convId = r.data.conversation.id;
+      setConversations((prev) => [r.data.conversation, ...prev]);
+      setTurnsByConv((prev) => ({ ...prev, [convId!]: [] }));
+      setHistoryLoaded((prev) => new Set(prev).add(convId!));
+      setCurrentId(convId);
+    }
+
+    // Snapshot attachments and clear them optimistically so the chip row
+    // disappears while the turn is in flight (avoids the user double-sending
+    // the same content if they panic-hit Enter).
+    if (!override) setAttachments([]);
+
+    // Build the wire prompt: the user's text verbatim, followed by each
+    // attachment's text body in a clearly-labeled fenced block. The visible
+    // bubble keeps the user's literal prompt — the chip row above tells them
+    // which files were inlined — so they can audit what was actually sent.
+    let finalWire = wirePrompt;
+    if (attached.length > 0) {
+      const blocks = attached.map((a) => {
+        const header = `[attached: ${a.name} (${a.mime}, ${a.size} 字节)]`;
+        return `${header}\n${a.text}`;
+      });
+      finalWire = `${wirePrompt}\n\n---\n\n${blocks.join('\n\n---\n\n')}`;
+    }
+
+    // Snapshot completed prior turns as multi-turn context for the model.
+    const priorTurns = (turnsByConv[convId] ?? [])
+      .filter((t) => t.status === 'done' && t.assistant)
+      .flatMap((t) => [
+        { role: 'user' as const, content: t.user },
+        { role: 'assistant' as const, content: t.assistant },
+      ]);
+
+    const id = crypto.randomUUID();
+    setTurnsByConv((prev) => ({
+      ...prev,
+      [convId!]: [
+        ...(prev[convId!] ?? []),
+        // Display the user's literal prompt in the bubble, NOT the wrapped
+        // system-instruction version — the user should see exactly what
+        // they typed. The system wrapper is hidden from the bubble.
+        { id, user: prompt, reasoning: '', assistant: '', tools: [], status: 'streaming', attached: attached.length > 0 ? attached : undefined },
+      ],
+    }));
+    if (!override) {
+      setInput('');
+      clear();
+    }
+    setStreamingConvId(convId);
+    setStreamingTurnId(id);
+    const res = await window.thihy.ai.ask({ prompt: finalWire, conversationId: convId, invocationId: id, history: priorTurns, tools: undefined });
+    if (!res.ok) {
+      setTurnsByConv((prev) => {
+        const list = prev[convId!] ?? [];
+        return {
+          ...prev,
+          [convId!]: list.map((t) =>
+            t.id === id ? { ...t, status: 'error', error: res.message ?? 'AI 调用失败' } : t,
+          ),
+        };
+      });
+    }
+    setStreamingConvId((cur) => (cur === convId ? null : cur));
+    setStreamingTurnId((cur) => (cur === id ? null : cur));
+    // Refresh list so the just-touched conversation bubbles to the top.
+    void refreshList();
+  };
+
+  // The Composer modal (center "新建任务" surface) dispatches this event
+  // when the user presses Enter. We pick it up here and route it through
+  // the same submit pipeline, so the user's text + images end up in the
+  // AI's prompt and the model creates the task via its todo.create tool.
+  useEffect(() => {
+    const onExternalSubmit = (e: Event): void => {
+      const detail = (e as CustomEvent<ExternalAiSubmitDetail>).detail;
+      if (!detail) return;
+      void runSubmit({ prompt: detail.prompt, images: detail.images });
+    };
+    window.addEventListener(AI_SUBMIT_EVENT, onExternalSubmit);
+    return () => window.removeEventListener(AI_SUBMIT_EVENT, onExternalSubmit);
+    // runSubmit closes over currentId / streamingTurnId / etc.; the listener
+    // picks up the latest closure on each event, which is what we want —
+    // a stale closure would race the conversation id the user expects.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentId, turnsByConv, streamingConvId, streamingTurnId]);
+
   return (
     <div className="aipane">
+      {/* Minimal topbar. Per the L5 layout request:
+            LEFT  : the "AI 助手" brand label so the panel always reads as
+                    "this is the AI assistant" even when the conversation
+                    title is in the content area.
+            RIGHT : a [+ 新建] icon and the [🗂 历史] icon.
+          The title itself moves out into the content area as a sticky
+          heading below — the topbar stops competing for horizontal space. */}
       <header className="aipane__header">
-        <div className="aipane__title">
-          <span className="aipane__glyph" aria-hidden="true">✦</span>
-          <span>AI 助手</span>
+        <div className="aipane__brand">
+          <span className="aipane__brand-glyph" aria-hidden="true">✦</span>
+          <span className="aipane__brand-text">AI 助手</span>
         </div>
-        <div className="aipane__meta" ref={switcherRef}>
-          {renaming && current ? (
-            <input
-              ref={renameInputRef}
-              className="aipane__rename"
-              value={renameDraft}
-              onChange={(e) => setRenameDraft(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') { e.preventDefault(); void commitRename(); }
-                if (e.key === 'Escape') { e.preventDefault(); setRenaming(false); }
-              }}
-              onBlur={() => void commitRename()}
-              aria-label="重命名对话"
-            />
-          ) : (
-            // L3-E: split the switcher into two click targets. Clicking the
-            // title text enters rename mode (the common-case one-click
-            // affordance); clicking the caret still opens the switcher
-            // dropdown. The 2-click rename (⋯ → 重命名) is preserved as a
-            // keyboard / discoverability fallback via the actions menu.
-            <div className="aipane__switcher-btn" data-disabled={conversations.length === 0 && !current}>
-              <button
-                type="button"
-                className="aipane__switcher-title"
-                onClick={() => { if (current) beginRename(); }}
-                disabled={!current}
-                title={current ? `重命名：${current.title}` : '选择对话'}
-                aria-label={current ? `重命名对话：${current.title}` : '选择对话'}
-              >
-                {current?.title ?? '选择对话…'}
-              </button>
-              <button
-                type="button"
-                className="aipane__switcher-caret-btn"
-                onClick={() => { setShowSwitcher((s) => !s); setShowActions(false); }}
-                disabled={conversations.length === 0 && !current}
-                title="切换对话"
-                aria-label="切换对话"
-                aria-haspopup="listbox"
-                aria-expanded={showSwitcher}
-              >
-                <span aria-hidden="true">▾</span>
-              </button>
-            </div>
-          )}
-          {showSwitcher && (
-            <div className="aipane__menu aipane__menu--left" role="listbox">
-              {/* L3-H: search/filter input. Type to narrow the list by
-                  title; matches are case-insensitive substring. Esc clears
-                  the filter; Enter selects the first match (or no-op if
-                  none). The search box is always present when the dropdown
-                  is open — even with 0 conversations, so users have a hint
-                  that filter is available. */}
-              <div className="aipane__search">
-                <input
-                  ref={switcherSearchRef}
-                  type="search"
-                  className="aipane__search-input"
-                  placeholder="搜索对话标题…"
-                  value={switcherQuery}
-                  onChange={(e) => setSwitcherQuery(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Escape') {
-                      e.preventDefault();
-                      if (switcherQuery) setSwitcherQuery('');
-                      else setShowSwitcher(false);
-                      return;
-                    }
-                    if (e.key === 'Enter' && filteredConversations.length > 0) {
-                      e.preventDefault();
-                      switchTo(filteredConversations[0]!.id);
-                    }
-                  }}
-                  aria-label="搜索对话"
-                />
-              </div>
-              {filteredConversations.length === 0 && conversations.length === 0 && (
-                <div className="aipane__menu-empty">还没有对话</div>
-              )}
-              {filteredConversations.length === 0 && conversations.length > 0 && switcherQuery && (
-                <div className="aipane__menu-empty">
-                  没有匹配“{switcherQuery}”的对话
-                </div>
-              )}
-              {filteredConversations.length > 0 && switcherQuery && (
-                <div className="aipane__menu-hint">
-                  {filteredConversations.length} / {conversations.length} 个匹配
-                </div>
-              )}
-              {filteredConversations.map((c) => (
-                <button
-                  key={c.id}
-                  type="button"
-                  role="option"
-                  aria-selected={c.id === currentId}
-                  className={`aipane__menu-item${c.id === currentId ? ' aipane__menu-item--active' : ''}`}
-                  onClick={() => switchTo(c.id)}
-                  title={c.title}
-                >
-                  {/* L3-J: two-line layout. Line 1 = title + tags;
-                       line 2 = last message preview + count when known.
-                       Tool turns don't drive the preview (last non-tool
-                       turn is computed in main), so the preview reflects
-                       actual conversation content the user typed/read. */}
-                  <span className="aipane__menu-line">
-                    <span className="aipane__menu-title">{c.title}</span>
-                    {c.archived && <span className="aipane__menu-tag">已归档</span>}
-                  </span>
-                  {(c.lastMessagePreview || typeof c.messageCount === 'number') && (
-                    <span className="aipane__menu-preview">
-                      {c.lastMessagePreview && (
-                        <span className="aipane__menu-preview-text">{c.lastMessagePreview}</span>
-                      )}
-                      {typeof c.messageCount === 'number' && (
-                        <span className="aipane__menu-count" title={`${c.messageCount} 条对话`}>
-                          {c.messageCount}
-                        </span>
-                      )}
-                    </span>
-                  )}
-                </button>
-              ))}
-              <div className="aipane__menu-divider" />
-              <button
-                type="button"
-                className="aipane__menu-item aipane__menu-item--toggle"
-                onClick={() => { setShowSwitcher(false); setShowArchived((s) => !s); }}
-              >
-                {showArchived ? '隐藏已归档' : '显示已归档'}
-              </button>
-            </div>
-          )}
-        </div>
-
-        <button
-          type="button"
-          className="icon-btn aipane__newbtn"
-          onClick={() => void createConversation()}
-          title="新建对话"
-          aria-label="新建对话"
-        >
-          +
-        </button>
-
-        <div className="aipane__actions" ref={actionsRef}>
+        <div className="aipane__actions">
           <button
             type="button"
-            className="icon-btn"
-            onClick={() => { setShowActions((s) => !s); setShowSwitcher(false); }}
-            disabled={!current}
-            title="对话操作"
-            aria-label="对话操作"
-            aria-haspopup="menu"
-            aria-expanded={showActions}
+            className="icon-btn aipane__new-btn"
+            onClick={() => void createConversation()}
+            title="新建对话"
+            aria-label="新建对话"
           >
-            ⋯
+            <span aria-hidden="true">＋</span>
           </button>
-          {showActions && current && (
-            <div className="aipane__menu aipane__menu--right" role="menu">
-              <button type="button" className="aipane__menu-item" onClick={() => beginRename()}>重命名</button>
-              <button type="button" className="aipane__menu-item" onClick={() => void toggleArchive()}>
-                {current.archived ? '取消归档' : '归档'}
-              </button>
-              <div className="aipane__menu-divider" />
-              <button type="button" className="aipane__menu-item aipane__menu-item--danger" onClick={() => void deleteCurrent()}>
-                删除
-              </button>
-            </div>
-          )}
+          <div className="aipane__history" ref={historyRef}>
+            <button
+              type="button"
+              className="icon-btn aipane__history-btn"
+              onClick={() => setShowHistory((s) => !s)}
+              title="对话历史"
+              aria-label="对话历史"
+              aria-haspopup="listbox"
+              aria-expanded={showHistory}
+            >
+              <span aria-hidden="true">🗂</span>
+            </button>
+            {showHistory && (
+              <div className="aipane__menu aipane__menu--right" role="listbox">
+                <div className="aipane__menu-head">
+                  <span className="aipane__menu-head-title">对话历史</span>
+                </div>
+                <div className="aipane__search">
+                  <input
+                    ref={historySearchRef}
+                    type="search"
+                    className="aipane__search-input"
+                    placeholder="搜索对话标题…"
+                    value={switcherQuery}
+                    onChange={(e) => setSwitcherQuery(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Escape') {
+                        e.preventDefault();
+                        if (switcherQuery) setSwitcherQuery('');
+                        else setShowHistory(false);
+                        return;
+                      }
+                      if (e.key === 'Enter' && filteredConversations.length > 0) {
+                        e.preventDefault();
+                        switchTo(filteredConversations[0]!.id);
+                      }
+                    }}
+                    aria-label="搜索对话"
+                  />
+                </div>
+                {filteredConversations.length === 0 && conversations.length === 0 && (
+                  <div className="aipane__menu-empty">还没有对话</div>
+                )}
+                {filteredConversations.length === 0 && conversations.length > 0 && switcherQuery && (
+                  <div className="aipane__menu-empty">
+                    没有匹配“{switcherQuery}”的对话
+                  </div>
+                )}
+                {filteredConversations.length > 0 && switcherQuery && (
+                  <div className="aipane__menu-hint">
+                    {filteredConversations.length} / {conversations.length} 个匹配
+                  </div>
+                )}
+                {filteredConversations.map((c) => (
+                  <div key={c.id} className="aipane__menu-row">
+                    <button
+                      type="button"
+                      role="option"
+                      aria-selected={c.id === currentId}
+                      className={`aipane__menu-item${c.id === currentId ? ' aipane__menu-item--active' : ''}`}
+                      onClick={() => switchTo(c.id)}
+                      title={c.title}
+                    >
+                      <span className="aipane__menu-line">
+                        <span className="aipane__menu-title">{c.title}</span>
+                        {c.archived && <span className="aipane__menu-tag">已归档</span>}
+                      </span>
+                      {(c.lastMessagePreview || typeof c.messageCount === 'number') && (
+                        <span className="aipane__menu-preview">
+                          {c.lastMessagePreview && (
+                            <span className="aipane__menu-preview-text">{c.lastMessagePreview}</span>
+                          )}
+                          {typeof c.messageCount === 'number' && (
+                            <span className="aipane__menu-count" title={`${c.messageCount} 条对话`}>
+                              {c.messageCount}
+                            </span>
+                          )}
+                        </span>
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      className="icon-btn aipane__menu-row-btn"
+                      onClick={() => setRowMenuId((cur) => (cur === c.id ? null : c.id))}
+                      title="对话操作"
+                      aria-label={`对 "${c.title}" 的操作`}
+                      aria-haspopup="menu"
+                      aria-expanded={rowMenuId === c.id}
+                    >
+                      ⋯
+                    </button>
+                    {rowMenuId === c.id && (
+                      <div className="aipane__menu aipane__menu--row" role="menu">
+                        <button type="button" className="aipane__menu-item aipane__menu-item--inline" onClick={() => { setRowMenuId(null); beginRenameFor(c); }}>
+                          重命名
+                        </button>
+                        <button type="button" className="aipane__menu-item aipane__menu-item--inline" onClick={() => void toggleArchive(c.id)}>
+                          {c.archived ? '取消归档' : '归档'}
+                        </button>
+                        <div className="aipane__menu-divider" />
+                        <button type="button" className="aipane__menu-item aipane__menu-item--inline aipane__menu-item--danger" onClick={() => void deleteConversation(c.id)}>
+                          删除
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ))}
+                <div className="aipane__menu-divider" />
+                <button
+                  type="button"
+                  className="aipane__menu-item aipane__menu-item--toggle"
+                  onClick={() => { setShowHistory(false); setRowMenuId(null); setShowArchived((s) => !s); }}
+                >
+                  {showArchived ? '隐藏已归档' : '显示已归档'}
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </header>
 
@@ -641,6 +720,51 @@ export const AIPane: React.FC = () => {
             ⚠ 会话列表加载失败：{bootError}
           </div>
         )}
+        {/* The conversation title moved OUT of the topbar and into the
+            content area as a sticky heading — it's the primary context for
+            what the user is reading, so it should live with the content. */}
+        {!bootError && current && (
+          <h2 className="aipane__conv-title" title={current.title}>
+            {renaming ? (
+              <input
+                ref={renameInputRef}
+                className="aipane__rename"
+                value={renameDraft}
+                onChange={(e) => setRenameDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') { e.preventDefault(); void commitRename(); }
+                  if (e.key === 'Escape') { e.preventDefault(); setRenaming(false); }
+                }}
+                onBlur={() => void commitRename()}
+                aria-label="重命名对话"
+              />
+            ) : (
+              current.title
+            )}
+          </h2>
+        )}
+
+        {/* Sticky "current question" banner. Surfaces the most recent user
+            message so even after the user scrolls deep into the history to
+            re-read an earlier answer, they always see what was actually
+            asked. Hidden when there's no user message yet. */}
+        {!bootError && lastUserTurn && (
+          <div className="aipane__currentq" aria-label="当前问题">
+            <span className="aipane__currentq-glyph" aria-hidden="true">❝</span>
+            <span className="aipane__currentq-text">
+              {lastUserTurn.user}
+              {lastUserTurn.attached && lastUserTurn.attached.length > 0 && (
+                <span className="aipane__currentq-attach">
+                  {' '}📎 {lastUserTurn.attached.length} 个附件
+                </span>
+              )}
+            </span>
+            {busy && (
+              <span className="aipane__currentq-status" aria-live="polite">生成中…</span>
+            )}
+          </div>
+        )}
+
         {!bootError && !current && conversations.length === 0 && (
           <div className="aipane__empty">
             <p>直接在下方输入问题，回车即创建第一条对话。</p>
@@ -654,6 +778,10 @@ export const AIPane: React.FC = () => {
         {currentTurns.map((t) => <TurnView key={t.id} turn={t} />)}
       </div>
 
+      {/* Unified composer: ONE card holding + button (left, embedded),
+          textarea (middle, flex-grows + autosizes), and Send/Stop (right).
+          Attachment chips float ABOVE the card so they don't eat vertical
+          space when empty. */}
       <div className="aipane__composer">
         {attachments.length > 0 && (
           <div className="aipane__attach-row" role="list" aria-label="已附加的文件">
@@ -674,7 +802,7 @@ export const AIPane: React.FC = () => {
             ))}
           </div>
         )}
-        <div className="aipane__composer-row">
+        <div className="aipane__composer-card">
           <button
             type="button"
             className="aipane__attach-btn"
@@ -682,16 +810,17 @@ export const AIPane: React.FC = () => {
             title="附加本地文件"
             aria-label="附加本地文件"
           >
-            📎
+            ＋
           </button>
           <textarea
+            ref={textareaRef}
             aria-label="向 AI 提问"
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
-                void submit();
+                void runSubmit();
                 return;
               }
               // L3-B: Esc while focused on the composer cancels the in-flight
@@ -703,7 +832,7 @@ export const AIPane: React.FC = () => {
               }
             }}
             placeholder={current ? '输入问题，回车发送…（Shift+Enter 换行，Esc 停止）' : '输入第一条问题，回车即创建对话…'}
-            rows={2}
+            rows={1}
             className="aipane__input"
           />
           {busy ? (
@@ -720,23 +849,35 @@ export const AIPane: React.FC = () => {
               aria-label="停止生成"
             >
               <span className="aipane__stop-glyph" aria-hidden="true">■</span>
-              <span>停止</span>
             </button>
           ) : (
             <button
               type="button"
               className="btn-primary aipane__send"
-              onClick={() => void submit()}
+              onClick={() => void runSubmit()}
               disabled={!input.trim()}
               title={current ? '发送（Enter）' : '发送并创建对话'}
+              aria-label="发送"
             >
-              发送
+              <span aria-hidden="true">➤</span>
             </button>
           )}
         </div>
       </div>
     </div>
   );
+
+  /** Inline rename helper: same flow as beginRename() but for a chosen row,
+   *  not necessarily the currently-active conversation. */
+  function beginRenameFor(c: ConversationRow): void {
+    setRenameDraft(c.title);
+    setRenaming(true);
+    // Switch to it first so commitRename() targets the right id.
+    setCurrentId(c.id);
+    setShowHistory(false);
+    setRowMenuId(null);
+    setTimeout(() => renameInputRef.current?.focus(), 0);
+  }
 };
 
 /** Convert a HistoryTurn (from JSONL decode) into the renderer's Turn shape. */

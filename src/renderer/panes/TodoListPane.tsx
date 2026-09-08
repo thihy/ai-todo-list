@@ -1,19 +1,30 @@
 // Task list — left column of the master-detail layout. Renders groups as a
-// hand-edited directory TREE (folders) with tasks as leaves (files) — distinct
-// from `project` / tags. Group names are editable inline (double-click);
-// sub-groups can be added; deleting a group un-files its tasks. The top action
-// is a 新建任务 button (not an input) that opens the center composer for
-// natural-language + image capture. The bottom-left user chip is in the footer.
+// hand-edited directory TREE (folders) with tasks as leaves (files).
+// L5 redesign:
+//   - Groups indent by nesting depth (Group > sub-Group > sub-sub-Group).
+//   - Tasks inside a group indent ONE more level than the group itself.
+//   - SubTasks (parentId !== null) indent UNDER their parent task, recursively.
+//   - Root-level tasks (no parentId, no groupId) render INLINE at the top
+//     of the tree; there is no "未分组" section header — "no group" is just
+//     "depth 0 in the tree".
+//   - Double-clicking a group row toggles expand/collapse (NOT rename).
+//   - Each group row has its action icons RIGHT-ALIGNED in a fixed slot:
+//     ✏ 重命名 · 📁 新建子分组 · 🗑 删除. They fade in on hover but the
+//     rename slot is always discoverable, so users don't have to discover
+//     the double-click-to-rename gesture (which used to conflict with
+//     double-click = expand).
 
 import React, { useEffect, useMemo, useState } from 'react';
 import { useTodos, useGroups } from '../hooks/useThihyApi';
 import type { ListFilter } from '../router';
-import type { Todo, TodoStatus, Group } from '../../shared/todo-types';
+import type { Todo, TodoStatus, Group, ULID } from '../../shared/todo-types';
 import { UserMenu } from '../components/UserMenu';
 
 interface GroupNode {
   group: Group;
   children: GroupNode[];
+  /** Tasks filed directly under this group (does NOT include SubTasks —
+   *  SubTasks are rendered under their parent task, not under the group). */
   tasks: Todo[];
 }
 
@@ -38,7 +49,12 @@ export const TodoListPane: React.FC<{
   }, [refresh, groupsApi]);
 
   const tree = useMemo(() => buildTree(groupsApi.groups, data), [groupsApi.groups, data]);
-  const unfiled = useMemo(() => data.filter((t) => !t.groupId), [data]);
+  // Root-level tasks: top-level (no parentId) AND unfiled (no groupId).
+  // These render inline above the group tree with no section header.
+  const rootTasks = useMemo(
+    () => data.filter((t) => !t.groupId && !t.parentId),
+    [data],
+  );
   const isEmpty = !loading && data.length === 0 && groupsApi.groups.length === 0;
 
   return (
@@ -72,6 +88,26 @@ export const TodoListPane: React.FC<{
           </div>
         )}
 
+        {/* Root-level tasks render INLINE here — no "未分组" section header. */}
+        {rootTasks.length > 0 && (
+          <ul className="task-list__root-tasks">
+            {rootTasks.map((t) => (
+              <TaskBranch
+                key={t.id}
+                todo={t}
+                depth={0}
+                selectedId={selectedId}
+                onSelect={onSelect}
+                allTodos={data}
+                onCycle={async (next) => {
+                  await window.thihy.todo.update(t.id, { status: next });
+                  await refresh();
+                }}
+              />
+            ))}
+          </ul>
+        )}
+
         {tree.map((node) => (
           <GroupBranch
             key={node.group.id}
@@ -81,33 +117,13 @@ export const TodoListPane: React.FC<{
             onSelect={onSelect}
             counts={groupsApi.counts}
             api={groupsApi}
+            allTodos={data}
             onCycle={async (t, next) => {
               await window.thihy.todo.update(t.id, { status: next });
               await refresh();
             }}
           />
         ))}
-
-        {(unfiled.length > 0 || tree.length === 0) && unfiled.length > 0 && (
-          <section className="task-group task-group--unfiled">
-            <h2 className="task-group__title">未分组</h2>
-            <ul className="task-group__items">
-              {unfiled.map((t) => (
-                <TaskRow
-                  key={t.id}
-                  todo={t}
-                  depth={0}
-                  active={t.id === selectedId}
-                  onSelect={onSelect}
-                  onCycle={async (next) => {
-                    await window.thihy.todo.update(t.id, { status: next });
-                    await refresh();
-                  }}
-                />
-              ))}
-            </ul>
-          </section>
-        )}
       </div>
 
       <footer className="task-list__footer">
@@ -116,6 +132,8 @@ export const TodoListPane: React.FC<{
     </section>
   );
 };
+
+// ----- Group row -----
 
 const GroupBranch: React.FC<{
   node: GroupNode;
@@ -129,14 +147,18 @@ const GroupBranch: React.FC<{
     remove: (id: string) => Promise<void>;
     refresh: () => Promise<void>;
   };
+  allTodos: Todo[];
   onCycle: (t: Todo, next: TodoStatus) => Promise<void>;
-}> = ({ node, depth, selectedId, onSelect, counts, api, onCycle }) => {
+}> = ({ node, depth, selectedId, onSelect, counts, api, onCycle, allTodos }) => {
+  // Default expanded; the user can collapse. We deliberately don't persist
+  // expansion across sessions — re-expanding on app launch matches the
+  // user's mental model ("I left it the way I see it now").
   const [expanded, setExpanded] = useState(true);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(node.group.name);
   const hasChildren = node.children.length > 0 || node.tasks.length > 0;
 
-  const commit = async (): Promise<void> => {
+  const commitRename = async (): Promise<void> => {
     const name = draft.trim();
     if (!name) {
       setDraft(node.group.name);
@@ -149,7 +171,14 @@ const GroupBranch: React.FC<{
 
   return (
     <section className="task-group" style={{ '--group-depth': depth } as React.CSSProperties}>
-      <div className="task-group__head">
+      <div
+        className="task-group__head"
+        // L5: double-click toggles expand, NOT rename. The rename affordance
+        // moved to a dedicated ✏ icon on the right side of the row, so the
+        // double-click gesture can safely serve the primary expand/collapse
+        // behavior without conflicting with rename.
+        onDoubleClick={() => setExpanded((v) => !v)}
+      >
         <button
           type="button"
           className="task-group__chevron"
@@ -168,9 +197,9 @@ const GroupBranch: React.FC<{
             value={draft}
             autoFocus
             onChange={(e) => setDraft(e.target.value)}
-            onBlur={() => void commit()}
+            onBlur={() => void commitRename()}
             onKeyDown={(e) => {
-              if (e.key === 'Enter') void commit();
+              if (e.key === 'Enter') void commitRename();
               else if (e.key === 'Escape') {
                 setDraft(node.group.name);
                 setEditing(false);
@@ -179,44 +208,54 @@ const GroupBranch: React.FC<{
             onClick={(e) => e.stopPropagation()}
           />
         ) : (
-          <span
-            className="task-group__name"
-            title="双击重命名"
-            onDoubleClick={() => {
+          <span className="task-group__name">{node.group.name}</span>
+        )}
+        <span className="task-group__count">{counts[node.group.id] ?? 0}</span>
+
+        {/* Right-aligned action slot. ✏ is the discoverable rename affordance
+            (replaces the old double-click-to-rename gesture); 📁+ creates a
+            child group; 🗑 removes the group (tasks become root-level). All
+            three sit on the right edge with consistent spacing. */}
+        <span className="task-group__actions">
+          <button
+            type="button"
+            className="task-group__action"
+            aria-label="重命名分组"
+            title="重命名"
+            onClick={() => {
               setDraft(node.group.name);
               setEditing(true);
             }}
           >
-            {node.group.name}
-          </span>
-        )}
-        <span className="task-group__count">{counts[node.group.id] ?? 0}</span>
-        <button
-          type="button"
-          className="task-group__action"
-          aria-label="新建子分组"
-          title="新建子分组"
-          onClick={() => {
-            void api.create('新建分组', node.group.id).then(() => setExpanded(true));
-          }}
-        >
-          <FolderPlusGlyph />
-        </button>
-        <button
-          type="button"
-          className="task-group__action task-group__action--danger"
-          aria-label="删除分组"
-          title="删除分组（任务保留，移至未分组）"
-          onClick={() => {
-            if (hasChildren) {
-              const ok = window.confirm(`删除分组「${node.group.name}」？子分组将一并删除，其中的任务移至未分组。`);
-              if (!ok) return;
-            }
-            void api.remove(node.group.id);
-          }}
-        >
-          <TrashGlyph />
-        </button>
+            <PencilGlyph />
+          </button>
+          <button
+            type="button"
+            className="task-group__action"
+            aria-label="新建子分组"
+            title="新建子分组"
+            onClick={() => {
+              void api.create('新建分组', node.group.id).then(() => setExpanded(true));
+            }}
+          >
+            <FolderPlusGlyph />
+          </button>
+          <button
+            type="button"
+            className="task-group__action task-group__action--danger"
+            aria-label="删除分组"
+            title="删除分组（子分组一并删除，其中的任务移至根）"
+            onClick={() => {
+              if (hasChildren) {
+                const ok = window.confirm(`删除分组「${node.group.name}」？子分组将一并删除，其中的任务移至根。`);
+                if (!ok) return;
+              }
+              void api.remove(node.group.id);
+            }}
+          >
+            <TrashGlyph />
+          </button>
+        </span>
       </div>
       {expanded && (
         <>
@@ -229,18 +268,20 @@ const GroupBranch: React.FC<{
               onSelect={onSelect}
               counts={counts}
               api={api}
+              allTodos={allTodos}
               onCycle={onCycle}
             />
           ))}
           {node.tasks.length > 0 && (
             <ul className="task-group__items">
               {node.tasks.map((t) => (
-                <TaskRow
+                <TaskBranch
                   key={t.id}
                   todo={t}
                   depth={depth + 1}
-                  active={t.id === selectedId}
+                  selectedId={selectedId}
                   onSelect={onSelect}
+                  allTodos={allTodos}
                   onCycle={async (next) => {
                     await window.thihy.todo.update(t.id, { status: next });
                     await api.refresh();
@@ -255,13 +296,71 @@ const GroupBranch: React.FC<{
   );
 };
 
+// ----- Task row (with SubTask nesting) -----
+
+/** Walk the allTodos list to find direct subtasks of `parent`. SubTasks are
+ *  tasks whose parentId points at `parent`. We filter in renderer code (not
+ *  repo) so the entire SubTask subtree is computed from the already-fetched
+ *  todo list without an extra round-trip per parent. */
+function subtasksOf(allTodos: Todo[], parent: ULID): Todo[] {
+  return allTodos.filter((t) => t.parentId === parent);
+}
+
+const TaskBranch: React.FC<{
+  todo: Todo;
+  depth: number;
+  selectedId: string | null;
+  onSelect: (id: string) => void;
+  allTodos: Todo[];
+  onCycle: (next: TodoStatus) => Promise<void>;
+}> = ({ todo, depth, selectedId, onSelect, allTodos, onCycle }) => {
+  const children = subtasksOf(allTodos, todo.id);
+  const hasSubtasks = children.length > 0;
+  const [expanded, setExpanded] = useState(true);
+
+  return (
+    <>
+      <TaskRow
+        todo={todo}
+        depth={depth}
+        active={todo.id === selectedId}
+        onSelect={onSelect}
+        onCycle={onCycle}
+        hasSubtasks={hasSubtasks}
+        subtasksExpanded={expanded}
+        onToggleSubtasks={() => setExpanded((v) => !v)}
+      />
+      {hasSubtasks && expanded && (
+        <ul className="task-branch__children">
+          {children.map((c) => (
+            <TaskBranch
+              key={c.id}
+              todo={c}
+              depth={depth + 1}
+              selectedId={selectedId}
+              onSelect={onSelect}
+              allTodos={allTodos}
+              onCycle={async (next) => {
+                await window.thihy.todo.update(c.id, { status: next });
+              }}
+            />
+          ))}
+        </ul>
+      )}
+    </>
+  );
+};
+
 const TaskRow: React.FC<{
   todo: Todo;
   depth: number;
   active: boolean;
   onSelect: (id: string) => void;
   onCycle: (next: TodoStatus) => Promise<void>;
-}> = ({ todo, depth, active, onSelect, onCycle }) => {
+  hasSubtasks: boolean;
+  subtasksExpanded: boolean;
+  onToggleSubtasks: () => void;
+}> = ({ todo, depth, active, onSelect, onCycle, hasSubtasks, subtasksExpanded, onToggleSubtasks }) => {
   const done = todo.status === 'done';
   return (
     <li
@@ -276,6 +375,26 @@ const TaskRow: React.FC<{
     >
       <div className="task-row__main">
         <div className="task-row__title-line">
+          {/* SubTask expand/collapse chevron — only rendered when this task
+              actually has subtasks, so leaf tasks don't carry dead chrome.
+              Click toggles the subtask list; clicking the row body still
+              selects the task. */}
+          {hasSubtasks ? (
+            <button
+              type="button"
+              className="task-row__chevron"
+              aria-label={subtasksExpanded ? '折叠子任务' : '展开子任务'}
+              aria-expanded={subtasksExpanded}
+              onClick={(e) => {
+                e.stopPropagation();
+                onToggleSubtasks();
+              }}
+            >
+              <ChevronGlyph open={subtasksExpanded} />
+            </button>
+          ) : (
+            <span className="task-row__chevron-spacer" aria-hidden="true" />
+          )}
           <span className="task-row__title">{todo.title || '(无标题)'}</span>
           <button
             type="button"
@@ -289,21 +408,23 @@ const TaskRow: React.FC<{
             <StatusGlyph status={todo.status} />
           </button>
         </div>
-        <Subtitle todo={todo} />
+        <Subtitle todo={todo} hasSubtasks={hasSubtasks} subtaskCount={undefined} />
       </div>
     </li>
   );
 };
 
-const Subtitle: React.FC<{ todo: Todo }> = ({ todo }) => {
+const Subtitle: React.FC<{ todo: Todo; hasSubtasks: boolean; subtaskCount: number | undefined }> = ({ todo, hasSubtasks }) => {
   const bits: React.ReactNode[] = [];
   if (todo.dueAt) bits.push(<span key="d">📅 {formatDate(todo.dueAt)}</span>);
   if (todo.tags?.length) {
-    todo.tags.slice(0, 3).forEach((tag) => bits.push(<span key={`t-${tag}`} className="task-row__tag">#{tag}</span>));
+    todo.tags.slice(0, 3).forEach((tag) => bits.push(<span key={`t-${tag}`} className="task-row__tag">#{tag}</span>);
+    );
   }
   if (todo.drawingIds && todo.drawingIds.length > 0) {
     bits.push(<span key="dr">✏ {todo.drawingIds.length}</span>);
   }
+  if (hasSubtasks) bits.push(<span key="sub">▸ 含子任务</span>);
   if (bits.length === 0) return <div className="task-row__sub task-row__sub--empty">无附加信息</div>;
   return <div className="task-row__sub">{bits}</div>;
 };
@@ -334,6 +455,9 @@ function buildTree(groups: Group[], todos: Todo[]): GroupNode[] {
   const tasksByGroup = new Map<string, Todo[]>();
   for (const t of todos) {
     if (!t.groupId) continue;
+    // SubTasks follow their parent task, not the group — only top-level
+    // tasks (no parentId) belong in the group's task list.
+    if (t.parentId) continue;
     const arr = tasksByGroup.get(t.groupId) ?? [];
     arr.push(t);
     tasksByGroup.set(t.groupId, arr);
@@ -420,6 +544,13 @@ const TrashGlyph: React.FC = () => (
   <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
     <path d="M3 4h10M6.5 4V3a1 1 0 011-1h1a1 1 0 011 1v1M4.5 4l.5 8a1 1 0 001 1h4a1 1 0 001-1l.5-8"
       stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+  </svg>
+);
+
+const PencilGlyph: React.FC = () => (
+  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+    <path d="M11.5 1.5l3 3-9 9H2.5v-3l9-9z" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" fill="none" />
+    <path d="M10 3l3 3" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
   </svg>
 );
 
