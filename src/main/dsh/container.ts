@@ -70,9 +70,7 @@ function makeEventSender() {
 async function loadRealDsh(): Promise<{ boot: (opts: { logger: { info: (m: string) => void; warn: (m: string) => void; error: (m: string) => void } }) => Promise<DshContainer> }> {
   // The `@deepseek-ai/*` packages were dropped because their RC/next chain is broken
   // upstream. Kept behind optional dynamic imports so a future fix is a one-line change.
-  // @ts-expect-error — package intentionally absent; path always falls through to shim.
   const baseModule = await import('@deepseek-ai/dsh-base').catch(() => ({ default: null }));
-  // @ts-expect-error — package intentionally absent.
   const cordisModule = await import('@deepseek-ai/cordis').catch(() => null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const base = (baseModule as any).default;

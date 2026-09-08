@@ -2,20 +2,13 @@ import { defineConfig, externalizeDepsPlugin } from 'electron-vite';
 import react from '@vitejs/plugin-react';
 import { resolve } from 'node:path';
 
-// `@deepseek-ai/*` and `cordis` are intentionally absent from node_modules —
-// we ship a shim-only DSH because the upstream RC chain is broken. The dynamic
-// imports in `src/main/dsh/container.ts` are catch-fallback paths; telling
-// rollup they are external lets the bundler succeed without bringing the
-// (non-existent) packages into the build.
-const DSH_OPTIONAL = [
-  '@deepseek-ai/dsh-base',
-  '@deepseek-ai/cordis',
-  '@deepseek-ai/dsh-bash-env',
-  '@deepseek-ai/dsh-compaction-basic',
-  '@deepseek-ai/dsh-permission',
-  'cordis',
-];
-
+// `externalizeDepsPlugin()` externalizes every package.json dependency —
+// including the `@deepseek-ai/*` DSH tree (dsh-base pulls ~273 ESM packages).
+// They are NOT bundled into the main output; the main process loads them at
+// runtime via dynamic `import()` from node_modules. This keeps the 273-pkg
+// agent/sandbox/editor/terminal stack out of the rollup graph entirely, which
+// is the only sane way to build it (those packages are ESM RC code with deep
+// import graphs that would explode the bundler).
 export default defineConfig({
   main: {
     plugins: [externalizeDepsPlugin()],
@@ -28,7 +21,6 @@ export default defineConfig({
     build: {
       rollupOptions: {
         input: { index: resolve('src/main/index.ts') },
-        external: DSH_OPTIONAL,
       },
     },
   },

@@ -31,6 +31,13 @@
     "audit": "pnpm audit --prod"
   },
   "dependencies": {
+    "@deepseek-ai/cordis": "4.0.2",
+    "@deepseek-ai/cordis-plugin-group": "1.0.2",
+    "@deepseek-ai/cordis-plugin-hmr": "1.0.17",
+    "@deepseek-ai/cordis-plugin-include": "1.0.7",
+    "@deepseek-ai/cordis-plugin-loader": "1.0.3",
+    "@deepseek-ai/dsh-app-boot": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-base": "0.1.2-rc.1",
     "@excalidraw/excalidraw": "^0.18.0",
     "better-sqlite3": "^11.5.0",
     "electron-updater": "^6.8.9",
@@ -74,7 +81,10 @@
       "electron",
       "esbuild",
       "electron-winstaller"
-    ]
+    ],
+    "overrides": {
+      "@electron/node-gyp": "10.2.0-electron.2"
+    }
   },
   "build": {
     "appId": "com.thihy.todolist",

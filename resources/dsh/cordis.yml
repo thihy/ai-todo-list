@@ -1,0 +1,42 @@
+# thihy-todolist DSH composition. Minimal agent tree: base LLM service (we
+# register our own ThihyLlmAdapter wrapping client.ts invokeChat after boot),
+# tool registry (we register our todo/content/drawing handlers), system prompt,
+# session service + projection + JSONL persistence, agent factory, and the
+# agent loop. NO bash/editor/sandbox/terminal tools — this is a TODO app, not a
+# coding agent; only our own typed domain tools are exposed to the model.
+# Configured agents: [] — we create agents programmatically via ctx.agents.create
+# per AI invocation, so activation needs no provider adapter at boot time.
+
+- id: llm
+  name: '@deepseek-ai/dsh-llm'
+
+- id: tools
+  name: '@deepseek-ai/dsh-tools'
+
+- id: system-prompt
+  name: '@deepseek-ai/dsh-system-prompt'
+  config:
+    persona: |-
+      You are thihy, an AI assistant inside a personal TODO list app.
+      When the user asks about their work, prefer calling tools (todo.*, content.*, drawing.*) to ground your answer in real data.
+      For destructive actions (todo.delete, drawing.delete, content.restoreVersion), describe what you would do and wait for explicit user approval.
+      Be concise; prefer bullet points and short paragraphs. Use the user's language.
+
+- id: session-projection
+  name: '@deepseek-ai/dsh-session-projection'
+
+- id: sessions
+  name: '@deepseek-ai/dsh-session'
+
+- id: session-persistence
+  name: '@deepseek-ai/dsh-session-persistence-jsonl'
+  config:
+    root: !!js process.cwd() + '/.thihy-todolist/dsh-sessions'
+
+- id: agents
+  name: '@deepseek-ai/dsh-agent'
+
+- id: agent-loop
+  name: '@deepseek-ai/dsh-agent-loop'
+  config:
+    agents: []

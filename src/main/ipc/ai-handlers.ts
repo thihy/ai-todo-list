@@ -5,6 +5,7 @@ import { register, okResult, failResult } from './router';
 import type { DshHandle } from '../dsh/types';
 import { tierFor } from '../dsh/tools';
 import { resolveEndpoint, invokeChat, makeSystemPrompt, healthCheck } from '../dsh/client';
+import { getDshRuntime } from '../dsh/dsh-runtime';
 import { SettingsStore } from '../settings/store';
 import { BrowserWindow } from 'electron';
 import type { AIStreamEvent } from '../../shared/ai-types';
@@ -75,6 +76,51 @@ export function registerAiHandlers(dsh: DshHandle): void {
     };
 
     send({ type: 'start', invocationId });
+
+    // DSH agent-loop path (tool-calling). Boot is lazy and may fail (RC
+    // packages, build packaging); on null we fall through to the text-only
+    // client.ts invokeChat path below, so the app keeps working either way.
+    const runtime = await getDshRuntime({
+      getEndpoint: () => ep,
+      repo: deps.repo,
+      md: deps.md,
+      drawings: deps.drawings,
+    });
+    if (runtime) {
+      try {
+        await runtime.runTurn({
+          prompt: req.prompt,
+          invocationId,
+          onEvent: (e) => {
+            switch (e.type) {
+              case 'token':
+                send({ type: 'token', invocationId, token: e.text });
+                break;
+              case 'toolResult':
+                // The renderer's AIToolCallEvent carries the completed call +
+                // its result together; DSH splits call/result, so emit on result.
+                send({ type: 'toolCall', invocationId, toolName: e.name, args: undefined, result: e.ok ? e.data : e.error });
+                break;
+              case 'done':
+                send({ type: 'done', invocationId, content: e.content, costUsd: 0 });
+                break;
+              case 'error':
+                send({ type: 'error', invocationId, message: e.message });
+                break;
+              // 'toolCall' (pre-execution) is intentionally not forwarded —
+              // the UI shows completed calls via the toolResult mapping above.
+            }
+          },
+        });
+        return okResult({ invocationId, costUsd: 0 });
+      } catch (err) {
+        const message = (err as Error).message;
+        send({ type: 'error', invocationId, message });
+        return failResult('invoke_failed', message);
+      }
+    }
+
+    // ---------- fallback: text-only client.ts invokeChat (no tool-calling) ----------
 
     // Permission gate for any tools the agent wants to call.
     const pendingPermissions = new Map<string, Promise<boolean>>();
