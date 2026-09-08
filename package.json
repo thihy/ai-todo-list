@@ -38,6 +38,9 @@
     "@deepseek-ai/cordis-plugin-loader": "1.0.3",
     "@deepseek-ai/dsh-app-boot": "0.1.2-rc.1",
     "@deepseek-ai/dsh-base": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-llm": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-session": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-tools": "0.1.2-rc.1",
     "@excalidraw/excalidraw": "^0.18.0",
     "better-sqlite3": "^11.5.0",
     "electron-updater": "^6.8.9",
@@ -50,6 +53,7 @@
     "zustand": "^5.0.1"
   },
   "devDependencies": {
+    "@electron/rebuild": "^3.7.0",
     "@playwright/test": "^1.49.0",
     "@types/better-sqlite3": "^7.6.11",
     "@types/node": "^22.10.0",
@@ -57,16 +61,16 @@
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.4",
     "@vitest/coverage-v8": "^2.1.6",
-    "@electron/rebuild": "^3.7.0",
+    "dmg-builder": "^26.16.0",
     "electron": "^33.2.0",
     "electron-builder": "^26.16.0",
-    "dmg-builder": "^26.16.0",
     "electron-builder-squirrel-windows": "^26.16.0",
     "electron-vite": "^2.3.0",
     "eslint": "^10.10.0",
     "happy-dom": "^15.11.6",
     "playwright": "^1.49.0",
     "prettier": "^3.4.1",
+    "tsx": "^4.23.13",
     "typescript": "^5.6.3",
     "vite": "^5.4.11",
     "vitest": "^2.1.6"
@@ -116,7 +120,9 @@
       "target": [
         {
           "target": "nsis",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ],
       "artifactName": "${productName} Setup ${version}.${ext}"
@@ -130,11 +136,15 @@
       "shortcutName": "thihy-todolist"
     },
     "mac": {
-      "target": ["dmg"],
+      "target": [
+        "dmg"
+      ],
       "category": "public.app-category.productivity"
     },
     "linux": {
-      "target": ["AppImage"],
+      "target": [
+        "AppImage"
+      ],
       "category": "Office"
     }
   }
