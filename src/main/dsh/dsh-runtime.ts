@@ -374,17 +374,25 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
 /**
  * Fold a session event log into a flat list of HistoryTurn entries.
  *
- * - user/message → one user turn (concatenated text blocks)
- * - assistant/message → one assistant turn (text + optional reasoning)
+ * - user/message → one user turn (concatenated text blocks). Shape:
+ *   `data.content: [{type, text}]` (NOT `data.message.content` — different
+ *   from assistant/message).
+ * - assistant/text → reconstructed from `assistant/chunk` text-deltas between
+ *   step boundaries. The final `assistant/message` event sometimes has
+ *   `data.message.content` with empty text blocks (the streamed answer
+ *   "苹果" is in the chunks, not in the final event — a DSH serialization
+ *   quirk), so chunks are the source of truth. Reasoning content (if any)
+ *   is aggregated from reasoning-delta chunks and surfaced as the
+ *   `reasoning` field of the assistant turn.
  * - tool/call + tool/result → one tool turn (paired by callId; missing
- *   result is still emitted as a tool turn with ok=false, error="no result")
- * - assistant/chunk and other granular events are SKIPPED — the final
- *   assistant/message already carries the full text + tool calls.
- * - Structural events (turn/start, step/end, etc.) are skipped.
+ *   result is still emitted as a tool turn with ok=false, error="no result").
+ * - Structural events (turn/start, step/end) are skipped; we use them as
+ *   boundaries for flushing accumulated assistant text.
  */
 function foldHistory(events: ReadonlyArray<{ type: string; data?: unknown }>): HistoryTurn[] {
   const turns: HistoryTurn[] = [];
-  // Index tool/result by callId so we can pair with tool/call.
+
+  // First pass: index tool/result by callId so we can pair with tool/call.
   const pendingResults = new Map<string, { ok: boolean; data?: unknown; error?: string }>();
   for (const ev of events) {
     if (ev.type === 'tool/result') {
@@ -406,34 +414,75 @@ function foldHistory(events: ReadonlyArray<{ type: string; data?: unknown }>): H
     }
   }
 
+  // Second pass: walk in order, accumulating assistant text/reasoning from
+  // chunks and flushing on boundaries (user turn, tool call, step end).
+  let bufText = '';
+  let bufReasoning = '';
+
+  const flushAssistant = (): void => {
+    if (bufText || bufReasoning) {
+      const out: HistoryTurn = bufReasoning
+        ? { type: 'assistant', text: bufText, reasoning: bufReasoning }
+        : { type: 'assistant', text: bufText };
+      turns.push(out);
+      bufText = '';
+      bufReasoning = '';
+    }
+  };
+
   for (const ev of events) {
     if (ev.type === 'user/message') {
-      const d = ev.data as { message?: { content?: Array<{ type?: string; text?: string }> } } | undefined;
-      const text = (d?.message?.content ?? [])
+      flushAssistant();
+      // user/message shape: { content: [{type, text}], source, role, id }
+      const d = ev.data as {
+        content?: Array<{ type?: string; text?: string }>;
+      } | undefined;
+      const text = (d?.content ?? [])
         .filter((b) => b?.type === 'text' && typeof b.text === 'string')
         .map((b) => b.text as string)
         .join('');
       if (text) turns.push({ type: 'user', text });
-    } else if (ev.type === 'assistant/message') {
+    } else if (ev.type === 'assistant/chunk') {
+      // Aggregate streaming deltas. chunks are scoped to the current step;
+      // step boundaries (step/end, user turn, tool call) flush below.
       const d = ev.data as {
-        message?: {
-          content?: Array<{ type?: string; text?: string }>;
-        };
+        chunk?: { type?: string; text?: string };
       } | undefined;
-      const blocks = d?.message?.content ?? [];
-      const text = blocks
-        .filter((b) => b?.type === 'text' && typeof b.text === 'string')
-        .map((b) => b.text as string)
-        .join('');
-      const reasoning = blocks
-        .filter((b) => b?.type === 'reasoning' && typeof b.text === 'string')
-        .map((b) => b.text as string)
-        .join('');
-      const out: HistoryTurn = reasoning
-        ? { type: 'assistant', text, reasoning }
-        : { type: 'assistant', text };
-      turns.push(out);
+      const chunk = d?.chunk;
+      if (chunk?.type === 'text-delta' && typeof chunk.text === 'string') {
+        bufText += chunk.text;
+      } else if (chunk?.type === 'reasoning-delta' && typeof chunk.text === 'string') {
+        bufReasoning += chunk.text;
+      }
+      // Other chunk types (block-start, block-end) are bookkeeping — ignored.
+    } else if (ev.type === 'assistant/message') {
+      // If chunks didn't populate the buffer (very short responses that snap
+      // straight to the final event without streaming), fall back to the
+      // message's own content blocks. Chunks always win when both are
+      // present — the final event has empty text even when chunks carried
+      // the answer.
+      if (!bufText && !bufReasoning) {
+        const d = ev.data as {
+          message?: {
+            content?: Array<{ type?: string; text?: string }>;
+          };
+        } | undefined;
+        const blocks = d?.message?.content ?? [];
+        bufText = blocks
+          .filter((b) => b?.type === 'text' && typeof b.text === 'string')
+          .map((b) => b.text as string)
+          .join('');
+        bufReasoning = blocks
+          .filter((b) => b?.type === 'reasoning' && typeof b.text === 'string')
+          .map((b) => b.text as string)
+          .join('');
+      }
+    } else if (ev.type === 'step/end' || ev.type === 'turn/end') {
+      flushAssistant();
     } else if (ev.type === 'tool/call') {
+      // A tool call interrupts the assistant's text — flush whatever was
+      // accumulated, then emit the tool turn.
+      flushAssistant();
       const d = ev.data as { callId?: unknown; name?: string; arguments?: string } | undefined;
       const callId = d?.callId != null ? String(d.callId) : '';
       const result = callId ? pendingResults.get(callId) : undefined;
@@ -446,10 +495,12 @@ function foldHistory(events: ReadonlyArray<{ type: string; data?: unknown }>): H
         error: result?.error ?? (result ? undefined : 'no result'),
       });
     }
-    // Everything else (chunks, structural events, session/end-seed, etc.)
-    // is intentionally skipped — final user/assistant/tool messages
-    // already carry the content.
+    // Everything else (chunks we already handled, structural start events,
+    // session/end-seed, request/*) is intentionally skipped.
   }
+
+  // Trailing flush — if the log ends mid-step without an explicit boundary.
+  flushAssistant();
   return turns;
 }
 
