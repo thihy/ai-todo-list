@@ -63,7 +63,9 @@ export function registerAiHandlers(dsh: DshHandle): void {
       if (!ep.apiKey) return failResult('no_api_key', 'Set API key in settings first');
     }
 
-    const invocationId = crypto.randomUUID();
+    // Use the caller-provided id so the renderer can match streamed token/done
+    // events that arrive before this IPC response resolves.
+    const invocationId = req.invocationId ?? crypto.randomUUID();
     const model = req.model ?? ep.model;
 
     const send = (event: AIStreamEvent): void => {

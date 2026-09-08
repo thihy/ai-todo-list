@@ -96,6 +96,10 @@ export interface AIAskReq {
   prompt: string;
   model?: AIModel;
   tools?: string[];
+  /** Caller-generated id so the renderer can match streamed token/done events
+   *  before the IPC response resolves. Main falls back to generating one if
+   *  omitted — but then the renderer can't correlate early stream events. */
+  invocationId?: string;
 }
 export interface AIAskRes {
   invocationId: string;

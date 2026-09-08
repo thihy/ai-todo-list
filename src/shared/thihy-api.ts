@@ -127,7 +127,7 @@ export interface ThihyApi {
     health(): Promise<IpcResponse<'ai.health'>>;
     models(): Promise<IpcResponse<'ai.models'>>;
     cancel(invocationId: string): Promise<IpcResponse<'ai.cancel'>>;
-    ask(req: { prompt: string; model?: AIModel; tools?: string[] }): Promise<IpcResponse<'ai.ask'>>;
+    ask(req: { prompt: string; model?: AIModel; tools?: string[]; invocationId?: string }): Promise<IpcResponse<'ai.ask'>>;
     /** Rule-based NL capture preview (works offline; returns structured fields). */
     parseCapturePreview(text: string): Promise<IpcResponse<'ai.parseCapturePreview'>>;
   };

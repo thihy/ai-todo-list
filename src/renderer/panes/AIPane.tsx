@@ -52,7 +52,7 @@ export const AIPane: React.FC<{ onCollapse?: () => void }> = ({ onCollapse }) =>
     clear();
     const id = crypto.randomUUID();
     setInvocationId(id);
-    const res = await window.thihy.ai.ask({ prompt, model: undefined, tools: undefined });
+    const res = await window.thihy.ai.ask({ prompt, invocationId: id, tools: undefined });
     if (!res.ok) {
       setHistory((h) => {
         const next = [...h];
