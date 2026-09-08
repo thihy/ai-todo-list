@@ -128,6 +128,17 @@ function bootstrap(): void {
     registerCaptureHandlers(repo, md);
     registerCapturePreviewHandler();
 
+    // Set DSH_SESSIONS_ROOT BEFORE importing the DSH container, because the
+    // cordis YAML loader evaluates `!js` expressions (like
+    // `process.env.DSH_SESSIONS_ROOT`) at boot time when it parses
+    // resources/dsh/cordis.yml. The plugin needs an absolute, writable path
+    // (rootDir is the user's chosen data directory; dsh-sessions/ sits beside
+    // the DB + todos + drawings so everything is co-located and survives an
+    // uninstall via the same retention rules).
+    const sessionsRoot = join(rootDir, 'dsh-sessions');
+    mkdirSync(sessionsRoot, { recursive: true });
+    process.env['DSH_SESSIONS_ROOT'] = sessionsRoot;
+
     // DSH container (AI runtime) — lazy imported so app launches even if DSH init fails
     try {
       const { initDshContainer } = await import('./dsh/container');

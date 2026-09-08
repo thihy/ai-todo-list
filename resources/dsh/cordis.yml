@@ -29,12 +29,33 @@
 - id: sessions
   name: '@deepseek-ai/dsh-session'
 
-# NOTE: dsh-session-persistence-jsonl is deliberately NOT mounted. It statically
-# imports `createZstdDecompress` etc. from node:zlib, which only exists on
-# Node 22.15+ — Electron 33 ships Node 20.18 and throws a SyntaxError on that
-# import, failing the whole boot. Sessions run in-memory instead, which is
-# fine here: runTurn creates a fresh agent per invocation and never resumes a
-# session by id across restarts, so on-disk persistence is unused.
+# Durable on-disk session store: one JSONL log per session, optionally
+# Zstandard-compressed (default). Injects `sessions` (the in-memory
+# coordinator) on the upstream side and exposes `ctx.sessionPersistence` to
+# anything that wants to inspect raw artifacts. Sessions survive a process
+# restart, so a future "resume the last conversation" UX only needs to look
+# up a SessionId in this root.
+#
+# The `root` path is dynamic — it has to be an absolute, writable directory
+# specific to this user/machine (we put it under <dataDir>/dsh-sessions
+# alongside DB/markdown/drawings). The cordis YAML Loader supports a `!!js`
+# (primary-tag, `tag:yaml.org,2002:js`) expression scalar that round-trips as
+# a `{ __jsExpr: "<js>" }` node the loader then `eval`s at entry activation
+# with the loader's scope on the stack — so `process.env.DSH_SESSIONS_ROOT`
+# is read at YAML parse time. Main process sets the env var in
+# src/main/index.ts BEFORE the DSH container import (so the loader sees it).
+# An absent env var surfaces as `undefined` here, which the plugin rejects
+# at construction ("root must be a string").
+#
+# compression: zstd uses Node 22.15+ `node:zlib` Zstandard bindings — works
+# under Electron 44 (Node 24.20). On older Node it would throw SyntaxError on
+# the `createZstdDecompress` import, which is why this plugin was left out
+# before the Electron 33 → 44 upgrade (Stage C1).
+- id: session-persistence
+  name: '@deepseek-ai/dsh-session-persistence-jsonl'
+  config:
+    root: !!js "process.env.DSH_SESSIONS_ROOT"
+    compression: zstd
 
 - id: agents
   name: '@deepseek-ai/dsh-agent'
