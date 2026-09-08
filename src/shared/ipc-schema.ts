@@ -139,6 +139,16 @@ export interface AIConversation {
   createdAt: number;
   updatedAt: number;
   archived: boolean;
+  /** L3-J: short preview of the last non-tool turn (user prompt or
+   *  assistant answer — whichever came last). Computed lazily by
+   *  ai.conversation.list from the JSONL log; absent for sessions
+   *  with no turns yet, or when the list call omitted history
+   *  computation for cost reasons. */
+  lastMessagePreview?: string;
+  /** L3-J: total turn count (user + assistant; tools are not counted
+   *  toward the conversation "depth"). Same lazy-compute caveat as
+   *  lastMessagePreview. */
+  messageCount?: number;
 }
 
 export interface AIConversationListReq { includeArchived?: boolean }

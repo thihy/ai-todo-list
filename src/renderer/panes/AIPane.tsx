@@ -45,6 +45,11 @@ interface ConversationRow {
   title: string;
   updatedAt: number;
   archived: boolean;
+  // L3-J: optional fields populated by ai.conversation.list (main
+  // computes them lazily from the JSONL log). Absent for newly-created
+  // conversations that haven't been written to disk yet.
+  lastMessagePreview?: string;
+  messageCount?: number;
 }
 
 /** Shape returned by ai.conversation.history — mirrors DshRuntime.HistoryTurn. */
@@ -470,8 +475,27 @@ export const AIPane: React.FC<{ onCollapse?: () => void }> = ({ onCollapse }) =>
                   onClick={() => switchTo(c.id)}
                   title={c.title}
                 >
-                  <span className="aipane__menu-title">{c.title}</span>
-                  {c.archived && <span className="aipane__menu-tag">已归档</span>}
+                  {/* L3-J: two-line layout. Line 1 = title + tags;
+                       line 2 = last message preview + count when known.
+                       Tool turns don't drive the preview (last non-tool
+                       turn is computed in main), so the preview reflects
+                       actual conversation content the user typed/read. */}
+                  <span className="aipane__menu-line">
+                    <span className="aipane__menu-title">{c.title}</span>
+                    {c.archived && <span className="aipane__menu-tag">已归档</span>}
+                  </span>
+                  {(c.lastMessagePreview || typeof c.messageCount === 'number') && (
+                    <span className="aipane__menu-preview">
+                      {c.lastMessagePreview && (
+                        <span className="aipane__menu-preview-text">{c.lastMessagePreview}</span>
+                      )}
+                      {typeof c.messageCount === 'number' && (
+                        <span className="aipane__menu-count" title={`${c.messageCount} 条对话`}>
+                          {c.messageCount}
+                        </span>
+                      )}
+                    </span>
+                  )}
                 </button>
               ))}
               <div className="aipane__menu-divider" />

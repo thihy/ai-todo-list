@@ -207,11 +207,48 @@ export function registerAiHandlers(dsh: DshHandle): void {
 
   // ----- ai.conversation.* -----
 
-  register('ai.conversation.list', (_e, req) => {
+  register('ai.conversation.list', async (_e, req) => {
     if (!deps) return Promise.resolve(failResult('ai_not_ready', 'DSH not initialised'));
     try {
       const list = deps.conversations.list(req?.includeArchived === true);
-      return Promise.resolve(okResult({ conversations: list }));
+      // L3-J: enrich each row with lastMessagePreview + messageCount from
+      // the JSONL log. We load each conversation's history in parallel —
+      // bounded by the conversation count, typically <100. Each load is a
+      // zstd-decoded JSONL scan; fast enough that the round-trip latency
+      // is dominated by fs reads, not model calls. For lists >200 rows
+      // this becomes worth caching, but at that scale the user already
+      // has L3-H search and we're past the affordance's intent.
+      const enriched = await Promise.all(list.map(async (conv) => {
+        try {
+          const runtime = await getDshRuntime({
+            getEndpoint: () => resolveEndpoint(deps!.settings.get()),
+            repo: deps!.repo,
+            md: deps!.md,
+            drawings: deps!.drawings,
+          });
+          if (!runtime) return conv;
+          const turns = await runtime.loadHistory({ conversationId: conv.id });
+          if (turns.length === 0) return conv;
+          // Last non-tool turn = the most recent user prompt or assistant
+          // answer. Walk from the end so tool cards don't dominate the
+          // preview (they're noisy and not what the user wants to scan).
+          let lastPreview: string | undefined;
+          for (let i = turns.length - 1; i >= 0; i--) {
+            const t = turns[i]!;
+            if (t.type === 'user') { lastPreview = t.text; break; }
+            if (t.type === 'assistant') { lastPreview = t.text; break; }
+            // tool turns are skipped — they're intermediate.
+          }
+          // messageCount = user + assistant turns (tools not counted).
+          const messageCount = turns.filter((t) => t.type === 'user' || t.type === 'assistant').length;
+          return { ...conv, lastMessagePreview: lastPreview, messageCount };
+        } catch {
+          // Per-row enrichment is best-effort — a torn log shouldn't
+          // blank the whole list.
+          return conv;
+        }
+      }));
+      return Promise.resolve(okResult({ conversations: enriched }));
     } catch (err) {
       return Promise.resolve(failResult('list_failed', (err as Error).message));
     }

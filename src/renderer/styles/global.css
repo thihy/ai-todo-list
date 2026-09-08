@@ -851,7 +851,11 @@ a:hover {
   position: absolute;
   top: calc(100% + 4px);
   min-width: 200px;
-  max-width: 260px;
+  /* L3-J: widen to 320px so the two-line layout (title + last-message
+     preview) fits without forcing the preview to truncate below ~20
+     characters. Still bounded — wider than this and the dropdown
+     starts colliding with the editor canvas. */
+  max-width: 320px;
   background: var(--bg-surface-elev);
   border: 1px solid var(--border-default);
   border-radius: var(--radius-md);
@@ -903,16 +907,25 @@ a:hover {
   font-variant-numeric: tabular-nums;
 }
 .aipane__menu-item {
+  /* L3-J: column layout so a row can stack a title line and an optional
+     preview line. Action items (重命名 / 归档 / 删除 / 显示已归档) still
+     work because their plain text content becomes an anonymous flex
+     item that occupies one line at its natural height. */
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-sm);
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
   padding: 6px var(--space-sm);
   border-radius: var(--radius-sm);
   color: var(--fg-primary);
   font-size: var(--font-sm);
   text-align: left;
   transition: background var(--dur-fast) var(--ease-out);
+  cursor: pointer;
+  background: transparent;
+  border: 0;
+  width: 100%;
+  font-family: inherit;
 }
 .aipane__menu-item:hover {
   background: var(--bg-hover);
@@ -930,7 +943,43 @@ a:hover {
 }
 .aipane__menu-item--toggle {
   color: var(--fg-muted);
-  justify-content: flex-start;
+}
+/* L3-J: row 1 of a conversation entry — title + (optional) tags. */
+.aipane__menu-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  min-width: 0;
+}
+/* L3-J: row 2 of a conversation entry — last message preview + (optional)
+   count badge. Smaller and muted so it doesn't compete with the title. */
+.aipane__menu-preview {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  font-size: var(--font-xs);
+  color: var(--fg-muted);
+  min-width: 0;
+}
+.aipane__menu-preview-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+.aipane__menu-count {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-muted);
+  background: var(--bg-surface, transparent);
+  border: 1px solid var(--border-subtle, transparent);
+  border-radius: 999px;
+  padding: 0 6px;
+  font-size: var(--font-xs);
+  line-height: 1.4;
 }
 .aipane__menu-title {
   overflow: hidden;
