@@ -94,14 +94,16 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
   try {
     const persistence = ctx.get('sessionPersistence') as {
       list?: (signal?: AbortSignal) => Promise<Array<{ id: string; createdAt: number }>>;
+      config?: { root?: string };
     } | undefined;
     if (persistence?.list) {
       const stored = await persistence.list();
+      const root = persistence.config?.root ?? process.env['DSH_SESSIONS_ROOT'] ?? '(unset)';
       if (stored.length === 0) {
-        logger.info('DSH persistence: 0 sessions stored under DSH_SESSIONS_ROOT');
+        logger.info(`DSH persistence: 0 sessions stored under ${root}`);
       } else {
         const ids = stored.map((s) => s.id).join(', ');
-        logger.info(`DSH persistence: ${stored.length} session(s) stored: ${ids}`);
+        logger.info(`DSH persistence: ${stored.length} session(s) stored under ${root}: ${ids}`);
       }
     }
   } catch (err) {
