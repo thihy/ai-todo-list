@@ -369,6 +369,14 @@ function mutatingScope(name: string): DataScope | null {
 }
 
 // --- L3-D helpers ---
+// Exported for unit tests in tests/unit/ai-handlers-helpers.spec.ts —
+// the auto-rename heuristic is pure and tiny, but it's the gate that
+// decides whether a conversation gets renamed or keeps its default
+// title, so a regression here would silently revert every chat to
+// "新对话 <timestamp>".
+
+// exported for tests
+export const __testing = { isDefaultTitle, autoTitleFromPrompt };
 
 /** Recognize the default titles ConversationRepo.create / migration emit,
  *  so we only auto-rename on the FIRST turn — subsequent turns see a

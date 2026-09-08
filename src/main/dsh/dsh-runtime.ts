@@ -600,8 +600,14 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
  *   result is still emitted as a tool turn with ok=false, error="no result").
  * - Structural events (turn/start, step/end) are skipped; we use them as
  *   boundaries for flushing accumulated assistant text.
+ *
+ * L3-I: exported so vitest can unit-test it directly. The shape tests
+ * live in tests/dsh-runtime-foldHistory.test.ts and pin the exact event
+ * shapes this function depends on — guard against silent regressions
+ * if a future DSH upgrade changes how the persistence plugin serializes
+ * chunks / final messages.
  */
-function foldHistory(events: ReadonlyArray<{ type: string; data?: unknown }>): HistoryTurn[] {
+export function foldHistory(events: ReadonlyArray<{ type: string; data?: unknown }>): HistoryTurn[] {
   const turns: HistoryTurn[] = [];
 
   // First pass: index tool/result by callId so we can pair with tool/call.
