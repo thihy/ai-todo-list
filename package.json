@@ -44,6 +44,7 @@
     "@deepseek-ai/dsh-session-title-first-prompt-llm": "0.1.2-rc.1",
     "@deepseek-ai/dsh-session-title-llm": "0.1.2-rc.1",
     "@deepseek-ai/dsh-tools": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-tool-ask-user": "0.1.2-rc.1",
     "@excalidraw/excalidraw": "^0.18.0",
     "better-sqlite3": "^13.0.3",
     "dompurify": "^3.4.15",

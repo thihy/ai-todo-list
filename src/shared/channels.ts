@@ -44,6 +44,14 @@ const DECLARED_CHANNELS: ReadonlySet<string> = new Set([
   'ai.conversation.history',
   'permission.prompt',
   'permission.respond',
+  // L4-G: human-in-the-loop bridges for DSH user-questions + user-approval
+  // waterfalls (see cordis.yml: id:user-questions + id:user-approval).
+  // The renderer POSTS the user's structured answer here; the answerer
+  // listener installed in bootDsh() resolves the pending waterfall
+  // promise on receipt. Two channels (not one) so the type system keeps
+  // question answers and approval answers distinct.
+  'ai.userQuestion.answer',
+  'ai.userApproval.answer',
   'settings.get',
   'settings.set',
   'settings.chooseDataDir',

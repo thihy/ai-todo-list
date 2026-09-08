@@ -13,7 +13,7 @@
 import { register, okResult, failResult } from './router';
 import type { DshHandle } from '../dsh/types';
 import { resolveEndpoint, healthCheck } from '../dsh/endpoints';
-import { getDshRuntime } from '../dsh/dsh-runtime';
+import { getDshRuntime, answerUserQuestion, answerUserApproval, type DshRuntimeDeps } from '../dsh/dsh-runtime';
 import { costForUsage } from '../dsh/pricing';
 import { SettingsStore } from '../settings/store';
 import { BrowserWindow, dialog } from 'electron';
@@ -21,9 +21,11 @@ import { logger } from '../logger';
 import type { AIStreamEvent } from '../../shared/ai-types';
 import type { DataScope } from '../../shared/thihy-api';
 import { TodoRepo } from '../db/todo-repo';
+import { GroupRepo } from '../db/group-repo';
 import { ConversationRepo } from '../db/conversation-repo';
 import { MarkdownStore } from '../files/markdown';
 import { DrawingStore } from '../files/drawings';
+import type Database from 'better-sqlite3';
 
 interface HandlerDeps {
   dsh: DshHandle;
@@ -32,9 +34,36 @@ interface HandlerDeps {
   conversations: ConversationRepo;
   md: MarkdownStore;
   drawings: DrawingStore;
+  groups: GroupRepo;
+  /** Raw better-sqlite3 handle — used by the AI tool surface for raw
+   *  inbox_attachments INSERTs (mirrors inbox.attach IPC). */
+  db: Database.Database;
+  /** Absolute path to the directory where inbox attachments are copied
+   *  on disk; used by the AI tool surface for inbox.attach / attachBlob. */
+  attachmentsDir: string;
 }
 
 let deps: HandlerDeps | null = null;
+
+/** L4-H: build the DshRuntimeDeps from the current bound `deps`. Used by
+ *  every `ai.*` and `ai.conversation.*` handler that needs the runtime,
+ *  so we don't have to spell out the 9-field object literal at every call
+ *  site. The runtime is single-instance (see dsh-runtime.ts:runtimePromise)
+ *  so the cost of constructing the closure on every call is negligible. */
+function buildRuntimeDeps(): DshRuntimeDeps | null {
+  if (!deps) return null;
+  return {
+    getEndpoint: () => resolveEndpoint(deps!.settings.get()),
+    repo: deps.repo,
+    md: deps.md,
+    drawings: deps.drawings,
+    conversations: deps.conversations,
+    groups: deps.groups,
+    db: deps.db,
+    attachmentsDir: deps.attachmentsDir,
+    settings: deps.settings,
+  };
+}
 
 export function registerAiHandlers(dsh: DshHandle): void {
   // The remaining deps are pulled in lazily because the IPC router is wired before
@@ -68,13 +97,7 @@ export function registerAiHandlers(dsh: DshHandle): void {
     if (!deps) return failResult('ai_not_ready', 'DSH not initialised');
     if (!req.conversationId) return failResult('no_conversation_id', 'conversationId required');
     try {
-      const runtime = await getDshRuntime({
-        getEndpoint: () => resolveEndpoint(deps!.settings.get()),
-        repo: deps.repo,
-        md: deps.md,
-        drawings: deps.drawings,
-        conversations: deps.conversations,
-      });
+      const runtime = await getDshRuntime(buildRuntimeDeps()!);
       if (runtime) await runtime.cancel(req.conversationId);
       return okResult({ ok: true });
     } catch (err) {
@@ -138,13 +161,7 @@ export function registerAiHandlers(dsh: DshHandle): void {
     // text-only client.ts fallback: if the runtime did not boot, surface the
     // error to the renderer instead of silently degrading. A null runtime means
     // DSH boot failed (see dsh-runtime.ts getDshRuntime — it logs the cause).
-    const runtime = await getDshRuntime({
-      getEndpoint: () => ep,
-      repo: deps.repo,
-      md: deps.md,
-      drawings: deps.drawings,
-      conversations: deps.conversations,
-    });
+    const runtime = await getDshRuntime(buildRuntimeDeps()!);
     if (!runtime) {
       const message = 'DSH runtime unavailable — agent loop did not boot. Check logs (main process).';
       send({ type: 'error', invocationId, message });
@@ -240,13 +257,7 @@ export function registerAiHandlers(dsh: DshHandle): void {
       // has L3-H search and we're past the affordance's intent.
       const enriched = await Promise.all(list.map(async (conv) => {
         try {
-          const runtime = await getDshRuntime({
-            getEndpoint: () => resolveEndpoint(deps!.settings.get()),
-            repo: deps!.repo,
-            md: deps!.md,
-            drawings: deps!.drawings,
-            conversations: deps!.conversations,
-          });
+          const runtime = await getDshRuntime(buildRuntimeDeps()!);
           if (!runtime) return conv;
           const turns = await runtime.loadHistory({ conversationId: conv.id });
           if (turns.length === 0) return conv;
@@ -328,13 +339,7 @@ export function registerAiHandlers(dsh: DshHandle): void {
       // Best-effort: dispose the runtime's cached agent for this conversation
       // so we don't keep an idle handle on a deleted row.
       try {
-        const runtime = await getDshRuntime({
-          getEndpoint: () => resolveEndpoint(deps!.settings.get()),
-          repo: deps.repo,
-          md: deps.md,
-          drawings: deps.drawings,
-          conversations: deps.conversations,
-        });
+        const runtime = await getDshRuntime(buildRuntimeDeps()!);
         if (runtime) {
           await runtime.disposeConversation(req.id);
           // L3-G: also drop the on-disk JSONL log so a deleted conversation
@@ -387,19 +392,66 @@ export function registerAiHandlers(dsh: DshHandle): void {
     if (!deps) return failResult('ai_not_ready', 'DSH not initialised');
     if (!req?.id) return failResult('no_conversation_id', 'id required');
     try {
-      const runtime = await getDshRuntime({
-        getEndpoint: () => resolveEndpoint(deps!.settings.get()),
-        repo: deps.repo,
-        md: deps.md,
-        drawings: deps.drawings,
-        conversations: deps.conversations,
-      });
+      const runtime = await getDshRuntime(buildRuntimeDeps()!);
       if (!runtime) return okResult({ turns: [] });
       const turns = await runtime.loadHistory({ conversationId: req.id });
       return okResult({ turns });
     } catch (err) {
       return failResult('history_failed', (err as Error).message);
     }
+  });
+
+  // L4-G: human-in-the-loop answerers. The renderer posts here when the
+  // user clicks an option on a UserQuestionCard / makes a decision on a
+  // UserApprovalCard. We forward to the dsh-runtime answerer, which
+  // resolves the pending waterfall promise; the in-flight DSH tool call
+  // then receives the structured answer and proceeds.
+  //
+  // The runtime is single-handle-per-conversation, but multiple windows
+  // may receive the request event for visibility — the answerer only
+  // resolves the FIRST reply it sees (subsequent replies find no pending
+  // entry and return ok:false). This matches the semantics in the
+  // @deepseek-ai/dsh-user-questions upstream example, which is
+  // single-answerer by construction.
+  register('ai.userQuestion.answer', (_e, req) => {
+    const reqId = req?.reqId;
+    const answers = req?.answers;
+    if (typeof reqId !== 'string' || !reqId) {
+      return failResult('bad_request', 'reqId required');
+    }
+    if (!Array.isArray(answers) || answers.length === 0) {
+      return failResult('bad_request', 'answers must be a non-empty array');
+    }
+    for (const a of answers) {
+      if (typeof a?.id !== 'string' || !a.id) {
+        return failResult('bad_request', 'every answer needs an id');
+      }
+      if (!Array.isArray(a.selected)) {
+        return failResult('bad_request', 'answer.selected must be an array of labels');
+      }
+    }
+    const ok = answerUserQuestion(reqId, answers);
+    if (!ok) {
+      // The pending entry is gone (timeout, already-answered, runtime
+      // torn down). The renderer will display "已超时" via the
+      // ai:user-question-timeout event, so we just acknowledge here.
+      return okResult({ ok: true });
+    }
+    return okResult({ ok: true });
+  });
+
+  register('ai.userApproval.answer', (_e, req) => {
+    const reqId = req?.reqId;
+    const decision = req?.decision;
+    if (typeof reqId !== 'string' || !reqId) {
+      return failResult('bad_request', 'reqId required');
+    }
+    if (decision !== 'allow-once' && decision !== 'reject') {
+      return failResult('bad_request', "decision must be 'allow-once' or 'reject'");
+    }
+    const ok = answerUserApproval(reqId, decision);
+    if (!ok) return okResult({ ok: true });
+    return okResult({ ok: true });
   });
 }
 
@@ -418,6 +470,7 @@ function mutatingScope(name: string): DataScope | null {
     case 'todo.create':
     case 'todo.update':
     case 'todo.delete':
+    case 'todo.batchUpdate':
       return 'todos';
     case 'content.writeBody':
     case 'content.restoreVersion':
@@ -426,6 +479,16 @@ function mutatingScope(name: string): DataScope | null {
     case 'drawing.delete':
     case 'drawing.setThumb':
       return 'drawings';
+    case 'group.create':
+    case 'group.update':
+    case 'group.delete':
+      return 'groups';
+    case 'conversation.create':
+    case 'conversation.rename':
+    case 'conversation.archive':
+    case 'conversation.unarchive':
+    case 'conversation.delete':
+      return 'conversations';
     default:
       return null;
   }

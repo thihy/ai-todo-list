@@ -27,6 +27,8 @@ import type {
   ParsedTodo,
   PermissionRequest,
   PermissionResponse,
+  UserQuestionAnswer,
+  UserApprovalAnswer,
 } from './ai-types';
 
 // ----- Generic envelope -----
@@ -267,6 +269,20 @@ export interface IpcRegistry {
 
   'permission.prompt': IpcChannel<PermissionPromptReq, IpcResult<void>>;
   'permission.respond': IpcChannel<{ response: PermissionResponse }, IpcResult<void>>;
+
+  // L4-G: human-in-the-loop answer channels (DSH user-questions +
+  // user-approval waterfalls). Push directions (main → renderer) live
+  // on the events bus (`ai:user-question-request`, `ai:user-approval-request`)
+  // — see AppEventMap. These two are the pull directions: renderer
+  // hands the user's structured answer back, the runtime listener
+  // resolves the pending waterfall promise on receipt.
+  'ai.userQuestion.answer': IpcChannel<UserQuestionAnswer, IpcResult<{ ok: true }>>;
+  'ai.userApproval.answer': IpcChannel<UserApprovalAnswer, IpcResult<{ ok: true }>>;
+
+  // Type-only exports of the push-direction payloads so the renderer
+  // can read the event bus payload shape without redeclaring it.
+  // (The channels themselves are not IPC-registered — events are
+  // delivered via the renderer-side `useAppEvent` hook.)
 
   'settings.get': IpcChannel<SettingsGetReq, IpcResult<SettingsGetRes>>;
   'settings.set': IpcChannel<SettingsSetReq, IpcResult<SettingsGetRes>>;

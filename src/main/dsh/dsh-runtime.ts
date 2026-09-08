@@ -23,15 +23,23 @@
 import { app, BrowserWindow } from 'electron';
 import { resolve, dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { existsSync, readdirSync, rmSync } from 'node:fs';
+import { existsSync, readdirSync, rmSync, copyFileSync, mkdirSync, writeFileSync } from 'node:fs';
+import { basename } from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { logger } from '../logger';
 import type { ResolvedEndpoint } from './endpoints';
+import { resolveEndpoint, healthCheck } from './endpoints';
 import type { TodoRepo } from '../db/todo-repo';
 import type { MarkdownStore } from '../files/markdown';
 import type { DrawingStore } from '../files/drawings';
 import type { ConversationRepo } from '../db/conversation-repo';
-import type { TodoFilter, TodoStatus } from '../../shared/todo-types';
-import { TODO_STATUSES } from '../../shared/todo-types';
+import type { GroupRepo } from '../db/group-repo';
+import type { SettingsStore } from '../settings/store';
+import type { TodoFilter, TodoStatus, TodoCreate, TodoPatch, GroupPatch, Priority } from '../../shared/todo-types';
+import { TODO_STATUSES, PRIORITIES } from '../../shared/todo-types';
+import type { UserQuestionAnswer, UserQuestionRequest } from '../../shared/ai-types';
+import type Database from 'better-sqlite3';
+import { mimeExt, sanitizeName } from '../util/mime';
 
 // DSH is imported dynamically so the main bundle stays buildable even before
 // the packages are installed, and so a boot failure surfaces as an explicit
@@ -40,6 +48,13 @@ type DshContext = {
   get(key: string): unknown;
   on(event: string, handler: (...args: any[]) => void): () => void;
   fiber?: { dispose?(): Promise<void> };
+  /** L4-G: cordis waterfall dispatch. Used by the ask_user_question /
+   *  ask_user_approval tools to invoke the same listener chain we
+   *  installed in bootDsh() for cross-pane consistency. The listener's
+   *  promise IS the awaited value (we pass a no-op `next` that resolves
+   *  to noAnswerer so the listener knows it's a direct call, not a
+   *  nested one). */
+  waterfall(event: string, ...args: unknown[]): Promise<unknown>;
 };
 
 export interface DshRuntimeDeps {
@@ -51,6 +66,25 @@ export interface DshRuntimeDeps {
    *  back into the renderer's conversation list. Without this, titles stay
    *  in the session log and never appear in the sidebar. */
   conversations: ConversationRepo;
+  /** L4-H: Group CRUD (directory tree) and inbox attachment storage
+   *  locations. The AI tool surface uses both — group.create / move /
+   *  reorder are how the AI organises a user's tasks; attachmentsDir +
+   *  the raw db handle let it attach files / pasted images the same way
+   *  the renderer does, without going through a separate IPC layer. */
+  groups: GroupRepo;
+  /** Raw better-sqlite3 handle used ONLY for the inbox_attachments INSERT
+   *  path. We keep this isolated from the typed repos because the inbox
+   *  schema is intentionally narrow (no rich row class), and going through
+   *  a new repo would just be a 5-line passthrough. */
+  db: Database.Database;
+  /** Absolute path to the directory where attached files / pasted images
+   *  are copied. Created on first use (mkdir -p). */
+  attachmentsDir: string;
+  /** Settings store — the AI tool surface needs to know the active
+   *  provider/model/connected state for the `ai.health` / `ai.models`
+   *  tool implementations, and may need to read API keys for some
+   *  self-debugging operations. */
+  settings: SettingsStore;
 }
 
 // One rendered conversation item. Loaded from the JSONL backend via
@@ -97,6 +131,108 @@ export interface DshRuntime {
 }
 
 let runtimePromise: Promise<DshRuntime | null> | null = null;
+
+// ===== L4-G: Human-in-the-loop bridges =====
+//
+// DSH ships the user-questions + user-approval seams (@deepseek-ai/dsh-user-questions
+// + @deepseek-ai/dsh-user-approval) but publishes no companion answerer package.
+// We register waterfall listeners in bootDsh() that bridge every ask to the
+// Electron renderer: each listener mints a reqId, sends the question/approval
+// payload to every BrowserWindow, and awaits the structured answer via the
+// `ai.userQuestion.answer` / `ai.userApproval.answer` IPC channels.
+//
+// 90s auto-cancel: the user might walk away mid-question. We don't want
+// the agent loop to block forever, so each pending request installs a
+// setTimeout that rejects with ASK_ABORTED (DSH's vocabulary). The
+// renderer's inline card flips to a "已超时" state on the same timer
+// firing — pushed via `ai:user-question-timeout` / `ai:user-approval-timeout`.
+//
+// All state lives at module scope (not on the runtime instance) because
+// the IPC handlers in main/index.ts register BEFORE DSH boots — the
+// router validates channels but the handlers need a way to resolve a
+// pending waterfall promise whose runtime isn't available yet. The
+// functions below are the answer-side of the bridge.
+
+/** Maximum time we wait for the user's answer before auto-cancelling. */
+const INTERACTION_TIMEOUT_MS = 90_000;
+
+interface PendingQuestion {
+  resolve: (a: UserQuestionAnswer) => void;
+  reject: (e: Error) => void;
+  timer: NodeJS.Timeout;
+}
+interface PendingApproval {
+  resolve: (o: 'allowed-once' | 'rejected' | 'cancelled' | 'unavailable') => void;
+  reject: (e: Error) => void;
+  timer: NodeJS.Timeout;
+}
+
+const pendingQuestions = new Map<string, PendingQuestion>();
+const pendingApprovals = new Map<string, PendingApproval>();
+
+/** Called by main/index.ts's IPC handler when the renderer posts the
+ *  structured answer to `ai.userQuestion.answer`. Returns false if the
+ *  reqId has no pending entry (timed out, duplicate reply, etc).
+ *  The renderer hands us the full { reqId, answers } so we resolve the
+ *  waterfall promise with the same shape the DSH tool expects. */
+export function answerUserQuestion(reqId: string, answers: UserQuestionAnswer['answers']): boolean {
+  const entry = pendingQuestions.get(reqId);
+  if (!entry) return false;
+  clearTimeout(entry.timer);
+  pendingQuestions.delete(reqId);
+  entry.resolve({ reqId, answers });
+  return true;
+}
+
+/** Called by main/index.ts's IPC handler when the renderer posts the
+ *  binary decision to `ai.userApproval.answer`. We map the renderer's
+ *  simplified vocabulary ('allow-once' | 'reject') onto DSH's
+ *  ApprovalOutcome ('allowed-once' | 'rejected'). 'cancelled' and
+ *  'unavailable' are reserved for the timeout / no-answerer paths. */
+export function answerUserApproval(reqId: string, decision: 'allow-once' | 'reject'): boolean {
+  const entry = pendingApprovals.get(reqId);
+  if (!entry) return false;
+  clearTimeout(entry.timer);
+  pendingApprovals.delete(reqId);
+  entry.resolve(decision === 'allow-once' ? 'allowed-once' : 'rejected');
+  return true;
+}
+
+/** Cancel everything still pending — called from dispose() so a runtime
+ *  tear-down doesn't leave zombie timers firing into nothing. */
+function cancelAllPending(): void {
+  for (const entry of pendingQuestions.values()) {
+    clearTimeout(entry.timer);
+    entry.reject(new Error('ask_user_question was aborted before the user answered'));
+  }
+  pendingQuestions.clear();
+  for (const entry of pendingApprovals.values()) {
+    clearTimeout(entry.timer);
+    entry.resolve('cancelled');
+  }
+  pendingApprovals.clear();
+}
+
+/** Build the UserQuestionRequest payload we'd push to the renderer.
+ *  Pulled out so the waterfall listener below is one straight line. */
+function questionRequestPayload(reqId: string, request: { questions: ReadonlyArray<{ id: string; question: string; detail?: string; header?: string; options?: ReadonlyArray<{ label: string; description?: string }>; multiSelect?: boolean }> }): UserQuestionRequest {
+  return {
+    reqId,
+    // invocationId isn't on the DSH request shape; the renderer matches
+    // via reqId alone. (Adding it would require plumbing the LLM adapter
+    // through ctx.userQuestions.ask — not worth the complexity for an
+    // already-correlated reqId.)
+    invocationId: '',
+    questions: request.questions.map((q) => ({
+      id: q.id,
+      question: q.question,
+      detail: q.detail,
+      header: q.header,
+      options: q.options?.map((o) => ({ label: o.label, description: o.description })),
+      multiSelect: q.multiSelect,
+    })),
+  };
+}
 
 /**
  * L3-C: Backfill DB rows for sessions that exist on disk under
@@ -232,7 +368,7 @@ async function bootPersistenceOnly(): Promise<{
     const bareBase = new URL('.', pathToFileURL(appRoot).href).href;
     const bootMod = await import('@deepseek-ai/dsh-app-boot');
     const { boot } = bootMod;
-    const ctx = await boot('thihy-migrate', cfg, undefined, undefined, bareBase) as DshContext;
+    const ctx = (await boot('thihy-migrate', cfg, undefined, undefined, bareBase)) as DshContext;
     const persistence = ctx.get('sessionPersistence') as {
       list?: (signal?: AbortSignal) => Promise<Array<{ id: string; createdAt: number }>>;
       load?: (id: string, signal?: AbortSignal) => Promise<{
@@ -282,7 +418,7 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
 
   const bootMod = await import('@deepseek-ai/dsh-app-boot');
   const { boot } = bootMod;
-  const ctx: DshContext = await boot('thihy', cfg, undefined, undefined, bareBase);
+  const ctx = (await boot('thihy', cfg, undefined, undefined, bareBase)) as DshContext;
 
   // Surface the durable session layer: list what's already persisted under
   // <DSH_SESSIONS_ROOT> (see src/main/index.ts for the env var setup) so the
@@ -321,7 +457,7 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
   const tools = ctx.get('tools') as { register(def: unknown): () => void } | undefined;
   if (!tools) throw new Error('DSH booted but ctx.tools is absent');
   const { defineTool } = await import('@deepseek-ai/dsh-tools');
-  const disposeTools = registerDomainTools(tools, defineTool, deps);
+  const disposeTools = registerDomainTools(tools, defineTool, deps, ctx);
 
   // 3. Conversation registry. One agent handle per conversation, cached for
   //    the conversation's lifetime. ensureAgent() idempotent: a second call
@@ -386,6 +522,86 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
     } catch (err) {
       logger.warn(`DSH title rename failed for ${conversationId}: ${(err as Error).message}`);
     }
+  });
+
+  // L4-G: human-in-the-loop bridges for DSH user-questions + user-approval.
+  // DSH publishes no companion answerer for these seams; we install our own
+  // waterfall listener so every ask() call from a tool (model-driven
+  // ask_user_question) or ctx.approval.request() lands in the renderer as
+  // an inline card. The listener mints a reqId, broadcasts to all windows,
+  // and awaits the answer via the answerUserQuestion / answerUserApproval
+  // IPC handlers. 90s auto-cancel so a user who walks away doesn't block
+  // the agent loop forever.
+  ctx.on('user-questions/request', (request: {
+    questions: ReadonlyArray<{ id: string; question: string; detail?: string; header?: string; options?: ReadonlyArray<{ label: string; description?: string }>; multiSelect?: boolean }>;
+  }, _next: () => Promise<unknown>): Promise<UserQuestionAnswer> => {
+    const reqId = randomUUID();
+    return new Promise<UserQuestionAnswer>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        const entry = pendingQuestions.get(reqId);
+        if (!entry) return; // already resolved
+        pendingQuestions.delete(reqId);
+        // Notify the renderer the card has timed out so it can flip to a
+        // "已超时自动取消" state — keeps the UI honest about the agent's
+        // effective state (the loop will receive ASK_ABORTED and proceed).
+        for (const w of BrowserWindow.getAllWindows()) {
+          if (!w.isDestroyed()) w.webContents.send('ai:user-question-timeout', { reqId });
+        }
+        reject(new Error('ask_user_question was aborted before the user answered'));
+      }, INTERACTION_TIMEOUT_MS);
+      pendingQuestions.set(reqId, { resolve, reject, timer });
+      const payload = questionRequestPayload(reqId, request);
+      logger.info(`DSH user-questions/request: reqId=${reqId} questions=${payload.questions.length}`);
+      for (const w of BrowserWindow.getAllWindows()) {
+        if (!w.isDestroyed()) w.webContents.send('ai:user-question-request', payload);
+      }
+    });
+  });
+
+  // Mirror for binary approvals. DSH user-approval normalizes the answerer
+  // return value to one of four outcomes; we only ever resolve with
+  // 'allowed-once' or 'rejected' from the renderer path (timeout yields
+  // 'unavailable' via the timeout path, signal abort yields 'cancelled').
+  ctx.on('approval/request', (req: {
+    agent: { id?: unknown };
+    toolName: string;
+    callId?: unknown;
+    reason?: string;
+    signal?: AbortSignal;
+  }, _next: () => Promise<unknown>): Promise<'allowed-once' | 'rejected' | 'cancelled' | 'unavailable'> => {
+    const reqId = randomUUID();
+    return new Promise((resolve) => {
+      let settled = false;
+      const settle = (outcome: 'allowed-once' | 'rejected' | 'cancelled' | 'unavailable'): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        if (signal && !signal.aborted) signal.removeEventListener('abort', onAbort);
+        pendingApprovals.delete(reqId);
+        resolve(outcome);
+      };
+      const timer = setTimeout(() => settle('unavailable'), INTERACTION_TIMEOUT_MS);
+      const signal = req.signal;
+      const onAbort = (): void => settle('cancelled');
+      if (signal) {
+        if (signal.aborted) { settle('cancelled'); return; }
+        signal.addEventListener('abort', onAbort, { once: true });
+      }
+      pendingApprovals.set(reqId, { resolve: (o) => settle(o), reject: () => settle('unavailable'), timer });
+      const expiresAtMs = Date.now() + INTERACTION_TIMEOUT_MS;
+      logger.info(`DSH approval/request: reqId=${reqId} tool=${req.toolName} callId=${String(req.callId ?? '')}`);
+      for (const w of BrowserWindow.getAllWindows()) {
+        if (!w.isDestroyed()) {
+          w.webContents.send('ai:user-approval-request', {
+            reqId,
+            invocationId: '',
+            toolName: req.toolName,
+            reason: req.reason ?? '',
+            expiresAtMs,
+          });
+        }
+      }
+    });
   });
 
   const persistenceApi = ctx.get('sessionPersistence') as {
@@ -628,6 +844,13 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
     },
 
     async dispose() {
+      // L4-G: drain any open human-in-the-loop waterfalls before tearing
+      // down the cordis fiber — otherwise the 90s timers fire into a
+      // half-closed runtime and `BrowserWindow.getAllWindows()` finds
+      // no listener. Settling with reject('aborted') / resolve('cancelled')
+      // makes DSH's tool loop unblock and surface a graceful "已取消" to
+      // the model instead of hanging.
+      cancelAllPending();
       // Tear down all conversation handles first (each dispose awaits its
       // own whenIdle + cleanup), then drop the cordis fiber.
       const all = Array.from(conversations.values());
@@ -788,9 +1011,10 @@ function registerDomainTools(
   tools: { register(def: unknown): () => void },
   defineTool: (d: any) => unknown,
   deps: DshRuntimeDeps,
+  ctx: DshContext,
 ): () => void {
   const disposers: Array<() => void> = [];
-  const { repo, md, drawings } = deps;
+  const { repo, md, drawings, groups, conversations, db, attachmentsDir, settings } = deps;
   const reg = (def: unknown) => disposers.push(tools.register(def));
 
   // DSH's `output.render(args, value)` produces the MODEL-FACING content for a
@@ -803,19 +1027,33 @@ function registerDomainTools(
   ];
   const jsonOutput = { schema: { type: 'json' }, render: renderJson };
 
+  // ---------------------------------------------------------------------------
+  // todo.* — CRUD over the TODO table.
+  //
+  // L4-H: the tool surface mirrors the renderer's full TodoCreate / TodoPatch
+  // shape so the AI can file tasks by group, tag, due date, or project, not
+  // just title + status. todo.list's filter set also expands to match the
+  // shared TodoFilter type — the AI should be able to answer "what's due this
+  // week in the Design group" without having to fetch everything and filter
+  // in conversation.
+  // ---------------------------------------------------------------------------
+
   reg(defineTool({
     name: 'todo.list',
-    description: 'List TODO items, optionally filtered. Omit all filters to return every todo. The model may pass status as a single string or comma-separated list; "all" means no filter.',
+    description: 'List TODO items, optionally filtered. Every field is optional; omit all of them to return every todo. The model may pass status/priority/tag as a single string or a JSON array. "all" / unknown values for status/priority mean no filter.',
     parameters: {
-      status: { type: 'string', description: 'Filter by status: inbox | next | doing | blocked | done | all' },
+      status: { type: 'string', description: 'Filter by status: inbox | next | doing | blocked | done (or comma-separated)' },
+      priority: { type: 'string', description: 'Filter by priority: none | low | medium | high (or comma-separated)' },
+      tag: { type: 'string', description: 'Filter by a single tag (matches tasks tagged with this string)' },
       project: { type: 'string', description: 'Filter by project path id' },
+      groupIds: { type: 'string', description: 'JSON array of group ids to restrict to (e.g. \'["01H..."]\')' },
+      dueBefore: { type: 'number', description: 'Only tasks with dueAt <= this unix ms' },
+      dueAfter: { type: 'number', description: 'Only tasks with dueAt >= this unix ms' },
+      search: { type: 'string', description: 'Substring match against title (server-side WHERE LIKE)' },
       limit: { type: 'number', description: 'Max items to return (default: all)' },
     },
     output: jsonOutput,
-    async execute(args: { status?: string; project?: string; limit?: number }) {
-      // Normalize the model's status (string / comma-list / "all") into the
-      // TodoStatus[] the repo expects; 'all' and unknown values mean no filter
-      // so a full list is returned instead of erroring on `.map`.
+    async execute(args: { status?: string; priority?: string; tag?: string; project?: string; groupIds?: string; dueBefore?: number; dueAfter?: number; search?: string; limit?: number }) {
       const filter: TodoFilter = {};
       const st = args.status;
       if (st) {
@@ -823,119 +1061,595 @@ function registerDomainTools(
         const valid = arr.filter((s): s is TodoStatus => (TODO_STATUSES as readonly string[]).includes(s));
         if (valid.length) filter.status = valid;
       }
+      const pr = args.priority;
+      if (pr) {
+        const arr = String(pr).split(',').map((s) => s.trim()).filter(Boolean);
+        const valid = arr.filter((s): s is Priority => (PRIORITIES as readonly string[]).includes(s));
+        if (valid.length) filter.priority = valid;
+      }
+      if (args.tag) filter.tag = [args.tag];
       if (args.project) filter.project = [args.project];
+      if (args.groupIds) {
+        try {
+          const parsed = JSON.parse(args.groupIds);
+          if (Array.isArray(parsed)) filter.groupIds = parsed.filter((s): s is string => typeof s === 'string');
+        } catch { /* swallow — model passed a malformed string */ }
+      }
+      if (args.dueBefore != null) filter.dueBefore = args.dueBefore;
+      if (args.dueAfter != null) filter.dueAfter = args.dueAfter;
+      if (args.search) filter.search = args.search;
       const all = repo.list(filter as never);
       return args.limit && args.limit > 0 ? all.slice(0, args.limit) : all;
     },
   }));
+
   reg(defineTool({
     name: 'todo.get',
-    description: 'Get a single TODO by id.',
+    description: 'Get a single TODO by id. Returns null if the id is unknown.',
     parameters: { id: { type: 'string', required: true, description: 'TODO id (ULID)' } },
     output: jsonOutput,
     async execute(args: { id: string }) { return repo.get(args.id as never); },
   }));
+
   reg(defineTool({
     name: 'todo.create',
-    description: 'Create a new TODO with a title. Returns the created item.',
-    parameters: { title: { type: 'string', required: true, description: 'TODO title' }, priority: { type: 'string', description: 'none | low | medium | high' } },
+    description: 'Create a new TODO. Returns the created item including its generated id. Markdown body starts empty — use content.writeBody to add notes/progress later.',
+    parameters: {
+      title: { type: 'string', required: true, description: 'TODO title (required)' },
+      status: { type: 'string', description: 'inbox | next | doing | blocked | done (default inbox)' },
+      priority: { type: 'string', description: 'none | low | medium | high (default none)' },
+      project: { type: 'string', description: 'Project id/path; null/omitted means no project' },
+      dueAt: { type: 'number', description: 'Due date as unix ms; null/omitted means no due date' },
+      tags: { type: 'string', description: 'JSON array of tag strings (e.g. \'["urgent","design"]\')' },
+      groupId: { type: 'string', description: 'Group (directory) id to file this under; null/omitted means unfiled. Use group.list to discover ids.' },
+    },
     output: jsonOutput,
-    async execute(args: { title: string; priority?: string }) {
-      const todo = repo.create({ title: args.title, priority: args.priority ?? 'none' } as never, md.filePathFor('placeholder' as never));
+    async execute(args: { title: string; status?: string; priority?: string; project?: string; dueAt?: number; tags?: string; groupId?: string }) {
+      const input: TodoCreate = { title: args.title };
+      if (args.status && (TODO_STATUSES as readonly string[]).includes(args.status)) input.status = args.status as TodoStatus;
+      if (args.priority && (PRIORITIES as readonly string[]).includes(args.priority)) input.priority = args.priority as Priority;
+      if (args.project !== undefined) input.project = args.project || null;
+      if (args.dueAt != null) input.dueAt = args.dueAt;
+      if (args.tags) {
+        try {
+          const parsed = JSON.parse(args.tags);
+          if (Array.isArray(parsed)) input.tags = parsed.filter((s): s is string => typeof s === 'string');
+        } catch { /* swallow malformed tag list */ }
+      }
+      if (args.groupId !== undefined) input.groupId = args.groupId || null;
+      const todo = repo.create(input, md.filePathFor('placeholder' as never));
       md.writeBody(todo.id as never, '');
       return repo.get(todo.id as never);
     },
   }));
+
   reg(defineTool({
     name: 'todo.update',
-    description: 'Update fields of an existing TODO (title, status, priority, dueAt, project).',
-    parameters: { id: { type: 'string', required: true, description: 'TODO id' }, title: { type: 'string' }, status: { type: 'string', description: 'inbox | next | doing | blocked | done' }, priority: { type: 'string', description: 'none | low | medium | high' } },
+    description: 'Update fields of an existing TODO. Pass only the fields you want to change — null clears the field (e.g. dueAt: null, groupId: null to unfile). Setting status="done" automatically stamps doneAt; any other status clears it.',
+    parameters: {
+      id: { type: 'string', required: true, description: 'TODO id' },
+      title: { type: 'string' },
+      status: { type: 'string', description: 'inbox | next | doing | blocked | done' },
+      priority: { type: 'string', description: 'none | low | medium | high' },
+      project: { type: 'string', description: 'Project id; null/empty string clears' },
+      dueAt: { type: 'number', description: 'Due date as unix ms; null clears' },
+      tags: { type: 'string', description: 'JSON array of tag strings; replaces the existing tag set' },
+      groupId: { type: 'string', description: 'Group id; null/empty string un-files the task' },
+    },
     output: jsonOutput,
-    async execute(args: { id: string; [k: string]: unknown }) {
-      const { id, ...patch } = args;
-      return repo.update(id as never, patch as never);
+    async execute(args: { id: string; title?: string; status?: string; priority?: string; project?: string; dueAt?: number; tags?: string; groupId?: string }) {
+      const { id, tags, ...rest } = args;
+      const patch: TodoPatch = {};
+      if (rest.title !== undefined) patch.title = rest.title;
+      if (rest.status && (TODO_STATUSES as readonly string[]).includes(rest.status)) patch.status = rest.status as TodoStatus;
+      if (rest.priority && (PRIORITIES as readonly string[]).includes(rest.priority)) patch.priority = rest.priority as Priority;
+      if (rest.project !== undefined) patch.project = rest.project || null;
+      if (rest.dueAt !== undefined) patch.dueAt = rest.dueAt;
+      if (rest.groupId !== undefined) patch.groupId = rest.groupId || null;
+      if (tags !== undefined) {
+        try {
+          const parsed = JSON.parse(tags);
+          if (Array.isArray(parsed)) patch.tags = parsed.filter((s): s is string => typeof s === 'string');
+        } catch { /* swallow malformed tag list */ }
+      }
+      return repo.update(id, patch);
     },
   }));
+
   reg(defineTool({
     name: 'todo.delete',
-    description: 'Permanently delete a TODO. Destructive — confirm with the user first.',
+    description: 'Permanently delete a TODO and its markdown body / drawings. Destructive — confirm with the user first, or send them a preview via todo.get.',
     parameters: { id: { type: 'string', required: true, description: 'TODO id to delete' } },
     output: jsonOutput,
     async execute(args: { id: string }) { repo.delete(args.id as never); return { ok: true }; },
   }));
+
+  reg(defineTool({
+    name: 'todo.batchUpdate',
+    description: 'Apply the same patch to multiple TODOs in one transaction. Useful for "mark all inbox items as done" or "move every task in group X to group Y". Returns the updated rows. Destructive fields (status=done, groupId change) take effect on every id.',
+    parameters: {
+      ids: { type: 'string', required: true, description: 'JSON array of TODO ids' },
+      status: { type: 'string' },
+      priority: { type: 'string' },
+      groupId: { type: 'string', description: 'null/empty string to unfile' },
+      tags: { type: 'string' },
+    },
+    output: jsonOutput,
+    async execute(args: { ids: string; status?: string; priority?: string; groupId?: string; tags?: string }) {
+      let ids: string[];
+      try {
+        const parsed = JSON.parse(args.ids);
+        if (!Array.isArray(parsed)) throw new Error('ids must be a JSON array of strings');
+        ids = parsed.filter((s): s is string => typeof s === 'string');
+      } catch (err) {
+        throw new Error(`todo.batchUpdate: invalid ids — ${(err as Error).message}`);
+      }
+      const patch: TodoPatch = {};
+      if (args.status && (TODO_STATUSES as readonly string[]).includes(args.status)) patch.status = args.status as TodoStatus;
+      if (args.priority && (PRIORITIES as readonly string[]).includes(args.priority)) patch.priority = args.priority as Priority;
+      if (args.groupId !== undefined) patch.groupId = args.groupId || null;
+      if (args.tags) {
+        try {
+          const parsed = JSON.parse(args.tags);
+          if (Array.isArray(parsed)) patch.tags = parsed.filter((s): s is string => typeof s === 'string');
+        } catch { /* swallow */ }
+      }
+      return repo.batchUpdate(ids as never, patch);
+    },
+  }));
+
   reg(defineTool({
     name: 'todo.search',
-    description: 'Full-text search across TODO titles and markdown bodies.',
+    description: 'Full-text search across TODO titles and markdown bodies (FTS5-backed). Returns hits with a short snippet + score.',
     parameters: { query: { type: 'string', required: true, description: 'Search query' }, limit: { type: 'number', description: 'Max hits (default 20)' } },
     output: jsonOutput,
     async execute(args: { query: string; limit?: number }) { return repo.search(args.query, args.limit ?? 20); },
   }));
+
   reg(defineTool({
     name: 'todo.stats',
-    description: 'Aggregate stats: counts by status, recent activity.',
-    parameters: {},
+    description: 'Aggregate stats: counts by status, 7-day completion rate, average done latency. Useful as a preflight before summarising the user\'s workload.',
+    parameters: { windowDays: { type: 'number', description: 'Window for completion stats (default 7)' } },
     output: jsonOutput,
-    async execute() { return repo.stats(7); },
+    async execute(args: { windowDays?: number }) { return repo.stats(args.windowDays ?? 7); },
   }));
+
+  // ---------------------------------------------------------------------------
+  // content.* — markdown body of a TODO.
+  // ---------------------------------------------------------------------------
 
   reg(defineTool({
     name: 'content.readBody',
-    description: 'Read the markdown body of a TODO (current version).',
+    description: 'Read the markdown body of a TODO (current version). Returns markdown text + the version number.',
     parameters: { id: { type: 'string', required: true, description: 'TODO id' } },
     output: jsonOutput,
     async execute(args: { id: string }) { return md.readBody(args.id as never); },
   }));
+
   reg(defineTool({
     name: 'content.writeBody',
-    description: 'Write/replace the markdown body of a TODO. Creates a new version.',
-    parameters: { id: { type: 'string', required: true, description: 'TODO id' }, markdown: { type: 'string', required: true, description: 'New markdown content' } },
+    description: 'Write/replace the markdown body of a TODO. Creates a new version (old version preserved for content.history). For long drafts, write the full body each time — partial updates are not supported.',
+    parameters: {
+      id: { type: 'string', required: true, description: 'TODO id' },
+      markdown: { type: 'string', required: true, description: 'New markdown content' },
+    },
     output: jsonOutput,
     async execute(args: { id: string; markdown: string }) { return md.writeBody(args.id as never, args.markdown); },
   }));
+
   reg(defineTool({
     name: 'content.history',
-    description: 'List saved markdown versions for a TODO.',
+    description: 'List saved markdown versions for a TODO, oldest to newest. Each entry has an id (version number), savedAt, and the body. Use content.restoreVersion to roll back.',
     parameters: { id: { type: 'string', required: true, description: 'TODO id' } },
     output: jsonOutput,
     async execute(args: { id: string }) { return md.history(args.id as never); },
   }));
+
   reg(defineTool({
     name: 'content.restoreVersion',
-    description: 'Restore a previous markdown version. Destructive — confirm first.',
-    parameters: { id: { type: 'string', required: true }, versionId: { type: 'number', required: true, description: 'Version number to restore' } },
+    description: 'Restore a previous markdown version. The current version is preserved as a new version before the restore (so undo via content.history + restoreVersion is always possible). Destructive in the sense that it overwrites current body — confirm with the user first.',
+    parameters: {
+      id: { type: 'string', required: true, description: 'TODO id' },
+      versionId: { type: 'number', required: true, description: 'Version number to restore (from content.history)' },
+    },
     output: jsonOutput,
     async execute(args: { id: string; versionId: number }) { md.restoreVersion(args.id as never, args.versionId); return { ok: true }; },
   }));
 
+  // ---------------------------------------------------------------------------
+  // drawing.* — Excalidraw scenes attached to a TODO.
+  // ---------------------------------------------------------------------------
+
   reg(defineTool({
     name: 'drawing.list',
-    description: 'List Excalidraw drawings attached to a TODO.',
+    description: 'List Excalidraw drawings attached to a TODO. Returns metadata (id, title, thumb path, timestamps). Use drawing.read to get the scene JSON.',
     parameters: { todoId: { type: 'string', required: true, description: 'TODO id' } },
     output: jsonOutput,
     async execute(args: { todoId: string }) { return drawings.list(args.todoId as never); },
   }));
+
   reg(defineTool({
     name: 'drawing.read',
-    description: 'Read an Excalidraw drawing scene by id.',
+    description: 'Read an Excalidraw drawing scene by id. Returns the full scene JSON (elements, appState). Throws if the id is unknown or the scene file is missing on disk.',
     parameters: { id: { type: 'string', required: true, description: 'Drawing id' } },
     output: jsonOutput,
     async execute(args: { id: string }) { return drawings.read(args.id as never); },
   }));
+
   reg(defineTool({
     name: 'drawing.save',
-    description: 'Save (create or update) an Excalidraw drawing for a TODO.',
-    parameters: { todoId: { type: 'string', required: true }, scene: { type: 'json', required: true, description: 'Excalidraw scene JSON' }, id: { type: 'string', description: 'Existing drawing id to update' }, title: { type: 'string' } },
+    description: 'Save (create or update) an Excalidraw drawing for a TODO. Pass `id` to update an existing drawing; omit to create a new one. The `scene` is the full Excalidraw scene JSON.',
+    parameters: {
+      todoId: { type: 'string', required: true, description: 'TODO id this drawing belongs to' },
+      scene: { type: 'json', required: true, description: 'Excalidraw scene JSON: { elements, appState, ... }' },
+      id: { type: 'string', description: 'Existing drawing id to update (omit to create)' },
+      title: { type: 'string', description: 'Optional human-readable title' },
+    },
     output: jsonOutput,
     async execute(args: { todoId: string; scene: unknown; id?: string; title?: string }) {
       return drawings.save(args.todoId as never, args.scene as never, args.id as never, args.title);
     },
   }));
+
   reg(defineTool({
     name: 'drawing.delete',
-    description: 'Permanently delete a drawing. Destructive — confirm first.',
+    description: 'Permanently delete a drawing. Destructive — confirm with the user first.',
     parameters: { id: { type: 'string', required: true, description: 'Drawing id' } },
     output: jsonOutput,
     async execute(args: { id: string }) { drawings.delete(args.id as never); return { ok: true }; },
+  }));
+
+  reg(defineTool({
+    name: 'drawing.setThumb',
+    description: 'Set the thumbnail image for a drawing (a data: URL, typically captured from the canvas). The renderer uses this to show a preview chip in the drawing list. Not destructive.',
+    parameters: {
+      id: { type: 'string', required: true, description: 'Drawing id' },
+      dataUrl: { type: 'string', required: true, description: 'data: URL of the thumbnail image (e.g. data:image/png;base64,...)' },
+    },
+    output: jsonOutput,
+    async execute(args: { id: string; dataUrl: string }) { drawings.setThumb(args.id as never, args.dataUrl); return { ok: true }; },
+  }));
+
+  // ---------------------------------------------------------------------------
+  // group.* — directory tree of the TODO list.
+  //
+  // Groups are how the user organises tasks into nested folders. The AI can
+  // create, rename, move, reorder, and delete groups, plus query the current
+  // tree with task counts. The renderer syncs the result via the
+  // `app:data-changed { scope: 'groups' }` bus.
+  // ---------------------------------------------------------------------------
+
+  reg(defineTool({
+    name: 'group.list',
+    description: 'List all groups (directory tree) for the TODO list, plus a count of how many tasks live in each (null key = unfiled). Returns flat rows with parentId; client reconstructs the tree.',
+    parameters: {},
+    output: jsonOutput,
+    async execute() {
+      const list = groups.list();
+      // Count tasks per group (mirrors the IPC group's list response shape).
+      const counts: Record<string, number> = {};
+      for (const t of repo.list({} as never)) counts[t.groupId ?? ''] = (counts[t.groupId ?? ''] ?? 0) + 1;
+      return { groups: list, counts };
+    },
+  }));
+
+  reg(defineTool({
+    name: 'group.create',
+    description: 'Create a new group (folder) at the given parent. Omit parentId to create at the root. Returns the new group row.',
+    parameters: {
+      name: { type: 'string', required: true, description: 'Group name' },
+      parentId: { type: 'string', description: 'Parent group id; omit to create at the root' },
+    },
+    output: jsonOutput,
+    async execute(args: { name: string; parentId?: string }) { return groups.create(args.name, args.parentId ?? null); },
+  }));
+
+  reg(defineTool({
+    name: 'group.update',
+    description: 'Rename, move, or reorder a group. Pass only the fields you want to change. Moving a group under one of its own descendants is rejected (would create a cycle).',
+    parameters: {
+      id: { type: 'string', required: true, description: 'Group id' },
+      name: { type: 'string', description: 'New name' },
+      parentId: { type: 'string', description: 'New parent group id; null/empty string moves to the root' },
+      sortOrder: { type: 'number', description: 'New sort order within its parent' },
+    },
+    output: jsonOutput,
+    async execute(args: { id: string; name?: string; parentId?: string; sortOrder?: number }) {
+      const patch: GroupPatch = {};
+      if (args.name !== undefined) patch.name = args.name;
+      if (args.parentId !== undefined) patch.parentId = args.parentId || null;
+      if (args.sortOrder !== undefined) patch.sortOrder = args.sortOrder;
+      return groups.update(args.id, patch);
+    },
+  }));
+
+  reg(defineTool({
+    name: 'group.delete',
+    description: 'Delete a group. Tasks inside the group become unfiled (groupId set to null). Destructive in the sense of "loses the folder structure" — confirm with the user first. The DB will not allow deleting a group with children; the renderer should call group.update to reparent or delete children first.',
+    parameters: { id: { type: 'string', required: true, description: 'Group id to delete' } },
+    output: jsonOutput,
+    async execute(args: { id: string }) {
+      // GroupRepo.delete() is recursive: it un-files all descendant tasks
+      // (group_id = NULL) and deletes the group + all its descendant
+      // groups. No return value to check — it either succeeds or throws.
+      try {
+        groups.delete(args.id);
+      } catch (err) {
+        throw new Error(`group.delete: ${(err as Error).message}`);
+      }
+      return { ok: true };
+    },
+  }));
+
+  // ---------------------------------------------------------------------------
+  // inbox.* — attach a file (path) or pasted image (data: URL) to a TODO.
+  //
+  // Mirrors the IPC `inbox.attach` / `inbox.attachBlob` handlers in main/index.ts.
+  // The AI uses these when a user says "attach this file to that todo" or
+  // "add this screenshot to the bug" — typically the file is already on disk
+  // (clipboard image save path, screenshot) or arrives as a data: URL.
+  // ---------------------------------------------------------------------------
+
+  reg(defineTool({
+    name: 'inbox.attach',
+    description: 'Attach a file from disk to a TODO. Copies the file into the app\'s attachments directory and records it in inbox_attachments. Returns the new attachment row.',
+    parameters: {
+      todoId: { type: 'string', required: true, description: 'Target TODO id' },
+      filePath: { type: 'string', required: true, description: 'Absolute path to the file to attach' },
+      mime: { type: 'string', required: true, description: 'MIME type (e.g. "image/png", "application/pdf")' },
+    },
+    output: jsonOutput,
+    async execute(args: { todoId: string; filePath: string; mime: string }) {
+      mkdirSync(attachmentsDir, { recursive: true });
+      const id = randomUUID();
+      const filename = `${id}-${basename(args.filePath)}`;
+      const target = join(attachmentsDir, filename);
+      copyFileSync(args.filePath, target);
+      const now = Date.now();
+      db.prepare(
+        'INSERT INTO inbox_attachments (id, todo_id, file_path, mime, created_at) VALUES (?, ?, ?, ?, ?)',
+      ).run(id, args.todoId, target, args.mime, now);
+      return { id, todoId: args.todoId, filePath: target, mime: args.mime, createdAt: now };
+    },
+  }));
+
+  reg(defineTool({
+    name: 'inbox.attachBlob',
+    description: 'Attach a pasted image (data: URL) to a TODO. Decodes the data URL, writes the bytes to disk, records the row. Use for screenshots / clipboard images the user said "add this picture to the todo".',
+    parameters: {
+      todoId: { type: 'string', required: true, description: 'Target TODO id' },
+      dataUrl: { type: 'string', required: true, description: 'data: URL of the image (e.g. data:image/png;base64,iVBORw0K...)' },
+      filename: { type: 'string', required: true, description: 'Original filename (used for extension inference and display)' },
+      mime: { type: 'string', required: true, description: 'MIME type (e.g. "image/png")' },
+    },
+    output: jsonOutput,
+    async execute(args: { todoId: string; dataUrl: string; filename: string; mime: string }) {
+      mkdirSync(attachmentsDir, { recursive: true });
+      const id = randomUUID();
+      const comma = args.dataUrl.indexOf(',');
+      const header = args.dataUrl.slice(0, comma);
+      const isBase64 = /;base64/i.test(header);
+      const payload = args.dataUrl.slice(comma + 1);
+      const buf = isBase64
+        ? Buffer.from(payload, 'base64')
+        : Buffer.from(decodeURIComponent(payload), 'utf8');
+      const ext = mimeExt(args.mime);
+      const filename = `${id}-${sanitizeName(args.filename) || 'pasted'}.${ext}`;
+      const target = join(attachmentsDir, filename);
+      writeFileSync(target, buf);
+      const now = Date.now();
+      db.prepare(
+        'INSERT INTO inbox_attachments (id, todo_id, file_path, mime, created_at) VALUES (?, ?, ?, ?, ?)',
+      ).run(id, args.todoId, target, args.mime, now);
+      return { id, todoId: args.todoId, filePath: target, mime: args.mime, createdAt: now };
+    },
+  }));
+
+  // ---------------------------------------------------------------------------
+  // conversation.* — manage the AI's own threads.
+  //
+  // These are how the AI lists / creates / archives past conversations. Most
+  // of the time the AI's `ai.ask` runs on the conversation the user is
+  // already on (so the runtime carries it implicitly), but occasionally the
+  // AI needs to spawn a side thread ("let me think through this in a scratch
+  // thread"), find a previous session ("what did we call the design review?"),
+  // or archive a completed thread.
+  // ---------------------------------------------------------------------------
+
+  reg(defineTool({
+    name: 'conversation.list',
+    description: 'List AI conversations. By default archived threads are hidden. Each row includes the title, timestamps, and an archived flag. Use conversation.history to load the turns of a specific conversation.',
+    parameters: { includeArchived: { type: 'boolean', description: 'Include archived conversations (default false)' } },
+    output: jsonOutput,
+    async execute(args: { includeArchived?: boolean }) { return { conversations: conversations.list(args.includeArchived ?? false) }; },
+  }));
+
+  reg(defineTool({
+    name: 'conversation.create',
+    description: 'Create a new (empty) AI conversation. Returns the new conversation row (id, title, timestamps). The default title is "新对话 <timestamp>" — the DSH session-title service will replace it with an AI-generated title after the first turn, or the user can rename it via the UI.',
+    parameters: { title: { type: 'string', description: 'Optional explicit title; omit to use the default new-conversation title' } },
+    output: jsonOutput,
+    async execute(args: { title?: string }) { return { conversation: conversations.create(args.title ? { title: args.title } : undefined) }; },
+  }));
+
+  reg(defineTool({
+    name: 'conversation.rename',
+    description: 'Rename an AI conversation. Throws if the id is unknown or the title is empty.',
+    parameters: {
+      id: { type: 'string', required: true, description: 'Conversation id' },
+      title: { type: 'string', required: true, description: 'New title' },
+    },
+    output: jsonOutput,
+    async execute(args: { id: string; title: string }) {
+      const ok = conversations.rename(args.id, args.title);
+      if (!ok) throw new Error(`conversation.rename: ${args.id} not found or archived`);
+      return { ok: true };
+    },
+  }));
+
+  reg(defineTool({
+    name: 'conversation.archive',
+    description: 'Archive an AI conversation (soft delete). Hidden from the default list. Reversible via conversation.unarchive. The on-disk JSONL log is NOT touched.',
+    parameters: { id: { type: 'string', required: true, description: 'Conversation id' } },
+    output: jsonOutput,
+    async execute(args: { id: string }) { return { ok: conversations.archive(args.id) }; },
+  }));
+
+  reg(defineTool({
+    name: 'conversation.unarchive',
+    description: 'Restore an archived conversation so it shows in the default list again.',
+    parameters: { id: { type: 'string', required: true, description: 'Conversation id' } },
+    output: jsonOutput,
+    async execute(args: { id: string }) { return { ok: conversations.unarchive(args.id) }; },
+  }));
+
+  reg(defineTool({
+    name: 'conversation.delete',
+    description: 'Hard delete the DB row of an AI conversation. The on-disk JSONL event log is NOT cleaned up by this (out of scope). Prefer conversation.archive for "I\'m done with this thread" semantics.',
+    parameters: { id: { type: 'string', required: true, description: 'Conversation id' } },
+    output: jsonOutput,
+    async execute(args: { id: string }) { return { ok: conversations.delete(args.id) }; },
+  }));
+
+  reg(defineTool({
+    name: 'conversation.history',
+    description: 'Load the persisted turn history of a conversation. Returns the same shape the AIPane uses: { type: "user" | "assistant" | "tool", text?, reasoning?, name?, args?, ok?, data?, error? }. Use this to "remember" what a past conversation discussed.',
+    parameters: { id: { type: 'string', required: true, description: 'Conversation id' } },
+    output: jsonOutput,
+    async execute(args: { id: string }) {
+      // L4-H: history loading lives on the runtime (it owns the
+      // dsh-session-persistence-jsonl backend). At tool-call time we
+      // don't have a direct handle — but a future improvement is to
+      // expose `runtime.loadHistory()` on deps. For now, return an
+      // empty array and let the model know it can ask the user to
+      // surface a specific thread via the AIPane UI.
+      // Use `args.id` so a future implementation that needs to compute
+      // a stable per-conversation key has a guaranteed-not-undefined
+      // value to anchor on.
+      void args.id;
+      return {
+        turns: [],
+        note: 'conversation.history at the tool layer is a stub; the AIPane UI loads the full history for the user when they switch threads. If you need to recall a past conversation, ask the user to open it.',
+      };
+    },
+  }));
+
+  // ---------------------------------------------------------------------------
+  // ai.* — self-introspection. The AI can check its own connectivity,
+  // discover available models, and read its own cost so far.
+  // ---------------------------------------------------------------------------
+
+  reg(defineTool({
+    name: 'ai.health',
+    description: 'Check the AI provider connection. Returns { ok, mode, latencyMs?, error? }. "shim" mode means offline / no API key — model calls will echo pre-canned answers. Use this before declaring "the API is broken" — it might just be missing credentials.',
+    parameters: {},
+    output: jsonOutput,
+    async execute() {
+      try {
+        const s = settings.get();
+        const ep = resolveEndpoint(s);
+        if (!ep) return { ok: false, mode: 'shim', error: 'no_api_key' };
+        if (ep.protocol !== 'openai' || s.provider !== 'ollama') {
+          if (!ep.apiKey) return { ok: false, mode: 'shim', error: 'no_api_key' };
+        }
+        const hc = await healthCheck(ep);
+        return { ok: hc.ok, mode: hc.ok ? 'real' : 'shim', latencyMs: hc.latencyMs, error: hc.error };
+      } catch (err) {
+        return { ok: false, mode: 'shim', error: (err as Error).message };
+      }
+    },
+  }));
+
+  reg(defineTool({
+    name: 'ai.models',
+    description: 'List the configured model(s) for the active provider. Returns the list of models the user has enabled (per-provider defaults from settings). Useful when the user asks "which model are you?".',
+    parameters: {},
+    output: jsonOutput,
+    async execute() {
+      const s = settings.get();
+      return { model: s.model, provider: s.provider, models: [s.model] };
+    },
+  }));
+
+  reg(defineTool({
+    name: 'ai.stats',
+    description: 'Read the cumulative AI cost from settings (sum of every successful turn\'s costUsd). Useful when the user asks "how much have you spent this month?"',
+    parameters: {},
+    output: jsonOutput,
+    async execute() {
+      const s = settings.get();
+      return { monthlyCostUsd: s.monthlyCostUsd, lastHeartbeatAt: s.lastHeartbeatAt };
+    },
+  }));
+
+  // ---------------------------------------------------------------------------
+  // ask_user_question / ask_user_approval — model-facing HITL primitives.
+  //
+  // The renderer-facing side (UserQuestionCard / UserApprovalCard) is the
+  // answerer; these are the CALLER side. When the model wants to ask a
+  // multi-choice question or get a binary OK, it invokes one of these and
+  // receives the user's answer. 90s timeout — if the user doesn't answer
+  // in 90s, the call rejects and the agent loop proceeds.
+  //
+  // Wiring: the runtime listener installed earlier in bootDsh() bridges
+  // ctx.userQuestions.ask() / ctx.approval.request() to the renderer via
+  // IPC (see dsh-runtime.ts: ctx.on('user-questions/request', ...) and
+  // ctx.on('approval/request', ...)).
+  // ---------------------------------------------------------------------------
+
+  reg(defineTool({
+    name: 'ask_user_question',
+    description: 'Pause the agent loop and ask the user a multi-choice question (or several). Returns the user\'s selection as { answers: [{ id, selected: string[], custom? }] }. Prefer this over open-ended text questions when the choices are enumerable — it\'s faster for the user and gives the model structured input. Auto-cancels after 90s if the user doesn\'t answer.',
+    parameters: {
+      questions: { type: 'json', required: true, description: 'Array of questions, each { id, question, detail?, header?, options?: [{label, description?}], multiSelect? }. 1-4 questions per call.' },
+    },
+    output: jsonOutput,
+    async execute(args: { questions: unknown }) {
+      // Validate the shape — DSH\'s listener will validate too, but a
+      // clear error here saves a wasted waterfall call.
+      if (!Array.isArray(args.questions) || args.questions.length === 0) {
+        throw new Error('ask_user_question: `questions` must be a non-empty array');
+      }
+      if (args.questions.length > 4) {
+        throw new Error('ask_user_question: at most 4 questions per call');
+      }
+      // DSH\'s upstream user-questions handler dispatches via
+      // `ctx.waterfall(\'user-questions/request\', request, noAnswerer)`.
+      // The listener we installed in bootDsh() (ctx.on(\'user-questions/request\', ...))
+      // mints a reqId, broadcasts to the renderer, and resolves the
+      // returned promise with the user\'s answer. Passing a noAnswerer
+      // as the final arg signals "no upstream fallback" so the listener
+      // is the sole answerer.
+      const noAnswerer = (): unknown => { throw new Error('no upstream answerer available'); };
+      const result = await ctx.waterfall('user-questions/request', { questions: args.questions }, noAnswerer);
+      return result as UserQuestionAnswer;
+    },
+  }));
+
+  reg(defineTool({
+    name: 'ask_user_approval',
+    description: 'Pause the agent loop and ask the user to approve or reject a specific tool call. Returns one of: "allowed-once" | "rejected" | "cancelled" | "unavailable". Use this BEFORE performing an irreversible side effect (deleting a file, sending a message, etc.). The user can always "reject" — the agent loop then aborts the tool call. Auto-cancels after 90s.',
+    parameters: {
+      toolName: { type: 'string', required: true, description: 'Name of the tool the agent is about to call (for display in the approval card)' },
+      reason: { type: 'string', required: true, description: 'Human-readable explanation of what this tool will do and why the user should approve' },
+      preview: { type: 'string', description: 'Optional JSON-stringified preview of the args (shown in the card so the user sees what they\'re approving)' },
+    },
+    output: jsonOutput,
+    async execute(args: { toolName: string; reason: string; preview?: string }) {
+      if (typeof args.toolName !== 'string' || !args.toolName) {
+        throw new Error('ask_user_approval: toolName is required');
+      }
+      if (typeof args.reason !== 'string' || !args.reason) {
+        throw new Error('ask_user_approval: reason is required');
+      }
+      const noAnswerer = (): unknown => 'unavailable';
+      const result = await ctx.waterfall(
+        'approval/request',
+        { toolName: args.toolName, reason: args.reason, preview: args.preview },
+        noAnswerer,
+      );
+      return result as 'allowed-once' | 'rejected' | 'cancelled' | 'unavailable';
+    },
   }));
 
   return () => disposers.forEach(d => { try { d(); } catch { /* noop */ } });

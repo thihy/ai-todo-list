@@ -5,7 +5,22 @@ import type {
   IpcRequest,
   IpcResponse,
 } from './ipc-schema';
-import type { AIModel, AIProvider, AICustomProtocol, CustomProviderInput, CustomProviderView, AIStreamEvent, PermissionRequest } from './ai-types';
+import type {
+  AIModel,
+  AIProvider,
+  AICustomProtocol,
+  CustomProviderInput,
+  CustomProviderView,
+  AIStreamEvent,
+  PermissionRequest,
+  UserQuestionRequest,
+  UserQuestionAnswer,
+  UserQuestionItem,
+  UserQuestionOption,
+  UserQuestionAnswerItem,
+  UserApprovalRequest,
+  UserApprovalAnswer,
+} from './ai-types';
 import type { Todo, TodoCreate, TodoPatch, TodoFilter, SearchHit, TodoStats } from './todo-types';
 import type { ContentVersionEntry } from './todo-types';
 import type { DrawingMeta, DrawingScene } from './todo-types';
@@ -22,7 +37,14 @@ export type AppEvent =
   | 'app:data-changed'
   | 'app:settings-changed'
   | 'ai:stream'
-  | 'ai:permission-request';
+  | 'ai:permission-request'
+  // L4-G: human-in-the-loop bridges for DSH user-questions + user-approval.
+  // Pushed from the main-process waterfall listener when a tool call
+  // awaits a UI decision. The renderer renders the appropriate card
+  // inline in the assistant turn and replies via `ai.userQuestion.answer`
+  // / `ai.userApproval.answer` IPC channels.
+  | 'ai:user-question-request'
+  | 'ai:user-approval-request';
 
 /** Coarse-grained scope of a data mutation, so the renderer can re-fetch only
  *  the stores that actually changed (e.g. the AI's todo.create tool mutating
@@ -39,6 +61,8 @@ export interface AppEventMap {
   'app:settings-changed': Record<string, never>;
   'ai:stream': AIStreamEvent;
   'ai:permission-request': PermissionRequest;
+  'ai:user-question-request': UserQuestionRequest;
+  'ai:user-approval-request': UserApprovalRequest;
 }
 
 // Renderer-side arg shapes. Match the IPC channel request types but with
@@ -191,6 +215,16 @@ export interface ThihyApi {
     /** Load decoded history turns from the persistence backend. */
     history(id: string): Promise<IpcResponse<'ai.conversation.history'>>;
   };
+  // L4-G: human-in-the-loop answers for DSH user-questions + user-approval
+  // waterfalls. The push directions are events (`ai:user-question-request`,
+  // `ai:user-approval-request`); the renderer correlates its reply via
+  // the `reqId` minted by the main-process listener.
+  aiUserQuestion: {
+    answer(reqId: string, answers: import('./ai-types').UserQuestionAnswerItem[]): Promise<IpcResponse<'ai.userQuestion.answer'>>;
+  };
+  aiUserApproval: {
+    answer(reqId: string, decision: 'allow-once' | 'reject'): Promise<IpcResponse<'ai.userApproval.answer'>>;
+  };
   on<E extends AppEvent>(event: E, cb: (payload: AppEventMap[E]) => void): () => void;
 }
 
@@ -199,5 +233,5 @@ export type { Todo, TodoCreate, TodoPatch, TodoFilter, SearchHit, TodoStats };
 export type { ContentVersionEntry };
 export type { DrawingMeta, DrawingScene };
 export type { Group, GroupCreate, GroupPatch };
-export type { AIModel, AIProvider, AICustomProtocol, CustomProviderInput, CustomProviderView, AIStreamEvent, PermissionRequest };
+export type { AIModel, AIProvider, AICustomProtocol, CustomProviderInput, CustomProviderView, AIStreamEvent, PermissionRequest, UserQuestionRequest, UserQuestionAnswer, UserQuestionItem, UserQuestionOption, UserQuestionAnswerItem, UserApprovalRequest, UserApprovalAnswer };
 export type { IpcChannelName, IpcRequest, IpcResponse };

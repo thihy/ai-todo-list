@@ -48,6 +48,13 @@ const APP_EVENTS: AppEvent[] = [
   'app:settings-changed',
   'ai:stream',
   'ai:permission-request',
+  // L4-G: human-in-the-loop events. The main-process waterfall listener
+  // pushes these when a DSH tool calls ask_user_question / a guarded
+  // tool needs binary approval. The renderer renders the matching
+  // inline card and posts the answer back via aiUserQuestion.answer /
+  // aiUserApproval.answer (defined below on the ThihyApi object).
+  'ai:user-question-request',
+  'ai:user-approval-request',
 ];
 
 function onAppEvent<E extends AppEvent>(
@@ -130,6 +137,16 @@ const api: ThihyApi = {
     delete: (id) => invoke('ai.conversation.delete', { id }),
     confirmDelete: (id, title) => invoke('ai.conversation.confirmDelete', { id, title }),
     history: (id) => invoke('ai.conversation.history', { id }),
+  },
+  // L4-G: human-in-the-loop answerer. The pending waterfall promise
+  // in dsh-runtime.ts is resolved by whichever renderer window posts
+  // first (other windows still receive the request event for
+  // multi-window consistency, but the answerer only fires once).
+  aiUserQuestion: {
+    answer: (reqId, answers) => invoke('ai.userQuestion.answer', { reqId, answers }),
+  },
+  aiUserApproval: {
+    answer: (reqId, decision) => invoke('ai.userApproval.answer', { reqId, decision }),
   },
   on: onAppEvent,
 };

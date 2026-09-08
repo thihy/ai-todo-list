@@ -177,3 +177,32 @@
 # skill picks are replay-stable. Inject: [agents, tools, skills] — all present.
 - id: tool-skill
   name: '@deepseek-ai/dsh-tool-skill'
+
+# Human-in-the-loop questions. `ctx.userQuestions` is the seam; the waterfall
+# listener registered in src/main/dsh/dsh-runtime.ts bridges `ask()` calls
+# to the Electron renderer via the `ai:user-question-request` / `answer`
+# IPC channels. The model sees the model-facing `ask_user_question` tool
+# below (dsh-tool-ask-user), which calls `ctx.userQuestions.ask()` under
+# the hood. No config knobs; the seam is its own service definition.
+- id: user-questions
+  name: '@deepseek-ai/dsh-user-questions'
+
+# Approval seam for destructive / sensitive operations. Same answerer
+# pattern as user-questions: `ctx.approval.request()` lands in the
+# `approval/request` waterfall, which our runtime listener bridges to
+# the renderer as `ai:user-approval-request` / `answer`. Fail-closed when
+# no answerer accepts; default policy is `ask`. The interactive-policy
+# system-prompt snippet is added by the service itself (no model prompt
+# fragment needed here).
+- id: user-approval
+  name: '@deepseek-ai/dsh-user-approval'
+  config:
+    policy: ask
+
+# Model-facing `ask_user_question` tool. Injects [tools, userQuestions] —
+# both present above. The tool pauses the agent loop until
+# `ctx.userQuestions.ask()` resolves with the user's answer, then feeds
+# that answer back as an ordinary tool result. Tool registration is
+# self-contained (no schema knobs).
+- id: tool-ask-user
+  name: '@deepseek-ai/dsh-tool-ask-user'

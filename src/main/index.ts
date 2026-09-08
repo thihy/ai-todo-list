@@ -20,6 +20,7 @@ import { DrawingStore } from './files/drawings';
 import { SettingsStore } from './settings/store';
 import { CaptureController } from './shortcuts/capture';
 import { TrayController } from './tray/tray';
+import { mimeExt as _mimeExt, sanitizeName as _sanitizeName } from './util/mime';
 import { ClipboardWatcher } from './clipboard/watcher';
 import { installAutoUpdater } from './updater/updater';
 import { installAppMenu, showAbout, popupCategory } from './menu';
@@ -147,7 +148,7 @@ function bootstrap(): void {
       const dsh = await initDshContainer({ repo, md, drawings, settings, db: handle.db });
       const { registerAiHandlers, bindAiDeps } = await import('./ipc/ai-handlers');
       registerAiHandlers(dsh);
-      bindAiDeps({ dsh, settings, repo, conversations, md, drawings });
+      bindAiDeps({ dsh, settings, repo, conversations, md, drawings, groups, db: handle.db, attachmentsDir });
       logger.info('DSH AI handlers registered');
 
       // L3-C: backfill DB rows for sessions that exist on disk but have no
@@ -330,8 +331,8 @@ function registerInboxHandlers(db: Database.Database, attachmentsDir: string): v
       const buf = isBase64
         ? Buffer.from(payload, 'base64')
         : Buffer.from(decodeURIComponent(payload), 'utf8');
-      const ext = mimeExt(req.mime);
-      const filename = `${id}-${sanitizeName(req.filename) || 'pasted'}.${ext}`;
+      const ext = _mimeExt(req.mime);
+      const filename = `${id}-${_sanitizeName(req.filename) || 'pasted'}.${ext}`;
       const target = join(attachmentsDir, filename);
       writeFileSync(target, buf);
       const now = Date.now();
@@ -352,17 +353,8 @@ function registerInboxHandlers(db: Database.Database, attachmentsDir: string): v
   logger.info('inbox.* handlers registered');
 }
 
-function mimeExt(mime: string): string {
-  const m = /image\/([a-z0-9.+-]+)/i.exec(mime);
-  if (!m) return 'bin';
-  if (m[1] === 'jpeg') return 'jpg';
-  return m[1];
-}
-
-function sanitizeName(s: string): string {
-  return s.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 40);
-}
-
+/** Best-effort mime-type from extension. Returns 'application/octet-stream'
+ *  for unknown extensions so callers can branch on a known set. */
 /** Best-effort mime-type from extension. Returns 'application/octet-stream'
  *  for unknown extensions so callers can branch on a known set. */
 function mimeFromExt(ext: string): string {

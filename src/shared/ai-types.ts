@@ -168,6 +168,73 @@ export interface PermissionResponse {
   rememberForSeconds: number;
 }
 
+// ===== Human-in-the-loop (DSH user-questions + user-approval) =====
+//
+// Wire shapes that mirror @deepseek-ai/dsh-user-questions/types but strip
+// server-only fields (the `agent` runtime ref) so the renderer can carry
+// the request payload without leaking the live agent handle into IPC.
+//
+// `reqId` is a server-minted correlation id so the answerer can match
+// the user's answer back to the pending waterfall call without sharing
+// the agent's internal id (which is a branded string the renderer has
+// no business seeing).
+
+/** One selectable answer offered to the user. */
+export interface UserQuestionOption {
+  label: string;
+  description?: string;
+}
+
+/** One question in a multi-question request. */
+export interface UserQuestionItem {
+  id: string;
+  question: string;
+  detail?: string;
+  header?: string;
+  options?: UserQuestionOption[];
+  multiSelect?: boolean;
+  intent?: { kind: 'plan-review'; approve: string };
+}
+
+/** Single-question batch as it travels main → renderer. */
+export interface UserQuestionRequest {
+  reqId: string;
+  invocationId: string;
+  questions: UserQuestionItem[];
+}
+
+/** One answer entry (mirrors DSH AskUserQuestionAnswerItem). */
+export interface UserQuestionAnswerItem {
+  id: string;
+  /** Selected option labels. Empty when `custom` is set on a single-select. */
+  selected: string[];
+  /** Optional free-text "Other" answer. */
+  custom?: string;
+}
+
+/** Renderer → main: the human's structured answer. */
+export interface UserQuestionAnswer {
+  reqId: string;
+  answers: UserQuestionAnswerItem[];
+}
+
+/** Binary approval request from main → renderer (DSH user-approval). */
+export interface UserApprovalRequest {
+  reqId: string;
+  invocationId: string;
+  toolName: string;
+  reason: string;
+  /** Optional hint for the renderer; missing on legacy ctx.approval callers. */
+  preview?: string;
+  expiresAtMs: number;
+}
+
+/** Binary approval answer from renderer → main. */
+export interface UserApprovalAnswer {
+  reqId: string;
+  decision: 'allow-once' | 'reject';
+}
+
 export interface AIMemoryEntry {
   id: ULID;
   kind: 'preference' | 'fact' | 'context';
