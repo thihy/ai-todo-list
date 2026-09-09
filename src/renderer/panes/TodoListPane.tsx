@@ -368,12 +368,17 @@ const TaskRow: React.FC<{
   onDelete: () => void;
   onRestore: () => void;
 }> = ({ todo, depth, active, onSelect, onCycle, hasSubtasks, subtaskCount, subtaskDoneCount, subtasksExpanded, onToggleSubtasks, archivedView, onDelete, onRestore }) => {
-  const done = todo.status === 'done';
+  const st = todo.status;
+  // Terminal/voided states recede (icon mutes, title strikes); blocked is still
+  // active but flagged. Each off-default status gets its own row class so the
+  // list reads at a glance: done = cleared, cancelled = voided, blocked = needs attention.
+  const recede = st === 'done' || st === 'cancelled';
+  const statusCls = st === 'done' ? ' is-done' : st === 'cancelled' ? ' is-cancelled' : st === 'blocked' ? ' is-blocked' : '';
   return (
     <li
       role="button"
       tabIndex={0}
-      className={`task-row${active ? ' is-active' : ''}${done ? ' is-done' : ''}`}
+      className={`task-row${active ? ' is-active' : ''}${statusCls}`}
       style={{ '--row-depth': depth } as React.CSSProperties}
       onClick={() => onSelect(todo.id)}
       onDoubleClick={(e) => {
@@ -400,7 +405,7 @@ const TaskRow: React.FC<{
               a folder-style icon of the same 14×14 stroke family so the
               tree reads as one icon set. Done tasks mute. */}
           <span className="task-row__icon" aria-hidden="true">
-            {hasSubtasks ? <TaskBranchGlyph open={subtasksExpanded} done={done} /> : <TaskGlyph done={done} />}
+            {hasSubtasks ? <TaskBranchGlyph open={subtasksExpanded} done={recede} /> : <TaskGlyph done={recede} />}
           </span>
           <span className="task-row__title">{todo.title || '(无标题)'}</span>
           {/* SubTask collapse/expand chevron — sits right AFTER the title

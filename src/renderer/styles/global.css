@@ -1930,6 +1930,30 @@ a:hover {
   text-decoration: line-through;
   color: var(--fg-muted);
 }
+/* ---- Status-based row treatments ---- */
+/* Distinct visual state per off-default lifecycle phase so the list reads at
+   a glance: done = cleared (strike + mute), cancelled = voided (strike +
+   whole-row dim), blocked = flagged for attention (danger rail + wash, NOT
+   dimmed — it's still active work). */
+.task-row.is-cancelled {
+  opacity: 0.6;
+}
+.task-row.is-cancelled .task-row__title {
+  text-decoration: line-through;
+  color: var(--fg-muted);
+}
+.task-row.is-blocked {
+  border-left-color: var(--accent-danger);
+  background: color-mix(in srgb, var(--accent-danger) 6%, transparent);
+}
+.task-row.is-blocked:hover {
+  background: color-mix(in srgb, var(--accent-danger) 10%, var(--bg-hover));
+}
+/* Keep the selection (active) border primary even on blocked rows so the
+   "you are here" signal never gets confused with the danger rail. */
+.task-row.is-blocked.is-active {
+  background: color-mix(in srgb, var(--accent-danger) 12%, var(--bg-active));
+}
 .task-row__main {
   flex: 1;
   min-width: 0;
