@@ -32,6 +32,7 @@ import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from
 import { useAiStream } from '../hooks/useThihyApi';
 import { useDataVersion } from '../data-bus';
 import { Markdown } from '../components/Markdown';
+import { IconHistory, IconPlus } from '../components/icons';
 import type { AITokenEvent, AIToolCallEvent, AIReasoningEvent, AIStreamEvent } from '../../shared/ai-types';
 import { AI_SUBMIT_EVENT, type ExternalAiSubmitDetail } from '../components/Composer';
 
@@ -671,7 +672,7 @@ export const AIPane: React.FC = () => {
             title="新建对话"
             aria-label="新建对话"
           >
-            <span aria-hidden="true">＋</span>
+            <IconPlus />
           </button>
           <div className="aipane__history" ref={historyRef}>
             <button
@@ -683,7 +684,7 @@ export const AIPane: React.FC = () => {
               aria-haspopup="listbox"
               aria-expanded={showHistory}
             >
-              <span aria-hidden="true">🗂</span>
+              <IconHistory />
             </button>
             {showHistory && (
               <div className="aipane__menu aipane__menu--right" role="listbox">
