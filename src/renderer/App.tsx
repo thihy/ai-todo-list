@@ -146,6 +146,7 @@ export const App: React.FC = () => {
                   onSelect={(id) => navigate(routeToHash({ name: 'todo', id }))}
                   onOpenSettings={() => setSettingsOpen(true)}
                   onCompose={() => setComposing(true)}
+                  toastBus={toast}
                 />
                 <TaskDetail
                   todoId={selectedId}

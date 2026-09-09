@@ -27,6 +27,7 @@ interface TodoRow {
   done_at: number | null;
   parent_id: string | null;
   archived_at: number | null;
+  deleted_at: number | null;
 }
 
 function rowToTodo(row: TodoRow, tags: string[], drawingIds: string[]): Todo {
@@ -46,6 +47,7 @@ function rowToTodo(row: TodoRow, tags: string[], drawingIds: string[]): Todo {
     drawingIds,
     parentId: row.parent_id,
     archivedAt: row.archived_at,
+    deletedAt: row.deleted_at,
   };
 }
 
@@ -102,6 +104,17 @@ export class TodoRepo {
       where.push('archived_at IS NOT NULL');
     } else if (!filter.includeArchived) {
       where.push('archived_at IS NULL');
+    }
+
+    // Delete scoping. deletedOnly surfaces the 已删除 recovery bin;
+    // otherwise deleted tasks are ALWAYS excluded — even from archivedOnly
+    // — so a soft-deleted task never leaks into the 归档 view or the active
+    // list. There's no includeDeleted escape hatch: the only way to see
+    // deleted rows is deletedOnly.
+    if (filter.deletedOnly) {
+      where.push('deleted_at IS NOT NULL');
+    } else {
+      where.push('deleted_at IS NULL');
     }
 
     const sql = `SELECT * FROM todos ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY updated_at DESC`;
@@ -239,8 +252,44 @@ export class TodoRepo {
     return false;
   }
 
+  /** Soft-delete a task and its ENTIRE subtree. Stamps deleted_at (epoch ms)
+   *  on the task + every descendant via a recursive CTE, so deleting a
+   *  parent removes the whole branch from the active list without losing
+   *  any row. The row + markdown + drawings survive — restore() clears it.
+   *  Idempotent: re-deleting an already-deleted subtree just refreshes the
+   *  timestamp. FK ON DELETE SET NULL never fires (we UPDATE, not DELETE). */
   delete(id: ULID): void {
-    this.db.prepare('DELETE FROM todos WHERE id = ?').run(id);
+    const now = Date.now();
+    this.db
+      .prepare(
+        `WITH subtree(id) AS (
+           SELECT id FROM todos WHERE id = ?
+           UNION ALL
+           SELECT t.id FROM todos t JOIN subtree s ON t.parent_id = s.id
+         )
+         UPDATE todos SET deleted_at = ?, updated_at = ?
+         WHERE id IN (SELECT id FROM subtree)`,
+      )
+      .run(id, now, now);
+  }
+
+  /** Restore a soft-deleted task and its ENTIRE subtree — the inverse of
+   *  delete(). Clears deleted_at on the task + every descendant so the whole
+   *  branch returns to the active list. If the task isn't deleted this is a
+   *  no-op (the UPDATE matches nothing harmful). */
+  restore(id: ULID): void {
+    const now = Date.now();
+    this.db
+      .prepare(
+        `WITH subtree(id) AS (
+           SELECT id FROM todos WHERE id = ?
+           UNION ALL
+           SELECT t.id FROM todos t JOIN subtree s ON t.parent_id = s.id
+         )
+         UPDATE todos SET deleted_at = NULL, updated_at = ?
+         WHERE id IN (SELECT id FROM subtree)`,
+      )
+      .run(id, now);
   }
 
   /** Auto-archive sweep: mark every `done` task whose done_at is older than
@@ -294,6 +343,7 @@ export class TodoRepo {
       done_at: number | null;
       parent_id: string | null;
       archived_at: number | null;
+      deleted_at: number | null;
       snippet: string;
       score: number;
     };
@@ -304,7 +354,7 @@ export class TodoRepo {
                 bm25(todos_fts) as score
          FROM todos_fts f
          JOIN todos t ON t.rowid = f.rowid
-         WHERE todos_fts MATCH ?
+         WHERE todos_fts MATCH ? AND t.deleted_at IS NULL
          ORDER BY score
          LIMIT ?`,
       )
@@ -318,8 +368,10 @@ export class TodoRepo {
   }
 
   stats(windowDays = 7): TodoStats {
+    // Stats describe LIVE work only — exclude soft-deleted rows so a
+    // deleted task doesn't inflate totals or the done count.
     const total = (
-      this.db.prepare<[], { c: number }>('SELECT COUNT(*) as c FROM todos').get()
+      this.db.prepare<[], { c: number }>('SELECT COUNT(*) as c FROM todos WHERE deleted_at IS NULL').get()
     )?.c ?? 0;
     const byStatus: Record<TodoStatus, number> = {
       next: 0,
@@ -330,7 +382,7 @@ export class TodoRepo {
     };
     const statusRows = this.db
       .prepare<[], { status: TodoStatus; c: number }>(
-        'SELECT status, COUNT(*) as c FROM todos GROUP BY status',
+        'SELECT status, COUNT(*) as c FROM todos WHERE deleted_at IS NULL GROUP BY status',
       )
       .all();
     for (const r of statusRows) byStatus[r.status] = r.c;
@@ -339,7 +391,7 @@ export class TodoRepo {
     const completedRecent = (
       this.db
         .prepare<[string, number], { c: number }>(
-          'SELECT COUNT(*) as c FROM todos WHERE status = ? AND done_at >= ?',
+          'SELECT COUNT(*) as c FROM todos WHERE status = ? AND done_at >= ? AND deleted_at IS NULL',
         )
         .get('done', windowStart)
     )?.c ?? 0;
@@ -350,7 +402,7 @@ export class TodoRepo {
     const avgLatency = (
       this.db
         .prepare<[string], { avg: number | null }>(
-          'SELECT AVG(done_at - created_at) as avg FROM todos WHERE status = ? AND done_at IS NOT NULL',
+          'SELECT AVG(done_at - created_at) as avg FROM todos WHERE status = ? AND done_at IS NOT NULL AND deleted_at IS NULL',
         )
         .get('done')
     )?.avg ?? 0;

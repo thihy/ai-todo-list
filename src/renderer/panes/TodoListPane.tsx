@@ -21,6 +21,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTodos } from '../hooks/useThihyApi';
 import type { ListFilter, SortKey } from '../router';
+import type { ToastBus } from '../components/Toast';
 import type { Todo, TodoStatus, ULID } from '../../shared/todo-types';
 import { UserMenu } from '../components/UserMenu';
 
@@ -31,7 +32,8 @@ export const TodoListPane: React.FC<{
   onSelect: (id: string) => void;
   onOpenSettings: () => void;
   onCompose: () => void;
-}> = ({ filter, sort, selectedId, onSelect, onOpenSettings, onCompose }) => {
+  toastBus: ToastBus;
+}> = ({ filter, sort, selectedId, onSelect, onOpenSettings, onCompose, toastBus }) => {
   const repoFilter = filterToRepoFilter(filter);
   const { data, loading, refresh } = useTodos(repoFilter);
 
@@ -68,19 +70,40 @@ export const TodoListPane: React.FC<{
     setExpandMap(next);
   }, [branchIds]);
 
-  const onDelete = useCallback(async (id: string) => {
-    await window.thihy.todo.delete(id);
-    await refresh();
-  }, [refresh]);
-
   // In the 归档 view the per-row hover button restores (un-archives) instead
   // of deleting. Restore = clear archived_at; the task drops back into the
   // active list.
   const archivedView = filter.kind === 'archived';
+  // 已删除 view: the quick-recovery bin. Rows here are soft-deleted; the
+  // per-row action is 恢复 (clear deleted_at on the subtree), not delete.
+  const deletedView = filter.kind === 'deleted';
   const onRestore = useCallback(async (id: string) => {
-    await window.thihy.todo.update(id, { archivedAt: null });
+    await window.thihy.todo.restore(id);
     await refresh();
   }, [refresh]);
+
+  // Quick-recovery: soft-deleting a task from the active list pops a 5-min
+  // toast with a 恢复 action. No confirmation — the delete is immediate
+  // (logical, always undoable). The toast auto-dismisses after 5 min; the
+  // task is still recoverable from the 已删除 filter view after that.
+  const onDelete = useCallback(async (id: string) => {
+    const todo = data.find((t) => t.id === id);
+    await window.thihy.todo.delete(id);
+    await refresh();
+    if (todo) {
+      toastBus.push({
+        kind: 'info',
+        message: `已删除「${todo.title || '(无标题)'}」`,
+        ttl: 5 * 60_000,
+        action: {
+          label: '恢复',
+          run: () => {
+            void window.thihy.todo.restore(id).then(() => refresh());
+          },
+        },
+      });
+    }
+  }, [refresh, data, toastBus]);
 
   // Root tasks: top-level (no parentId). SubTasks nest under their parent
   // via TaskBranch, so the root list is just the parentId === null set.
@@ -91,6 +114,20 @@ export const TodoListPane: React.FC<{
     () => sortTodos(data.filter((t) => !t.parentId), sort),
     [data, sort],
   );
+  // 已删除 view: deletion-roots = deleted tasks whose parent is NOT itself
+  // deleted (or has no parent). Because delete() cascades to the subtree, a
+  // deleted parent carries its descendants with it; showing only roots avoids
+  // listing a child twice and avoids the orphan case where restoring a child
+  // alone would leave it dangling under a still-deleted parent. Restoring a
+  // root restores the whole subtree (repo.restore cascades). Sorted by
+  // deletion time DESC (newest deletion first), per the user's spec.
+  const deletedRoots = useMemo(() => {
+    if (!deletedView) return [] as Todo[];
+    const deletedIds = new Set(data.map((t) => t.id));
+    return data
+      .filter((t) => !t.parentId || !deletedIds.has(t.parentId))
+      .sort((a, b) => (b.deletedAt ?? 0) - (a.deletedAt ?? 0));
+  }, [data, deletedView]);
   const isEmpty = !loading && data.length === 0;
   return (
     <section className="task-list" aria-label="任务列表">
@@ -114,7 +151,7 @@ export const TodoListPane: React.FC<{
         {loading && data.length === 0 && (
           <div className="task-list__hint">加载中…</div>
         )}
-        {isEmpty && (
+        {isEmpty && !deletedView && (
           <div className="task-list__empty">
             <div className="task-list__empty-glyph" aria-hidden="true">📭</div>
             <div>暂无任务</div>
@@ -123,30 +160,56 @@ export const TodoListPane: React.FC<{
             </div>
           </div>
         )}
+        {isEmpty && deletedView && (
+          <div className="task-list__empty">
+            <div className="task-list__empty-glyph" aria-hidden="true">🗑</div>
+            <div>回收站为空</div>
+            <div className="task-list__empty-hint">
+              删除的任务会暂存于此，可随时恢复
+            </div>
+          </div>
+        )}
 
-        {rootTasks.length > 0 && (
-          <ul className="task-list__root-tasks">
-            {rootTasks.map((t) => (
-              <TaskBranch
-                key={t.id}
-                todo={t}
-                depth={0}
-                selectedId={selectedId}
-                onSelect={onSelect}
-                allTodos={data}
-                sort={sort}
-                getExpanded={getExpanded}
-                toggleExpanded={toggleExpanded}
-                archivedView={archivedView}
-                onCycle={async (next) => {
-                  await window.thihy.todo.update(t.id, { status: next });
-                  await refresh();
-                }}
-                onDelete={onDelete}
-                onRestore={onRestore}
-              />
-            ))}
-          </ul>
+        {deletedView ? (
+          deletedRoots.length > 0 && (
+            <ul className="task-list__root-tasks">
+              {deletedRoots.map((t) => (
+                <DeletedRow
+                  key={t.id}
+                  todo={t}
+                  active={t.id === selectedId}
+                  descendantCount={countDescendants(data, t.id)}
+                  onSelect={onSelect}
+                  onRestore={onRestore}
+                />
+              ))}
+            </ul>
+          )
+        ) : (
+          rootTasks.length > 0 && (
+            <ul className="task-list__root-tasks">
+              {rootTasks.map((t) => (
+                <TaskBranch
+                  key={t.id}
+                  todo={t}
+                  depth={0}
+                  selectedId={selectedId}
+                  onSelect={onSelect}
+                  allTodos={data}
+                  sort={sort}
+                  getExpanded={getExpanded}
+                  toggleExpanded={toggleExpanded}
+                  archivedView={archivedView}
+                  onCycle={async (next) => {
+                    await window.thihy.todo.update(t.id, { status: next });
+                    await refresh();
+                  }}
+                  onDelete={onDelete}
+                  onRestore={onRestore}
+                />
+              ))}
+            </ul>
+          )
         )}
       </div>
 
@@ -158,6 +221,30 @@ export const TodoListPane: React.FC<{
 };
 
 // ----- Task row (with SubTask nesting) -----
+
+/** Count the descendants of `rootId` within `all` (the deleted slice in the
+ *  已删除 view). Walks the parent_id tree downward; O(n) per root but n is
+ *  the deleted slice, which stays small. Used for the "N 子任务" chip on a
+ *  DeletedRow so the user knows restoring a root brings back its branch. */
+function countDescendants(all: Todo[], rootId: ULID): number {
+  const byParent = new Map<string, Todo[]>();
+  for (const t of all) {
+    if (!t.parentId) continue;
+    const arr = byParent.get(t.parentId);
+    if (arr) arr.push(t);
+    else byParent.set(t.parentId, [t]);
+  }
+  let n = 0;
+  const stack = [rootId];
+  while (stack.length) {
+    const pid = stack.pop()!;
+    for (const c of byParent.get(pid) ?? []) {
+      n++;
+      stack.push(c.id);
+    }
+  }
+  return n;
+}
 
 // Sort a slice of todos by the user's chosen key. Default 字母顺序 is
 // Chinese-aware (localeCompare with numeric ordering so "task2" < "task10")
@@ -550,12 +637,64 @@ const CollapseAllGlyph: React.FC = () => (
   </svg>
 );
 
+// DeletedRow — a flat row in the 已删除 recovery bin. Simpler than TaskRow:
+// no tree nesting (delete() cascades to the subtree, so only deletion-roots
+// are shown), no status-cycle button. The single action is 恢复 (clears
+// deleted_at on the whole subtree via repo.restore). Shows a "N 子任务" chip
+// when the deleted branch had descendants so the user knows restore brings
+// them all back. Reuses task-row styling so the bin reads as the same list.
+const DeletedRow: React.FC<{
+  todo: Todo;
+  active: boolean;
+  descendantCount: number;
+  onSelect: (id: string) => void;
+  onRestore: (id: string) => void;
+}> = ({ todo, active, descendantCount, onSelect, onRestore }) => {
+  return (
+    <li
+      role="button"
+      tabIndex={0}
+      className={`task-row${active ? ' is-active' : ''}`}
+      onClick={() => onSelect(todo.id)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') onSelect(todo.id);
+      }}
+    >
+      <div className="task-row__main">
+        <div className="task-row__title-line">
+          <span className="task-row__icon" aria-hidden="true">
+            <TaskGlyph done={false} />
+          </span>
+          <span className="task-row__title">{todo.title || '(无标题)'}</span>
+          {descendantCount > 0 && (
+            <span className="task-row__sub--done">{descendantCount} 子任务</span>
+          )}
+          <span className="task-row__deleted-time">{formatDateTime(todo.deletedAt)}</span>
+          <button
+            type="button"
+            className="task-row__action task-row__restore task-row__restore--bin"
+            aria-label="恢复任务"
+            title="恢复（移回列表）"
+            onClick={(e) => {
+              e.stopPropagation();
+              onRestore(todo.id);
+            }}
+          >
+            <RestoreGlyph /> 恢复
+          </button>
+        </div>
+      </div>
+    </li>
+  );
+};
+
 function filterToRepoFilter(f: ListFilter): Parameters<typeof window.thihy.todo.list>[0] {
   switch (f.kind) {
     case 'all': return {};
     case 'today': return { dueBefore: endOfToday(), dueAfter: startOfToday() };
     case 'next7': return { dueBefore: Date.now() + 7 * 24 * 3600_000, dueAfter: startOfToday() };
     case 'archived': return { archivedOnly: true };
+    case 'deleted': return { deletedOnly: true };
     case 'project': return { tag: [f.tag] };
     case 'status': return { status: [f.status as TodoStatus] };
     case 'priority': return { priority: [f.priority as Todo['priority']] };
@@ -575,4 +714,12 @@ function endOfToday(): number {
 function formatDate(ms: number): string {
   const d = new Date(ms);
   return `${d.getMonth() + 1}/${d.getDate()}`;
+}
+/** Full timestamp for the 已删除 bin — the deletion moment matters (sorted
+ *  by it), so show date + HH:MM, not just the M/D used for due dates. */
+function formatDateTime(ms: number | null): string {
+  if (!ms) return '';
+  const d = new Date(ms);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getMonth() + 1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }

@@ -3,12 +3,19 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 
 export type ToastKind = 'info' | 'success' | 'warn' | 'error';
+export interface ToastAction {
+  label: string;
+  run: () => void;
+}
 export interface Toast {
   id: string;
   kind: ToastKind;
   message: string;
   /** Auto-dismiss after N ms; 0 means sticky. */
   ttl: number;
+  /** Optional inline action (e.g. 恢复 on a "已删除" toast). Clicking it
+   *  runs `run()` then dismisses the toast. */
+  action?: ToastAction;
 }
 
 export interface ToastBus {
@@ -79,16 +86,38 @@ export const ToastHost: React.FC<{ bus: ToastBus }> = ({ bus }) => {
             boxShadow: '0 8px 32px rgba(0,0,0,.45)',
             minWidth: 220,
             maxWidth: 360,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 'var(--space-sm)',
           }}
         >
-          {t.message}
+          <span style={{ flex: 1 }}>{t.message}</span>
+          {t.action && (
+            <button
+              type="button"
+              onClick={() => {
+                try { t.action?.run(); } finally { dismiss(t.id); }
+              }}
+              style={{
+                flexShrink: 0,
+                padding: '2px var(--space-sm)',
+                borderRadius: 'var(--radius-sm)',
+                border: '1px solid var(--border-strong)',
+                background: 'transparent',
+                color: 'var(--accent-primary)',
+                fontSize: 'var(--font-xs)',
+                cursor: 'pointer',
+              }}
+            >
+              {t.action.label}
+            </button>
+          )}
           <button
             type="button"
             onClick={() => dismiss(t.id)}
             aria-label="关闭通知"
             style={{
-              float: 'right',
-              marginLeft: 'var(--space-md)',
+              flexShrink: 0,
               color: 'var(--fg-muted)',
             }}
           >

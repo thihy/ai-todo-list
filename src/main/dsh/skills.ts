@@ -17,8 +17,8 @@ export const SKILLS: DshSkill[] = [
     id: 'todo-ops',
     name: 'TODO 操作',
     description: '列出、搜索、创建、修改 TODO',
-    tools: ['todo.list', 'todo.get', 'todo.search', 'todo.stats', 'todo.create', 'todo.update', 'todo.delete'],
-    promptFragment: '你可以读取和修改用户的 TODO；删除是不可恢复的，需要走权限闸门。',
+    tools: ['todo.list', 'todo.get', 'todo.search', 'todo.stats', 'todo.create', 'todo.update', 'todo.delete', 'todo.restore'],
+    promptFragment: '你可以读取和修改用户的 TODO；删除是逻辑删除（可恢复），恢复用 todo.restore。',
     enabledByDefault: true,
   },
   {

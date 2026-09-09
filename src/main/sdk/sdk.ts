@@ -26,6 +26,7 @@ export interface ThihySdk {
     create(input: TodoCreate): Todo;
     update(id: string, patch: TodoPatch): Todo;
     delete(id: string): void;
+    restore(id: string): void;
     search(query: string, limit?: number): SearchHit[];
     stats(windowDays?: number): TodoStats;
   };
@@ -60,6 +61,7 @@ export function createSdk(deps: {
       },
       update: (id, patch) => deps.repo.update(id, patch),
       delete: (id) => deps.repo.delete(id),
+      restore: (id) => deps.repo.restore(id),
       search: (query, limit) => deps.repo.search(query, limit ?? 50),
       stats: (windowDays) => deps.repo.stats(windowDays ?? 7),
     },

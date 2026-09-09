@@ -1987,6 +1987,28 @@ a:hover {
   color: var(--accent-primary);
   background: var(--bg-active);
 }
+/* 已删除 bin: the restore button carries a text label and is the row's
+   primary action (always visible, not hover-revealed), so it gets auto
+   width + a gap for the glyph. The deletion-time label sits muted before
+   it. */
+.task-row__restore--bin {
+  width: auto;
+  padding: 0 var(--space-xs);
+  gap: 4px;
+  font-size: var(--font-xs);
+  opacity: 1;
+  color: var(--accent-primary);
+}
+.task-row__restore--bin:hover {
+  background: var(--bg-active);
+}
+.task-row__deleted-time {
+  flex: 1;
+  text-align: right;
+  color: var(--fg-muted);
+  font-size: var(--font-xs);
+  padding-right: var(--space-xs);
+}
 
 /* ===== Task detail (right column) ===== */
 

@@ -24,6 +24,7 @@ const fakeSdk: ThihySdk = {
     create: () => ({ id: 't2' } as never),
     update: () => ({ id: 't3' } as never),
     delete: () => undefined,
+    restore: () => undefined,
     search: () => [],
     stats: () => ({ total: 1, done: 0, inProgress: 0, completionRate: 0, aiInvocations: 0, aiCostUsd: 0 }),
   },

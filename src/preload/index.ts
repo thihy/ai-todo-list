@@ -73,6 +73,7 @@ const api: ThihyApi = {
     create: (input) => invoke('todo.create', { input }),
     update: (id, patch) => invoke('todo.update', { id, patch }),
     delete: (id) => invoke('todo.delete', { id }),
+    restore: (id) => invoke('todo.restore', { id }),
     batchUpdate: (ids, patch) => invoke('todo.batchUpdate', { ids, patch }),
     search: (q, limit) => invoke('todo.search', { query: q, limit }),
     stats: (windowDays) => invoke('todo.stats', { windowDays }),

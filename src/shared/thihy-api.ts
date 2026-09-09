@@ -106,6 +106,7 @@ export interface ThihyApi {
     create(input: TodoCreate): Promise<IpcResponse<'todo.create'>>;
     update(id: string, patch: TodoPatch): Promise<IpcResponse<'todo.update'>>;
     delete(id: string): Promise<IpcResponse<'todo.delete'>>;
+    restore(id: string): Promise<IpcResponse<'todo.restore'>>;
     batchUpdate(ids: string[], patch: TodoPatch): Promise<IpcResponse<'todo.batchUpdate'>>;
     search(q: string, limit?: number): Promise<IpcResponse<'todo.search'>>;
     stats(windowDays?: number): Promise<IpcResponse<'todo.stats'>>;

@@ -50,6 +50,15 @@ export function registerTodoHandlers(repo: TodoRepo, md: MarkdownStore): void {
     }
   });
 
+  register('todo.restore', (_e, req) => {
+    try {
+      repo.restore(req.id);
+      return Promise.resolve(okResult(undefined as never));
+    } catch (err) {
+      return Promise.resolve(failResult('restore_failed', (err as Error).message));
+    }
+  });
+
   register('todo.batchUpdate', (_e, req) => {
     try {
       return Promise.resolve(okResult(repo.batchUpdate(req.ids, req.patch)));

@@ -7,7 +7,7 @@ const { ulid } = ulidPkg;
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 
-export const SCHEMA_VERSION = 8;
+export const SCHEMA_VERSION = 9;
 
 const MIGRATIONS: ReadonlyArray<{ version: number; sql: string }> = [
   {
@@ -366,6 +366,22 @@ const MIGRATIONS: ReadonlyArray<{ version: number; sql: string }> = [
 
       -- Repopulate the kept FTS5 index from the rebuilt content table.
       INSERT INTO todos_fts(todos_fts) VALUES('rebuild');
+    `,
+  },
+  {
+    version: 9,
+    // Soft-delete (快速恢复 / quick recovery). A task can be logically
+    // deleted (deleted_at) so the row + its markdown/drawings survive for
+    // undo. Deletion cascades to the whole subtree (the repo's delete()
+    // stamps deleted_at on the task + every descendant via a recursive
+    // CTE); restore(id) clears it for the subtree. The default list excludes
+    // deleted tasks; the 已删除 filter view surfaces them (deletedOnly).
+    //
+    // A nullable column ADD is enough — no CHECK, no rebuild, no FTS churn.
+    // Search/stats exclude deleted rows so they don't leak into results.
+    sql: `
+      ALTER TABLE todos ADD COLUMN deleted_at INTEGER;
+      CREATE INDEX idx_todos_deleted ON todos(deleted_at);
     `,
   },
 ];

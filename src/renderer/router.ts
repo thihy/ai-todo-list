@@ -18,6 +18,7 @@ export type ListFilter =
   | { kind: 'today' }
   | { kind: 'next7' }
   | { kind: 'archived' }
+  | { kind: 'deleted' }
   | { kind: 'project'; tag: string }
   | { kind: 'status'; status: string }
   | { kind: 'priority'; priority: string };
@@ -63,6 +64,7 @@ function parseFilter(s: string): ListFilter {
   if (s === 'today') return { kind: 'today' };
   if (s === 'next7') return { kind: 'next7' };
   if (s === 'archived') return { kind: 'archived' };
+  if (s === 'deleted') return { kind: 'deleted' };
   if (s.startsWith('project/')) return { kind: 'project', tag: s.slice('project/'.length) };
   if (s.startsWith('status/')) return { kind: 'status', status: s.slice('status/'.length) };
   if (s.startsWith('priority/')) return { kind: 'priority', priority: s.slice('priority/'.length) };
@@ -102,6 +104,8 @@ function filterToPath(f: ListFilter): string {
       return 'next7';
     case 'archived':
       return 'archived';
+    case 'deleted':
+      return 'deleted';
     case 'project':
       return `project/${f.tag}`;
     case 'status':

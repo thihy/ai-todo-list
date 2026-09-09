@@ -39,6 +39,10 @@ describe('Permission tiers', () => {
     expect(tierFor('content.restoreVersion')).toBe('block');
   });
 
+  it('restore is safe (undo of a delete)', () => {
+    expect(tierFor('todo.restore')).toBe('auto');
+  });
+
   it('list/read are safe', () => {
     expect(tierFor('todo.list')).toBe('auto');
     expect(tierFor('todo.get')).toBe('auto');

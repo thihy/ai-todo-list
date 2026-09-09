@@ -116,4 +116,62 @@ describe('TodoRepo + MarkdownStore', () => {
     expect(repo.list().map((t) => t.id)).toContain(old.id);
     expect(repo.list({ archivedOnly: true })).toHaveLength(0);
   });
+
+  it('soft-deletes a task (and its subtree) and restores it', () => {
+    // A parent with two subtasks; the second subtask has its own child to
+    // verify the cascade goes >1 level deep.
+    const parent = repo.create({ title: 'parent' }, 'x');
+    const child1 = repo.create({ title: 'child1', parentId: parent.id }, 'x');
+    const child2 = repo.create({ title: 'child2', parentId: parent.id }, 'x');
+    const grand = repo.create({ title: 'grand', parentId: child2.id }, 'x');
+    // An unrelated task that must NOT be touched.
+    const other = repo.create({ title: 'unrelated' }, 'x');
+
+    // Default list shows all five (none deleted).
+    expect(repo.list().map((t) => t.id).sort()).toEqual(
+      [parent.id, child1.id, child2.id, grand.id, other.id].sort(),
+    );
+
+    // Soft-delete the parent — the whole subtree (child1, child2, grand)
+    // cascades to deleted_at; `other` is untouched.
+    repo.delete(parent.id);
+
+    // Active list now only has `other`.
+    expect(repo.list().map((t) => t.id)).toEqual([other.id]);
+
+    // deletedOnly surfaces the subtree, newest-deletion-first is irrelevant
+    // here (all stamped in the same UPDATE). Every deleted row carries
+    // deletedAt.
+    const bin = repo.list({ deletedOnly: true });
+    expect(bin.map((t) => t.id).sort()).toEqual(
+      [parent.id, child1.id, child2.id, grand.id].sort(),
+    );
+    for (const t of bin) expect(t.deletedAt).not.toBeNull();
+    // `other` is NOT in the bin.
+    expect(bin.find((t) => t.id === other.id)).toBeUndefined();
+
+    // Restoring the parent clears deleted_at on the WHOLE subtree.
+    repo.restore(parent.id);
+    const back = repo.list();
+    expect(back.map((t) => t.id).sort()).toEqual(
+      [parent.id, child1.id, child2.id, grand.id, other.id].sort(),
+    );
+    for (const t of back) expect(t.deletedAt).toBeNull();
+    expect(repo.list({ deletedOnly: true })).toHaveLength(0);
+  });
+
+  it('excludes soft-deleted tasks from search and stats', () => {
+    const keep = repo.create({ title: 'keepme searchable', status: 'done' }, 'x');
+    const gone = repo.create({ title: 'goneme searchable', status: 'done' }, 'x');
+    repo.delete(gone.id);
+
+    // Search for the shared substring — only the live task hits.
+    const hits = repo.search('searchable');
+    expect(hits.map((h) => h.todo.id)).toEqual([keep.id]);
+
+    // Stats count only live tasks: total=1, done=1.
+    const s = repo.stats();
+    expect(s.total).toBe(1);
+    expect(s.byStatus.done).toBe(1);
+  });
 });

@@ -1045,10 +1045,11 @@ function registerDomainTools(
       parentId: { type: 'string', description: 'List direct subtasks of this parent TODO; null/omitted lists all tasks regardless of nesting' },
       archivedOnly: { type: 'boolean', description: 'Only archived tasks (the 归档 bin). Default false.' },
       includeArchived: { type: 'boolean', description: 'Include archived tasks alongside active ones. Default false — the list excludes archived tasks (auto-archived done work) to stay decluttered. Pass true when the user asks about old/completed work.' },
+      deletedOnly: { type: 'boolean', description: 'Only soft-deleted tasks (the 已删除 recovery bin, newest deletion first). Default false. Deleted tasks are excluded from every other list query; this is the only way to surface them.' },
       limit: { type: 'number', description: 'Max items to return (default: all)' },
     },
     output: jsonOutput,
-    async execute(args: { status?: string; priority?: string; tag?: string; project?: string; dueBefore?: number; dueAfter?: number; search?: string; parentId?: string; archivedOnly?: boolean; includeArchived?: boolean; limit?: number }) {
+    async execute(args: { status?: string; priority?: string; tag?: string; project?: string; dueBefore?: number; dueAfter?: number; search?: string; parentId?: string; archivedOnly?: boolean; includeArchived?: boolean; deletedOnly?: boolean; limit?: number }) {
       const filter: TodoFilter = {};
       const st = args.status;
       if (st) {
@@ -1070,6 +1071,7 @@ function registerDomainTools(
       if (args.parentId !== undefined && args.parentId !== '') filter.parentId = args.parentId || null;
       if (args.archivedOnly) filter.archivedOnly = true;
       else if (args.includeArchived) filter.includeArchived = true;
+      if (args.deletedOnly) filter.deletedOnly = true;
       const all = repo.list(filter as never);
       return args.limit && args.limit > 0 ? all.slice(0, args.limit) : all;
     },
@@ -1162,10 +1164,18 @@ function registerDomainTools(
 
   reg(defineTool({
     name: 'todo.delete',
-    description: 'Permanently delete a TODO and its markdown body / drawings. Destructive — confirm with the user first, or send them a preview via todo.get.',
-    parameters: { id: { type: 'string', required: true, description: 'TODO id to delete' } },
+    description: 'Soft-delete a TODO and its entire subtree. This is a LOGICAL delete — the row, markdown body, and drawings survive so the action is always undoable via todo.restore. The task disappears from every active view (list, search, stats) and is only visible via todo.list with deletedOnly=true. No confirmation needed beyond the normal permission tier.',
+    parameters: { id: { type: 'string', required: true, description: 'TODO id to soft-delete (cascades to its subtasks)' } },
     output: jsonOutput,
     async execute(args: { id: string }) { repo.delete(args.id as never); return { ok: true }; },
+  }));
+
+  reg(defineTool({
+    name: 'todo.restore',
+    description: 'Restore a soft-deleted TODO and its entire subtree — the inverse of todo.delete. Clears deleted_at on the task + every descendant so the whole branch returns to the active list. Safe to call on an already-live task (no-op).',
+    parameters: { id: { type: 'string', required: true, description: 'TODO id to restore (clears deleted_at on its subtree)' } },
+    output: jsonOutput,
+    async execute(args: { id: string }) { repo.restore(args.id as never); return { ok: true }; },
   }));
 
   reg(defineTool({

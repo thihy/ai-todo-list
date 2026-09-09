@@ -50,6 +50,7 @@ export const FilterButton: React.FC<{
             <FilterItem active={filter.kind === 'next7'} label="未来 7 天" onClick={() => choose({ kind: 'next7' })} />
             <FilterItem active={filter.kind === 'status' && filter.status === 'next'} label="未完成" onClick={() => choose({ kind: 'status', status: 'next' })} />
             <FilterItem active={filter.kind === 'archived'} label="归档" onClick={() => choose({ kind: 'archived' })} />
+            <FilterItem active={filter.kind === 'deleted'} label="已删除" onClick={() => choose({ kind: 'deleted' })} />
           </FilterSection>
           <FilterSection title="优先级">
             {(['high', 'medium', 'low', 'none'] as const).map((p) => (

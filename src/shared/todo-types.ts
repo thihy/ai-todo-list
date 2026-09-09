@@ -29,14 +29,20 @@ export interface Todo {
   attachmentIds: ULID[];
   drawingIds: ULID[];
   /** Parent todo id (SubTask support). null = top-level task. Cycles are
-   *  rejected at the API boundary; deleting a parent sets this to NULL on
-   *  its former children (ON DELETE SET NULL on the self-FK). */
+   *  rejected at the API boundary; deleting a parent soft-deletes its whole
+   *  subtree (the repo cascades deleted_at), so children are never orphaned. */
   parentId: ULID | null;
   /** Soft-archive timestamp. null = active (shown in the default list).
    *  Set by the auto-archive sweep (done tasks older than the configured
    *  threshold) or manually. Archived tasks are excluded from the default
    *  list/search-of-active and surfaced via the 归档 view. */
   archivedAt: number | null;
+  /** Soft-delete timestamp. null = live. Set by todo.delete (which cascades
+   *  to the whole subtree); cleared by todo.restore. Deleted tasks are
+   *  excluded from every default view (list, search, stats) and surfaced via
+   *  the 已删除 filter view (deletedOnly). The row + markdown + drawings
+   *  survive so a delete is always undoable. */
+  deletedAt: number | null;
 }
 
 export interface TodoCreate {
@@ -80,6 +86,10 @@ export interface TodoFilter {
   includeArchived?: boolean;
   /** Only archived tasks (archived_at IS NOT NULL). For the 归档 view. */
   archivedOnly?: boolean;
+  /** Only soft-deleted tasks (deleted_at IS NOT NULL). For the 已删除
+   *  recovery view. Deleted tasks are excluded from every other list query
+   *  regardless of other filters, so this is the sole way to surface them. */
+  deletedOnly?: boolean;
 }
 
 export interface TodoStats {

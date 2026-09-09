@@ -8,6 +8,7 @@ const DECLARED_CHANNELS: ReadonlySet<string> = new Set([
   'todo.create',
   'todo.update',
   'todo.delete',
+  'todo.restore',
   'todo.batchUpdate',
   'todo.search',
   'todo.stats',

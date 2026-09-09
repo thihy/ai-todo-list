@@ -11,6 +11,7 @@ export const SAFE_TOOLS: ReadonlySet<string> = new Set([
   'todo.get',
   'todo.search',
   'todo.stats',
+  'todo.restore',
   'content.readBody',
   'content.history',
   'drawing.list',

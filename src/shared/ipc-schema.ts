@@ -46,6 +46,7 @@ export interface TodoGetReq { id: ULID }
 export interface TodoCreateReq { input: TodoCreate; captureWindow?: boolean }
 export interface TodoUpdateReq { id: ULID; patch: TodoPatch }
 export interface TodoDeleteReq { id: ULID }
+export interface TodoRestoreReq { id: ULID }
 export interface TodoBatchUpdateReq { ids: ULID[]; patch: TodoPatch }
 export interface TodoSearchReq { query: string; limit?: number }
 export interface TodoStatsReq { windowDays?: number }
@@ -215,6 +216,7 @@ export interface IpcRegistry {
   'todo.create': IpcChannel<TodoCreateReq, IpcResult<{ id: ULID; todo: Todo }>>;
   'todo.update': IpcChannel<TodoUpdateReq, IpcResult<Todo>>;
   'todo.delete': IpcChannel<TodoDeleteReq, IpcResult<void>>;
+  'todo.restore': IpcChannel<TodoRestoreReq, IpcResult<void>>;
   'todo.batchUpdate': IpcChannel<TodoBatchUpdateReq, IpcResult<Todo[]>>;
   'todo.search': IpcChannel<TodoSearchReq, IpcResult<SearchHit[]>>;
   'todo.stats': IpcChannel<TodoStatsReq, IpcResult<TodoStats>>;

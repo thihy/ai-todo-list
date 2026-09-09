@@ -56,6 +56,13 @@ describe('router sort deep-link', () => {
     expect(r.filter).toMatchObject({ kind: 'project', tag: 'work' });
     expect(r.sort).toBe('due');
   });
+
+  it('parses the 已删除 recovery view', () => {
+    const r = parseHash('#/list/deleted');
+    expect(r.filter).toMatchObject({ kind: 'deleted' });
+    const h = routeToHash({ name: 'list', filter: { kind: 'deleted' }, sort: 'alpha' });
+    expect(h).toBe('#/list/deleted');
+  });
 });
 
 describe('router non-list routes unaffected by sort', () => {

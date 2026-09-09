@@ -93,6 +93,7 @@ export class JsonRpcBridge {
       case 'todo.create': return this.sdk.todo.create(args.input as never);
       case 'todo.update': return this.sdk.todo.update(args.id as string, args.patch as never);
       case 'todo.delete': this.sdk.todo.delete(args.id as string); return { ok: true };
+      case 'todo.restore': this.sdk.todo.restore(args.id as string); return { ok: true };
       case 'todo.search': return this.sdk.todo.search(args.query as string, args.limit as number | undefined);
       case 'todo.stats': return this.sdk.todo.stats(args.windowDays as number | undefined);
       case 'content.readBody': return this.sdk.content.readBody(args.id as string);
