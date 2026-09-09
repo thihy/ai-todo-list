@@ -335,12 +335,71 @@ export const MarkdownEditor: React.FC<{
 
   return (
     <div className="md-editor">
-      <div className="md-editor__bar">
+      {/* Tabs + format toolbar share one row to keep the editor chrome
+          compact (the prior layout had tabs on row 1 and toolbar on row 2,
+          which burned vertical space in the body). Status + save still
+          float right within the same row. */}
+      <div className="md-editor__topbar">
         <div className="md-editor__tabs">
           <button type="button" className={`md-editor__tab${view === 'write' ? ' is-active' : ''}`} onClick={() => setView('write')} aria-pressed={view === 'write'}>编辑</button>
           <button type="button" className={`md-editor__tab${view === 'preview' ? ' is-active' : ''}`} onClick={() => setView('preview')} aria-pressed={view === 'preview'}>预览</button>
           <button type="button" className={`md-editor__tab${view === 'split' ? ' is-active' : ''}`} onClick={() => setView('split')} aria-pressed={view === 'split'}>分屏</button>
         </div>
+        {view !== 'preview' && (
+          <>
+            <span className="md-editor__tb-sep" aria-hidden="true" />
+            <div className="md-editor__toolbar" role="toolbar" aria-label="格式">
+              <ToolbarBtn label="H1" title="一级标题 (Ctrl+Alt+1)" onClick={() => doLine('# ')}>
+                <span className="md-editor__tb-text">H1</span>
+              </ToolbarBtn>
+              <ToolbarBtn label="H2" title="二级标题" onClick={() => doLine('## ')}>
+                <span className="md-editor__tb-text">H2</span>
+              </ToolbarBtn>
+              <ToolbarBtn label="H3" title="三级标题" onClick={() => doLine('### ')}>
+                <span className="md-editor__tb-text">H3</span>
+              </ToolbarBtn>
+              <span className="md-editor__tb-sep" aria-hidden="true" />
+              <ToolbarBtn label="粗体" title="粗体 (Ctrl/Cmd+B)" onClick={() => doWrap('**', '**', '粗体')}>
+                <IconBold size={14} />
+              </ToolbarBtn>
+              <ToolbarBtn label="斜体" title="斜体 (Ctrl/Cmd+I)" onClick={() => doWrap('*', '*', '斜体')}>
+                <IconItalic size={14} />
+              </ToolbarBtn>
+              <ToolbarBtn label="删除线" title="删除线" onClick={() => doWrap('~~', '~~', '文字')}>
+                <IconStrike size={14} />
+              </ToolbarBtn>
+              <ToolbarBtn label="行内代码" title="行内代码" onClick={() => doWrap('`', '`', 'code')}>
+                <IconCode size={14} />
+              </ToolbarBtn>
+              <ToolbarBtn label="代码块" title="代码块" onClick={() => insertAtCursor('```\n\n```', 4, 4)}>
+                <IconCodeBlock size={14} />
+              </ToolbarBtn>
+              <span className="md-editor__tb-sep" aria-hidden="true" />
+              <ToolbarBtn label="链接" title="链接 (Ctrl/Cmd+K)" onClick={() => doWrap('[', '](https://)', '链接文字')}>
+                <IconLink size={14} />
+              </ToolbarBtn>
+              <ToolbarBtn label="引用" title="引用" onClick={() => doLine('> ')}>
+                <IconQuote size={14} />
+              </ToolbarBtn>
+              <ToolbarBtn label="无序列表" title="无序列表" onClick={() => doLine('- ')}>
+                <IconListUl size={14} />
+              </ToolbarBtn>
+              <ToolbarBtn label="有序列表" title="有序列表" onClick={() => doLine('1. ')}>
+                <IconListOl size={14} />
+              </ToolbarBtn>
+              <ToolbarBtn label="任务列表" title="任务列表" onClick={() => doLine('- [ ] ')}>
+                <IconListCheck size={14} />
+              </ToolbarBtn>
+              <ToolbarBtn label="分割线" title="分割线" onClick={() => insertAtCursor('\n---\n')}>
+                <IconDivider size={14} />
+              </ToolbarBtn>
+              <span className="md-editor__tb-sep" aria-hidden="true" />
+              <span className="md-editor__tb-hint" title="Ctrl/Cmd+B 粗体 · Ctrl/Cmd+I 斜体 · Ctrl/Cmd+K 链接 · Tab 缩进 · Shift+Tab 减少缩进 · 回车续行">
+                快捷键
+              </span>
+            </div>
+          </>
+        )}
         <span className="md-editor__spacer" />
         {saving && <span className="md-editor__status">保存中…</span>}
         {error && <span className="md-editor__status md-editor__status--error">{error}</span>}
@@ -353,62 +412,6 @@ export const MarkdownEditor: React.FC<{
           {dirty ? '保存' : '已保存'}
         </button>
       </div>
-
-      {/* Format toolbar — only meaningful in write/split. Hidden in pure
-          preview to avoid noise. Each button is a no-op (just a refocus)
-          when the textarea isn't mounted yet, so clicks are safe. */}
-      {view !== 'preview' && (
-        <div className="md-editor__toolbar" role="toolbar" aria-label="格式">
-          <ToolbarBtn label="H1" title="一级标题 (Ctrl+Alt+1)" onClick={() => doLine('# ')}>
-            <span className="md-editor__tb-text">H1</span>
-          </ToolbarBtn>
-          <ToolbarBtn label="H2" title="二级标题" onClick={() => doLine('## ')}>
-            <span className="md-editor__tb-text">H2</span>
-          </ToolbarBtn>
-          <ToolbarBtn label="H3" title="三级标题" onClick={() => doLine('### ')}>
-            <span className="md-editor__tb-text">H3</span>
-          </ToolbarBtn>
-          <span className="md-editor__tb-sep" aria-hidden="true" />
-          <ToolbarBtn label="粗体" title="粗体 (Ctrl/Cmd+B)" onClick={() => doWrap('**', '**', '粗体')}>
-            <IconBold size={14} />
-          </ToolbarBtn>
-          <ToolbarBtn label="斜体" title="斜体 (Ctrl/Cmd+I)" onClick={() => doWrap('*', '*', '斜体')}>
-            <IconItalic size={14} />
-          </ToolbarBtn>
-          <ToolbarBtn label="删除线" title="删除线" onClick={() => doWrap('~~', '~~', '文字')}>
-            <IconStrike size={14} />
-          </ToolbarBtn>
-          <ToolbarBtn label="行内代码" title="行内代码" onClick={() => doWrap('`', '`', 'code')}>
-            <IconCode size={14} />
-          </ToolbarBtn>
-          <ToolbarBtn label="代码块" title="代码块" onClick={() => insertAtCursor('```\n\n```', 4, 4)}>
-            <IconCodeBlock size={14} />
-          </ToolbarBtn>
-          <span className="md-editor__tb-sep" aria-hidden="true" />
-          <ToolbarBtn label="链接" title="链接 (Ctrl/Cmd+K)" onClick={() => doWrap('[', '](https://)', '链接文字')}>
-            <IconLink size={14} />
-          </ToolbarBtn>
-          <ToolbarBtn label="引用" title="引用" onClick={() => doLine('> ')}>
-            <IconQuote size={14} />
-          </ToolbarBtn>
-          <ToolbarBtn label="无序列表" title="无序列表" onClick={() => doLine('- ')}>
-            <IconListUl size={14} />
-          </ToolbarBtn>
-          <ToolbarBtn label="有序列表" title="有序列表" onClick={() => doLine('1. ')}>
-            <IconListOl size={14} />
-          </ToolbarBtn>
-          <ToolbarBtn label="任务列表" title="任务列表" onClick={() => doLine('- [ ] ')}>
-            <IconListCheck size={14} />
-          </ToolbarBtn>
-          <ToolbarBtn label="分割线" title="分割线" onClick={() => insertAtCursor('\n---\n')}>
-            <IconDivider size={14} />
-          </ToolbarBtn>
-          <span className="md-editor__tb-sep" aria-hidden="true" />
-          <span className="md-editor__tb-hint" title="Ctrl/Cmd+B 粗体 · Ctrl/Cmd+I 斜体 · Ctrl/Cmd+K 链接 · Tab 缩进 · Shift+Tab 减少缩进 · 回车续行">
-            快捷键
-          </span>
-        </div>
-      )}
 
       <div className={`md-editor__body md-editor__body--${view}`}>
         {view !== 'preview' && (

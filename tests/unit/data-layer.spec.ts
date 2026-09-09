@@ -174,4 +174,58 @@ describe('TodoRepo + MarkdownStore', () => {
     expect(s.total).toBe(1);
     expect(s.byStatus.done).toBe(1);
   });
+
+  describe('progress log burst-merge', () => {
+    it('collapses rapid no-note writes within 60s into a single row', () => {
+      const t = repo.create({ title: 'Merge me' }, join(dir, 'todos', 'm.md'));
+      repo.logProgress(t.id, 10);
+      repo.logProgress(t.id, 25);
+      const last = repo.logProgress(t.id, 40);
+      const rows = repo.listProgress(t.id);
+      expect(rows).toHaveLength(1);
+      expect(rows[0].id).toBe(last.entry.id);
+      expect(rows[0].percent).toBe(40);
+      expect(rows[0].note).toBeNull();
+    });
+
+    it('does not merge across a real note (note ends the burst)', () => {
+      // Date.now() can return the same ms across rapid calls — that would
+      // collapse rows whose order is then arbitrary. Force monotonic
+      // timestamps here so the merge logic sees a real ordering.
+      const t = repo.create({ title: 'Noted' }, join(dir, 'todos', 'n.md'));
+      const base = Date.now();
+      const realNow = Date.now;
+      let cursor = base;
+      Date.now = (): number => {
+        cursor += 100; // 100ms apart, all within the 60s window
+        return cursor;
+      };
+      try {
+        repo.logProgress(t.id, 10);                       // burst 1: no note
+        repo.logProgress(t.id, 25, 'completed first step'); // new row: with note
+        repo.logProgress(t.id, 35);                       // null note, INSERT
+      } finally {
+        Date.now = realNow;
+      }
+      const rows = repo.listProgress(t.id);
+      // Three rows: collapsed burst-1 (10), the noted row (25), the
+      // subsequent no-note row (35 — its own burst).
+      expect(rows).toHaveLength(3);
+      const noted = rows.find((r) => r.note !== null);
+      expect(noted?.percent).toBe(25);
+      expect(noted?.note).toBe('completed first step');
+      const noNotes = rows.filter((r) => r.note === null).map((r) => r.percent).sort((a, b) => a - b);
+      expect(noNotes).toEqual([10, 35]);
+    });
+
+    it('update({progress}) path also burst-merges', () => {
+      const t = repo.create({ title: 'Update path' }, join(dir, 'todos', 'u.md'));
+      repo.update(t.id, { progress: 10 });
+      repo.update(t.id, { progress: 25 });
+      repo.update(t.id, { progress: 40 });
+      const rows = repo.listProgress(t.id);
+      expect(rows).toHaveLength(1);
+      expect(rows[0].percent).toBe(40);
+    });
+  });
 });

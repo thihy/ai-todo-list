@@ -22,12 +22,34 @@ export const ProgressBar: React.FC<{
   value: number;
   className?: string;
   showLabel?: boolean;
-}> = ({ value, className, showLabel }) => {
+  /** Render 20/40/60/80 tick marks on the track for at-a-glance landmarks. */
+  showTicks?: boolean;
+  /** Optional ref attached to the visual track element (not the wrapping
+   *  .progress-bar). The drag handler reads from this so its
+   *  getBoundingClientRect width equals the visible track width — which is
+   *  what makes "鼠标在 100% 位置 = 进度条 100%" line up. */
+  trackRef?: React.MutableRefObject<HTMLDivElement | null>;
+}> = ({ value, className, showLabel, showTicks, trackRef }) => {
   const v = Math.max(0, Math.min(100, Math.round(value)));
   return (
     <div className={`progress-bar${className ? ' ' + className : ''}`}>
-      <div className="progress-bar__track" role="progressbar" aria-valuenow={v} aria-valuemin={0} aria-valuemax={100}>
+      <div
+        ref={trackRef ?? undefined}
+        className="progress-bar__track"
+        role="progressbar"
+        aria-valuenow={v}
+        aria-valuemin={0}
+        aria-valuemax={100}
+      >
         <div className="progress-bar__fill" style={{ width: `${v}%` }} />
+        {showTicks && [20, 40, 60, 80].map((p) => (
+          <div
+            key={p}
+            className="progress-bar__tick"
+            style={{ left: `${p}%` }}
+            aria-hidden
+          />
+        ))}
       </div>
       {showLabel && <span className="progress-bar__label">{v}%</span>}
     </div>
@@ -72,7 +94,10 @@ export const ProgressInline: React.FC<{
     if (!el) return percent;
     const rect = el.getBoundingClientRect();
     const ratio = (clientX - rect.left) / Math.max(rect.width, 1);
-    return Math.max(0, Math.min(100, Math.round(ratio * 100)));
+    const raw = Math.max(0, Math.min(100, ratio * 100));
+    // Snap to a 5% grid so the user lands on round numbers when releasing
+    // — matches the 20/40/60/80 tick marks visually.
+    return Math.round(raw / 5) * 5;
   }, [percent]);
 
   // Drag the bar to set progress. On release, if the value changed, commit it
@@ -172,7 +197,6 @@ export const ProgressInline: React.FC<{
             element that captures pointer events, otherwise getBoundingClientRect
             returns a stale rect (or null) and the drag silently no-ops. */}
         <div
-          ref={trackRef}
           className="progress-inline__bar-btn"
           role="slider"
           aria-label="任务进度（拖动调整）"
@@ -182,7 +206,7 @@ export const ProgressInline: React.FC<{
           title="拖动调整进度"
           onPointerDown={onTrackPointerDown}
         >
-          <ProgressBar value={shownPercent} showLabel />
+          <ProgressBar value={shownPercent} showLabel showTicks trackRef={trackRef} />
         </div>
 
         {/* Latest progress description — click to edit it. Sits in the right

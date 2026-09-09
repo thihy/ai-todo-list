@@ -15,6 +15,12 @@ import type {
   ULID,
 } from '../../shared/todo-types';
 
+/** Burst-merge window for progress_log: when a user drags the bar several
+ *  times within this window, all writes collapse into the latest row (same
+ *  id, updated percent). Without this, a single drag session produced 5-20
+ *  "进度 X% → Y%" entries that obscured real audit signal in 动态. */
+export const PROGRESS_MERGE_WINDOW_MS = 60_000;
+
 interface TodoRow {
   id: string;
   title: string;
@@ -253,50 +259,106 @@ export class TodoRepo {
         oldProgress !== undefined &&
         oldProgress !== patch.progress
       ) {
-        this.db
-          .prepare(
-            'INSERT INTO progress_log (id, todo_id, percent, note, created_at) VALUES (?, ?, ?, NULL, ?)',
-          )
-          .run(newId(), id, patch.progress, Date.now());
+        this.mergeOrAppendProgress(id, patch.progress, null, Date.now());
       }
     });
     tx();
     return this.get(id)!;
   }
 
+  /** Burst-merge a new progress write: if the most recent log row for this
+   *  todo is within PROGRESS_MERGE_WINDOW_MS and shares the same note
+   *  signature (both null, or both equal strings), update that row's
+   *  percent in place. Otherwise INSERT a fresh row.
+   *
+   *  Returns the row that ended up representing this write (the merged-into
+   *  row, or the brand new one) so callers can echo the canonical id/
+   *  timestamp back to the renderer without an extra SELECT. */
+  private mergeOrAppendProgress(
+    todoId: ULID,
+    percent: number,
+    note: string | null,
+    now: number,
+  ): ProgressLogEntry {
+    const latest = this.db
+      .prepare<
+        [ULID, number],
+        { id: string; percent: number; note: string | null; created_at: number }
+      >(
+        'SELECT id, percent, note, created_at FROM progress_log WHERE todo_id = ? AND created_at >= ? ORDER BY created_at DESC LIMIT 1',
+      )
+      .get(todoId, now - PROGRESS_MERGE_WINDOW_MS);
+    // Note signature must match exactly: a row with a real note ends the
+    // burst (the user explicitly recorded something — don't silently fold
+    // later no-note writes into it). NULLs match only NULLs.
+    const noteMatches =
+      latest !== undefined &&
+      ((latest.note === null && note === null) ||
+        (latest.note !== null && note !== null && latest.note === note));
+    if (latest && noteMatches) {
+      this.db
+        .prepare('UPDATE progress_log SET percent = ? WHERE id = ?')
+        .run(percent, latest.id);
+      return {
+        id: latest.id,
+        todoId,
+        percent,
+        note: latest.note,
+        createdAt: latest.created_at,
+      };
+    }
+    const id = newId();
+    this.db
+      .prepare(
+        'INSERT INTO progress_log (id, todo_id, percent, note, created_at) VALUES (?, ?, ?, ?, ?)',
+      )
+      .run(id, todoId, percent, note, now);
+    return { id, todoId, percent, note, createdAt: now };
+  }
+
   /** Record a progress entry: sets the todos.progress column AND appends a
    *  progress_log row with the user's (optional) one-line note. This is the
    *  user-facing "录入进展" path. It does NOT go through update() (which
    *  would append a second, note-less log row) — it owns its own transaction.
-   *  percent is clamped to [0, 100] and rounded. Returns the new entry plus
-   *  the refreshed todo so the renderer can update both at once. */
+   *  percent is clamped to [0, 100] and rounded. Returns the entry that
+   *  ended up representing this write (may be a previously-existing row we
+   *  burst-merged into) plus the refreshed todo so the renderer can update
+   *  both at once. */
   logProgress(
     todoId: ULID,
     percent: number,
     note?: string,
   ): { entry: ProgressLogEntry; todo: Todo } {
     const clamped = Math.max(0, Math.min(100, Math.round(percent)));
-    const id = newId();
     const now = Date.now();
+    const normalizedNote = note?.trim() ? note.trim() : null;
     const tx = this.db.transaction(() => {
-      this.db
-        .prepare(
-          'INSERT INTO progress_log (id, todo_id, percent, note, created_at) VALUES (?, ?, ?, ?, ?)',
-        )
-        .run(id, todoId, clamped, note ?? null, now);
+      this.mergeOrAppendProgress(todoId, clamped, normalizedNote, now);
       this.db
         .prepare('UPDATE todos SET progress = ?, updated_at = ? WHERE id = ?')
         .run(clamped, now, todoId);
     });
     tx();
-    const entry: ProgressLogEntry = {
-      id,
-      todoId,
-      percent: clamped,
-      note: note ?? null,
-      createdAt: now,
-    };
-    return { entry, todo: this.get(todoId)! };
+    // Re-read the canonical row (post-merge) so the id/timestamp we hand
+    // back match what the next listProgress() call will return.
+    const canonical = this.db
+      .prepare<
+        [ULID],
+        { id: string; percent: number; note: string | null; created_at: number }
+      >(
+        'SELECT id, percent, note, created_at FROM progress_log WHERE todo_id = ? ORDER BY created_at DESC LIMIT 1',
+      )
+      .get(todoId);
+    const finalEntry: ProgressLogEntry = canonical
+      ? {
+          id: canonical.id,
+          todoId,
+          percent: canonical.percent,
+          note: canonical.note,
+          createdAt: canonical.created_at,
+        }
+      : { id: 'unknown', todoId, percent: clamped, note: normalizedNote, createdAt: now };
+    return { entry: finalEntry, todo: this.get(todoId)! };
   }
 
   /** Audit timeline for a task, newest-first. Used by the detail editor's
