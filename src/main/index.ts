@@ -2,7 +2,7 @@
 
 import { app, BrowserWindow, shell, protocol, net, Menu, dialog } from 'electron';
 import { join } from 'node:path';
-import { mkdirSync, readFileSync, statSync, readdirSync } from 'node:fs';
+import { mkdirSync, readFileSync, statSync, readdirSync, existsSync } from 'node:fs';
 import { cpSync } from 'node:fs';
 import { basename, extname } from 'node:path';
 import { userInfo } from 'node:os';
@@ -85,6 +85,16 @@ protocol.registerSchemesAsPrivileged([
     scheme: 'attachment',
     privileges: { secure: true, supportFetchAPI: true, corsEnabled: true },
   },
+  {
+    // dsh-web:// serves the built @deepseek-ai/dsh-web-frontend dist
+    // (apps/web/dist from D:\03_Git\deepseek-harness). The AIPanel mounts an
+    // <iframe src="dsh-web://index.html"> and delegates AI rendering to it —
+    // we never self-implement message / tool / reasoning UI in our renderer.
+    // Privileged so the iframe can issue XHRs back to the host without CORS
+    // dialogs and so the IPC bridge can talk through window.parent.
+    scheme: 'dsh-web',
+    privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, allowServiceWorkers: false },
+  },
 ]);
 
 function bootstrap(): void {
@@ -105,6 +115,14 @@ function bootstrap(): void {
         }
       });
     }
+
+    // dsh-web:// serves the built @deepseek-ai/dsh-web-frontend dist. The
+    // AIPanel mounts an <iframe src="dsh-web://index.html"> so all AI chat /
+    // tool / reasoning rendering comes from the official DSH web frontend
+    // (no self-implemented chat UI in our renderer). If the dist has not been
+    // built yet, fall back to a friendly placeholder so the panel still
+    // renders something useful instead of an Electron error page.
+    registerDshWebProtocol();
 
     // Settings must be read FIRST so we know the data directory before opening
     // the DB or any file store. The config file itself lives in userData
@@ -713,3 +731,110 @@ function registerAppHandlers(): void {
   });
   logger.info('app.* handlers registered');
 }
+
+// ----------------------------------------------------------------------------
+// dsh-web:// protocol — serves the built @deepseek-ai/dsh-web-frontend dist.
+// The AIPanel mounts <iframe src="dsh-web://index.html"> and lets the official
+// DSH web frontend handle all AI chat / tool / reasoning rendering. We do not
+// self-implement that UI in our renderer (per project directive).
+//
+// The dist is expected at one of:
+//   <DSH_HARNESS_DIST>      explicit override env var (absolute path)
+//   ../deepseek-harness/apps/web/dist   (sibling repo, default layout)
+//   resources/dsh-web/      packaged inside the app (electron-builder copy)
+// When none of these contains an index.html, we serve a friendly placeholder
+// so the panel still renders something useful — not a raw Electron error page.
+// ----------------------------------------------------------------------------
+
+/** Resolve the on-disk directory holding the DSH web frontend dist. Returns
+ *  null when no built dist is available so the caller can fall back to a
+ *  placeholder page. The lookup order is the same as the docblock above. */
+function resolveDshWebDistDir(): string | null {
+  const envOverride = process.env['DSH_HARNESS_DIST'];
+  if (envOverride && existsSync(join(envOverride, 'index.html'))) return envOverride;
+  // Sibling repo layout (this app lives at <root>/thihy_todolist, the
+  // harness at <root>/deepseek-harness). The dist path is also where the
+  // monorepo's `pnpm build:web` lands it.
+  const sibling = join(__dirname, '../../../../deepseek-harness/apps/web/dist');
+  if (existsSync(join(sibling, 'index.html'))) return sibling;
+  // Packaged location — electron-builder copies the dist into resources/dsh-web
+  // when the user runs `pnpm dist` after a successful dsh-web-frontend build.
+  const packaged = join(process.resourcesPath ?? '', 'dsh-web');
+  if (existsSync(join(packaged, 'index.html'))) return packaged;
+  return null;
+}
+
+function registerDshWebProtocol(): void {
+  protocol.handle('dsh-web', async (req) => {
+    try {
+      const distDir = resolveDshWebDistDir();
+      // Root or unknown path with no dist: hand back a single placeholder page
+      // so the iframe shows a human-readable explanation instead of a 404.
+      if (distDir === null) {
+        const u = new URL(req.url);
+        const wantsIndex = u.pathname === '/' || u.pathname === '/index.html' || u.pathname === '';
+        if (wantsIndex) {
+          return new Response(DSH_WEB_PLACEHOLDER_HTML, {
+            status: 200,
+            headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache' },
+          });
+        }
+        return new Response('not found', { status: 404 });
+      }
+      // dsh-web://<path> -> <distDir>/<path>
+      const u = new URL(req.url);
+      const rel = decodeURIComponent(u.pathname).replace(/^\/+/, '');
+      // Defence-in-depth: refuse paths that escape the dist root (../, absolute).
+      if (rel.includes('..')) {
+        return new Response('forbidden', { status: 403 });
+      }
+      const file = join(distDir, rel || 'index.html');
+      if (!existsSync(file)) return new Response('not found', { status: 404 });
+      return await net.fetch(`file:///${file.replace(/\\/g, '/')}`);
+    } catch (err) {
+      logger.error(`dsh-web protocol: ${(err as Error).message}`);
+      return new Response('not found', { status: 404 });
+    }
+  });
+}
+
+/** Self-contained fallback page for the AIPanel iframe. Renders when the
+ *  dsh-web-frontend dist has not been built yet — explains what to do, and
+ *  tells the user the AI session/IPC machinery is still wired and ready. */
+const DSH_WEB_PLACEHOLDER_HTML = `<!DOCTYPE html>
+<html lang="zh-Hans">
+<head>
+<meta charset="utf-8">
+<title>A 待办 · AI 助手</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { margin: 0; height: 100vh; display: flex; align-items: center; justify-content: center;
+         font: 14px/1.6 -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+         background: #F6F7F9; color: #1F2328; }
+  @media (prefers-color-scheme: dark) { body { background: #1F2328; color: #E6EDF3; } }
+  .card { max-width: 360px; padding: 24px; border-radius: 12px;
+          background: #FFFFFF; box-shadow: 0 1px 2px rgba(0,0,0,.06), 0 8px 24px rgba(0,0,0,.08); }
+  @media (prefers-color-scheme: dark) { .card { background: #161A20; box-shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.5); } }
+  h1 { font-size: 18px; margin: 0 0 8px; }
+  p { margin: 0 0 12px; color: #57606A; }
+  @media (prefers-color-scheme: dark) { p { color: #8B949E; } }
+  code { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: 12.5px;
+         background: rgba(175,184,193,.2); padding: 1px 5px; border-radius: 4px; }
+  ol { margin: 0; padding-left: 20px; }
+  li { margin-bottom: 4px; }
+  .ok { margin-top: 16px; font-size: 12.5px; color: #047857; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1>AI 助手前端未构建</h1>
+    <p>对话、工具调用、思考流的渲染由 <code>@deepseek-ai/dsh-web-frontend</code> 负责，本应用不内置 AI 渲染实现。</p>
+    <ol>
+      <li>在 <code>D:\\03_Git\\deepseek-harness</code> 下执行 <code>pnpm build:web</code></li>
+      <li>把生成的 <code>apps/web/dist</code> 复制到本应用的 <code>resources/dsh-web/</code></li>
+      <li>重新打包或重启 <code>pnpm dev</code></li>
+    </ol>
+    <p class="ok">AI 会话、IPC 处理器、DSH 运行时均已就绪，构建前端后会自动接管此面板。</p>
+  </div>
+</body>
+</html>`;
