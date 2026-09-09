@@ -245,23 +245,41 @@ export const ProgressInline: React.FC<{
   );
 };
 
-/** Full progress timeline for the 动态 section (and the inline [v] expand). */
+/** Full progress timeline for the 动态 section (and the inline [v] expand).
+ *  Each entry shows the *transition* (from previous → current percent) so a
+ *  bare "28%" reads as "from X% to 28%" — that's the audit story: how did we
+ *  get here. The first entry reads as "0% → N%" (there was no prior). */
 export const ProgressTimeline: React.FC<{ todoId: string }> = ({ todoId }) => {
   const { entries } = useProgress(todoId);
   if (entries.length === 0) {
     return <p className="progress-view__empty">暂无动态</p>;
   }
+  // entries are newest-first; the "previous" value for entry[i] is entry[i+1].
   return (
     <ol className="progress-view__timeline-list">
-      {entries.map((e) => (
-        <li key={e.id} className="progress-view__timeline-item">
-          <span className="progress-view__timeline-time">
-            {new Date(e.createdAt).toLocaleString()}
-          </span>
-          <span className="progress-view__timeline-percent">{e.percent}%</span>
-          {e.note && <span className="progress-view__timeline-note">{e.note}</span>}
-        </li>
-      ))}
+      {entries.map((e, i) => {
+        const prev = entries[i + 1];
+        const fromPct = prev ? prev.percent : 0;
+        const arrow =
+          fromPct === e.percent
+            ? `${e.percent}%（无变化）`
+            : `${fromPct}% → ${e.percent}%`;
+        const arrowClass =
+          fromPct === e.percent
+            ? 'progress-view__timeline-percent is-flat'
+            : e.percent > fromPct
+              ? 'progress-view__timeline-percent is-up'
+              : 'progress-view__timeline-percent is-down';
+        return (
+          <li key={e.id} className="progress-view__timeline-item">
+            <span className="progress-view__timeline-time">
+              {new Date(e.createdAt).toLocaleString()}
+            </span>
+            <span className={arrowClass}>{arrow}</span>
+            {e.note && <span className="progress-view__timeline-note">{e.note}</span>}
+          </li>
+        );
+      })}
     </ol>
   );
 };

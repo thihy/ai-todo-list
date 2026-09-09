@@ -474,6 +474,26 @@ const TaskRow: React.FC<{
 
 const Subtitle: React.FC<{ todo: Todo; subtaskCount: number; subtaskDoneCount: number }> = ({ todo, subtaskCount, subtaskDoneCount }) => {
   const bits: React.ReactNode[] = [];
+  // Priority is rendered as a small colored chip next to the other metadata.
+  // "none" priority is suppressed (it's the default — would just add noise).
+  if (todo.priority && todo.priority !== 'none') {
+    bits.push(
+      <span key="p" className={`task-row__prio task-row__prio--${todo.priority}`} title={`优先级：${PRIORITY_LABEL[todo.priority]}`}>
+        <span className="task-row__prio-dot" aria-hidden="true" />
+        {PRIORITY_LABEL[todo.priority]}
+      </span>,
+    );
+  }
+  if (todo.progress != null && todo.progress > 0) {
+    bits.push(
+      <span key="prog" className="task-row__progress" title={`进度 ${todo.progress}%`}>
+        <span className="task-row__progress-track" aria-hidden="true">
+          <span className="task-row__progress-fill" style={{ width: `${todo.progress}%` }} />
+        </span>
+        <span className="task-row__progress-label">{todo.progress}%</span>
+      </span>,
+    );
+  }
   if (todo.dueAt) bits.push(<span key="d">📅 {formatDate(todo.dueAt)}</span>);
   if (todo.tags?.length) {
     todo.tags.slice(0, 3).forEach((tag) => bits.push(<span key={`t-${tag}`} className="task-row__tag">#{tag}</span>));
@@ -493,6 +513,13 @@ const Subtitle: React.FC<{ todo: Todo; subtaskCount: number; subtaskDoneCount: n
   }
   if (bits.length === 0) return <div className="task-row__sub task-row__sub--empty">无附加信息</div>;
   return <div className="task-row__sub">{bits}</div>;
+};
+
+const PRIORITY_LABEL: Record<NonNullable<Todo['priority']>, string> = {
+  high: '高',
+  medium: '中',
+  low: '低',
+  none: '无',
 };
 
 // ----- Glyphs -----

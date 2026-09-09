@@ -2098,6 +2098,59 @@ a:hover {
 .task-row__tag {
   color: var(--accent-info);
 }
+/* Priority chip — small colored dot + label so the eye picks up high/medium
+   urgency at a glance even when the row is collapsed. "none" is suppressed
+   in markup (no default-state noise). */
+.task-row__prio {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 6px;
+  border-radius: var(--radius-pill);
+  font-size: var(--font-xs);
+  font-weight: 600;
+  background: var(--bg-soft);
+}
+.task-row__prio-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  flex: 0 0 auto;
+}
+.task-row__prio--high { color: var(--accent-danger); background: color-mix(in srgb, var(--accent-danger) 12%, var(--bg-soft)); }
+.task-row__prio--medium { color: var(--accent-warning); background: color-mix(in srgb, var(--accent-warning) 14%, var(--bg-soft)); }
+.task-row__prio--low { color: var(--accent-info); background: color-mix(in srgb, var(--accent-info) 14%, var(--bg-soft)); }
+/* Mini progress bar — same visual language as the detail header's
+   ProgressBar but at row scale: 60×4px track + a percent label. */
+.task-row__progress {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--fg-muted);
+  font-variant-numeric: tabular-nums;
+}
+.task-row__progress-track {
+  position: relative;
+  display: inline-block;
+  width: 60px;
+  height: 4px;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--fg-primary) 22%, transparent);
+  overflow: hidden;
+  flex: 0 0 auto;
+}
+.task-row__progress-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 0%;
+  background: var(--accent-primary);
+  border-radius: var(--radius-pill);
+}
+.task-row__progress-label {
+  font-size: var(--font-xs);
+  min-width: 26px;
+}
 /* Subtask progress chip when the whole branch is done — accent-success so
    a glance tells you the branch is clear. */
 .task-row__sub--done {
@@ -3495,16 +3548,22 @@ a:hover {
 .progress-bar__track {
   position: relative;
   width: 100px;
+  min-width: 100px;
   height: 8px;
   border-radius: var(--radius-pill);
-  background: color-mix(in srgb, var(--fg-primary) 12%, transparent);
+  /* Heavier contrast: at 12% on dark surfaces the track vanished entirely,
+     making the bar look like just a "0%" label. ~22% reads on both themes
+     without overpowering the fill. */
+  background: color-mix(in srgb, var(--fg-primary) 22%, transparent);
   overflow: hidden;
+  flex: 0 0 auto;
 }
 .progress-bar__fill {
   position: absolute;
   left: 0;
   top: 0;
   bottom: 0;
+  width: 0%;
   background: var(--accent-primary);
   border-radius: var(--radius-pill);
   transition: width .25s ease;
@@ -3545,7 +3604,9 @@ a:hover {
 .progress-inline__bar-btn {
   flex: 0 0 200px;
   width: 200px;
-  padding: 0;
+  /* Tall enough to be a comfortable drag target; the visible track is 8px
+     inside, the rest is padding to give the pointer room to grab. */
+  padding: 6px 0;
   border: 0;
   background: transparent;
   cursor: ew-resize;
@@ -3554,6 +3615,7 @@ a:hover {
 }
 .progress-inline__bar-btn .progress-bar__track {
   width: 100%;
+  min-width: 0;
   height: 8px;
 }
 .progress-inline__bar-btn:hover .progress-bar__track {
@@ -3789,8 +3851,12 @@ a:hover {
 .progress-view__timeline-percent {
   font-weight: 600;
   color: var(--accent-primary);
-  min-width: 36px;
+  min-width: 110px;
+  font-variant-numeric: tabular-nums;
 }
+.progress-view__timeline-percent.is-up { color: var(--accent-primary); }
+.progress-view__timeline-percent.is-down { color: var(--accent-danger); }
+.progress-view__timeline-percent.is-flat { color: var(--fg-muted); }
 .progress-view__timeline-note {
   color: var(--fg-primary);
   flex: 1 1 auto;
