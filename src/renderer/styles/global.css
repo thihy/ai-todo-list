@@ -2886,13 +2886,13 @@ a:hover {
 .editor-pane__status-pill.is-cancelled { color: var(--fg-muted); }
 .editor-pane__status-pill.is-next { color: var(--fg-secondary); }
 
-/* --- priority picker (flag button + popover menu) --- */
+/* --- priority picker (pill trigger + popover menu; mirrors status-select) --- */
 
 .priority-picker {
   position: relative;
   display: inline-flex;
 }
-.priority-picker__flag {
+.priority-picker__pill {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -2905,9 +2905,12 @@ a:hover {
   cursor: pointer;
   transition: background .12s ease, border-color .12s ease;
 }
-.priority-picker__flag:hover {
+.priority-picker__pill:hover {
   background: var(--bg-hover);
   border-color: var(--border-strong);
+}
+.priority-picker__flag-icon {
+  color: var(--fg-muted);
 }
 .priority-picker__dot {
   width: 8px;
@@ -2920,39 +2923,44 @@ a:hover {
 }
 .priority-picker__menu {
   position: absolute;
+  z-index: 20;
   top: calc(100% + 4px);
   left: 0;
-  z-index: 10;
-  margin: 0;
+  min-width: 132px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
   padding: 4px;
+  margin: 0;
   list-style: none;
   background: var(--bg-surface);
   border: 1px solid var(--border-default);
   border-radius: var(--radius-md);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, .12);
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 96px;
+  box-shadow: var(--shadow-md);
 }
 .priority-picker__option {
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-sm);
   width: 100%;
-  padding: 4px var(--space-sm);
-  border: 1px solid currentColor;
+  padding: 6px var(--space-sm);
+  border: 0;
   background: transparent;
   border-radius: var(--radius-sm);
+  color: var(--fg-primary);
   font-size: var(--font-sm);
   cursor: pointer;
-  transition: filter .12s ease;
+  text-align: left;
 }
-.priority-picker__option:hover {
-  filter: brightness(1.05);
+.priority-picker__option:hover,
+.priority-picker__option.is-active {
+  background: var(--bg-hover);
 }
-.priority-picker__option.is-selected {
-  font-weight: 600;
+.priority-picker__option-label {
+  flex: 1 1 auto;
+}
+.priority-picker__option-check {
+  color: var(--accent-primary);
 }
 
 /* --- date picker (read chip / edit panel) --- */

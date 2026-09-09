@@ -93,4 +93,19 @@ export const IconClose: React.FC<IconProps> = (p) => (
   </Svg>
 );
 
+/** Check — selection marker for menus / option lists. */
+export const IconCheck: React.FC<IconProps> = (p) => (
+  <Svg {...p}>
+    <path d="M3.5 8l3 3 6-6" />
+  </Svg>
+);
+
+/** Flag — priority indicator. */
+export const IconFlag: React.FC<IconProps> = (p) => (
+  <Svg {...p}>
+    <path d="M4 14V3" />
+    <path d="M4 3.5h7l-1.5 2.5L11 8.5H4" />
+  </Svg>
+);
+
 export default Svg;

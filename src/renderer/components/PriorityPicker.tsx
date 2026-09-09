@@ -1,25 +1,30 @@
-// PriorityPicker — a single "flag" button that opens a 4-item menu.
+// PriorityPicker — a compact pill trigger that opens a 4-item popover.
 //
-// Replaces the old always-visible row of four pill buttons (高/中/低/—)
-// which was visually loud and demanded horizontal space proportional to the
-// option count. The flag button shows the current priority's colour dot +
-// label at a glance; clicking surfaces the four options in a popover.
+// Mirrors StatusSelect's menu aesthetic so the detail meta row reads as one
+// family: neutral menu rows where colour is carried by a small dot only
+// (the previous version bordered every option in its own colour, which read
+// as a noisy rainbow). The selected option gets a check mark, not a fill.
 //
-// Semantic colouring: 高=danger / 中=warn / 低=info / 无=灰. The selected
-// option renders solid; the others render outline so the current choice is
-// instantly legible.
+// Semantic colouring: 高=danger / 中=warn / 低=info / 无=muted.
 
 import React, { useEffect, useRef, useState } from 'react';
+import { IconCheck, IconFlag } from './icons';
 import type { Priority } from '../../shared/todo-types';
 
-const OPTIONS: Array<{ value: Priority; label: string; color: string }> = [
+interface Option {
+  value: Priority;
+  label: string;
+  color: string;
+}
+
+const OPTIONS: Option[] = [
   { value: 'high', label: '高', color: 'var(--accent-danger)' },
   { value: 'medium', label: '中', color: 'var(--accent-warn)' },
   { value: 'low', label: '低', color: 'var(--accent-info)' },
   { value: 'none', label: '无', color: 'var(--fg-muted)' },
 ];
 
-function find(value: Priority): { value: Priority; label: string; color: string } {
+function find(value: Priority): Option {
   return OPTIONS.find((o) => o.value === value) ?? OPTIONS[3]!;
 }
 
@@ -29,11 +34,10 @@ export const PriorityPicker: React.FC<{
 }> = ({ value, onChange }) => {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
-
   const current = find(value);
 
-  // Close on outside click / Escape. The menu is small and unowned by a
-  // dialog, so it must self-dismiss when focus leaves its subtree.
+  // Close on outside click / Escape — the menu is unowned by a dialog, so it
+  // must self-dismiss when focus leaves its subtree.
   useEffect(() => {
     if (!open) return;
     const onDown = (e: MouseEvent): void => {
@@ -54,13 +58,14 @@ export const PriorityPicker: React.FC<{
     <div className="priority-picker" ref={rootRef}>
       <button
         type="button"
-        className="priority-picker__flag"
+        className="priority-picker__pill"
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-label={`优先级：${current.label}，点击切换`}
         title={`优先级：${current.label}`}
         onClick={() => setOpen((v) => !v)}
       >
+        <IconFlag size={14} className="priority-picker__flag-icon" />
         <span className="priority-picker__dot" style={{ background: current.color }} />
         <span className="priority-picker__label">{current.label}</span>
       </button>
@@ -75,16 +80,12 @@ export const PriorityPicker: React.FC<{
                   type="button"
                   role="option"
                   aria-selected={selected}
-                  className={`priority-picker__option${selected ? ' is-selected' : ''}`}
-                  style={{
-                    color: selected ? '#fff' : o.color,
-                    borderColor: o.color,
-                    background: selected ? o.color : 'transparent',
-                  }}
+                  className={`priority-picker__option${selected ? ' is-active' : ''}`}
                   onClick={() => { onChange(o.value); setOpen(false); }}
                 >
                   <span className="priority-picker__dot" style={{ background: o.color }} />
-                  {o.label}
+                  <span className="priority-picker__option-label">{o.label}</span>
+                  {selected && <IconCheck size={14} className="priority-picker__option-check" />}
                 </button>
               </li>
             );
