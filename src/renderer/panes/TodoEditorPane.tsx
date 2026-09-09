@@ -21,7 +21,7 @@
 // titled sections so each facet of the task (identity, links, documents,
 // activity) has its own addressable region.
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useTodo, useDrawings, useDocuments } from '../hooks/useThihyApi';
 import { routeToHash } from '../router';
 import { DocumentsView } from '../components/DocumentsView';
@@ -30,7 +30,7 @@ import { PriorityPicker } from '../components/PriorityPicker';
 import { TagInput } from '../components/TagInput';
 import { DatePicker } from '../components/DatePicker';
 import { StatusPill } from '../components/StatusPill';
-import { ProgressBar, ProgressView } from '../components/ProgressView';
+import { ProgressInline, ProgressTimeline } from '../components/ProgressView';
 import { DrawingStrip } from '../components/DrawingStrip';
 import { IconLink } from '../components/icons';
 import type { Priority, TodoStatus, TaskDocument } from '../../shared/todo-types';
@@ -100,6 +100,7 @@ export const TodoEditorPane: React.FC<{
   const [priority, setPriority] = useState<Priority>('none');
   const [dueAt, setDueAt] = useState<number | null>(null);
   const [status, setStatus] = useState<TodoStatus>('next');
+  const activityRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
     if (!todo) return;
@@ -153,7 +154,13 @@ export const TodoEditorPane: React.FC<{
             创建于 {new Date(todo.createdAt).toLocaleDateString()}
           </span>
           <div className="editor-pane__progress">
-            <ProgressBar value={todo.progress} showLabel />
+            <ProgressInline
+              todoId={todo.id}
+              progress={todo.progress}
+              onViewHistory={() =>
+                activityRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+              }
+            />
           </div>
         </div>
 
@@ -178,9 +185,9 @@ export const TodoEditorPane: React.FC<{
       </section>
 
       {/* ===== 动态 ===== */}
-      <section className="editor-pane__section">
+      <section className="editor-pane__section" ref={activityRef}>
         <h2 className="editor-pane__section-title">动态</h2>
-        <ProgressView todoId={todo.id} progress={todo.progress} />
+        <ProgressTimeline todoId={todo.id} />
       </section>
     </div>
   );

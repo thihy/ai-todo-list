@@ -1,15 +1,17 @@
-// ProgressView — the task's progress surface in the detail body.
+// ProgressView — the task's progress surface, split into two pieces that
+// live in different detail sub-sections:
 //
-// Top row: a progress bar + percent + a "录入进展" toggle. The bar reads from
-// the canonical `todo.progress` (refreshed via the app:data-changed broadcast
-// after progress.log), so it stays honest even across AI/batch mutations.
+//   ProgressInline (基本信息):
+//     [progress bar] [latest entry note] [录入进度]
+//     The bar shows the canonical `todo.progress` (refreshed via the
+//     app:data-changed broadcast after progress.log). Clicking the bar opens
+//     the history timeline (scrolls to / expands the 动态 section). The
+//     录入进度 button toggles an inline entry form (range + number + note).
+//     The latest entry's note is shown next to the bar by default.
 //
-// Toggle open: an entry form (range slider + number input synced, optional
-// one-line note, Enter or 提交 to commit). Submit calls progress.log, which
-// appends a progress_log row + bumps the todo's progress column.
-//
-// Collapsible timeline: every progress change (user-entered with a note, or
-// AI/batch note-less) listed newest-first with time + percent + note.
+//   ProgressTimeline (动态):
+//     Every progress change (user-entered with a note, or AI/batch note-less)
+//     listed newest-first with time + percent + note.
 //
 // ProgressBar is exported so the summary header can render a compact
 // at-a-glance bar without duplicating the styling.
@@ -33,14 +35,20 @@ export const ProgressBar: React.FC<{
   );
 };
 
-export const ProgressView: React.FC<{ todoId: string; progress: number }> = ({
-  todoId,
-  progress,
-}) => {
+/** Inline progress row for the 基本信息 section: bar + latest note + entry
+ *  button. The bar is clickable to surface the history timeline. */
+export const ProgressInline: React.FC<{
+  todoId: string;
+  progress: number;
+  onViewHistory?: () => void;
+}> = ({ todoId, progress, onViewHistory }) => {
   const { entries, log } = useProgress(todoId);
   const [open, setOpen] = useState(false);
   const [percent, setPercent] = useState(progress);
   const [note, setNote] = useState('');
+
+  const latest = entries[0];
+  const latestNote = latest?.note?.trim() || '';
 
   // Keep the slider in sync with the canonical progress when it changes
   // externally (e.g. another surface logged progress, or the todo reloaded).
@@ -56,18 +64,27 @@ export const ProgressView: React.FC<{ todoId: string; progress: number }> = ({
   }, [percent, note, log]);
 
   return (
-    <section className="progress-view">
-      <div className="progress-view__head">
-        <ProgressBar value={progress} className="progress-view__bar" showLabel />
+    <div className="progress-inline">
+      <div className="progress-inline__bar">
         <button
           type="button"
-          className="progress-view__toggle"
-          onClick={() => setOpen((v) => !v)}
-          aria-expanded={open}
+          className="progress-inline__bar-btn"
+          onClick={onViewHistory}
+          title="点击查看进展历史"
+          aria-label="查看进展历史"
         >
-          {open ? '收起' : '录入进展'}
+          <ProgressBar value={progress} showLabel />
         </button>
+        {latestNote && <span className="progress-inline__note">{latestNote}</span>}
       </div>
+      <button
+        type="button"
+        className="progress-inline__toggle"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+      >
+        {open ? '收起' : '录入进度'}
+      </button>
 
       {open && (
         <div className="progress-view__entry">
@@ -123,26 +140,38 @@ export const ProgressView: React.FC<{ todoId: string; progress: number }> = ({
           </div>
         </div>
       )}
-
-      {entries.length > 0 && (
-        <details className="progress-view__timeline" open>
-          <summary className="progress-view__timeline-head">
-            <span>进展历史</span>
-            <span className="progress-view__timeline-count">{entries.length}</span>
-          </summary>
-          <ul className="progress-view__timeline-list">
-            {entries.map((e) => (
-              <li key={e.id} className="progress-view__timeline-item">
-                <span className="progress-view__timeline-time">
-                  {new Date(e.createdAt).toLocaleString()}
-                </span>
-                <span className="progress-view__timeline-percent">{e.percent}%</span>
-                {e.note && <span className="progress-view__timeline-note">{e.note}</span>}
-              </li>
-            ))}
-          </ul>
-        </details>
-      )}
-    </section>
+    </div>
   );
 };
+
+/** Full progress timeline for the 动态 section. */
+export const ProgressTimeline: React.FC<{ todoId: string }> = ({ todoId }) => {
+  const { entries } = useProgress(todoId);
+  if (entries.length === 0) {
+    return <p className="progress-view__empty">暂无动态</p>;
+  }
+  return (
+    <ol className="progress-view__timeline-list">
+      {entries.map((e) => (
+        <li key={e.id} className="progress-view__timeline-item">
+          <span className="progress-view__timeline-time">
+            {new Date(e.createdAt).toLocaleString()}
+          </span>
+          <span className="progress-view__timeline-percent">{e.percent}%</span>
+          {e.note && <span className="progress-view__timeline-note">{e.note}</span>}
+        </li>
+      ))}
+    </ol>
+  );
+};
+
+/** @deprecated retained for backward-compat; prefer ProgressInline + ProgressTimeline. */
+export const ProgressView: React.FC<{ todoId: string; progress: number }> = ({
+  todoId,
+  progress,
+}) => (
+  <section className="progress-view">
+    <ProgressInline todoId={todoId} progress={progress} />
+    <ProgressTimeline todoId={todoId} />
+  </section>
+);
