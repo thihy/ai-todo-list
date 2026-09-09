@@ -791,28 +791,33 @@ a:hover {
   flex: none;
 }
 
-/* ===== L5: conversation title in content area ===== */
+/* ===== L5: sticky conversation header (title + current question) ===== */
 
-/* The current conversation title now lives INSIDE the content area as a
-   sticky heading. It reads as the "section title" for the messages below,
-   which is more natural than the previous topbar placement (the topbar
-   was competing with other controls for horizontal space). */
-.aipane__conv-title {
+/* One sticky wrapper holding the conversation title and the current-question
+   banner. Both used to be individually sticky at top:0 — the taller
+   current-question banner overlapped the title and bled into it, which read
+   as "content penetrating the title". Now they move as a single unit under
+   one opaque full-bleed background, so scrolling messages cannot paint over
+   or show through the header. */
+.aipane__sticky-head {
   position: sticky;
   top: 0;
   z-index: 2;
-  /* Full-bleed: extend past the body's side padding so scrolling content
-     can't show through the gutters beside the heading. Solid (opaque)
-     background is required — a gradient fading to transparent lets the
-     message stream bleed through, which is what made the sticky title
-     read as "penetrated" by the content underneath. */
-  margin: 0 calc(-1 * var(--space-lg)) var(--space-sm);
+  margin: 0 calc(-1 * var(--space-lg)) var(--space-md);
+  padding: 0;
+  background: var(--bg-surface);
+}
+
+.aipane__conv-title {
+  /* Static child of .aipane__sticky-head. The wrapper owns the sticky
+     position and opaque full-bleed background; the title keeps its own
+     padding so the text insets to align with the message stream. */
+  margin: 0 0 var(--space-sm);
   padding: var(--space-md) var(--space-lg) var(--space-sm);
   font-size: var(--font-lg);
   font-weight: 650;
   letter-spacing: -0.01em;
   color: var(--fg-primary);
-  background: var(--bg-surface);
   /* Single-line truncation with ellipsis so a long title doesn't push the
      sticky banner out of the viewport. */
   white-space: nowrap;
@@ -834,14 +839,14 @@ a:hover {
    user can always see what was asked — even after scrolling deep into
    the history to re-read an earlier answer. */
 .aipane__currentq {
-  position: sticky;
-  top: 0;
-  z-index: 1;
+  /* Static child of .aipane__sticky-head, stacked beneath the title. The
+     wrapper handles stickiness + full-bleed; this banner keeps its tinted
+     background as a visual separator from the title above. */
   display: flex;
   align-items: flex-start;
   gap: var(--space-xs);
-  padding: var(--space-sm) var(--space-md);
-  margin: 0 calc(-1 * var(--space-lg)) var(--space-sm);
+  padding: var(--space-sm) var(--space-lg);
+  margin: 0 0 var(--space-xs);
   background: color-mix(in srgb, var(--accent-primary, #4F8AF7) 8%, var(--bg-surface));
   border-top: 1px solid color-mix(in srgb, var(--accent-primary, #4F8AF7) 25%, transparent);
   border-bottom: 1px solid color-mix(in srgb, var(--accent-primary, #4F8AF7) 18%, transparent);

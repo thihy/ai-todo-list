@@ -710,9 +710,14 @@ export const AIPane: React.FC = () => {
             ⚠ 会话列表加载失败：{bootError}
           </div>
         )}
-        {/* The conversation title moved OUT of the topbar and into the
-            content area as a sticky heading — it's the primary context for
-            what the user is reading, so it should live with the content. */}
+        {/* The conversation title + current-question banner are wrapped in a
+            single sticky header so they move as one unit. Previously both
+            were individually sticky at top:0 — the taller current-question
+            banner overlapped the title and its text bled into the title
+            band ("content penetrates the title"). One shared sticky context
+            with an opaque full-bleed background also guarantees scrolling
+            messages can't show through the header. */}
+        <div className="aipane__sticky-head">
         {!bootError && current && (
           <h2 className="aipane__conv-title" title={current.title}>
             {renaming ? (
@@ -754,6 +759,7 @@ export const AIPane: React.FC = () => {
             )}
           </div>
         )}
+        </div>
 
         {!bootError && !current && conversations.length === 0 && (
           <div className="aipane__empty">
