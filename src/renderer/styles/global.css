@@ -3643,8 +3643,17 @@ a:hover {
   touch-action: none;
   text-align: left;
 }
-.progress-inline__bar-btn .progress-bar__track {
+.progress-inline__bar-btn .progress-bar {
+  /* Override the base .progress-bar's `display: inline-flex` (which sizes to
+     content and so starves the inner track of any real width). Inside the
+     inline drag affordance we want the bar to fill the button, not hug the
+     "28%" label. */
+  display: flex;
   width: 100%;
+}
+.progress-inline__bar-btn .progress-bar__track {
+  flex: 1 1 auto;
+  width: auto;
   min-width: 0;
   height: 12px;
 }
