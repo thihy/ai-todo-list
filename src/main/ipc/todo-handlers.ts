@@ -37,6 +37,7 @@ export function registerTodoHandlers(repo: TodoRepo, md: MarkdownStore): void {
       const todo = repo.create(req.input, md.filePathFor('placeholder'));
       md.writeBody(todo.id, '');
       const fresh = repo.get(todo.id)!;
+      broadcastDataChanged('todos');
       return Promise.resolve(okResult({ id: todo.id, todo: fresh }));
     } catch (err) {
       return Promise.resolve(failResult('create_failed', (err as Error).message));
@@ -45,7 +46,14 @@ export function registerTodoHandlers(repo: TodoRepo, md: MarkdownStore): void {
 
   register('todo.update', (_e, req) => {
     try {
-      return Promise.resolve(okResult(repo.update(req.id, req.patch)));
+      const res = okResult(repo.update(req.id, req.patch));
+      // Bidirectional refresh: an edit from the detail pane must refresh the
+      // list, and an edit from the list row must refresh the detail. Both
+      // useTodos and useTodo subscribe to the 'todos' data-version, so a
+      // single broadcast here drives both. Without it, each side only sees
+      // its own optimistic state and stays stale until re-selection.
+      broadcastDataChanged('todos');
+      return Promise.resolve(res);
     } catch (err) {
       return Promise.resolve(failResult('update_failed', (err as Error).message));
     }
@@ -54,6 +62,7 @@ export function registerTodoHandlers(repo: TodoRepo, md: MarkdownStore): void {
   register('todo.delete', (_e, req) => {
     try {
       repo.delete(req.id);
+      broadcastDataChanged('todos');
       return Promise.resolve(okResult(undefined as never));
     } catch (err) {
       return Promise.resolve(failResult('delete_failed', (err as Error).message));
@@ -63,6 +72,7 @@ export function registerTodoHandlers(repo: TodoRepo, md: MarkdownStore): void {
   register('todo.restore', (_e, req) => {
     try {
       repo.restore(req.id);
+      broadcastDataChanged('todos');
       return Promise.resolve(okResult(undefined as never));
     } catch (err) {
       return Promise.resolve(failResult('restore_failed', (err as Error).message));
@@ -71,7 +81,9 @@ export function registerTodoHandlers(repo: TodoRepo, md: MarkdownStore): void {
 
   register('todo.batchUpdate', (_e, req) => {
     try {
-      return Promise.resolve(okResult(repo.batchUpdate(req.ids, req.patch)));
+      const res = okResult(repo.batchUpdate(req.ids, req.patch));
+      broadcastDataChanged('todos');
+      return Promise.resolve(res);
     } catch (err) {
       return Promise.resolve(failResult('batch_failed', (err as Error).message));
     }
