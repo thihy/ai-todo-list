@@ -17,7 +17,7 @@ import { TodoListPane } from './panes/TodoListPane';
 import { TodoEditorPane } from './panes/TodoEditorPane';
 import { StatsPane } from './panes/StatsPane';
 import { DrawingPane } from './panes/DrawingPane';
-import { parseHash, routeToHash, type Route, type ListFilter } from './router';
+import { parseHash, routeToHash, type Route, type ListFilter, type SortKey } from './router';
 import { useAppEvent } from './hooks/useThihyApi';
 import { emitDataChanged } from './data-bus';
 
@@ -43,6 +43,7 @@ export const App: React.FC = () => {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [composing, setComposing] = useState(false);
   const [listFilter, setListFilter] = useState<ListFilter>({ kind: 'all' });
+  const [listSort, setListSort] = useState<SortKey>('alpha');
   const [aiOpen, setAiOpen] = useState<boolean>(() => {
     try {
       return localStorage.getItem(AI_OPEN_KEY) !== '0';
@@ -57,9 +58,12 @@ export const App: React.FC = () => {
     return () => window.removeEventListener('hashchange', onHash);
   }, []);
 
-  // Sync the list filter from #/list/<path> deep links.
+  // Sync the list filter + sort from #/list/<path>?sort=<key> deep links.
   useEffect(() => {
-    if (route.name === 'list') setListFilter(route.filter);
+    if (route.name === 'list') {
+      setListFilter(route.filter);
+      setListSort(route.sort);
+    }
   }, [route]);
 
   // Ctrl-K command palette
@@ -106,8 +110,12 @@ export const App: React.FC = () => {
   const toggleAi = useCallback(() => setAiOpen((v) => !v), []);
   const selectFilter = useCallback((f: ListFilter) => {
     setListFilter(f);
-    location.hash = routeToHash({ name: 'list', filter: f });
-  }, []);
+    location.hash = routeToHash({ name: 'list', filter: f, sort: listSort });
+  }, [listSort]);
+  const selectSort = useCallback((s: SortKey) => {
+    setListSort(s);
+    location.hash = routeToHash({ name: 'list', filter: listFilter, sort: s });
+  }, [listFilter]);
 
   const view = deriveView(route);
   const selectedId = route.name === 'todo' ? route.id : null;
@@ -124,6 +132,8 @@ export const App: React.FC = () => {
           onOpenPalette={() => setPaletteOpen(true)}
           listFilter={listFilter}
           onSelectFilter={selectFilter}
+          listSort={listSort}
+          onSelectSort={selectSort}
         />
         <div className="app-body">
           <main className={`app-main${view === 'list' ? ' is-master' : ''}`}>
@@ -131,6 +141,7 @@ export const App: React.FC = () => {
               <div className="master-detail">
                 <TodoListPane
                   filter={listFilter}
+                  sort={listSort}
                   selectedId={selectedId}
                   onSelect={(id) => navigate(routeToHash({ name: 'todo', id }))}
                   onOpenSettings={() => setSettingsOpen(true)}

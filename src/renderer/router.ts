@@ -1,8 +1,12 @@
 // Hash router. Routes per ui-wireframe.md §1.
 
+export type SortKey = 'alpha' | 'created' | 'due' | 'priority';
+export const SORT_KEYS: readonly SortKey[] = ['alpha', 'created', 'due', 'priority'];
+export const DEFAULT_SORT: SortKey = 'alpha';
+
 export type Route =
   | { name: 'home' }
-  | { name: 'list'; filter: ListFilter }
+  | { name: 'list'; filter: ListFilter; sort: SortKey }
   | { name: 'todo'; id: string }
   | { name: 'todo-drawing'; id: string; drawingId?: string }
   | { name: 'settings' }
@@ -25,10 +29,17 @@ export function parseHash(hash: string): Route {
   // (which is why Settings / Stats / Inbox appeared to do nothing).
   const raw = hash.replace(/^#\/?/, '');
   if (!raw) return { name: 'home' };
-  const [head, ...rest] = raw.split('/');
+  // Split off a '?sort=...' query before path-segment splitting so a sort
+  // query on a list route doesn't leak into the filter path (and so a
+  // project tag containing '?' — already URL-fragile — is no worse than
+  // before). Only the FIRST '?' splits; the rest stays in the query.
+  const qIdx = raw.indexOf('?');
+  const pathPart = qIdx < 0 ? raw : raw.slice(0, qIdx);
+  const queryPart = qIdx < 0 ? '' : raw.slice(qIdx + 1);
+  const [head, ...rest] = pathPart.split('/');
   switch (head) {
     case 'list':
-      return { name: 'list', filter: parseFilter(rest.join('/')) };
+      return { name: 'list', filter: parseFilter(rest.join('/')), sort: parseSort(queryPart) };
     case 'todo': {
       const [id, sub, subId] = rest;
       if (sub === 'drawing') {
@@ -62,8 +73,12 @@ export function routeToHash(r: Route): string {
   switch (r.name) {
     case 'home':
       return '#/';
-    case 'list':
-      return `#/list/${filterToPath(r.filter)}`;
+    case 'list': {
+      const base = `#/list/${filterToPath(r.filter)}`;
+      // Omit ?sort= for the default so URLs stay clean (the default is
+      // implied). parseSort maps a missing query back to DEFAULT_SORT.
+      return r.sort === DEFAULT_SORT ? base : `${base}?sort=${r.sort}`;
+    }
     case 'todo':
       return `#/todo/${r.id}`;
     case 'todo-drawing':
@@ -94,4 +109,10 @@ function filterToPath(f: ListFilter): string {
     case 'priority':
       return `priority/${f.priority}`;
   }
+}
+
+function parseSort(query: string): SortKey {
+  if (!query) return DEFAULT_SORT;
+  const s = new URLSearchParams(query).get('sort');
+  return (s && (SORT_KEYS as readonly string[]).includes(s)) ? (s as SortKey) : DEFAULT_SORT;
 }

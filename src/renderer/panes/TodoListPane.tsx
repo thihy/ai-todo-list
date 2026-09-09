@@ -20,17 +20,18 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTodos } from '../hooks/useThihyApi';
-import type { ListFilter } from '../router';
+import type { ListFilter, SortKey } from '../router';
 import type { Todo, TodoStatus, ULID } from '../../shared/todo-types';
 import { UserMenu } from '../components/UserMenu';
 
 export const TodoListPane: React.FC<{
   filter: ListFilter;
+  sort: SortKey;
   selectedId: string | null;
   onSelect: (id: string) => void;
   onOpenSettings: () => void;
   onCompose: () => void;
-}> = ({ filter, selectedId, onSelect, onOpenSettings, onCompose }) => {
+}> = ({ filter, sort, selectedId, onSelect, onOpenSettings, onCompose }) => {
   const repoFilter = filterToRepoFilter(filter);
   const { data, loading, refresh } = useTodos(repoFilter);
 
@@ -83,7 +84,13 @@ export const TodoListPane: React.FC<{
 
   // Root tasks: top-level (no parentId). SubTasks nest under their parent
   // via TaskBranch, so the root list is just the parentId === null set.
-  const rootTasks = useMemo(() => data.filter((t) => !t.parentId), [data]);
+  // The repo orders by updated_at DESC, but the user-facing sort (字母顺序
+  // by default, or 创建日期 / 截止日期 / 优先级) is applied here in the
+  // renderer because the tree is assembled client-side from the fetched set.
+  const rootTasks = useMemo(
+    () => sortTodos(data.filter((t) => !t.parentId), sort),
+    [data, sort],
+  );
   const isEmpty = !loading && data.length === 0;
   return (
     <section className="task-list" aria-label="任务列表">
@@ -127,6 +134,7 @@ export const TodoListPane: React.FC<{
                 selectedId={selectedId}
                 onSelect={onSelect}
                 allTodos={data}
+                sort={sort}
                 getExpanded={getExpanded}
                 toggleExpanded={toggleExpanded}
                 archivedView={archivedView}
@@ -151,12 +159,48 @@ export const TodoListPane: React.FC<{
 
 // ----- Task row (with SubTask nesting) -----
 
+// Sort a slice of todos by the user's chosen key. Default 字母顺序 is
+// Chinese-aware (localeCompare with numeric ordering so "task2" < "task10")
+// and case-insensitive; the other keys order by the natural direction for
+// each: 创建日期 newest-first, 截止日期 soonest-first (no-due last), 优先级
+// high→none. The comparator is stable-ish (no tiebreak beyond the key), which
+// is fine — siblings of equal key keep their fetched (updated_at DESC) order.
+const PRIORITY_WEIGHT: Record<Todo['priority'], number> = { high: 4, medium: 3, low: 2, none: 1 };
+
+function sortTodos(todos: Todo[], sort: SortKey): Todo[] {
+  // Slice first so we never mutate the hook's cached array.
+  const arr = todos.slice();
+  switch (sort) {
+    case 'alpha':
+      arr.sort((a, b) => (a.title || '').localeCompare(b.title || '', 'zh-Hans-CN', { numeric: true, sensitivity: 'base' }));
+      break;
+    case 'created':
+      arr.sort((a, b) => b.createdAt - a.createdAt);
+      break;
+    case 'due':
+      // Soonest first; no due date sinks to the bottom of the branch.
+      arr.sort((a, b) => {
+        if (a.dueAt == null && b.dueAt == null) return 0;
+        if (a.dueAt == null) return 1;
+        if (b.dueAt == null) return -1;
+        return a.dueAt - b.dueAt;
+      });
+      break;
+    case 'priority':
+      arr.sort((a, b) => PRIORITY_WEIGHT[b.priority] - PRIORITY_WEIGHT[a.priority]);
+      break;
+  }
+  return arr;
+}
+
 /** Walk the allTodos list to find direct subtasks of `parent`. SubTasks are
  *  tasks whose parentId points at `parent`. We filter in renderer code (not
  *  repo) so the entire SubTask subtree is computed from the already-fetched
- *  todo list without an extra round-trip per parent. */
-function subtasksOf(allTodos: Todo[], parent: ULID): Todo[] {
-  return allTodos.filter((t) => t.parentId === parent);
+ *  todo list without an extra round-trip per parent. The result is sorted by
+ *  the current sort key (same comparator as root tasks) so a nested branch
+ *  reads in the same order as the top-level list. */
+function subtasksOf(allTodos: Todo[], parent: ULID, sort: SortKey): Todo[] {
+  return sortTodos(allTodos.filter((t) => t.parentId === parent), sort);
 }
 
 const TaskBranch: React.FC<{
@@ -165,14 +209,15 @@ const TaskBranch: React.FC<{
   selectedId: string | null;
   onSelect: (id: string) => void;
   allTodos: Todo[];
+  sort: SortKey;
   getExpanded: (id: string) => boolean;
   toggleExpanded: (id: string) => void;
   archivedView: boolean;
   onCycle: (next: TodoStatus) => Promise<void>;
   onDelete: (id: string) => void;
   onRestore: (id: string) => void;
-}> = ({ todo, depth, selectedId, onSelect, allTodos, getExpanded, toggleExpanded, archivedView, onCycle, onDelete, onRestore }) => {
-  const children = subtasksOf(allTodos, todo.id);
+}> = ({ todo, depth, selectedId, onSelect, allTodos, sort, getExpanded, toggleExpanded, archivedView, onCycle, onDelete, onRestore }) => {
+  const children = subtasksOf(allTodos, todo.id, sort);
   const hasSubtasks = children.length > 0;
   const doneCount = hasSubtasks ? children.filter((c) => c.status === 'done').length : 0;
   const expanded = getExpanded(todo.id);
@@ -204,6 +249,7 @@ const TaskBranch: React.FC<{
               selectedId={selectedId}
               onSelect={onSelect}
               allTodos={allTodos}
+              sort={sort}
               getExpanded={getExpanded}
               toggleExpanded={toggleExpanded}
               archivedView={archivedView}

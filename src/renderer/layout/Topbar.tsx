@@ -1,11 +1,12 @@
 // Topbar — the frameless title bar. Left: brand (drag). Tools (no-drag):
-// [过滤][搜索] then flat menu-category buttons 文件/编辑/视图/窗口/帮助
+// [过滤][排序][搜索] then flat menu-category buttons 文件/编辑/视图/窗口/帮助
 // (each pops its native submenu). Then a drag spacer; native min/max/close
 // sit in the titleBarOverlay region reserved by the topbar's env() right padding.
 
 import React from 'react';
 import { FilterButton } from '../components/FilterPopover';
-import type { ListFilter } from '../router';
+import { SortButton } from '../components/SortPopover';
+import type { ListFilter, SortKey } from '../router';
 
 const MENU_CATEGORIES = ['文件', '编辑', '视图', '窗口', '帮助'] as const;
 
@@ -13,7 +14,9 @@ export const Topbar: React.FC<{
   onOpenPalette: () => void;
   listFilter: ListFilter;
   onSelectFilter: (f: ListFilter) => void;
-}> = ({ onOpenPalette, listFilter, onSelectFilter }) => {
+  listSort: SortKey;
+  onSelectSort: (s: SortKey) => void;
+}> = ({ onOpenPalette, listFilter, onSelectFilter, listSort, onSelectSort }) => {
   return (
     <header className="topbar">
       <div className="topbar__brand">
@@ -23,6 +26,7 @@ export const Topbar: React.FC<{
 
       <div className="topbar__tools">
         <FilterButton filter={listFilter} onSelect={onSelectFilter} />
+        <SortButton sort={listSort} onSelect={onSelectSort} />
         <button
           type="button"
           className="icon-btn topbar__tool"
