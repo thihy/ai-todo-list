@@ -147,6 +147,12 @@ export const AIPane: React.FC = () => {
   // duplicating a question bubble that's still on screen. null when no user
   // question has scrolled out of view (e.g. at the top of the conversation).
   const [activeQuestionId, setActiveQuestionId] = useState<string | null>(null);
+  // Vertical push applied to the pinned banner so it hands off smoothly to its
+  // own visible bubble instead of stacking a duplicate: while the active bubble
+  // is still partially visible just under the header, translateY slides the
+  // banner up (negative); once the bubble has fully scrolled under the header
+  // it returns to 0 (banner at rest). 0 when no banner is shown.
+  const [pinTranslateY, setPinTranslateY] = useState(0);
 
   // Files the user picked via the composer's + button. We read them as
   // text in main (app.pickFile), so each entry carries the inlined text
@@ -273,19 +279,37 @@ export const AIPane: React.FC = () => {
     const container = scrollRef.current;
     if (!container) return;
     const head = stickyHeadRef.current;
-    // Threshold = bottom of the sticky header (title). A user bubble is
-    // "scrolled out of view" once its bottom edge is at/above this line.
-    const threshold = head ? head.getBoundingClientRect().bottom : container.getBoundingClientRect().top;
+    // T = bottom edge of the sticky header (the title). A user bubble becomes
+    // "active" the moment its TOP crosses under this line — i.e. as soon as it
+    // is the topmost question at/under the header. Switching on TOP (not the
+    // bottom) is what prevents the lag where the previous question's banner
+    // sat over the next answer: the banner updates the instant the next
+    // question reaches the top, not after it has fully scrolled past.
+    const t = head ? head.getBoundingClientRect().bottom : container.getBoundingClientRect().top;
+    // Banner height from the live overlay (0 while no banner is rendered).
+    const overlay = container.querySelector<HTMLElement>('.aipane__currentq-overlay');
+    const bannerH = overlay ? overlay.getBoundingClientRect().height : 0;
     const bubbles = Array.from(container.querySelectorAll<HTMLElement>('[data-user-q]'));
-    let next: string | null = null;
-    for (const b of bubbles) {
-      if (b.getBoundingClientRect().bottom <= threshold + 1) {
-        next = b.dataset.turnId ?? null;
-      } else {
-        break; // conversation-ordered; the first not-yet-scrolled-out stops us
-      }
+    let activeIdx = -1;
+    for (let i = 0; i < bubbles.length; i++) {
+      if (bubbles[i]!.getBoundingClientRect().top <= t + 1) activeIdx = i;
+      else break; // conversation-ordered; first not-yet-at-top stops us
+    }
+    const next = activeIdx >= 0 ? (bubbles[activeIdx]!.dataset.turnId ?? null) : null;
+    // Push-up: while the active bubble's bottom pokes below T (still partially
+    // visible just under the header), translate the banner up by that overflow
+    // so it recedes into the header and the visible bubble takes over — never
+    // two copies of the same question. Capped at bannerH (fully hidden).
+    // Once the bubble's bottom passes fully under the header (<= T) the banner
+    // sits at rest (0) and shows the question.
+    let pinY = 0;
+    if (activeIdx >= 0 && bannerH > 0) {
+      const activeBottom = bubbles[activeIdx]!.getBoundingClientRect().bottom;
+      const overflow = Math.max(0, activeBottom - t);
+      pinY = -Math.min(overflow, bannerH);
     }
     setActiveQuestionId((prev) => (prev === next ? prev : next));
+    setPinTranslateY((prev) => (prev === pinY ? prev : pinY));
   }, []);
 
   // Recompute on scroll (rAF-throttled) and whenever the turn list / active
@@ -809,7 +833,11 @@ export const AIPane: React.FC = () => {
             instant the original bubble is visible it isn't pinned, so the user
             never sees the same question twice. */}
         {!bootError && activeQuestion && (
-          <div className="aipane__currentq-overlay" aria-hidden="false">
+          <div
+            className="aipane__currentq-overlay"
+            aria-hidden="false"
+            style={{ transform: `translateY(${pinTranslateY}px)` }}
+          >
             <div className="aipane__currentq-pin bubble bubble--user" role="status" aria-label="当前问题">
               <span className="aipane__currentq-text">
                 {activeQuestion.user}
