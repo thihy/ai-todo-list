@@ -1,6 +1,6 @@
 // Single source of truth for IPC handlers wiring, window factory, lifecycle.
 
-import { app, BrowserWindow, shell, protocol, net, Menu, dialog } from 'electron';
+import { app, BrowserWindow, shell, protocol, net, Menu, dialog, WebContentsView } from 'electron';
 import { join } from 'node:path';
 import { mkdirSync, readFileSync, statSync, readdirSync, existsSync } from 'node:fs';
 import { cpSync } from 'node:fs';
@@ -152,6 +152,10 @@ function bootstrap(): void {
     registerContentHandlers(md, drawings);
     registerDocumentHandlers(docs);
     registerInboxHandlers(inbox);
+    // AIPane host. The renderer pushes its measured placeholder bounds +
+    // visibility here; main mounts/resizes/collapses the WebContentsView that
+    // hosts @deepseek-ai/dsh-web-frontend (no <iframe> — see docblock above).
+    registerAipaneLayoutHandler();
 
     // attachment://<id> → serve the inbox_attachments file bytes. Registered
     // after the inbox store exists so the handler closure can capture it.
@@ -733,10 +737,22 @@ function registerAppHandlers(): void {
 }
 
 // ----------------------------------------------------------------------------
-// dsh-web:// protocol — serves the built @deepseek-ai/dsh-web-frontend dist.
-// The AIPanel mounts <iframe src="dsh-web://index.html"> and lets the official
-// DSH web frontend handle all AI chat / tool / reasoning rendering. We do not
+// dsh-web:// protocol + WebContentsView host
+//
+// The AIPane hosts the official @deepseek-ai/dsh-web-frontend (consumed as the
+// npm dep @deepseek-ai/dsh-web-frontend — its dist/ is a self-contained Vite
+// build that handles all AI chat / tool / reasoning rendering). We do NOT
 // self-implement that UI in our renderer (per project directive).
+//
+// Hosting strategy: a single Electron `WebContentsView` is added to the main
+// BrowserWindow's contentView (no <iframe> — iframe's separate document,
+// sandbox, and pointer-event quirks fight the rest of the app's chrome).
+// The renderer measures its AIPane placeholder div with a ResizeObserver and
+// pushes the bounds + visibility to main via the `aipane.layout` IPC channel;
+// main forwards bounds to `WebContentsView.setBounds()` and detaches the view
+// when the panel is collapsed. The view is created lazily on first show and
+// kept alive across show/hide so the DSH web frontend's open-thread / scroll
+// state is preserved.
 //
 // The dist is consumed as an npm package (workspace-installed under
 // node_modules/@deepseek-ai/dsh-web-frontend/dist/). Electron's asar-aware fs
@@ -805,9 +821,12 @@ function registerDshWebProtocol(): void {
   });
 }
 
-/** Self-contained fallback page for the AIPanel iframe. Renders when the
+/** Self-contained fallback page for the AIPanel host. Renders when the
  *  npm-installed dsh-web-frontend package is missing or broken — explains the
- *  recovery step and confirms the AI session/IPC machinery is still wired. */
+ *  recovery step and confirms the AI session/IPC machinery is still wired.
+ *  Served directly by the dsh-web:// protocol (the WebContentsView loads
+ *  dsh-web://index.html, which transparently falls back to this HTML when
+ *  the dist is unavailable). */
 const DSH_WEB_PLACEHOLDER_HTML = `<!DOCTYPE html>
 <html lang="zh-Hans">
 <head>
@@ -845,3 +864,103 @@ const DSH_WEB_PLACEHOLDER_HTML = `<!DOCTYPE html>
   </div>
 </body>
 </html>`;
+
+// ----------------------------------------------------------------------------
+// AIPane WebContentsView lifecycle
+//
+// A single WebContentsView is shared across show/hide cycles so the dsh-web
+// frontend preserves its scroll position, open thread, input draft, and any
+// in-flight subscription across panel toggles. The view's parent is always
+// the main BrowserWindow's contentView (there is only one BrowserWindow).
+// ----------------------------------------------------------------------------
+
+/** The lazily-created WebContentsView that hosts the DSH web frontend. Kept
+ *  alive between panel show/hide cycles to preserve state. Null until the
+ *  renderer first signals the AIPane is visible. */
+let dshWebView: WebContentsView | null = null;
+
+/** Whether the view is currently a child of some BrowserWindow's contentView.
+ *  When false, the view either was never mounted (dshWebView === null) or
+ *  was detached via removeChildView because the renderer signaled
+ *  `visible: false`. */
+let dshWebViewAttached = false;
+
+function ensureDshWebView(): WebContentsView {
+  if (dshWebView !== null) return dshWebView;
+  // Sandbox: the DSH web frontend is a Vite-built SPA — it doesn't need
+  // Node integration. contextIsolation is on by default. We intentionally
+  // do NOT inject a preload: the web frontend talks to our main process
+  // through standard browser APIs (fetch to dsh-web://index.html for the
+  // dist; its own transport — set up by DSH runtime — talks to the AI
+  // backend). If a future bridge is needed, add a preload here rather than
+  // flipping nodeIntegration on.
+  dshWebView = new WebContentsView({
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+  // The view is hidden by default until the renderer pushes bounds.
+  // setBackgroundThrottling is on by default in Electron; left alone.
+  return dshWebView;
+}
+
+/** Mount (or move) the AIPane WebContentsView into `win`'s contentView at
+ *  `bounds`, and ensure it's loading `dsh-web://index.html` (idempotent:
+ *  loadURL only fires on first mount). */
+function attachDshWebView(win: BrowserWindow, bounds: { x: number; y: number; width: number; height: number }): void {
+  const view = ensureDshWebView();
+  if (!dshWebViewAttached) {
+    win.contentView.addChildView(view);
+    dshWebViewAttached = true;
+    // First mount only — kick off the navigation. Subsequent shows reuse
+    // the same webContents and preserve its in-memory state.
+    if (view.webContents.getURL() === '') {
+      void view.webContents.loadURL('dsh-web://index.html');
+    }
+  }
+  view.setBounds(bounds);
+}
+
+/** Detach the AIPane WebContentsView from its current BrowserWindow's
+ *  contentView. The view object + its webContents stay alive so the next
+ *  `attach` is instant (no reload) and preserves the dsh-web frontend's
+ *  internal state. */
+function detachDshWebView(): void {
+  if (!dshWebViewAttached || dshWebView === null) return;
+  // Find the parent BrowserWindow by walking all windows. There's only one
+  // BrowserWindow in this app, but we don't capture a reference at module
+  // load (the window can be recreated mid-session).
+  for (const w of BrowserWindow.getAllWindows()) {
+    if (w.isDestroyed()) continue;
+    if (w.contentView.children.includes(dshWebView)) {
+      w.contentView.removeChildView(dshWebView);
+      break;
+    }
+  }
+  dshWebViewAttached = false;
+}
+
+/** IPC handler for the `aipane.layout` channel. The renderer pushes
+ *  `{ bounds, visible }` on every placeholder bounds change (via
+ *  ResizeObserver) and once more with `visible:false` on unmount. */
+function registerAipaneLayoutHandler(): void {
+  register('aipane.layout', (_e, req: { bounds: { x: number; y: number; width: number; height: number }; visible: boolean }) => {
+    try {
+      const win = BrowserWindow.fromWebContents(_e.sender);
+      if (!win || win.isDestroyed()) {
+        return Promise.resolve(okResult(undefined as never));
+      }
+      if (req.visible) {
+        attachDshWebView(win, req.bounds);
+      } else {
+        detachDshWebView();
+      }
+      return Promise.resolve(okResult(undefined as never));
+    } catch (err) {
+      return Promise.resolve(failResult('aipane_layout_failed', (err as Error).message));
+    }
+  });
+  logger.info('aipane.layout handler registered');
+}

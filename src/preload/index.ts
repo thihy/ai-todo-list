@@ -169,6 +169,9 @@ const api: ThihyApi = {
   aiUserApproval: {
     answer: (reqId, decision) => invoke('ai.userApproval.answer', { reqId, decision }),
   },
+  aipane: {
+    layout: (req) => invoke('aipane.layout', req),
+  },
   on: onAppEvent,
 };
 

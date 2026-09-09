@@ -675,16 +675,24 @@ a:hover {
 
 /* The iframe that hosts the DSH web frontend dist (served via dsh-web://).
    Fills the panel minus the left grip so the panel resize handle stays
-   clickable. The web frontend owns all internal scrolling and UI affordances
-   — we just give it the rectangular canvas. */
-.ai-pane__dsh-web {
+   /* AIPane host placeholder. The WebContentsView that renders the DSH web
+   frontend is mounted as a sibling of our renderer in the BrowserWindow's
+   contentView and painted ON TOP of this div at the bounds we push via
+   the aipane.layout IPC channel. The div itself must be fully filled and
+   hit-test transparent (the WebContentsView captures all input over it) —
+   see WebContentsView comment in main/index.ts. We give it a neutral
+   background as a one-frame fallback before the view paints, so the user
+   never sees a flash of the app's own chrome through the gap. */
+.ai-pane__host {
   display: block;
   width: 100%;
   height: 100%;
-  border: 0;
   background: var(--bg-surface);
-  /* Web frontend may use dark/light scheme; let it pick via prefers-color-scheme. */
+  /* Let the WebContentsView behind it pick its own color scheme — its
+     background is opaque so this fallback is only visible for a frame. */
   color-scheme: light dark;
+  /* Prevent any focus ring / outline from this purely-decorative div. */
+  outline: none;
 }
 
 .ai-panel__grip {

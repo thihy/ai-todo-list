@@ -271,6 +271,16 @@ export interface ThihyApi {
   aiUserApproval: {
     answer(reqId: string, decision: 'allow-once' | 'reject'): Promise<IpcResponse<'ai.userApproval.answer'>>;
   };
+  /**
+   * AIPane host. The renderer pushes its measured placeholder bounds + visibility
+   * to main; main mounts/unmounts the @deepseek-ai/dsh-web-frontend
+   * WebContentsView accordingly. Called from AIPane.tsx on mount + on every
+   * ResizeObserver tick while visible; called once more with `visible:false`
+   * on unmount.
+   */
+  aipane: {
+    layout(req: { bounds: { x: number; y: number; width: number; height: number }; visible: boolean }): Promise<IpcResponse<'aipane.layout'>>;
+  };
   on<E extends AppEvent>(event: E, cb: (payload: AppEventMap[E]) => void): () => void;
 }
 
