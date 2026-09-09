@@ -4481,6 +4481,46 @@ a:hover {
 .md-editor__textarea:focus { outline: none; }
 .md-editor__body--split .md-editor__textarea { border: 1px solid var(--border-default); border-radius: var(--radius-md); }
 
+/* Bottom status bar shared by both editors (RICH + MD). Sits inside the
+   editor column below the body so it always reports the active document's
+   state. Sized like the global statusbar so the rhythm matches the app's
+   other chrome rows. */
+.editor-statusbar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: 4px var(--space-sm);
+  border-top: 1px solid var(--border-default);
+  background: var(--bg-surface);
+  font-size: var(--font-xs);
+  color: var(--fg-muted);
+  min-height: var(--statusbar-h);
+}
+.editor-statusbar__item {
+  color: var(--fg-muted);
+  white-space: nowrap;
+}
+.editor-statusbar__sep {
+  opacity: 0.5;
+}
+.editor-statusbar__spacer {
+  flex: 1;
+}
+/* "已保存 X 秒前" / "保存中…" / "未保存" cluster on the right. Dirty and
+   saving states use accent colors so the user can tell at a glance whether
+   their last change has hit disk. */
+.editor-statusbar__save {
+  color: var(--fg-secondary);
+  font-weight: 500;
+}
+.editor-statusbar__save.is-dirty {
+  color: var(--accent-warn);
+}
+.editor-statusbar__save.is-saving {
+  color: var(--accent-primary);
+}
+
 /* Rendered markdown preview. The .md-preview block is the canonical home
  * for markdown typography — the WYSIWYG content uses its own rules. */
 .md-preview {

@@ -180,7 +180,17 @@ export const MarkdownEditor: React.FC<{
 }> = ({ value, version, onSave, saving, error }) => {
   const [md, setMd] = useState(value);
   const [view, setView] = useState<'write' | 'preview' | 'split'>('write');
+  const [lastSavedAt, setLastSavedAt] = useState<number | null>(null);
   const dirty = md !== value && md !== '';
+  // Wrap onSave so we can stamp lastSavedAt when the round-trip resolves —
+  // the status bar reads it to show "已保存 HH:MM:SS" after a save.
+  const onSaveWrapped = useCallback(
+    async (text: string): Promise<void> => {
+      await onSave(text);
+      setLastSavedAt(Date.now());
+    },
+    [onSave],
+  );
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   // Apply an edit and restore the textarea's selection on the next paint so
@@ -207,7 +217,7 @@ export const MarkdownEditor: React.FC<{
     const onKey = (e: KeyboardEvent): void => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
         e.preventDefault();
-        if (dirty) void onSave(md);
+        if (dirty) void onSaveWrapped(md);
       }
     };
     window.addEventListener('keydown', onKey);
@@ -406,7 +416,7 @@ export const MarkdownEditor: React.FC<{
         <button
           type="button"
           className={`md-editor__save${dirty ? ' is-dirty' : ''}`}
-          onClick={() => void onSave(md)}
+          onClick={() => void onSaveWrapped(md)}
           disabled={!dirty || saving}
         >
           {dirty ? '保存' : '已保存'}
@@ -429,9 +439,76 @@ export const MarkdownEditor: React.FC<{
           <Preview markdown={md} />
         )}
       </div>
+
+      {/* Status bar — word/char count + last-saved timestamp. The user
+          reads it as "is my work safe + how big is it" without leaving the
+          editor. Updates every second so the relative "Xs ago" stays
+          honest while the user is watching. */}
+      <EditorStatusBar
+        text={md}
+        lastSavedAt={lastSavedAt}
+        saving={saving}
+        dirty={dirty}
+      />
     </div>
   );
 };
+
+/** Bottom status bar shared by MarkdownEditor and WysiwygEditor. Shows
+ *  word count, char count, and "已保存 HH:MM:SS" (or "保存中…" / "未保存" /
+ *  "Xs 前已保存"). Re-renders once a second so the relative timestamp
+ *  stays current. */
+const EditorStatusBar: React.FC<{
+  text: string;
+  lastSavedAt: number | null;
+  saving: boolean;
+  dirty: boolean;
+}> = ({ text, lastSavedAt, saving, dirty }) => {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    if (lastSavedAt === null) return;
+    const t = window.setInterval(() => setTick((n) => n + 1), 1000);
+    return () => window.clearInterval(t);
+  }, [lastSavedAt]);
+  const words = text.trim() === '' ? 0 : text.trim().split(/\s+/u).length;
+  const chars = text.length;
+  const lines = text === '' ? 0 : text.split('\n').length;
+  const savedLabel = saving
+    ? '保存中…'
+    : dirty
+      ? '未保存'
+      : lastSavedAt === null
+        ? '尚未保存'
+        : `已保存 ${formatTimeAgo(lastSavedAt)}`;
+  return (
+    <div className="editor-statusbar" role="status" aria-live="polite">
+      <span className="editor-statusbar__item">字数 {words}</span>
+      <span className="editor-statusbar__sep" aria-hidden>·</span>
+      <span className="editor-statusbar__item">字符 {chars}</span>
+      <span className="editor-statusbar__sep" aria-hidden>·</span>
+      <span className="editor-statusbar__item">行 {lines}</span>
+      <span className="editor-statusbar__spacer" />
+      <span
+        className={`editor-statusbar__item editor-statusbar__save${dirty ? ' is-dirty' : ''}${saving ? ' is-saving' : ''}`}
+      >
+        {savedLabel}
+      </span>
+    </div>
+  );
+};
+
+function formatTimeAgo(ts: number): string {
+  const diff = Math.max(0, Date.now() - ts);
+  const sec = Math.floor(diff / 1000);
+  if (sec < 5) return '刚刚';
+  if (sec < 60) return `${sec} 秒前`;
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min} 分钟前`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr} 小时前`;
+  const d = Math.floor(hr / 24);
+  return `${d} 天前`;
+}
 
 /** Toolbar button — keeps the toolbar compact. The label is for screen
  *  readers; the icon/text inside is the visible affordance. */

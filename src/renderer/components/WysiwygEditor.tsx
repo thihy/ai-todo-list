@@ -33,6 +33,7 @@ export const WysiwygEditor: React.FC<{
   error: string | null;
 }> = ({ todoId, value, version, onSave, saving, error }) => {
   const [html, setHtml] = useState(value);
+  const [lastSavedAt, setLastSavedAt] = useState<number | null>(null);
   const { prompt, node: promptNode } = usePrompt();
   const dirty = html !== value && html !== '';
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -40,6 +41,13 @@ export const WysiwygEditor: React.FC<{
   // freshest closure without re-arming on every keystroke.
   const onSaveRef = useRef(onSave);
   onSaveRef.current = onSave;
+  const onSaveWrapped = useCallback(
+    async (text: string): Promise<void> => {
+      await onSave(text);
+      setLastSavedAt(Date.now());
+    },
+    [onSave],
+  );
 
   const persistPastedImage = useCallback(
     async (file: File, editor: Editor): Promise<void> => {
@@ -120,24 +128,24 @@ export const WysiwygEditor: React.FC<{
   useEffect(() => {
     if (!dirty || saving) return;
     saveTimer.current = setTimeout(() => {
-      void onSaveRef.current(html);
+      void onSaveWrapped(html);
     }, 1500);
     return () => {
       if (saveTimer.current) clearTimeout(saveTimer.current);
     };
-  }, [html, dirty, saving]);
+  }, [html, dirty, saving, onSaveWrapped]);
 
   // Cmd/Ctrl-S saves immediately.
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
         e.preventDefault();
-        if (dirty) void onSave(html);
+        if (dirty) void onSaveWrapped(html);
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [html, dirty, onSave]);
+  }, [html, dirty, onSaveWrapped]);
 
   // Pick an image file via the dialog and insert it.
   const pickImage = useCallback(async (): Promise<void> => {
@@ -202,14 +210,80 @@ export const WysiwygEditor: React.FC<{
         <button
           type="button"
           className="wysiwyg__save"
-          onClick={() => void onSave(html)}
+          onClick={() => void onSaveWrapped(html)}
           disabled={!dirty || saving}
         >
           {dirty ? '保存' : '已保存'}
         </button>
       </div>
       <EditorContent editor={editor} />
+      {/* Status bar — same shape as MarkdownEditor so the user has one
+          consistent "is my work safe + how big is it" reading across both
+          editor types. word/char counts come from the editor's plain text
+          (HTML markup excluded) so they match what the user actually wrote. */}
+      <EditorStatusBar
+        text={editor.getText()}
+        lastSavedAt={lastSavedAt}
+        saving={saving}
+        dirty={dirty}
+      />
       {promptNode}
     </div>
   );
 };
+
+/** Bottom status bar shared by both editors. Mirrors the MarkdownEditor
+ *  status bar exactly so the user reads the same affordances in both
+ *  contexts. Re-renders once a second so the relative timestamp stays
+ *  current. */
+const EditorStatusBar: React.FC<{
+  text: string;
+  lastSavedAt: number | null;
+  saving: boolean;
+  dirty: boolean;
+}> = ({ text, lastSavedAt, saving, dirty }) => {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    if (lastSavedAt === null) return;
+    const t = window.setInterval(() => setTick((n) => n + 1), 1000);
+    return () => window.clearInterval(t);
+  }, [lastSavedAt]);
+  const words = text.trim() === '' ? 0 : text.trim().split(/\s+/u).length;
+  const chars = text.length;
+  const lines = text === '' ? 0 : text.split('\n').length;
+  const savedLabel = saving
+    ? '保存中…'
+    : dirty
+      ? '未保存'
+      : lastSavedAt === null
+        ? '尚未保存'
+        : `已保存 ${formatTimeAgo(lastSavedAt)}`;
+  return (
+    <div className="editor-statusbar" role="status" aria-live="polite">
+      <span className="editor-statusbar__item">字数 {words}</span>
+      <span className="editor-statusbar__sep" aria-hidden>·</span>
+      <span className="editor-statusbar__item">字符 {chars}</span>
+      <span className="editor-statusbar__sep" aria-hidden>·</span>
+      <span className="editor-statusbar__item">行 {lines}</span>
+      <span className="editor-statusbar__spacer" />
+      <span
+        className={`editor-statusbar__item editor-statusbar__save${dirty ? ' is-dirty' : ''}${saving ? ' is-saving' : ''}`}
+      >
+        {savedLabel}
+      </span>
+    </div>
+  );
+};
+
+function formatTimeAgo(ts: number): string {
+  const diff = Math.max(0, Date.now() - ts);
+  const sec = Math.floor(diff / 1000);
+  if (sec < 5) return '刚刚';
+  if (sec < 60) return `${sec} 秒前`;
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min} 分钟前`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr} 小时前`;
+  const d = Math.floor(hr / 24);
+  return `${d} 天前`;
+}
