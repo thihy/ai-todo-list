@@ -13,7 +13,7 @@ describe('IPC channel registry', () => {
   it('accepts the full ai.conversation.* set (L4 regression guard)', () => {
     // channels.ts and ipc-schema.ts must agree on every conversation
     // channel — if DECLARED_CHANNELS forgets one, the renderer's
-    // window.thihy.conversation.* calls fail with unknown_channel.
+    // window.todoList.conversation.* calls fail with unknown_channel.
     const set = [
       'ai.conversation.list',
       'ai.conversation.create',

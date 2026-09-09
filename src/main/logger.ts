@@ -18,7 +18,7 @@ class Logger {
   private ensurePath(): string | null {
     if (this.logPath) return this.logPath;
     try {
-      const path = join(app.getPath('userData'), 'thihy.log');
+      const path = join(app.getPath('userData'), 'todo-list.log');
       mkdirSync(dirname(path), { recursive: true });
       this.logPath = path;
       return path;

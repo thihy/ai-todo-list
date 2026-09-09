@@ -15,7 +15,7 @@ export const CommandPaletteHost: React.FC<{
   useEffect(() => {
     if (!open) return;
     setQ('');
-    window.thihy.todo.list({}).then((res) => {
+    window.todoList.todo.list({}).then((res) => {
       if (res.ok) setTodos(res.data as Todo[]);
     });
   }, [open]);

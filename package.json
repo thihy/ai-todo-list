@@ -1,12 +1,12 @@
 {
-  "name": "thihy-todolist",
+  "name": "todo-list",
   "version": "0.1.0",
   "private": true,
   "description": "AI-native Electron TODO list with Markdown content and Excalidraw drawings, built on DeepSeek Harness (DSH)",
-  "appId": "com.thihy.todolist",
+  "appId": "com.todolist.app",
   "productName": "A待办",
-  "author": "thihy",
-  "copyright": "Copyright © 2026 thihy",
+  "author": "todo-list",
+  "copyright": "Copyright © 2026 todo-list",
   "main": "out/main/index.js",
   "type": "module",
   "scripts": {
@@ -38,6 +38,7 @@
     "@deepseek-ai/cordis-plugin-loader": "1.0.3",
     "@deepseek-ai/dsh-app-boot": "0.1.2-rc.1",
     "@deepseek-ai/dsh-base": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-client-ui-primitives": "0.1.5-alpha.2",
     "@deepseek-ai/dsh-llm": "0.1.2-rc.1",
     "@deepseek-ai/dsh-session": "0.1.2-rc.1",
     "@deepseek-ai/dsh-session-title": "0.1.2-rc.1",
@@ -45,7 +46,6 @@
     "@deepseek-ai/dsh-session-title-llm": "0.1.2-rc.1",
     "@deepseek-ai/dsh-tool-ask-user": "0.1.2-rc.1",
     "@deepseek-ai/dsh-tools": "0.1.2-rc.1",
-    "@deepseek-ai/dsh-web-frontend": "0.1.2-rc.1",
     "@excalidraw/excalidraw": "^0.18.0",
     "@tiptap/extension-image": "^3.31.3",
     "@tiptap/extension-link": "^3.31.3",
@@ -104,7 +104,7 @@
     }
   },
   "build": {
-    "appId": "com.thihy.todolist",
+    "appId": "com.todolist.app",
     "productName": "A待办",
     "npmRebuild": false,
     "directories": {

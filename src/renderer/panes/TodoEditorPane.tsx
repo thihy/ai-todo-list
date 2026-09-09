@@ -22,7 +22,7 @@
 // activity) has its own addressable region.
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { useTodo, useDocuments } from '../hooks/useThihyApi';
+import { useTodo, useDocuments } from '../hooks/useTodoListApi';
 import { usePrompt } from '../hooks/usePrompt';
 import { useFocusSync } from '../hooks/useFocusSync';
 import { DocumentsView } from '../components/DocumentsView';
@@ -46,7 +46,7 @@ const LinksView: React.FC<{ todoId: string }> = ({ todoId }) => {
     const url = await prompt('链接地址', 'https://');
     if (!url) return;
     const title = (await prompt('链接名称（可留空）')) || new URL(url).hostname;
-    const res = await window.thihy.document.create({ todoId, kind: 'link', title, url });
+    const res = await window.todoList.document.create({ todoId, kind: 'link', title, url });
     if (res.ok) {
       await refresh();
     }
@@ -79,7 +79,7 @@ const LinkRow: React.FC<{ doc: TaskDocument; onRemoved: () => Promise<void> }> =
       title="删除链接"
       onClick={() => {
         if (!window.confirm(`删除「${doc.title ?? doc.url}」？`)) return;
-        void window.thihy.document.remove(doc.id).then(onRemoved);
+        void window.todoList.document.remove(doc.id).then(onRemoved);
       }}
     >
       ×
@@ -109,10 +109,10 @@ export const TodoEditorPane: React.FC<{
   }, [todo]);
 
   const commitMeta = async (
-    patch: Parameters<typeof window.thihy.todo.update>[1],
+    patch: Parameters<typeof window.todoList.todo.update>[1],
   ): Promise<void> => {
     if (!todo) return;
-    await window.thihy.todo.update(todo.id, patch);
+    await window.todoList.todo.update(todo.id, patch);
   };
 
   // Push a task-level focus pointer. DocumentsView will push a more-specific
@@ -195,7 +195,7 @@ export const TodoEditorPane: React.FC<{
               className="editor-pane__section-action"
               title="在文件管理器中打开此任务的目录"
               aria-label="打开任务目录"
-              onClick={() => { void window.thihy.app.openTaskDir(todo.id); }}
+              onClick={() => { void window.todoList.app.openTaskDir(todo.id); }}
             >
               <IconExternal size={14} />
             </button>

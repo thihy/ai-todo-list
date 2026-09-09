@@ -1,7 +1,7 @@
 // Settings — API key, model, streaming, hotkey, theme, data directory.
 
 import React, { useEffect, useState } from 'react';
-import { useSettings } from '../hooks/useThihyApi';
+import { useSettings } from '../hooks/useTodoListApi';
 import type { AIModel } from '../../shared/ai-types';
 
 export const SettingsPane: React.FC = () => {

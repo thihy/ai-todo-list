@@ -154,7 +154,7 @@ export async function showAbout(): Promise<void> {
     type: 'info',
     title: '关于 A待办',
     message: 'A待办',
-    detail: `版本 ${app.getVersion()}\nAI 原生 TODO 清单 · Markdown 进展 · Excalidraw 绘图\nCopyright © 2026 thihy`,
+    detail: `版本 ${app.getVersion()}\nAI 原生 TODO 清单 · Markdown 进展 · Excalidraw 绘图\nCopyright © 2026 todo-list`,
     buttons: ['确定'],
   });
 }

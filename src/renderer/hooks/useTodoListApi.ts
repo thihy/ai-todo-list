@@ -1,7 +1,12 @@
-// Tiny hooks over window.thihy (the contextBridge API).
+// Tiny hooks over window.todoList (the contextBridge API).
+//
+// Each hook returns either the latest response (useTodo, useStats, useSettings)
+// or the latest data + a stable callback for refresh + writes (useProgress,
+// useDocuments, useDocument, useDrawing, useDrawings). Hooks use AbortController
+// to drop in-flight responses when the consuming component unmounts.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { ThihyApi, AppEvent, AppEventMap, SettingsPatchArgs } from '../../shared/thihy-api';
+import type { TodoListApi, AppEvent, AppEventMap, SettingsPatchArgs } from '../../shared/todo-list-api';
 import type { Todo, TodoFilter, SearchHit, TodoStats } from '../../shared/todo-types';
 import type { ContentVersionEntry, ProgressLogEntry } from '../../shared/todo-types';
 import type { TaskDocument } from '../../shared/todo-types';
@@ -12,7 +17,7 @@ import { useDataVersion } from '../data-bus';
 
 declare global {
   interface Window {
-    thihy: ThihyApi;
+    todoList: TodoListApi;
   }
 }
 
@@ -36,7 +41,7 @@ export function useTodos(filter: TodoFilter): {
 
   const refresh = useCallback(async () => {
     setLoading(true);
-    const res = await window.thihy.todo.list(filterRef.current);
+    const res = await window.todoList.todo.list(filterRef.current);
     setData(unwrap(res, [] as Todo[]));
     setLoading(false);
   }, []);
@@ -58,7 +63,7 @@ export function useTodo(id: string | null): { todo: Todo | null; loading: boolea
       return;
     }
     setLoading(true);
-    window.thihy.todo.get(id).then((res) => {
+    window.todoList.todo.get(id).then((res) => {
       setTodo(unwrap(res, null as Todo | null));
       setLoading(false);
     });
@@ -74,7 +79,7 @@ export function useSearch(q: string, limit = 50): { hits: SearchHit[] } {
       return;
     }
     const t = setTimeout(() => {
-      window.thihy.todo.search(q, limit).then((res) => setHits(unwrap(res, [])));
+      window.todoList.todo.search(q, limit).then((res) => setHits(unwrap(res, [])));
     }, 200);
     return () => clearTimeout(t);
   }, [q, limit]);
@@ -85,7 +90,7 @@ export function useStats(windowDays = 7): { stats: TodoStats | null } {
   const [stats, setStats] = useState<TodoStats | null>(null);
   const dataVersion = useDataVersion(['todos']);
   useEffect(() => {
-    window.thihy.todo.stats(windowDays).then((res) => setStats(unwrap(res, null as TodoStats | null)));
+    window.todoList.todo.stats(windowDays).then((res) => setStats(unwrap(res, null as TodoStats | null)));
   }, [windowDays, dataVersion]);
   return { stats };
 }
@@ -111,7 +116,7 @@ export function useBody(id: string | null): {
       setVersion(null);
       return;
     }
-    window.thihy.content.readBody(id).then((res) => {
+    window.todoList.content.readBody(id).then((res) => {
       const d = unwrap(res, { markdown: '', version: 0 });
       setBody(d.markdown);
       setVersion(d.version);
@@ -123,7 +128,7 @@ export function useBody(id: string | null): {
       if (!id) return;
       setSaving(true);
       setError(null);
-      const res = await window.thihy.content.writeBody(
+      const res = await window.todoList.content.writeBody(
         id,
         markdown,
         expectVersion ?? version ?? undefined,
@@ -145,7 +150,7 @@ export function useHistory(id: string | null): { versions: ContentVersionEntry[]
   const [versions, setVersions] = useState<ContentVersionEntry[]>([]);
   useEffect(() => {
     if (!id) return;
-    window.thihy.content.history(id).then((res) => setVersions(unwrap(res, [])));
+    window.todoList.content.history(id).then((res) => setVersions(unwrap(res, [])));
   }, [id]);
   return { versions };
 }
@@ -166,13 +171,13 @@ export function useProgress(todoId: string | null): {
       setEntries([]);
       return;
     }
-    window.thihy.progress.list(todoId).then((res) => setEntries(unwrap(res, [])));
+    window.todoList.progress.list(todoId).then((res) => setEntries(unwrap(res, [])));
   }, [todoId, dataVersion]);
 
   const log = useCallback(
     async (percent: number, note?: string) => {
       if (!todoId) return null;
-      const res = await window.thihy.progress.log(todoId, percent, note);
+      const res = await window.todoList.progress.log(todoId, percent, note);
       if (res.ok) {
         // Optimistic prepend for immediate UI feedback; the data-changed
         // broadcast will also trigger a full re-list via dataVersion.
@@ -186,7 +191,7 @@ export function useProgress(todoId: string | null): {
 
   const updateNote = useCallback(
     async (entryId: string, note: string | null) => {
-      const res = await window.thihy.progress.updateNote(entryId, note);
+      const res = await window.todoList.progress.updateNote(entryId, note);
       if (res.ok && res.data) {
         setEntries((prev) =>
           prev.map((e) => (e.id === entryId ? { ...e, note: res.data!.note } : e)),
@@ -210,7 +215,7 @@ export function useDrawings(todoId: string | null): {
       setDrawings([]);
       return;
     }
-    const res = await window.thihy.drawing.list(todoId);
+    const res = await window.todoList.drawing.list(todoId);
     setDrawings(unwrap(res, []));
   }, [todoId]);
   useEffect(() => {
@@ -235,7 +240,7 @@ export function useAttachments(todoId: string | null): {
       setAttachments([]);
       return;
     }
-    const res = await window.thihy.inbox.list({ todoId });
+    const res = await window.todoList.inbox.list({ todoId });
     setAttachments(unwrap(res, []));
   }, [todoId]);
   useEffect(() => {
@@ -259,7 +264,7 @@ export function useDocuments(todoId: string | null): {
       setDocuments([]);
       return;
     }
-    const res = await window.thihy.document.list(todoId);
+    const res = await window.todoList.document.list(todoId);
     setDocuments(unwrap(res, []));
   }, [todoId]);
   useEffect(() => {
@@ -287,7 +292,7 @@ export function useDocument(docId: string | null): {
       setVersion(null);
       return;
     }
-    window.thihy.document.read(docId).then((res) => {
+    window.todoList.document.read(docId).then((res) => {
       const d = unwrap(res, { content: '', version: 0 });
       setContent(d.content);
       setVersion(d.version);
@@ -299,7 +304,7 @@ export function useDocument(docId: string | null): {
       if (!docId) return;
       setSaving(true);
       setError(null);
-      const res = await window.thihy.document.write(
+      const res = await window.todoList.document.write(
         docId,
         next,
         expectVersion ?? version ?? undefined,
@@ -324,7 +329,7 @@ export function useDrawing(id: string | null): { scene: DrawingScene | null } {
       setScene(null);
       return;
     }
-    window.thihy.drawing.read(id).then((res) => {
+    window.todoList.drawing.read(id).then((res) => {
       const scene = unwrap(res, null) as DrawingScene | null;
       setScene(scene ?? null);
     });
@@ -339,18 +344,18 @@ export function useSettings(): {
 } {
   const [data, setData] = useState<SettingsGetRes | null>(null);
   const refresh = useCallback(async () => {
-    const res = await window.thihy.settings.get();
+    const res = await window.todoList.settings.get();
     if (res.ok) setData(res.data);
   }, []);
   const patch = useCallback(
     async (patch: SettingsPatchArgs) => {
-      const res = await window.thihy.settings.set(patch);
+      const res = await window.todoList.settings.set(patch);
       if (res.ok) setData(res.data);
     },
     [],
   );
   const chooseDataDir = useCallback(async () => {
-    const res = await window.thihy.settings.chooseDataDir();
+    const res = await window.todoList.settings.chooseDataDir();
     if (res.ok) return res.data.path;
     return null;
   }, []);
@@ -360,7 +365,7 @@ export function useSettings(): {
   // L4-E: re-fetch when the AI turns add cost. Without this the SettingsPane
   // shows stale `monthlyCostUsd` until the user reopens it.
   useEffect(() => {
-    return window.thihy.on('app:settings-changed', () => { void refresh(); });
+    return window.todoList.on('app:settings-changed', () => { void refresh(); });
   }, [refresh]);
   return { data, patch, chooseDataDir };
 }
@@ -372,7 +377,7 @@ export function useAppEvent<E extends AppEvent>(
   const cbRef = useRef(cb);
   cbRef.current = cb;
   useEffect(() => {
-    return window.thihy.on(event, (p) => cbRef.current(p));
+    return window.todoList.on(event, (p) => cbRef.current(p));
   }, [event]);
 }
 
@@ -392,7 +397,7 @@ export function useAiStream(): { events: AIStreamEvent[]; clear: () => void } {
 export function useModels(): { models: AIModel[] } {
   const [models, setModels] = useState<AIModel[]>([]);
   useEffect(() => {
-    window.thihy.ai.models().then((res) => {
+    window.todoList.ai.models().then((res) => {
       if (res.ok) setModels((res.data as { models: AIModel[] }).models);
     });
   }, []);

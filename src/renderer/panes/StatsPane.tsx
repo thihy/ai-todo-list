@@ -1,7 +1,7 @@
 // Stats — totals, completion rate, AI spend.
 
 import React from 'react';
-import { useStats } from '../hooks/useThihyApi';
+import { useStats } from '../hooks/useTodoListApi';
 
 export const StatsPane: React.FC = () => {
   const { stats } = useStats(7);

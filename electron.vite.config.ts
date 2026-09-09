@@ -31,7 +31,7 @@ export default defineConfig({
     },
     // Electron 33's sandboxed preload must be CommonJS; with package.json
     // "type": "module", the default output is .mjs (ESM), which sandbox mode
-    // refuses to load and leaves window.thihy undefined. Force CJS + .cjs so
+    // refuses to load and leaves window.todoList undefined. Force CJS + .cjs so
     // the preload actually runs.
     build: {
       rollupOptions: {

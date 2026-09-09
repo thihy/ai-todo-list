@@ -20,7 +20,7 @@ export const Statusbar: React.FC<{ route: Route }> = ({ route }) => {
   const [connected, setConnected] = useState(false);
   const dataVersion = useDataVersion(['todos']);
   useEffect(() => {
-    window.thihy.todo.list({}).then((res) => {
+    window.todoList.todo.list({}).then((res) => {
       if (res.ok) {
         const all = res.data as Todo[];
         setCounts({
@@ -29,7 +29,7 @@ export const Statusbar: React.FC<{ route: Route }> = ({ route }) => {
         });
       }
     });
-    window.thihy.settings.get().then((res) => {
+    window.todoList.settings.get().then((res) => {
       if (res.ok) setConnected((res.data as { connected: boolean }).connected);
     });
   }, [route.name, route.name === 'list' ? route.filter.kind : '', dataVersion]);

@@ -16,7 +16,7 @@
 // at-a-glance bar without duplicating the styling.
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { useProgress } from '../hooks/useThihyApi';
+import { useProgress } from '../hooks/useTodoListApi';
 
 export const ProgressBar: React.FC<{
   value: number;

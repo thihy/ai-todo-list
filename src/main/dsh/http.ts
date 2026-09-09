@@ -1,6 +1,6 @@
 // Shared HTTP helpers for the LLM transports.
 //
-// Used by ThihyLlmAdapter (the production OpenAI/Anthropic wire path) and by
+// Used by TodoListLlmAdapter (the production OpenAI/Anthropic wire path) and by
 // spike scripts that need to replay or mock a streaming call. Kept tiny and
 // dependency-free so it can run in any Node-side environment.
 

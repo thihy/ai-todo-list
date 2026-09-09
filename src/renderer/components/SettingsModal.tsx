@@ -4,9 +4,9 @@
 // + API key + streaming.
 
 import React, { useEffect, useState } from 'react';
-import { useSettings } from '../hooks/useThihyApi';
+import { useSettings } from '../hooks/useTodoListApi';
 import type { SettingsGetRes } from '../../shared/ipc-schema';
-import type { SettingsPatchArgs } from '../../shared/thihy-api';
+import type { SettingsPatchArgs } from '../../shared/todo-list-api';
 import {
   AI_PROVIDERS,
   PROVIDER_LABELS,

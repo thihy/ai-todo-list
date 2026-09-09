@@ -53,7 +53,7 @@ export const WysiwygEditor: React.FC<{
     async (file: File, editor: Editor): Promise<void> => {
       try {
         const dataUrl = await fileToDataUrl(file);
-        const res = await window.thihy.inbox.attachBlob({
+        const res = await window.todoList.inbox.attachBlob({
           todoId,
           dataUrl,
           filename: file.name || 'pasted',

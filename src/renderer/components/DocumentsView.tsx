@@ -19,7 +19,7 @@
 // "open editor" affordance; the + menu's 绘图 entry creates a new drawing.
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useDocuments, useDocument, useDrawings } from '../hooks/useThihyApi';
+import { useDocuments, useDocument, useDrawings } from '../hooks/useTodoListApi';
 import { usePrompt } from '../hooks/usePrompt';
 import { useFocusSync } from '../hooks/useFocusSync';
 import { WysiwygEditor } from './WysiwygEditor';
@@ -35,7 +35,7 @@ import {
   IconLink,
   IconPlus,
 } from './icons';
-import type { AppFocus } from '../../shared/thihy-api';
+import type { AppFocus } from '../../shared/todo-list-api';
 import type { DocumentKind, TaskDocument } from '../../shared/todo-types';
 
 const KIND_ICON: Record<DocumentKind, React.FC<{ size?: number }>> = {
@@ -68,17 +68,17 @@ function removeTab(tab: Tab, after: () => void): void {
     if (doc.kind === 'progress') return;
     if (!window.confirm(`删除「${doc.title ?? KIND_LABEL[doc.kind]}」？`)) return;
     if (doc.kind === 'attachment' && doc.refId) {
-      void window.thihy.inbox.remove({ id: doc.refId }).then(() => {
-        void window.thihy.document.remove(doc.id).then(after);
+      void window.todoList.inbox.remove({ id: doc.refId }).then(() => {
+        void window.todoList.document.remove(doc.id).then(after);
       });
     } else {
-      void window.thihy.document.remove(doc.id).then(after);
+      void window.todoList.document.remove(doc.id).then(after);
     }
     return;
   }
   // drawing
   if (!window.confirm(`删除绘图「${tab.title ?? '无标题'}」？`)) return;
-  void window.thihy.drawing.delete(tab.id).then(after);
+  void window.todoList.drawing.delete(tab.id).then(after);
 }
 
 const DocEditor: React.FC<{ doc: TaskDocument; todoId: string }> = ({ doc, todoId }) => {
@@ -124,7 +124,7 @@ const AttachmentView: React.FC<{ doc: TaskDocument }> = ({ doc }) => {
   useEffect(() => {
     if (!doc.refId) return;
     setLoading(true);
-    window.thihy.inbox
+    window.todoList.inbox
       .read({ id: doc.refId })
       .then((res) => {
         if (res.ok) setDataUrl(res.data.dataUrl);
@@ -255,10 +255,10 @@ export const DocumentsView: React.FC<{
         : tab.title ?? '绘图';
     if (next === current) return;
     if (tab.kind === 'document') {
-      const res = await window.thihy.document.rename(tab.doc.id, next);
+      const res = await window.todoList.document.rename(tab.doc.id, next);
       if (res.ok) await refresh();
     } else {
-      const res = await window.thihy.drawing.rename(tab.id, next);
+      const res = await window.todoList.drawing.rename(tab.id, next);
       if (res.ok) await refreshDrawings();
     }
   }, [editingId, editDraft, tabs, refresh, refreshDrawings]);
@@ -268,7 +268,7 @@ export const DocumentsView: React.FC<{
   }, []);
 
   const addNote = useCallback(async (): Promise<void> => {
-    const res = await window.thihy.document.create({ todoId, kind: 'note_md', title: '笔记' });
+    const res = await window.todoList.document.create({ todoId, kind: 'note_md', title: '笔记' });
     if (res.ok) {
       await refresh();
       setSelectedId(`d:${res.data.id}`);
@@ -283,7 +283,7 @@ export const DocumentsView: React.FC<{
       return;
     }
     const title = (await prompt('链接名称（可留空）')) || new URL(url).hostname;
-    const res = await window.thihy.document.create({ todoId, kind: 'link', title, url });
+    const res = await window.todoList.document.create({ todoId, kind: 'link', title, url });
     if (res.ok) {
       await refresh();
       setSelectedId(`d:${res.data.id}`);
@@ -306,14 +306,14 @@ export const DocumentsView: React.FC<{
         r.onerror = () => reject(r.error);
         r.readAsDataURL(file);
       });
-      const attRes = await window.thihy.inbox.attachBlob({
+      const attRes = await window.todoList.inbox.attachBlob({
         todoId,
         dataUrl,
         filename: file.name,
         mime: file.type || 'application/octet-stream',
       });
       if (attRes.ok) {
-        const docRes = await window.thihy.document.create({
+        const docRes = await window.todoList.document.create({
           todoId,
           kind: 'attachment',
           title: file.name,
@@ -333,7 +333,7 @@ export const DocumentsView: React.FC<{
   // The Excalidraw editor mounts directly inside the tab body — no separate
   // page navigation. (DrawingPane still exists for deep-link back-compat.)
   const addDrawing = useCallback(async (): Promise<void> => {
-    const res = await window.thihy.drawing.save(
+    const res = await window.todoList.drawing.save(
       todoId,
       { elements: [], appState: {} },
       undefined,

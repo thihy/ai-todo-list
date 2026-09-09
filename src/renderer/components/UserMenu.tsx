@@ -14,7 +14,7 @@ export const UserMenu: React.FC<{ onOpenSettings: () => void }> = ({ onOpenSetti
   // Fetch the OS login name once. We don't hardcode a name — the chip is the
   // current Windows user, not a preset persona.
   useEffect(() => {
-    window.thihy.app.osUser().then((res) => {
+    window.todoList.app.osUser().then((res) => {
       if (res.ok) setUsername(res.data.username);
     });
   }, []);
@@ -70,10 +70,10 @@ export const UserMenu: React.FC<{ onOpenSettings: () => void }> = ({ onOpenSetti
       {open && (
         <div className="user-menu__popup" role="menu">
           {item('设置', onOpenSettings)}
-          {item('关于', () => void window.thihy.app.action('about'))}
-          {item('检查更新', () => void window.thihy.app.action('checkUpdate'))}
+          {item('关于', () => void window.todoList.app.action('about'))}
+          {item('检查更新', () => void window.todoList.app.action('checkUpdate'))}
           <div className="user-menu__sep" aria-hidden="true" />
-          {item('退出', () => void window.thihy.app.action('quit'))}
+          {item('退出', () => void window.todoList.app.action('quit'))}
         </div>
       )}
     </div>

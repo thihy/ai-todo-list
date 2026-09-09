@@ -1,5 +1,5 @@
-// DSH runtime — boots the in-process agent tree, registers our ThihyLlmAdapter
-// for the 'thihy' provider route, registers our typed todo/content/drawing
+// DSH runtime — boots the in-process agent tree, registers our TodoListLlmAdapter
+// for the 'todo-list' provider route, registers our typed todo/content/drawing
 // tool handlers, and exposes runTurn() to drive an agent turn and stream
 // tokens + tool activity back to the renderer.
 //
@@ -366,7 +366,7 @@ async function bootPersistenceOnly(): Promise<{
     const bareBase = new URL('.', pathToFileURL(appRoot).href).href;
     const bootMod = await import('@deepseek-ai/dsh-app-boot');
     const { boot } = bootMod;
-    const ctx = (await boot('thihy-migrate', cfg, undefined, undefined, bareBase)) as DshContext;
+    const ctx = (await boot('todo-list-migrate', cfg, undefined, undefined, bareBase)) as DshContext;
     const persistence = ctx.get('sessionPersistence') as {
       list?: (signal?: AbortSignal) => Promise<Array<{ id: string; createdAt: number }>>;
       load?: (id: string, signal?: AbortSignal) => Promise<{
@@ -416,7 +416,7 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
 
   const bootMod = await import('@deepseek-ai/dsh-app-boot');
   const { boot } = bootMod;
-  const ctx = (await boot('thihy', cfg, undefined, undefined, bareBase)) as DshContext;
+  const ctx = (await boot('todo-list', cfg, undefined, undefined, bareBase)) as DshContext;
 
   // Surface the durable session layer: list what's already persisted under
   // <DSH_SESSIONS_ROOT> (see src/main/index.ts for the env var setup) so the
@@ -445,11 +445,11 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
     logger.warn(`DSH persistence list failed (non-fatal): ${(err as Error).message}`);
   }
 
-  // 1. Register our LLM adapter for the 'thihy' route.
+  // 1. Register our LLM adapter for the 'todo-list' route.
   const llm = ctx.get('llm') as { registerAdapter(providers: string[], adapter: unknown): () => void } | undefined;
   if (!llm) throw new Error('DSH booted but ctx.llm is absent');
-  const { ThihyLlmAdapter } = await import('./llm-adapter');
-  const disposeAdapter = llm.registerAdapter(['thihy'], new ThihyLlmAdapter({ getEndpoint: deps.getEndpoint }));
+  const { TodoListLlmAdapter } = await import('./llm-adapter');
+  const disposeAdapter = llm.registerAdapter(['todo-list'], new TodoListLlmAdapter({ getEndpoint: deps.getEndpoint }));
 
   // 2. Register our typed domain tools.
   const tools = ctx.get('tools') as { register(def: unknown): () => void } | undefined;
@@ -647,7 +647,7 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
 
     const handle = await agentsApi!.create({
       sessionId: SessionId(conversationId),
-      agentOptions: { provider: 'thihy', model },
+      agentOptions: { provider: 'todo-list', model },
     });
 
     const entry: ConversationEntry = {

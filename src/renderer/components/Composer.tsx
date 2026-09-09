@@ -42,7 +42,7 @@ export interface ExternalAiSubmitDetail {
 /** Fired on `window` when the user presses Enter (or clicks 发送给 AI 助手).
  *  Detail: ExternalAiSubmitDetail. The Composer does NOT create the task
  *  itself — it just hands the raw prompt + images off to the AI pane. */
-export const AI_SUBMIT_EVENT = 'thihy:ai-submit-external';
+export const AI_SUBMIT_EVENT = 'todo-list:ai-submit-external';
 
 export const Composer: React.FC<{
   onClose: () => void;

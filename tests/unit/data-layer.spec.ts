@@ -13,7 +13,7 @@ describe('TodoRepo + MarkdownStore', () => {
   let md: MarkdownStore;
 
   beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), 'thihy-'));
+    dir = mkdtempSync(join(tmpdir(), 'todo-list-'));
     handle = openDb(join(dir, 'db.sqlite'));
     repo = new TodoRepo(handle.db);
     md = new MarkdownStore(handle.db, join(dir, 'todos'));

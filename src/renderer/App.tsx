@@ -22,11 +22,11 @@ import { PaneDivider } from './components/PaneDivider';
 import { IconCheck } from './components/icons';
 import { usePaneWidths } from './hooks/usePaneWidths';
 import { parseHash, routeToHash, type Route, type ListFilter, type SortKey } from './router';
-import { useAppEvent, useTodo } from './hooks/useThihyApi';
+import { useAppEvent, useTodo } from './hooks/useTodoListApi';
 import { emitDataChanged } from './data-bus';
 import { IconFullscreenExit } from './components/icons';
 
-const AI_OPEN_KEY = 'thihy.aiOpen';
+const AI_OPEN_KEY = 'todo-list.aiOpen';
 
 type View = 'list' | 'stats' | 'drawing';
 

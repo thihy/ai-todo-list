@@ -13,7 +13,7 @@ export const Sidebar: React.FC<{
   const [todos, setTodos] = useState<Todo[]>([]);
   const dataVersion = useDataVersion(['todos']);
   useEffect(() => {
-    window.thihy.todo.list({}).then((res) => {
+    window.todoList.todo.list({}).then((res) => {
       if (res.ok) setTodos(res.data as Todo[]);
     });
   }, [dataVersion]);

@@ -6,7 +6,7 @@
 // default colour) so the palette stays in sync without a settings round-trip.
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useSettings } from '../hooks/useThihyApi';
+import { useSettings } from '../hooks/useTodoListApi';
 import { IconClose, IconPlus } from './icons';
 
 // A preset palette for tag colours. The user picks from these — no manual

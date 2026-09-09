@@ -8,7 +8,7 @@
 // only the hooks whose scopes actually changed re-run.
 
 import { useSyncExternalStore } from 'react';
-import type { DataScope } from '../shared/thihy-api';
+import type { DataScope } from '../shared/todo-list-api';
 
 const SCOPES: readonly DataScope[] = ['todos', 'content', 'drawings', 'conversations'];
 const scopeVersions = new Map<DataScope, number>(SCOPES.map((s) => [s, 0]));

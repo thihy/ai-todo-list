@@ -15,7 +15,7 @@ const Capture: React.FC = () => {
       return;
     }
     setSaving(true);
-    const res = await window.thihy.capture.submit({ title: v.split('\n')[0].slice(0, 200), markdown: v });
+    const res = await window.todoList.capture.submit({ title: v.split('\n')[0].slice(0, 200), markdown: v });
     setSaving(false);
     if (!res.ok) {
       setErr(res.message ?? '提交失败');

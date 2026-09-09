@@ -1,12 +1,12 @@
 // Endpoint resolution + health probe for the AI channels.
 //
 // This module is the *only* place that knows about provider/protocol details —
-// DSH's ThihyLlmAdapter reads ResolvedEndpoint at stream time (one call per
+// DSH's TodoListLlmAdapter reads ResolvedEndpoint at stream time (one call per
 // turn) so the user can change providers/keys without restarting. ai.health
 // uses the same resolver to probe reachability with a /models GET.
 //
 // History: an earlier `client.ts` carried a full OpenAI/Anthropic streaming
-// shim here; that path was replaced by ThihyLlmAdapter + DSH's agent loop,
+// shim here; that path was replaced by TodoListLlmAdapter + DSH's agent loop,
 // leaving only resolveEndpoint + healthCheck. The shim's helpers (sseData,
 // safeText, httpError, openAIHeaders) now live in `http.ts`.
 

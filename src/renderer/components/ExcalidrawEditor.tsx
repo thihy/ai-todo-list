@@ -9,7 +9,7 @@
 
 import React, { useEffect, useRef } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { useDrawing } from '../hooks/useThihyApi';
+import { useDrawing } from '../hooks/useTodoListApi';
 
 export const ExcalidrawEditor: React.FC<{
   /** Parent task — required so autosave knows which TODO this drawing belongs to. */
@@ -75,7 +75,7 @@ async function defaultSave(
   drawingId: string,
   scene: { elements?: unknown; appState?: unknown },
 ): Promise<void> {
-  await window.thihy.drawing.save(todoId, scene as never, drawingId);
+  await window.todoList.drawing.save(todoId, scene as never, drawingId);
 }
 
 function debounced<T extends (...args: never[]) => unknown>(fn: T, ms: number): T {

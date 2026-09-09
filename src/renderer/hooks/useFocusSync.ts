@@ -8,7 +8,7 @@
 // push replaces the broader one until it changes.
 
 import { useEffect, useRef } from 'react';
-import type { AppFocus } from '../../shared/thihy-api';
+import type { AppFocus } from '../../shared/todo-list-api';
 
 export function useFocusSync(focus: AppFocus | null): void {
   // Dedupe: only push when the focus actually changes (deep-equal cheap
@@ -19,7 +19,7 @@ export function useFocusSync(focus: AppFocus | null): void {
     const serialized = focus ? JSON.stringify(focus) : null;
     if (serialized === lastRef.current) return;
     lastRef.current = serialized;
-    void window.thihy.app.setFocus(focus).catch(() => {
+    void window.todoList.app.setFocus(focus).catch(() => {
       // Best-effort: the AI tool degrades gracefully if main can't be
       // reached. Don't surface an error — focus sync is invisible plumbing.
     });

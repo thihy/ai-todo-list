@@ -3,7 +3,7 @@
 // drawing edit surface is now embedded in DocumentsView via ExcalidrawEditor.
 
 import React, { useState } from 'react';
-import { useDrawings } from '../hooks/useThihyApi';
+import { useDrawings } from '../hooks/useTodoListApi';
 import { ExcalidrawEditor } from '../components/ExcalidrawEditor';
 
 export const DrawingPane: React.FC<{
@@ -18,7 +18,7 @@ export const DrawingPane: React.FC<{
   const onNew = async (): Promise<void> => {
     setCreating(true);
     try {
-      const res = await window.thihy.drawing.save(todoId, { elements: [], appState: {} }, undefined, '新绘图');
+      const res = await window.todoList.drawing.save(todoId, { elements: [], appState: {} }, undefined, '新绘图');
       if (res.ok) {
         await refresh();
         const d = res.data as { id: string };

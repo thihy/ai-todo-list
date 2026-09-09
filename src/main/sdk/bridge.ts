@@ -1,7 +1,7 @@
 // JSON-RPC bridge for external consumers (CI scripts, plugins, ACP transport).
 //
 // Listens on a Unix socket (Linux/macOS) or named pipe (Windows) and exposes the
-// same operations as ThihySdk over JSON-RPC 2.0. Each request is one of:
+// same operations as TodoListSdk over JSON-RPC 2.0. Each request is one of:
 //
 //   { jsonrpc: '2.0', id, method: 'todo.list', params: { filter } }
 //   { jsonrpc: '2.0', id, method: 'content.writeBody', params: { id, markdown } }
@@ -15,17 +15,17 @@ import { createServer, type Server, type Socket } from 'node:net';
 import { existsSync, mkdirSync, unlinkSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
-import type { ThihySdk } from './sdk';
+import type { TodoListSdk } from './sdk';
 import { logger } from '../logger';
 
 const DEFAULT_PATH = process.platform === 'win32'
-  ? '\\\\.\\pipe\\thihy-todolist'
-  : join(tmpdir(), 'thihy-todolist.sock');
+  ? '\\\\.\\pipe\\todo-list'
+  : join(tmpdir(), 'todo-list.sock');
 
 export class JsonRpcBridge {
   private server: Server | null = null;
 
-  constructor(private sdk: ThihySdk, private socketPath: string = DEFAULT_PATH) {}
+  constructor(private sdk: TodoListSdk, private socketPath: string = DEFAULT_PATH) {}
 
   start(): void {
     if (this.server) return;

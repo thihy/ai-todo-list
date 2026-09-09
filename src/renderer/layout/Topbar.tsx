@@ -43,7 +43,7 @@ export const Topbar: React.FC<{
               type="button"
               className="topbar__menu-item"
               role="menuitem"
-              onClick={() => void window.thihy.app.popupMenuCategory(cat)}
+              onClick={() => void window.todoList.app.popupMenuCategory(cat)}
             >
               {cat}
             </button>

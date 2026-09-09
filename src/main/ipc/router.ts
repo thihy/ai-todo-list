@@ -67,7 +67,7 @@ export function installRouter(): void {
 
   // We use ipcMain.handle with a single proxy channel so all calls go through one router.
   // Each renderer invokes through preload using the real channel string.
-  ipcMain.handle('__thihy_router__', async (event, channel: string, payload: unknown) => {
+  ipcMain.handle('__todo_router__', async (event, channel: string, payload: unknown) => {
     const fn = (wrapped as Record<string, unknown>)[channel];
     if (typeof fn !== 'function') {
       logger.warn(`router: unknown_channel rejected: ${channel}`);

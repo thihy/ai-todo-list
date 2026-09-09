@@ -1,7 +1,7 @@
-// ThihyLlmAdapter — the custom DSH LLM adapter that wraps our existing
+// TodoListLlmAdapter — the custom DSH LLM adapter that wraps our existing
 // 3-protocol HTTP transport (client.ts) so DSH's agent loop drives the user's
 // configured providers. This is the seam that lets us drop dsh-llm-deepseek /
-// dsh-llm-pi-ai: we register one adapter for the 'thihy' route and resolve the
+// dsh-llm-pi-ai: we register one adapter for the 'todo-list' route and resolve the
 // real endpoint from settings at call time.
 //
 // The adapter must emit provider-native tool-calling chunks (tool-call-delta +
@@ -40,13 +40,13 @@ export interface AdapterDeps {
   getEndpoint: () => ResolvedEndpoint | null;
 }
 
-export class ThihyLlmAdapter extends LlmAdapter {
+export class TodoListLlmAdapter extends LlmAdapter {
   constructor(private readonly deps: AdapterDeps) {
     super();
   }
 
   override providerInfo(provider: string) {
-    return { id: provider, name: 'thihy (OpenAI/Anthropic compatible)' };
+    return { id: provider, name: 'todo-list (OpenAI/Anthropic compatible)' };
   }
 
   override async listModels() {
@@ -80,7 +80,7 @@ export class ThihyLlmAdapter extends LlmAdapter {
       }
     } catch (err) {
       const message = (err as Error).message;
-      logger.warn(`ThihyLlmAdapter stream error: ${message}`);
+      logger.warn(`TodoListLlmAdapter stream error: ${message}`);
       yield { type: 'finish', reason: { kind: 'error', failure: { message, code: 'STREAM_ERROR' } } };
     }
   }

@@ -69,7 +69,7 @@ function safeUserDataDir(): string {
   } catch {
     const { tmpdir } = require('node:os') as typeof import('node:os');
     const { join } = require('node:path') as typeof import('node:path');
-    return join(tmpdir(), 'thihy-test-userData');
+    return join(tmpdir(), 'todo-list-test-userData');
   }
 }
 

@@ -19,7 +19,7 @@
 //     a focused row does the same.
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { useTodos } from '../hooks/useThihyApi';
+import { useTodos } from '../hooks/useTodoListApi';
 import type { ListFilter, SortKey } from '../router';
 import { ToastHost } from '../components/Toast';
 import type { ToastBus } from '../components/Toast';
@@ -43,7 +43,7 @@ export const TodoListPane: React.FC<{
 
   // Auto-refresh when a new todo is created elsewhere (capture window, AI).
   useEffect(() => {
-    const off = window.thihy.on('app:todo-created', () => {
+    const off = window.todoList.on('app:todo-created', () => {
       void refresh();
     });
     return off;
@@ -82,7 +82,7 @@ export const TodoListPane: React.FC<{
   // per-row action is 恢复 (clear deleted_at on the subtree), not delete.
   const deletedView = filter.kind === 'deleted';
   const onRestore = useCallback(async (id: string) => {
-    await window.thihy.todo.restore(id);
+    await window.todoList.todo.restore(id);
     await refresh();
   }, [refresh]);
 
@@ -92,7 +92,7 @@ export const TodoListPane: React.FC<{
   // task is still recoverable from the 已删除 filter view after that.
   const onDelete = useCallback(async (id: string) => {
     const todo = data.find((t) => t.id === id);
-    await window.thihy.todo.delete(id);
+    await window.todoList.todo.delete(id);
     await refresh();
     if (todo) {
       toastBus.push({
@@ -102,7 +102,7 @@ export const TodoListPane: React.FC<{
         action: {
           label: '恢复',
           run: () => {
-            void window.thihy.todo.restore(id).then(() => refresh());
+            void window.todoList.todo.restore(id).then(() => refresh());
           },
         },
       });
@@ -206,7 +206,7 @@ export const TodoListPane: React.FC<{
                     toggleExpanded={toggleExpanded}
                     archivedView={archivedView}
                     onCycle={async (next) => {
-                      await window.thihy.todo.update(t.id, { status: next });
+                      await window.todoList.todo.update(t.id, { status: next });
                       await refresh();
                     }}
                     onDelete={onDelete}
@@ -351,7 +351,7 @@ const TaskBranch: React.FC<{
               toggleExpanded={toggleExpanded}
               archivedView={archivedView}
               onCycle={async (next) => {
-                await window.thihy.todo.update(c.id, { status: next });
+                await window.todoList.todo.update(c.id, { status: next });
               }}
               onDelete={onDelete}
               onRestore={onRestore}
@@ -666,7 +666,7 @@ const DeletedRow: React.FC<{
   );
 };
 
-function filterToRepoFilter(f: ListFilter): Parameters<typeof window.thihy.todo.list>[0] {
+function filterToRepoFilter(f: ListFilter): Parameters<typeof window.todoList.todo.list>[0] {
   switch (f.kind) {
     case 'all': return {};
     case 'today': return { dueBefore: endOfToday(), dueAfter: startOfToday() };

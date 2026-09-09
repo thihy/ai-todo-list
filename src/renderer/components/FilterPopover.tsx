@@ -79,7 +79,7 @@ const PRIO_LABEL: Record<string, string> = { high: '高', medium: '中', low: '�
 const ProjectList: React.FC<{ filter: ListFilter; choose: (f: ListFilter) => void }> = ({ filter, choose }) => {
   const [tags, setTags] = useState<string[]>([]);
   useEffect(() => {
-    window.thihy.todo.list({}).then((res) => {
+    window.todoList.todo.list({}).then((res) => {
       if (res.ok) {
         const all = res.data as Todo[];
         setTags(Array.from(new Set(all.flatMap((t) => t.tags ?? []))).slice(0, 12));

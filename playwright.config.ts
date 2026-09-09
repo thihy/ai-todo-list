@@ -6,7 +6,7 @@ export default defineConfig({
   workers: 1,
   reporter: 'list',
   use: {
-    baseURL: 'app://thihy-todolist',
+    baseURL: 'app://todo-list',
     trace: 'retain-on-failure',
   },
   projects: [{ name: 'electron', use: { ...devices['Desktop Chrome'] } }],

@@ -6,8 +6,8 @@
 
 import { useCallback, useEffect, useState } from 'react';
 
-const LIST_KEY = 'thihy.pane.listW';
-const AI_KEY = 'thihy.pane.aiW';
+const LIST_KEY = 'todo-list.pane.listW';
+const AI_KEY = 'todo-list.pane.aiW';
 
 const LIST_DEFAULT = 340;
 const AI_DEFAULT = 384;

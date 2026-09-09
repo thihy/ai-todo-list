@@ -17,7 +17,7 @@ describe('InboxStore', () => {
   let inbox: InboxStore;
 
   beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), 'thihy-inbox-'));
+    dir = mkdtempSync(join(tmpdir(), 'todo-list-inbox-'));
     handle = openDb(join(dir, 'db.sqlite'));
     repo = new TodoRepo(handle.db);
     inbox = new InboxStore(handle.db, join(dir, 'attachments'));

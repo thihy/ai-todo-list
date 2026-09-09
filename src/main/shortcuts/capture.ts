@@ -69,7 +69,7 @@ export class CaptureController {
     const win = new BrowserWindow(opts);
     const devUrl = process.env['ELECTRON_RENDERER_URL'];
     if (devUrl) void win.loadURL(`${devUrl}/capture.html`);
-    else void win.loadURL('app://thihy-todolist/capture.html');
+    else void win.loadURL('app://todo-list/capture.html');
     win.on('blur', () => setTimeout(() => win.hide(), 5_000));
     win.on('ready-to-show', () => {
       win.show();

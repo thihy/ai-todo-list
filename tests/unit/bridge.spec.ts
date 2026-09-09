@@ -13,11 +13,11 @@ import { unlinkSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { JsonRpcBridge } from '../../src/main/sdk/bridge';
-import type { ThihySdk } from '../../src/main/sdk/sdk';
+import type { TodoListSdk } from '../../src/main/sdk/sdk';
 
-const SOCKET = join(tmpdir(), `thihy-bridge-test-${Date.now()}.sock`);
+const SOCKET = join(tmpdir(), `todo-list-bridge-test-${Date.now()}.sock`);
 
-const fakeSdk: ThihySdk = {
+const fakeSdk: TodoListSdk = {
   todo: {
     list: () => [{ id: 't1', title: 'hello', status: 'next', priority: 'p2', tags: [], createdAt: 0, updatedAt: 0 } as never],
     get: () => null,

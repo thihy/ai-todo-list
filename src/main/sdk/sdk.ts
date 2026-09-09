@@ -19,7 +19,7 @@ import type {
   TodoStats,
 } from '../../shared/todo-types';
 
-export interface ThihySdk {
+export interface TodoListSdk {
   todo: {
     list(filter?: TodoFilter): Todo[];
     get(id: string): Todo | null;
@@ -49,7 +49,7 @@ export function createSdk(deps: {
   repo: TodoRepo;
   md: MarkdownStore;
   drawings: DrawingStore;
-}): ThihySdk {
+}): TodoListSdk {
   return {
     todo: {
       list: (filter = {}) => deps.repo.list(filter),

@@ -10,7 +10,7 @@ let dir: string;
 let store: SettingsStore;
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), 'thihy-settings-'));
+  dir = mkdtempSync(join(tmpdir(), 'todo-list-settings-'));
   store = new SettingsStore(dir);
 });
 

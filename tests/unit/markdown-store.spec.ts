@@ -22,7 +22,7 @@ function seedTodo(id: string, title = 'test'): void {
 }
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), 'thihy-md-'));
+  dir = mkdtempSync(join(tmpdir(), 'todo-list-md-'));
   const handle = openDb(join(dir, 't.db'));
   db = handle.db;
   md = new MarkdownStore(db, join(dir, 'todos'));

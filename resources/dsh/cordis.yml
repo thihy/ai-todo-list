@@ -1,5 +1,5 @@
-# thihy-todolist DSH composition. Minimal agent tree: base LLM service (we
-# register our own ThihyLlmAdapter wrapping client.ts invokeChat after boot),
+# todo-list DSH composition. Minimal agent tree: base LLM service (we
+# register our own TodoListLlmAdapter wrapping client.ts invokeChat after boot),
 # tool registry (we register our todo/content/drawing handlers), system prompt,
 # session service + projection + JSONL persistence, agent factory, and the
 # agent loop. NO bash/editor/sandbox/terminal tools — this is a TODO app, not a
@@ -17,7 +17,7 @@
   name: '@deepseek-ai/dsh-system-prompt'
   config:
     persona: |-
-      你是 thihy，一个内嵌于个人 TODO 列表应用中的 AI 助手。
+      你是 todo-list，一个内嵌于个人 TODO 列表应用中的 AI 助手。
       - 始终使用中文回复用户。
 
       ## 工具总览（按场景）

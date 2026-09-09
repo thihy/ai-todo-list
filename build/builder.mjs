@@ -2,9 +2,9 @@ import electronBuilder from 'electron-builder';
 import type { Configuration } from 'electron-builder';
 
 const config: Configuration = {
-  appId: 'com.thihy.todolist',
-  productName: 'thihy-todolist',
-  copyright: 'Copyright © 2026 thihy',
+  appId: 'com.todolist.app',
+  productName: 'todo-list',
+  copyright: 'Copyright © 2026 todo-list',
   directories: {
     output: 'dist',
     buildResources: 'build',
@@ -13,8 +13,8 @@ const config: Configuration = {
   asarUnpack: ['**/*.{node,dll}'],
   publish: {
     provider: 'github',
-    owner: 'thihy',
-    repo: 'thihy-todolist',
+    owner: 'todo-list',
+    repo: 'todo-list',
     releaseType: 'release',
   },
   win: {

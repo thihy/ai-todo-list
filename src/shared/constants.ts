@@ -1,6 +1,6 @@
 // App-wide constants. Mirrored in openspec spec files.
 
-export const APP_NAME = 'thihy-todolist';
+export const APP_NAME = 'todo-list';
 export const APP_VERSION = '0.1.0';
 export const APP_USER_AGENT = `${APP_NAME}/${APP_VERSION}`;
 
@@ -8,7 +8,7 @@ export const DEFAULT_CAPTURE_HOTKEY = 'CommandOrControl+Shift+T';
 export const DEFAULT_THEME = 'system' as const;
 export const DEFAULT_PROVIDER = 'deepseek' as const;
 
-export const ROOT_DIR_NAME = '.thihy-todolist';
+export const ROOT_DIR_NAME = '.todo-list';
 export const DB_FILENAME = 'db.sqlite';
 export const CONFIG_FILENAME = 'config.json';
 export const TODOS_SUBDIR = 'todos';

@@ -19,7 +19,7 @@ import { SettingsStore } from '../settings/store';
 import { BrowserWindow, dialog } from 'electron';
 import { logger } from '../logger';
 import type { AIStreamEvent } from '../../shared/ai-types';
-import type { DataScope } from '../../shared/thihy-api';
+import type { DataScope } from '../../shared/todo-list-api';
 import { TodoRepo } from '../db/todo-repo';
 import { ConversationRepo } from '../db/conversation-repo';
 import { MarkdownStore } from '../files/markdown';
