@@ -1,4 +1,4 @@
-/* Thihy TODO list — light theme. Neutral graphite surfaces, emerald accent
+/* Todo List — light theme. Neutral graphite surfaces, emerald accent
  * (deliberately non-blue). WCAG 2.2 AA contrast ratios computed, not estimated.
  * Frameless title bar: the Topbar IS the title bar; native caption buttons are
  * themed via titleBarOverlay and the topbar reserves space with env() insets.
@@ -673,26 +673,49 @@ a:hover {
   overflow: visible;
 }
 
-/* The iframe that hosts the DSH web frontend dist (served via dsh-web://).
-   Fills the panel minus the left grip so the panel resize handle stays
-   /* AIPane host placeholder. The WebContentsView that renders the DSH web
-   frontend is mounted as a sibling of our renderer in the BrowserWindow's
-   contentView and painted ON TOP of this div at the bounds we push via
-   the aipane.layout IPC channel. The div itself must be fully filled and
-   hit-test transparent (the WebContentsView captures all input over it) —
-   see WebContentsView comment in main/index.ts. We give it a neutral
-   background as a one-frame fallback before the view paints, so the user
-   never sees a flash of the app's own chrome through the gap. */
+/* AIPane host: filled by the AIPane React component (currently a Scaffold
+   placeholder). The previous <webview> embed of @deepseek-ai/dsh-web-frontend
+   is gone; AI rendering now goes through @deepseek-ai/dsh-client-ui-primitives
+   atoms imported directly in renderer JSX. */
 .ai-pane__host {
-  display: block;
+  display: flex;
   width: 100%;
   height: 100%;
   background: var(--bg-surface);
-  /* Let the WebContentsView behind it pick its own color scheme — its
-     background is opaque so this fallback is only visible for a frame. */
+  /* Let the embedded DSH web frontend pick its own color scheme. */
   color-scheme: light dark;
-  /* Prevent any focus ring / outline from this purely-decorative div. */
-  outline: none;
+}
+
+/* AIPane React scaffold (replaces the previous webview embed). Real chat
+   UI lands later; for now this is the placeholder rendered by AIPane.tsx. */
+.ai-pane__react {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 16px;
+  gap: 12px;
+}
+.ai-pane__react-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ai-pane__react-title {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0;
+}
+.ai-pane__react-body {
+  flex: 1 1 auto;
+  overflow: auto;
+  padding: 8px 0;
+}
+.ai-pane__react-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-subtle);
 }
 
 .ai-panel__grip {
@@ -4528,6 +4551,36 @@ a:hover {
 }
 .editor-statusbar__spacer {
   flex: 1;
+}
+/* View-mode segmented control (编辑/预览/分屏) — lives in the status bar
+   (the top toolbar used to host it, but the user wants the topbar to be
+   format-affordances-only). Inline-flex segmented pill on the right side
+   of the bar, just before the save-state cluster. */
+.editor-statusbar__view {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 6px;
+  background: rgba(175, 184, 193, 0.18);
+}
+.editor-statusbar__view-btn {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 11.5px;
+  color: var(--fg-muted);
+  padding: 2px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+.editor-statusbar__view-btn:hover { color: var(--fg-default); }
+.editor-statusbar__view-btn.is-active {
+  background: var(--bg-surface);
+  color: var(--fg-default);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
 }
 /* "已保存 X 秒前" / "保存中…" / "未保存" cluster on the right. Dirty and
    saving states use accent colors so the user can tell at a glance whether

@@ -79,8 +79,6 @@ const DECLARED_CHANNELS: ReadonlySet<string> = new Set([
   'app.focus.get',
   // Open the task's documents directory in the OS file manager.
   'app.openTaskDir',
-  // AIPane host layout (mount/resize/collapse the dsh-web WebContentsView).
-  'aipane.layout',
 ]);
 
 export function isKnownChannel(name: string): name is IpcChannelName {

@@ -16,7 +16,7 @@
 //   - Enter continues the current list / quote block; an empty marker exits.
 //   - Backspace at column 0 of an empty list item removes the marker.
 
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   IconBold,
   IconCode,
@@ -30,6 +30,7 @@ import {
   IconQuote,
   IconStrike,
 } from './icons';
+import { MarkdownText, type MarkdownLabels } from '@deepseek-ai/dsh-client-ui-primitives';
 
 /** A textarea + value transform, returning the new value and selection. */
 interface EditResult {
@@ -345,20 +346,13 @@ export const MarkdownEditor: React.FC<{
 
   return (
     <div className="md-editor">
-      {/* Tabs + format toolbar share one row to keep the editor chrome
-          compact (the prior layout had tabs on row 1 and toolbar on row 2,
-          which burned vertical space in the body). Status + save still
+      {/* Format toolbar only — the 编辑/预览/分屏 mode switch was moved
+          into the bottom status bar (EditorStatusBar) so the topbar stays
+          a single, focused row of format affordances. Status + save still
           float right within the same row. */}
       <div className="md-editor__topbar">
-        <div className="md-editor__tabs">
-          <button type="button" className={`md-editor__tab${view === 'write' ? ' is-active' : ''}`} onClick={() => setView('write')} aria-pressed={view === 'write'}>编辑</button>
-          <button type="button" className={`md-editor__tab${view === 'preview' ? ' is-active' : ''}`} onClick={() => setView('preview')} aria-pressed={view === 'preview'}>预览</button>
-          <button type="button" className={`md-editor__tab${view === 'split' ? ' is-active' : ''}`} onClick={() => setView('split')} aria-pressed={view === 'split'}>分屏</button>
-        </div>
         {view !== 'preview' && (
-          <>
-            <span className="md-editor__tb-sep" aria-hidden="true" />
-            <div className="md-editor__toolbar" role="toolbar" aria-label="格式">
+          <div className="md-editor__toolbar" role="toolbar" aria-label="格式">
               <ToolbarBtn label="H1" title="一级标题 (Ctrl+Alt+1)" onClick={() => doLine('# ')}>
                 <span className="md-editor__tb-text">H1</span>
               </ToolbarBtn>
@@ -407,8 +401,7 @@ export const MarkdownEditor: React.FC<{
               <span className="md-editor__tb-hint" title="Ctrl/Cmd+B 粗体 · Ctrl/Cmd+I 斜体 · Ctrl/Cmd+K 链接 · Tab 缩进 · Shift+Tab 减少缩进 · 回车续行">
                 快捷键
               </span>
-            </div>
-          </>
+          </div>
         )}
         <span className="md-editor__spacer" />
         {saving && <span className="md-editor__status">保存中…</span>}
@@ -449,6 +442,8 @@ export const MarkdownEditor: React.FC<{
         lastSavedAt={lastSavedAt}
         saving={saving}
         dirty={dirty}
+        view={view}
+        onViewChange={setView}
       />
     </div>
   );
@@ -457,13 +452,18 @@ export const MarkdownEditor: React.FC<{
 /** Bottom status bar shared by MarkdownEditor and WysiwygEditor. Shows
  *  word count, char count, and "已保存 HH:MM:SS" (or "保存中…" / "未保存" /
  *  "Xs 前已保存"). Re-renders once a second so the relative timestamp
- *  stays current. */
+ *  stays current. The MarkdownEditor also passes `view` / `onViewChange`
+ *  to render the 编辑/预览/分屏 mode switch in the bar (it used to live
+ *  in the top toolbar, but the topbar is reserved for format affordances
+ *  now). */
 const EditorStatusBar: React.FC<{
   text: string;
   lastSavedAt: number | null;
   saving: boolean;
   dirty: boolean;
-}> = ({ text, lastSavedAt, saving, dirty }) => {
+  view?: 'write' | 'preview' | 'split';
+  onViewChange?: (v: 'write' | 'preview' | 'split') => void;
+}> = ({ text, lastSavedAt, saving, dirty, view, onViewChange }) => {
   const [, setTick] = useState(0);
   useEffect(() => {
     if (lastSavedAt === null) return;
@@ -488,6 +488,38 @@ const EditorStatusBar: React.FC<{
       <span className="editor-statusbar__sep" aria-hidden>·</span>
       <span className="editor-statusbar__item">行 {lines}</span>
       <span className="editor-statusbar__spacer" />
+      {view !== undefined && onViewChange && (
+        <div className="editor-statusbar__view" role="radiogroup" aria-label="视图模式">
+          <button
+            type="button"
+            role="radio"
+            aria-checked={view === 'write'}
+            className={`editor-statusbar__view-btn${view === 'write' ? ' is-active' : ''}`}
+            onClick={() => onViewChange('write')}
+          >
+            编辑
+          </button>
+          <button
+            type="button"
+            role="radio"
+            aria-checked={view === 'preview'}
+            className={`editor-statusbar__view-btn${view === 'preview' ? ' is-active' : ''}`}
+            onClick={() => onViewChange('preview')}
+          >
+            预览
+          </button>
+          <button
+            type="button"
+            role="radio"
+            aria-checked={view === 'split'}
+            className={`editor-statusbar__view-btn${view === 'split' ? ' is-active' : ''}`}
+            onClick={() => onViewChange('split')}
+          >
+            分屏
+          </button>
+        </div>
+      )}
+      <span className="editor-statusbar__sep" aria-hidden>·</span>
       <span
         className={`editor-statusbar__item editor-statusbar__save${dirty ? ' is-dirty' : ''}${saving ? ' is-saving' : ''}`}
       >
@@ -530,86 +562,23 @@ const ToolbarBtn: React.FC<{
   </button>
 );
 
+const PREVIEW_LABELS: MarkdownLabels = {
+  code: { copyLabel: '复制', copiedLabel: '已复制' },
+  footnotes: '脚注',
+};
+
 const Preview: React.FC<{ markdown: string }> = ({ markdown }) => {
-  const [html, setHtml] = useState('');
-  const hostRef = useRef<HTMLDivElement>(null);
-
-  // Render markdown → sanitised HTML. Mermaid blocks become
-  // <div class="mermaid"> placeholders (the custom code renderer); they're
-  // transformed to SVG in the effect below, AFTER the HTML is in the DOM.
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      const [{ marked }, { default: DOMPurify }] = await Promise.all([
-        import('marked'),
-        import('dompurify'),
-      ]);
-      const renderer = new marked.Renderer();
-      const origCode = renderer.code.bind(renderer);
-      renderer.code = (arg: unknown): string => {
-        // marked v16 calls code({ text, lang, escaped }). Support both the
-        // object form (v6+) and the legacy positional form.
-        const o = arg as { text?: string; lang?: string; escaped?: boolean };
-        if (o.lang === 'mermaid') {
-          // Mermaid reads the raw diagram text from the element's textContent;
-          // keep it unescaped so entities like &gt; survive verbatim.
-          return `<div class="mermaid">${o.text ?? ''}</div>`;
-        }
-        return origCode(arg as never);
-      };
-      marked.use({ gfm: true, breaks: false, renderer });
-      const raw = await marked.parse(markdown);
-      const clean = DOMPurify.sanitize(raw as string, {
-        // Mermaid's rendered SVG uses classes/attributes DOMPurify would
-        // strip by default; but we only sanitise the marked HTML here —
-        // mermaid.run injects SVG afterwards (post-sanitisation), so a plain
-        // config is safe and the diagram SVG is never passed through it.
-        ADD_ATTR: ['target'],
-      } as Record<string, unknown>);
-      if (!cancelled) setHtml(clean);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [markdown]);
-
-  // After the HTML is mounted, find .mermaid placeholders and render them.
-  // Dynamic-imported so note docs without diagrams don't load the library.
-  useEffect(() => {
-    if (!hostRef.current) return;
-    const nodes = hostRef.current.querySelectorAll<HTMLElement>('.mermaid');
-    if (nodes.length === 0) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const mermaid = (await import('mermaid')).default;
-        mermaid.initialize({ startOnLoad: false, theme: 'default', securityLevel: 'loose' });
-        // Re-init each placeholder (mermaid mutates them in place) and render.
-        const targets = Array.from(nodes) as HTMLElement[];
-        for (const n of targets) {
-          // mermaid expects the diagram source as the element's textContent;
-          // the placeholder already holds it. Clear any prior render id.
-          n.removeAttribute('data-processed');
-        }
-        await mermaid.run({ nodes: targets });
-      } catch {
-        // If a diagram is invalid, leave the raw source visible so the user
-        // sees the error rather than a blank box.
-        if (!cancelled) {
-          for (const n of Array.from(nodes)) n.classList.add('mermaid--error');
-        }
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [html]);
-
+  // MarkdownText does GFM + KaTeX + Shiki highlighting out of the box, with
+  // mermaid support added by the caller via a custom plugin if needed. We
+  // fall back to a no-render placeholder when there's nothing to render so
+  // the editor chrome stays in place (saves a render cycle per keystroke).
+  const empty = useMemo(() => markdown.trim() === '', [markdown]);
+  if (empty) {
+    return <div className="md-preview md-preview--empty">（无内容可预览）</div>;
+  }
   return (
-    <div
-      ref={hostRef}
-      className="md-preview"
-      dangerouslySetInnerHTML={{ __html: html }}
-    />
+    <div className="md-preview">
+      <MarkdownText text={markdown} labels={PREVIEW_LABELS} />
+    </div>
   );
 };

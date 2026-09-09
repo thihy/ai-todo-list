@@ -1,5 +1,5 @@
 // preload/index.ts — single context bridge.
-// Renderer accesses everything via window.thihy.* (see shared/thihy-api.ts).
+// Renderer accesses everything via window.todoList.* (see shared/todo-list-api.ts).
 // Sandboxed: no direct Node, no ipcRenderer without allowlisting.
 
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
@@ -12,7 +12,7 @@ import type {
 import type {
   AppEvent,
   AppEventMap,
-  ThihyApi,
+  TodoListApi,
   CaptureSubmitArgs,
   InboxAttachArgs,
   InboxAttachBlobArgs,
@@ -20,7 +20,7 @@ import type {
   InboxReadArgs,
   InboxRemoveArgs,
   SettingsPatchArgs,
-} from '../shared/thihy-api';
+} from '../shared/todo-list-api';
 
 // Cached at module load: list of channels whose response is a `void` (none for now).
 // Each call passes channel + payload; renderer never sees ipcRenderer directly.
@@ -36,11 +36,11 @@ function invoke<C extends IpcChannelName>(
       message: `Unknown channel: ${channel}`,
     } as IpcResponse<C>);
   }
-  return ipcRenderer.invoke('__thihy_router__', channel, req);
+  return ipcRenderer.invoke('__todo_router__', channel, req);
 }
 
 // Channel-list listeners: map event name to renderer-side listener.
-// Each `app:*` event coming from main is re-emitted on window.thihy.on*.
+// Each `app:*` event coming from main is re-emitted on window.todoList.on*.
 const APP_EVENTS: AppEvent[] = [
   'app:todo-created',
   'app:navigate',
@@ -55,7 +55,7 @@ const APP_EVENTS: AppEvent[] = [
   // pushes these when a DSH tool calls ask_user_question / a guarded
   // tool needs binary approval. The renderer renders the matching
   // inline card and posts the answer back via aiUserQuestion.answer /
-  // aiUserApproval.answer (defined below on the ThihyApi object).
+  // aiUserApproval.answer (defined below on the TodoListApi object).
   'ai:user-question-request',
   'ai:user-approval-request',
 ];
@@ -69,7 +69,7 @@ function onAppEvent<E extends AppEvent>(
   return () => ipcRenderer.removeListener(event, listener);
 }
 
-const api: ThihyApi = {
+const api: TodoListApi = {
   todo: {
     list: (filter) => invoke('todo.list', { filter }),
     get: (id) => invoke('todo.get', { id }),
@@ -169,13 +169,10 @@ const api: ThihyApi = {
   aiUserApproval: {
     answer: (reqId, decision) => invoke('ai.userApproval.answer', { reqId, decision }),
   },
-  aipane: {
-    layout: (req) => invoke('aipane.layout', req),
-  },
   on: onAppEvent,
 };
 
-contextBridge.exposeInMainWorld('thihy', api);
+contextBridge.exposeInMainWorld('todoList', api);
 
 // Allow-listed event channels for the renderer.
-contextBridge.exposeInMainWorld('__thihy_event_channels__', APP_EVENTS);
+contextBridge.exposeInMainWorld('__todo_event_channels__', APP_EVENTS);

@@ -389,25 +389,6 @@ export interface IpcRegistry {
   // task-scoped attachments. No-op (with `not_found`) if the task has no
   // directory on disk yet.
   'app.openTaskDir': IpcChannel<{ todoId: string }, IpcResult<{ path: string }>>;
-
-  // AIPane host layout. The renderer measures its AIPane placeholder div
-  // with a ResizeObserver and pushes `{ bounds, visible }` whenever either
-  // changes. Main mounts/unmounts the WebContentsView (which hosts the
-  // @deepseek-ai/dsh-web-frontend dist) and forwards `bounds` to
-  // `WebContentsView.setBounds()`. `visible:false` collapses the view to
-  // {0,0,0,0} and detaches it from the contentView so the panel is
-  // truly empty when collapsed.
-  'aipane.layout': IpcChannel<AIPaneLayoutReq, IpcResult<void>>;
-}
-
-export interface AIPaneLayoutReq {
-  /** Bounds of the AIPane placeholder div, in BrowserWindow contentView
-   *  coordinates (the renderer is the contentView's only webContents, so
-   *  getBoundingClientRect == contentView-local). */
-  bounds: { x: number; y: number; width: number; height: number };
-  /** True = mount (or update) the WebContentsView at these bounds.
-   *  False = detach from the contentView (panel collapsed). */
-  visible: boolean;
 }
 
 export interface AppFocus {
