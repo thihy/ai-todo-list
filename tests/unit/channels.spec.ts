@@ -29,6 +29,16 @@ describe('IPC channel registry', () => {
     }
   });
 
+  it('accepts the app focus + openTaskDir set (#174b regression guard)', () => {
+    // DocumentsView's fullscreen button + the open-directory icon both
+    // depend on these three being in DECLARED_CHANNELS. If the schema adds
+    // a channel but channels.ts misses it, the renderer call fails silently
+    // — pin them.
+    for (const c of ['app.focus.set', 'app.focus.get', 'app.openTaskDir']) {
+      expect(isKnownChannel(c)).toBe(true);
+    }
+  });
+
   it('rejects unknown channels', () => {
     expect(isKnownChannel('todo.explode')).toBe(false);
     expect(isKnownChannel('foo.bar')).toBe(false);

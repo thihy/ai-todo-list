@@ -131,6 +131,9 @@ const api: ThihyApi = {
     pickFile: (opts) => invoke('app.pickFile', opts ?? {}),
     action: (action) => invoke('app.action', { action }),
     osUser: () => invoke('app.osUser', undefined as never),
+    setFocus: (focus) => invoke('app.focus.set', { focus }),
+    getFocus: () => invoke('app.focus.get', undefined as never),
+    openTaskDir: (todoId) => invoke('app.openTaskDir', { todoId }),
   },
   capture: {
     submit: (args: CaptureSubmitArgs) => invoke('capture.submit', args),

@@ -10,6 +10,7 @@
 import type { TodoRepo } from '../db/todo-repo';
 import type { MarkdownStore } from '../files/markdown';
 import type { DrawingStore } from '../files/drawings';
+import type { DocumentStore } from '../files/documents';
 import type { SettingsStore } from '../settings/store';
 import type Database from 'better-sqlite3';
 import type { DshHandle, AIModel } from './types';
@@ -19,6 +20,9 @@ export interface InitArgs {
   repo: TodoRepo;
   md: MarkdownStore;
   drawings: DrawingStore;
+  /** DocumentStore — threaded through for the lazy DSH runtime so the
+   *  `app.currentContext` tool can enrich a document-kind focus pointer. */
+  docs: DocumentStore;
   settings: SettingsStore;
   db: Database.Database;
 }

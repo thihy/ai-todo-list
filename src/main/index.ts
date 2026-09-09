@@ -158,6 +158,14 @@ function bootstrap(): void {
     registerCaptureHandlers(repo, md);
     registerCapturePreviewHandler();
 
+    // AI-context: focus pointer (renderer→main "what's open") + open task dir.
+    // Needs `todosDir` + `todoId` so the openTaskDir handler can resolve a
+    // directory per-task; the focus handlers don't need any closure deps.
+    const { registerAppFocusHandlers } = await import('./ipc/app-handlers');
+    registerAppFocusHandlers({
+      resolveTaskDir: (todoId: string) => join(todosDir, todoId),
+    });
+
     // Set DSH_SESSIONS_ROOT BEFORE importing the DSH container, because the
     // cordis YAML loader evaluates `!js` expressions (like
     // `process.env.DSH_SESSIONS_ROOT`) at boot time when it parses
@@ -172,10 +180,10 @@ function bootstrap(): void {
     // DSH container (AI runtime) — lazy imported so app launches even if DSH init fails
     try {
       const { initDshContainer } = await import('./dsh/container');
-      const dsh = await initDshContainer({ repo, md, drawings, settings, db: handle.db });
+      const dsh = await initDshContainer({ repo, md, drawings, settings, db: handle.db, docs });
       const { registerAiHandlers, bindAiDeps } = await import('./ipc/ai-handlers');
       registerAiHandlers(dsh);
-      bindAiDeps({ dsh, settings, repo, conversations, md, drawings, db: handle.db, attachmentsDir });
+      bindAiDeps({ dsh, settings, repo, conversations, md, drawings, docs, db: handle.db, attachmentsDir });
       logger.info('DSH AI handlers registered');
 
       // L3-C: backfill DB rows for sessions that exist on disk but have no

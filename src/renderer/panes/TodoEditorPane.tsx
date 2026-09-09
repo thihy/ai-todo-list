@@ -24,6 +24,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useTodo, useDocuments } from '../hooks/useThihyApi';
 import { usePrompt } from '../hooks/usePrompt';
+import { useFocusSync } from '../hooks/useFocusSync';
 import { DocumentsView } from '../components/DocumentsView';
 import { InlineTitle } from '../components/InlineTitle';
 import { PriorityPicker } from '../components/PriorityPicker';
@@ -31,7 +32,7 @@ import { TagInput } from '../components/TagInput';
 import { DatePicker } from '../components/DatePicker';
 import { StatusSelect } from '../components/StatusSelect';
 import { ProgressInline, ProgressTimeline } from '../components/ProgressView';
-import { IconLink, IconPlus } from '../components/icons';
+import { IconExternal, IconLink, IconPlus } from '../components/icons';
 import type { Priority, TodoStatus, TaskDocument } from '../../shared/todo-types';
 
 /** 链接 section — manages link-kind documents in their own addressable region
@@ -88,7 +89,9 @@ const LinkRow: React.FC<{ doc: TaskDocument; onRemoved: () => Promise<void> }> =
 
 export const TodoEditorPane: React.FC<{
   todoId: string;
-}> = ({ todoId }) => {
+  /** Open the document workspace fullscreen (hides the task list; AI stays). */
+  onFullscreen?: () => void;
+}> = ({ todoId, onFullscreen }) => {
   const { todo, loading } = useTodo(todoId);
 
   const [tagDraft, setTagDraft] = useState<string[]>([]);
@@ -115,6 +118,17 @@ export const TodoEditorPane: React.FC<{
   if (loading || !todo) {
     return <div className="editor-pane__loading">加载中…</div>;
   }
+
+  // Push a task-level focus pointer. DocumentsView will push a more-specific
+  // document/drawing focus as the user picks tabs; this broader pointer is
+  // what the AI sees when the user is in the basic-info / links / activity
+  // regions (no doc open yet) — giving the AI at minimum the task's id and
+  // title so it can ground its answers.
+  useFocusSync({
+    kind: 'task',
+    todoId: todo.id,
+    taskTitle: todo.title,
+  });
 
   return (
     <div className="editor-pane editor-pane--sections">
@@ -176,8 +190,23 @@ export const TodoEditorPane: React.FC<{
         </section>
 
         <section className="editor-pane__section">
-          <h2 className="editor-pane__section-title">文档</h2>
-          <DocumentsView todoId={todo.id} />
+          <div className="editor-pane__section-head">
+            <h2 className="editor-pane__section-title">文档</h2>
+            <button
+              type="button"
+              className="editor-pane__section-action"
+              title="在文件管理器中打开此任务的目录"
+              aria-label="打开任务目录"
+              onClick={() => { void window.thihy.app.openTaskDir(todo.id); }}
+            >
+              <IconExternal size={14} />
+            </button>
+          </div>
+          <DocumentsView
+            todoId={todo.id}
+            taskTitle={todo.title}
+            onFullscreen={onFullscreen}
+          />
         </section>
 
         <section className="editor-pane__section" ref={activityRef}>

@@ -200,6 +200,14 @@ export interface ThihyApi {
     action(a: 'about' | 'checkUpdate' | 'quit'): Promise<IpcResponse<'app.action'>>;
     /** OS username for the bottom-left chip (no hardcoded preset identity). */
     osUser(): Promise<IpcResponse<'app.osUser'>>;
+    /** Renderer → main: tell main what's currently focused so the AI can
+     *  ground its answers via `app.currentContext`. Pass `null` to clear. */
+    setFocus(focus: AppFocus | null): Promise<IpcResponse<'app.focus.set'>>;
+    /** Renderer → main: read the current focus (used for sync after a reload
+     *  or for cross-window context). */
+    getFocus(): Promise<IpcResponse<'app.focus.get'>>;
+    /** Open the task's on-disk documents directory in the OS file manager. */
+    openTaskDir(todoId: string): Promise<IpcResponse<'app.openTaskDir'>>;
   };
   capture: {
     submit(args: CaptureSubmitArgs): Promise<IpcResponse<'capture.submit'>>;
@@ -264,6 +272,20 @@ export interface ThihyApi {
     answer(reqId: string, decision: 'allow-once' | 'reject'): Promise<IpcResponse<'ai.userApproval.answer'>>;
   };
   on<E extends AppEvent>(event: E, cb: (payload: AppEventMap[E]) => void): () => void;
+}
+
+/** Renderer-side mirror of the main `AppFocus` interface. Pushes what the
+ *  user is currently looking at so the AI can ground its answers in real
+ *  context via the `app.currentContext` DSH tool. */
+export interface AppFocus {
+  kind: 'document' | 'drawing' | 'task';
+  todoId: string;
+  documentId?: string;
+  documentKind?: string;
+  documentTitle?: string | null;
+  drawingId?: string;
+  drawingTitle?: string | null;
+  taskTitle?: string | null;
 }
 
 // Re-exports for renderer convenience.

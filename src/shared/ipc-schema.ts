@@ -376,6 +376,33 @@ export interface IpcRegistry {
   // The OS username for the bottom-left user chip (so we don't hardcode a
   // preset identity). Returns the login name from os.userInfo().
   'app.osUser': IpcChannel<undefined, IpcResult<{ username: string | null }>>;
+
+  // Renderer → main: the renderer pushes its "current focus" (what the user
+  // is looking at right now — a task / document / drawing). The AI's
+  // `app.currentContext` tool reads it so its answers are grounded in what
+  // the user has open. Pass `null` to clear (e.g. leaving a task).
+  'app.focus.set': IpcChannel<{ focus: AppFocus | null }, IpcResult<void>>;
+  'app.focus.get': IpcChannel<undefined, IpcResult<AppFocus | null>>;
+
+  // Open the task's on-disk document directory in the OS file manager.
+  // Shows the folder containing the task's body markdown + versions + any
+  // task-scoped attachments. No-op (with `not_found`) if the task has no
+  // directory on disk yet.
+  'app.openTaskDir': IpcChannel<{ todoId: string }, IpcResult<{ path: string }>>;
+}
+
+export interface AppFocus {
+  kind: 'document' | 'drawing' | 'task';
+  todoId: string;
+  /** Set when kind === 'document'. */
+  documentId?: string;
+  documentKind?: string;
+  documentTitle?: string | null;
+  /** Set when kind === 'drawing'. */
+  drawingId?: string;
+  drawingTitle?: string | null;
+  /** Set when kind === 'task' (no specific doc/drawing selected). */
+  taskTitle?: string | null;
 }
 
 export interface AppActionReq {

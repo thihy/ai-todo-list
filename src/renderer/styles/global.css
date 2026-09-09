@@ -2190,6 +2190,90 @@ a:hover {
   max-width: 320px;
 }
 
+/* ===== Fullscreen document mode =====
+ * The task list disappears; the right column becomes a tall DocumentsView
+ * with a slim header showing the task title + exit button. Esc / the ⛶
+ * button drop back to normal mode. The AI panel (rendered in App.tsx) is
+ * untouched, so the user can keep asking questions about what's on screen. */
+.task-detail--fullscreen { background: var(--bg-canvas); }
+.fullscreen-doc {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+.fullscreen-doc__header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  border-bottom: 1px solid var(--border-soft);
+  background: var(--bg-panel);
+}
+.fullscreen-doc__title {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--font-md);
+  font-weight: 600;
+  color: var(--fg-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.fullscreen-doc__exit {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: 4px 10px;
+  border-radius: var(--radius-md);
+  background: transparent;
+  border: 1px solid var(--border-soft);
+  color: var(--fg-secondary);
+  font-size: var(--font-xs);
+  cursor: pointer;
+  transition: background-color 0.12s ease, color 0.12s ease;
+}
+.fullscreen-doc__exit:hover {
+  background: var(--bg-soft);
+  color: var(--fg-primary);
+}
+.fullscreen-doc__body {
+  flex: 1;
+  min-height: 0;
+  padding: var(--space-md);
+  overflow: auto;
+}
+
+/* Section header with an inline action button next to the title
+ * (e.g. open-directory icon next to 文档). The h2 keeps its own line;
+ * the action sits to the right via flex. */
+.editor-pane__section-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  margin-bottom: var(--space-xs);
+}
+.editor-pane__section-head .editor-pane__section-title { margin-bottom: 0; }
+.editor-pane__section-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--fg-muted);
+  cursor: pointer;
+  transition: background-color 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+}
+.editor-pane__section-action:hover {
+  background: var(--bg-soft);
+  color: var(--fg-primary);
+  border-color: var(--border-soft);
+}
+
 /* ===== User menu (bottom-left chip) ===== */
 
 .user-menu {

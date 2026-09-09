@@ -32,6 +32,8 @@ import { resolveEndpoint, healthCheck } from './endpoints';
 import type { TodoRepo } from '../db/todo-repo';
 import type { MarkdownStore } from '../files/markdown';
 import type { DrawingStore } from '../files/drawings';
+import type { DocumentStore } from '../files/documents';
+import { getFocus } from '../app-context';
 import type { ConversationRepo } from '../db/conversation-repo';
 import type { SettingsStore } from '../settings/store';
 import type { TodoFilter, TodoStatus, TodoCreate, TodoPatch, Priority } from '../../shared/todo-types';
@@ -61,6 +63,9 @@ export interface DshRuntimeDeps {
   repo: TodoRepo;
   md: MarkdownStore;
   drawings: DrawingStore;
+  /** DocumentStore — used by the `app.currentContext` tool to enrich a
+   *  document-kind focus pointer with the full task_documents row. */
+  docs: DocumentStore;
   /** Required so the DSH session-title service can sync AI-generated titles
    *  back into the renderer's conversation list. Without this, titles stay
    *  in the session log and never appear in the sidebar. */
@@ -1007,7 +1012,7 @@ function registerDomainTools(
   ctx: DshContext,
 ): () => void {
   const disposers: Array<() => void> = [];
-  const { repo, md, drawings, conversations, db, attachmentsDir, settings } = deps;
+  const { repo, md, drawings, conversations, db, attachmentsDir, settings, docs } = deps;
   const reg = (def: unknown) => disposers.push(tools.register(def));
 
   // DSH's `output.render(args, value)` produces the MODEL-FACING content for a
@@ -1522,6 +1527,48 @@ function registerDomainTools(
     async execute() {
       const s = settings.get();
       return { monthlyCostUsd: s.monthlyCostUsd, lastHeartbeatAt: s.lastHeartbeatAt };
+    },
+  }));
+
+  // ---------------------------------------------------------------------------
+  // app.currentContext — "what is the user looking at right now".
+  //
+  // The renderer pushes its currently focused entity (task / document /
+  // drawing) to main via `app.focus.set` whenever the selection changes.
+  // This tool reads that pointer and enriches it with the full row so the
+  // model can ground its answer in real data — e.g. "rewrite the progress
+  // doc on the task I'm looking at" needs the task id + doc id, which this
+  // returns together.
+  //
+  // Returns null when nothing is focused (user is on the list / stats view).
+  // Don't fall back to "guess the most recent task" — that would fabricate
+  // context and silently mis-attribute edits. If null, ask the user what
+  // they want to work on, or call todo.list to find a candidate.
+  // ---------------------------------------------------------------------------
+
+  reg(defineTool({
+    name: 'app.currentContext',
+    description: 'Read the user\'s current focus (what they have open right now — a task, document, or drawing). Returns the full row(s) so you can act on them with todo.update / content.writeBody / drawing.save etc. without a separate lookup. Returns null when nothing is focused — the user is on the list/stats view, in which case call todo.list to find a candidate.',
+    parameters: {},
+    output: jsonOutput,
+    async execute() {
+      const f = getFocus();
+      if (!f) return null;
+      if (f.kind === 'task') {
+        const t = repo.get(f.todoId as never);
+        return { kind: 'task', task: t };
+      }
+      if (f.kind === 'document') {
+        const t = repo.get(f.todoId as never);
+        const d = docs.get(f.documentId as never);
+        return { kind: 'document', task: t, document: d };
+      }
+      if (f.kind === 'drawing') {
+        const t = repo.get(f.todoId as never);
+        const g = drawings.get(f.drawingId as never);
+        return { kind: 'drawing', task: t, drawing: g };
+      }
+      return null;
     },
   }));
 

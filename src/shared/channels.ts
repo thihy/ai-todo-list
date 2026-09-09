@@ -73,6 +73,12 @@ const DECLARED_CHANNELS: ReadonlySet<string> = new Set([
   'app.pickFile',
   'app.action',
   'app.osUser',
+  // Renderer→main "what's the user looking at right now" pointer, so the AI
+  // can ground its answers via app.currentContext.
+  'app.focus.set',
+  'app.focus.get',
+  // Open the task's documents directory in the OS file manager.
+  'app.openTaskDir',
 ]);
 
 export function isKnownChannel(name: string): name is IpcChannelName {

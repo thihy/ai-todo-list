@@ -17,11 +17,13 @@ import { TodoListPane } from './panes/TodoListPane';
 import { TodoEditorPane } from './panes/TodoEditorPane';
 import { StatsPane } from './panes/StatsPane';
 import { DrawingPane } from './panes/DrawingPane';
+import { DocumentsView } from './components/DocumentsView';
 import { PaneDivider } from './components/PaneDivider';
 import { usePaneWidths } from './hooks/usePaneWidths';
 import { parseHash, routeToHash, type Route, type ListFilter, type SortKey } from './router';
-import { useAppEvent } from './hooks/useThihyApi';
+import { useAppEvent, useTodo } from './hooks/useThihyApi';
 import { emitDataChanged } from './data-bus';
+import { IconFullscreenExit } from './components/icons';
 
 const AI_OPEN_KEY = 'thihy.aiOpen';
 
@@ -46,6 +48,10 @@ export const App: React.FC = () => {
   const [composing, setComposing] = useState(false);
   const [listFilter, setListFilter] = useState<ListFilter>({ kind: 'all' });
   const [listSort, setListSort] = useState<SortKey>('alpha');
+  // Fullscreen document mode: hides the task list + basic-info/links/activity
+  // chrome, keeps the AI panel. The DocumentsView's tab bar shows an exit
+  // button (IconFullscreenExit) so the user can drop back out.
+  const [fullscreenTodoId, setFullscreenTodoId] = useState<string | null>(null);
   const [aiOpen, setAiOpen] = useState<boolean>(() => {
     try {
       return localStorage.getItem(AI_OPEN_KEY) !== '0';
@@ -82,6 +88,19 @@ export const App: React.FC = () => {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, []);
+
+  // Esc drops out of fullscreen doc mode (the inverse of clicking ⛶).
+  useEffect(() => {
+    if (!fullscreenTodoId) return;
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        setFullscreenTodoId(null);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [fullscreenTodoId]);
 
   useEffect(() => {
     try {
@@ -124,6 +143,7 @@ export const App: React.FC = () => {
 
   const view = deriveView(route);
   const selectedId = route.name === 'todo' ? route.id : null;
+  const showFullscreen = view === 'list' && fullscreenTodoId !== null && selectedId === fullscreenTodoId;
 
   const closeSettings = useCallback(() => {
     setSettingsOpen(false);
@@ -142,7 +162,13 @@ export const App: React.FC = () => {
         />
         <div className="app-body">
           <main className={`app-main${view === 'list' ? ' is-master' : ''}`}>
-            {view === 'list' && (
+            {view === 'list' && showFullscreen && selectedId && (
+              <FullscreenDoc
+                todoId={selectedId}
+                onExit={() => setFullscreenTodoId(null)}
+              />
+            )}
+            {view === 'list' && !showFullscreen && (
               <div className="master-detail">
                 <TodoListPane
                   width={listWidth}
@@ -160,6 +186,7 @@ export const App: React.FC = () => {
                   composing={composing}
                   onCloseCompose={() => setComposing(false)}
                   navigate={navigate}
+                  onFullscreen={(todoId) => setFullscreenTodoId(todoId)}
                 />
               </div>
             )}
@@ -184,7 +211,8 @@ const TaskDetail: React.FC<{
   composing: boolean;
   onCloseCompose: () => void;
   navigate: (to: string) => void;
-}> = ({ todoId, composing, onCloseCompose, navigate }) => {
+  onFullscreen: (todoId: string) => void;
+}> = ({ todoId, composing, onCloseCompose, navigate, onFullscreen }) => {
   if (composing) {
     return (
       <div className="task-detail task-detail--compose">
@@ -205,7 +233,40 @@ const TaskDetail: React.FC<{
   }
   return (
     <div className="task-detail">
-      <TodoEditorPane todoId={todoId} />
+      <TodoEditorPane todoId={todoId} onFullscreen={() => onFullscreen(todoId)} />
+    </div>
+  );
+};
+
+/** FullscreenDoc — the document workspace fills the detail area; the task list
+ *  disappears. The AI panel stays so the user can keep asking questions about
+ *  whatever they're editing. Esc / the ⛶ button drop back to normal mode. */
+const FullscreenDoc: React.FC<{ todoId: string; onExit: () => void }> = ({ todoId, onExit }) => {
+  const { todo } = useTodo(todoId);
+  const taskTitle = todo?.title ?? null;
+  return (
+    <div className="task-detail task-detail--fullscreen">
+      <div className="fullscreen-doc">
+        <div className="fullscreen-doc__header">
+          <div className="fullscreen-doc__title">{taskTitle ?? '任务'}</div>
+          <button
+            type="button"
+            className="fullscreen-doc__exit"
+            onClick={onExit}
+            title="退出全屏 (Esc)"
+            aria-label="退出全屏"
+          >
+            <IconFullscreenExit size={16} /> 退出全屏
+          </button>
+        </div>
+        <div className="fullscreen-doc__body">
+          <DocumentsView
+            todoId={todoId}
+            taskTitle={taskTitle}
+            onFullscreen={onExit}
+          />
+        </div>
+      </div>
     </div>
   );
 };

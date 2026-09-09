@@ -24,6 +24,7 @@ import { TodoRepo } from '../db/todo-repo';
 import { ConversationRepo } from '../db/conversation-repo';
 import { MarkdownStore } from '../files/markdown';
 import { DrawingStore } from '../files/drawings';
+import { DocumentStore } from '../files/documents';
 import type Database from 'better-sqlite3';
 
 interface HandlerDeps {
@@ -33,6 +34,8 @@ interface HandlerDeps {
   conversations: ConversationRepo;
   md: MarkdownStore;
   drawings: DrawingStore;
+  /** DocumentStore — used by the DSH runtime's `app.currentContext` tool. */
+  docs: DocumentStore;
   /** Raw better-sqlite3 handle — used by the AI tool surface for raw
    *  inbox_attachments INSERTs (mirrors inbox.attach IPC). */
   db: Database.Database;
@@ -55,6 +58,7 @@ function buildRuntimeDeps(): DshRuntimeDeps | null {
     repo: deps.repo,
     md: deps.md,
     drawings: deps.drawings,
+    docs: deps.docs,
     conversations: deps.conversations,
     db: deps.db,
     attachmentsDir: deps.attachmentsDir,

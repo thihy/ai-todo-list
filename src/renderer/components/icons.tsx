@@ -212,4 +212,28 @@ export const IconDivider: React.FC<IconProps> = (p) => (
   </Svg>
 );
 
+/** Fullscreen — four corner brackets pointing outward (the convention for
+ *  "expand to fullscreen"). Used by the DocumentsView tab bar's ⛶ button. */
+export const IconFullscreen: React.FC<IconProps> = (p) => (
+  <Svg {...p}>
+    <path d="M3 6V3h3M13 6V3h-3M3 10v3h3M13 10v3h-3" />
+  </Svg>
+);
+
+/** Exit fullscreen — four corner brackets pointing inward. */
+export const IconFullscreenExit: React.FC<IconProps> = (p) => (
+  <Svg {...p}>
+    <path d="M6 3v3H3M10 3v3h3M6 13v-3H3M10 13v-3h3" />
+  </Svg>
+);
+
+/** External link / open in new window — used for "open task directory". */
+export const IconExternal: React.FC<IconProps> = (p) => (
+  <Svg {...p}>
+    <path d="M9 3h4v4" />
+    <path d="M13 3 7 9" />
+    <path d="M11 9v3a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h3" />
+  </Svg>
+);
+
 export default Svg;

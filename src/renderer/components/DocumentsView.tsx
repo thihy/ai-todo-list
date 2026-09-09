@@ -21,6 +21,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useDocuments, useDocument, useDrawings } from '../hooks/useThihyApi';
 import { usePrompt } from '../hooks/usePrompt';
+import { useFocusSync } from '../hooks/useFocusSync';
 import { WysiwygEditor } from './WysiwygEditor';
 import { MarkdownEditor } from './MarkdownEditor';
 import { ExcalidrawEditor } from './ExcalidrawEditor';
@@ -30,9 +31,11 @@ import {
   IconClose,
   IconDoc,
   IconDrawing,
+  IconFullscreen,
   IconLink,
   IconPlus,
 } from './icons';
+import type { AppFocus } from '../../shared/thihy-api';
 import type { DocumentKind, TaskDocument } from '../../shared/todo-types';
 
 const KIND_ICON: Record<DocumentKind, React.FC<{ size?: number }>> = {
@@ -171,7 +174,12 @@ const DrawingView: React.FC<{ todoId: string; drawingId: string }> = ({ todoId, 
 
 export const DocumentsView: React.FC<{
   todoId: string;
-}> = ({ todoId }) => {
+  /** Task title — included in the focus push so the AI sees it without a
+   *  separate todo.get call. Optional; falls back to a generic title. */
+  taskTitle?: string | null;
+  /** Open the editor fullscreen (hides the task list; AI pane stays). */
+  onFullscreen?: () => void;
+}> = ({ todoId, taskTitle, onFullscreen }) => {
   const { documents, refresh } = useDocuments(todoId);
   const { drawings, refresh: refreshDrawings } = useDrawings(todoId);
   const { prompt, node: promptNode } = usePrompt();
@@ -352,6 +360,33 @@ export const DocumentsView: React.FC<{
 
   const selected = tabs.find((t) => tabId(t) === selectedId) ?? null;
 
+  // Push the document/drawing focus to main on every tab change so the AI's
+  // `app.currentContext` tool knows what's open. We push the most-specific
+  // focus we can; App.tsx pushes a broader task-level focus that gets
+  // replaced by this one once the user picks a tab.
+  const focus: AppFocus | null = useMemo(() => {
+    if (!selected) return null;
+    if (selected.kind === 'document') {
+      const doc = selected.doc;
+      return {
+        kind: 'document',
+        todoId,
+        documentId: doc.id,
+        documentKind: doc.kind,
+        documentTitle: doc.title ?? KIND_LABEL[doc.kind],
+        taskTitle: taskTitle ?? null,
+      };
+    }
+    return {
+      kind: 'drawing',
+      todoId,
+      drawingId: selected.id,
+      drawingTitle: selected.title,
+      taskTitle: taskTitle ?? null,
+    };
+  }, [selected, todoId, taskTitle]);
+  useFocusSync(focus);
+
   return (
     <div className="docs-workspace docs-workspace--tabs">
       <div className="docs-workspace__tabbar">
@@ -411,6 +446,17 @@ export const DocumentsView: React.FC<{
           })}
         </div>
         <div className="docs-workspace__add">
+          {onFullscreen && selected && (
+            <button
+              type="button"
+              className="docs-workspace__add-btn"
+              onClick={onFullscreen}
+              title="全屏编辑 (隐藏任务列表，保留 AI 助手)"
+              aria-label="全屏编辑"
+            >
+              <IconFullscreen size={16} />
+            </button>
+          )}
           <button
             type="button"
             className="docs-workspace__add-btn"
