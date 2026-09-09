@@ -9,11 +9,13 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSettings } from '../hooks/useThihyApi';
 import { IconClose, IconPlus } from './icons';
 
-// A small palette for new tags whose colour the user hasn't picked yet.
-// Rotated by name hash so two new tags rarely collide.
-const TAG_PALETTE = [
+// A preset palette for tag colours. The user picks from these — no manual
+// colour picker (keeps the registry colours coherent and accessible). 12
+// distinct, contrast-checked hues; new tags rotate through them by hash.
+export const TAG_PALETTE = [
   '#2563eb', '#0d9488', '#9333ea', '#db2777',
   '#ca8a04', '#ea580c', '#16a34a', '#0891b2',
+  '#dc2626', '#4f46e5', '#475569', '#65a30d',
 ];
 
 function defaultColorFor(name: string): string {
@@ -21,6 +23,60 @@ function defaultColorFor(name: string): string {
   for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
   return TAG_PALETTE[h % TAG_PALETTE.length]!;
 }
+
+/** Colour picker — a swatch button that opens a 12-colour preset palette.
+ *  No manual/freeform picker; the palette is the single source of tag colours. */
+export const TagColorPicker: React.FC<{
+  value: string;
+  onChange: (color: string) => void;
+  ariaLabel?: string;
+}> = ({ value, onChange, ariaLabel }) => {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent): void => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent): void => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  return (
+    <div className="tag-color-picker" ref={rootRef}>
+      <button
+        type="button"
+        className="tag-color-picker__swatch"
+        style={{ background: value }}
+        aria-label={ariaLabel ?? '选择颜色'}
+        title="选择颜色"
+        onClick={() => setOpen((v) => !v)}
+      />
+      {open && (
+        <div className="tag-color-picker__popover" role="listbox">
+          {TAG_PALETTE.map((c) => (
+            <button
+              key={c}
+              type="button"
+              role="option"
+              aria-selected={c.toLowerCase() === value.toLowerCase()}
+              className={`tag-color-picker__opt${c.toLowerCase() === value.toLowerCase() ? ' is-selected' : ''}`}
+              style={{ background: c }}
+              onClick={() => { onChange(c); setOpen(false); }}
+              aria-label={c}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
 
 export const TagInput: React.FC<{
   value: string[];

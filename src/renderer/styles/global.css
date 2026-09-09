@@ -3323,18 +3323,54 @@ a:hover {
   padding-top: var(--space-sm);
   border-top: 1px dashed var(--border-subtle);
 }
-.settings-tags__swatch {
+/* Tag colour picker (used in Settings). A swatch button opens a 12-colour
+   preset palette; no manual picker, no freeform input. */
+.tag-color-picker {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+.tag-color-picker__swatch {
   width: 26px;
   height: 26px;
   padding: 0;
   border: 1px solid var(--border-default);
   border-radius: var(--radius-sm);
-  background: transparent;
   cursor: pointer;
-  flex: 0 0 auto;
+  /* background set inline to the current colour */
 }
-.settings-tags__swatch::-webkit-color-swatch-wrapper { padding: 2px; }
-.settings-tags__swatch::-webkit-color-swatch { border: none; border-radius: 2px; }
+.tag-color-picker__swatch:hover {
+  border-color: var(--border-strong);
+}
+.tag-color-picker__popover {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: var(--z-popover);
+  display: grid;
+  grid-template-columns: repeat(6, 22px);
+  gap: 4px;
+  padding: 6px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+}
+.tag-color-picker__opt {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 50%;
+  cursor: pointer;
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+.tag-color-picker__opt:hover {
+  transform: scale(1.12);
+}
+.tag-color-picker__opt.is-selected {
+  border-color: var(--fg-primary);
+}
 .settings-tags__name {
   flex: 1 1 auto;
   min-width: 0;

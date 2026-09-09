@@ -17,6 +17,7 @@ import {
   type AICustomProtocol,
   type CustomProviderInput,
 } from '../../shared/ai-types';
+import { TagColorPicker, TAG_PALETTE } from './TagInput';
 
 type Category = 'general' | 'model' | 'data' | 'tags' | 'hotkeys' | 'about';
 
@@ -490,8 +491,6 @@ const HotkeysPane: React.FC<PaneProps> = ({ data, patch }) => (
   </div>
 );
 
-const TAG_PALETTE = ['#2563eb', '#0d9488', '#9333ea', '#db2777', '#ca8a04', '#ea580c', '#16a34a', '#0891b2'];
-
 const TagsPane: React.FC<PaneProps> = ({ data, patch }) => {
   const tags = data.tags ?? [];
   const [name, setName] = useState('');
@@ -530,13 +529,7 @@ const TagsPane: React.FC<PaneProps> = ({ data, patch }) => {
           {tags.length === 0 && <div className="muted">还没有标签。在任务详情中新建，或在此添加。</div>}
           {tags.map((t) => (
             <div key={t.name} className="settings-tags__row">
-              <input
-                type="color"
-                className="settings-tags__swatch"
-                value={t.color}
-                aria-label={`${t.name} 颜色`}
-                onChange={(e) => recolor(t.name, e.target.value)}
-              />
+              <TagColorPicker value={t.color} onChange={(c) => recolor(t.name, c)} ariaLabel={`${t.name} 颜色`} />
               <input
                 className="input settings-tags__name"
                 defaultValue={t.name}
@@ -549,7 +542,7 @@ const TagsPane: React.FC<PaneProps> = ({ data, patch }) => {
             </div>
           ))}
           <div className="settings-tags__row settings-tags__row--new">
-            <input type="color" className="settings-tags__swatch" value={color} onChange={(e) => setColor(e.target.value)} aria-label="新标签颜色" />
+            <TagColorPicker value={color} onChange={setColor} ariaLabel="新标签颜色" />
             <input
               className="input settings-tags__name"
               placeholder="新标签名称"
