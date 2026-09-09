@@ -30,7 +30,7 @@ import { TagInput } from '../components/TagInput';
 import { DatePicker } from '../components/DatePicker';
 import { StatusPill } from '../components/StatusPill';
 import { ProgressInline, ProgressTimeline } from '../components/ProgressView';
-import { IconLink } from '../components/icons';
+import { IconLink, IconPlus } from '../components/icons';
 import type { Priority, TodoStatus, TaskDocument } from '../../shared/todo-types';
 
 /** 链接 section — manages link-kind documents in their own addressable region
@@ -51,17 +51,13 @@ const LinksView: React.FC<{ todoId: string }> = ({ todoId }) => {
 
   return (
     <div className="links-view">
-      {links.length === 0 ? (
-        <p className="links-view__empty">暂无链接</p>
-      ) : (
-        <ul className="links-view__list">
-          {links.map((l) => (
-            <LinkRow key={l.id} doc={l} onRemoved={refresh} />
-          ))}
-        </ul>
-      )}
+      <ul className="links-view__list">
+        {links.map((l) => (
+          <LinkRow key={l.id} doc={l} onRemoved={refresh} />
+        ))}
+      </ul>
       <button type="button" className="links-view__add" onClick={() => void addLink()}>
-        + 添加链接
+        <IconPlus size={14} /> 添加链接
       </button>
     </div>
   );
