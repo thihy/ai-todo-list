@@ -174,13 +174,7 @@ export const TodoEditorPane: React.FC<{
         {/* Progress gets its own row so the bar can span the full width and
             reads as a first-class status of the task, not a tucked-away chip. */}
         <div className="editor-pane__progress-row">
-          <ProgressInline
-            todoId={todo.id}
-            progress={todo.progress}
-            onViewHistory={() =>
-              activityRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-            }
-          />
+          <ProgressInline todoId={todo.id} progress={todo.progress} />
         </div>
       </section>
 

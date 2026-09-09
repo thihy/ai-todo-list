@@ -1,23 +1,20 @@
 // ProgressView — the task's progress surface, split into two pieces:
 //
 //   ProgressInline (基本信息):
-//     [200px progress bar] [latest entry note] [v]
+//     [drag-to-set progress bar]
 //     - Drag the bar to set progress; on release a note input pops up below
 //       (auto-dismisses after 1 min idle or on outside-click; the progress is
 //       already saved the moment the drag ends).
-//     - Click the latest note to edit it in the same popover.
-//     - The [v] toggles the full history timeline inline.
 //
-//   ProgressTimeline (动态 section, also reused inline by [v]):
+//   ProgressTimeline (动态 section):
 //     Every progress change (user-entered with a note, or AI/batch note-less)
-//     listed newest-first with time + percent + note.
+//     listed newest-first with time + "进度 <prev>% → <curr>%" + note.
 //
 // ProgressBar is exported so the summary header can render a compact
 // at-a-glance bar without duplicating the styling.
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useProgress } from '../hooks/useThihyApi';
-import { IconChevronDown } from './icons';
 
 export const ProgressBar: React.FC<{
   value: number;
@@ -38,31 +35,24 @@ export const ProgressBar: React.FC<{
 const IDLE_DISMISS_MS = 60_000;
 
 /** Inline progress row for the 基本信息 section. See file header for the full
- *  interaction model (drag-to-set, note popover, click-to-edit, history v). */
+ *  interaction model (drag-to-set, post-drag note popover). */
 export const ProgressInline: React.FC<{
   todoId: string;
   progress: number;
-  onViewHistory?: () => void;
-}> = ({ todoId, progress, onViewHistory }) => {
-  const { entries, log, updateNote } = useProgress(todoId);
+}> = ({ todoId, progress }) => {
+  const { log, updateNote } = useProgress(todoId);
   const [percent, setPercent] = useState(progress);
   const [dragging, setDragging] = useState(false);
   // pendingEntryId = an entry just created by a drag, awaiting an optional note.
-  // editingEntryId = an existing entry whose note the user clicked to edit.
   const [pendingEntryId, setPendingEntryId] = useState<string | null>(null);
-  const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
   const [noteDraft, setNoteDraft] = useState('');
-  const [historyOpen, setHistoryOpen] = useState(false);
 
   const trackRef = useRef<HTMLDivElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
   const noteInputRef = useRef<HTMLInputElement>(null);
   const idleTimer = useRef<number | null>(null);
 
-  const latest = entries[0] ?? null;
-  const latestNote = latest?.note?.trim() || '';
-  const openEntryId = pendingEntryId ?? editingEntryId;
-  const popoverOpen = openEntryId !== null;
+  const popoverOpen = pendingEntryId !== null;
 
   // Keep the local drag value honest with the canonical progress when not
   // actively dragging (e.g. another surface logged progress, or a reload).
@@ -84,7 +74,6 @@ export const ProgressInline: React.FC<{
     e.preventDefault();
     setDragging(true);
     setPendingEntryId(null);
-    setEditingEntryId(null);
     setNoteDraft('');
     const move = (ev: PointerEvent): void => setPercent(pctFromX(ev.clientX));
     const up = (ev: PointerEvent): void => {
@@ -108,18 +97,17 @@ export const ProgressInline: React.FC<{
 
   const closePopover = useCallback((): void => {
     setPendingEntryId(null);
-    setEditingEntryId(null);
     setNoteDraft('');
   }, []);
 
   const commitNote = useCallback(async (): Promise<void> => {
-    if (!openEntryId) return;
+    if (!pendingEntryId) return;
     const trimmed = noteDraft.trim();
     // Only write if there's something to say (empty = clear the note too, so
     // the user can blank a note they typed by mistake).
-    await updateNote(openEntryId, trimmed || null);
+    await updateNote(pendingEntryId, trimmed || null);
     closePopover();
-  }, [openEntryId, noteDraft, updateNote, closePopover]);
+  }, [pendingEntryId, noteDraft, updateNote, closePopover]);
 
   // Focus + select the note input when the popover opens, and run the idle
   // auto-dismiss timer. The timer resets on each keystroke.
@@ -138,7 +126,7 @@ export const ProgressInline: React.FC<{
     return () => {
       if (idleTimer.current) window.clearTimeout(idleTimer.current);
     };
-  }, [popoverOpen, openEntryId, closePopover]);
+  }, [popoverOpen, pendingEntryId, closePopover]);
 
   const resetIdle = useCallback((): void => {
     if (idleTimer.current) window.clearTimeout(idleTimer.current);
@@ -158,13 +146,6 @@ export const ProgressInline: React.FC<{
     document.addEventListener('mousedown', onDown);
     return () => document.removeEventListener('mousedown', onDown);
   }, [popoverOpen, closePopover]);
-
-  const onEditLatest = (): void => {
-    if (!latest) return;
-    setPendingEntryId(null);
-    setEditingEntryId(latest.id);
-    setNoteDraft(latest.note ?? '');
-  };
 
   const shownPercent = dragging ? percent : progress;
 
@@ -189,35 +170,11 @@ export const ProgressInline: React.FC<{
         >
           <ProgressBar value={shownPercent} showLabel />
         </div>
-
-        {/* Latest progress description — click to edit it. */}
-        <span
-          className={`progress-inline__note${latestNote ? ' is-editable' : ''}`}
-          onClick={onEditLatest}
-          title={latestNote ? '点击编辑描述' : undefined}
-        >
-          {latestNote || (latest ? '添加描述…' : '')}
-        </span>
-
-        {/* [v] expands the full history inline. */}
-        <button
-          type="button"
-          className={`progress-inline__history-toggle${historyOpen ? ' is-open' : ''}`}
-          aria-label={historyOpen ? '收起进度历史' : '展开进度历史'}
-          aria-expanded={historyOpen}
-          title="历史进度"
-          onClick={(e) => {
-            e.stopPropagation();
-            if (!historyOpen && onViewHistory) onViewHistory();
-            setHistoryOpen((v) => !v);
-          }}
-        >
-          <IconChevronDown size={14} />
-        </button>
       </div>
 
-      {/* Note popover — for the pending (just-dragged) or editing (clicked)
-          entry. Auto-dismisses after 1 min idle or on outside-click. */}
+      {/* Note popover — opens after a drag completes, for an optional note on
+          the just-logged entry. Auto-dismisses after 1 min idle or on
+          outside-click. */}
       {popoverOpen && (
         <div className="progress-inline__note-popover" ref={popoverRef}>
           <input
@@ -239,20 +196,13 @@ export const ProgressInline: React.FC<{
           </div>
         </div>
       )}
-
-      {historyOpen && (
-        <div className="progress-inline__history">
-          <ProgressTimeline todoId={todoId} />
-        </div>
-      )}
     </div>
   );
 };
 
-/** Full progress timeline for the 动态 section (and the inline [v] expand).
- *  Each entry shows the *transition* (from previous → current percent) so a
- *  bare "28%" reads as "from X% to 28%" — that's the audit story: how did we
- *  get here. The first entry reads as "0% → N%" (there was no prior). */
+/** Full progress timeline for the 动态 section.
+ *  Each entry reads as "进度 0% → 28%" so the audit story is one glance. The
+ *  first entry (no prior) reads as "进度 0% → N%". */
 export const ProgressTimeline: React.FC<{ todoId: string }> = ({ todoId }) => {
   const { entries } = useProgress(todoId);
   if (entries.length === 0) {
@@ -266,8 +216,8 @@ export const ProgressTimeline: React.FC<{ todoId: string }> = ({ todoId }) => {
         const fromPct = prev ? prev.percent : 0;
         const arrow =
           fromPct === e.percent
-            ? `${e.percent}%（无变化）`
-            : `${fromPct}% → ${e.percent}%`;
+            ? `进度 ${e.percent}%（无变化）`
+            : `进度 ${fromPct}% → ${e.percent}%`;
         const arrowClass =
           fromPct === e.percent
             ? 'progress-view__timeline-percent is-flat'

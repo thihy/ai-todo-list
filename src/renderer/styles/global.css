@@ -3614,14 +3614,22 @@ a:hover {
   display: flex;
   align-items: center;
   gap: var(--space-sm);
-  flex: 0 0 auto;
+  flex: 1 1 auto;
+  min-width: 0;
 }
 .progress-inline__bar-btn {
-  flex: 0 0 200px;
-  width: 200px;
-  /* Tall enough to be a comfortable drag target; the visible track is 8px
+  /* Fill the row so the drag affordance covers as much horizontal space as
+     the layout can spare (was a fixed 200px — too short for a precision
+     target, and the cursor's screen position then didn't match the bar's
+     visual extent). min-width guarantees a comfortable drag target even on
+     narrow panes; max-width caps it on wide panes so the inline note still
+     has room to render. */
+  flex: 1 1 0;
+  min-width: 220px;
+  max-width: 420px;
+  /* Tall enough to be a comfortable drag target; the visible track is 12px
      inside, the rest is padding to give the pointer room to grab. */
-  padding: 6px 0;
+  padding: 8px 0;
   border: 0;
   background: transparent;
   cursor: ew-resize;
@@ -3631,7 +3639,7 @@ a:hover {
 .progress-inline__bar-btn .progress-bar__track {
   width: 100%;
   min-width: 0;
-  height: 8px;
+  height: 12px;
 }
 .progress-inline__bar-btn:hover .progress-bar__track {
   filter: brightness(0.96);
