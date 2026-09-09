@@ -24,7 +24,7 @@ import type { ListFilter, SortKey } from '../router';
 import type { ToastBus } from '../components/Toast';
 import type { Todo, TodoStatus, ULID } from '../../shared/todo-types';
 import { UserMenu } from '../components/UserMenu';
-import { STATUS_LABEL, nextStatus, StatusGlyph } from '../components/StatusGlyph';
+import { StatusSelect } from '../components/StatusSelect';
 
 export const TodoListPane: React.FC<{
   filter: ListFilter;
@@ -427,18 +427,7 @@ const TaskRow: React.FC<{
               <ChevronGlyph open={subtasksExpanded} />
             </button>
           )}
-          <button
-            type="button"
-            className="task-row__status"
-            aria-label={`状态：${STATUS_LABEL[todo.status] ?? todo.status}，点击切换`}
-            title={`状态：${STATUS_LABEL[todo.status] ?? todo.status}（点击切换）`}
-            onClick={(e) => {
-              e.stopPropagation();
-              void onCycle(nextStatus(todo.status));
-            }}
-          >
-            <StatusGlyph status={todo.status} />
-          </button>
+          <StatusSelect status={todo.status} onChange={onCycle} variant="icon" />
           {/* Per-row action — revealed on hover. In the active list it's
               quick delete; in the 归档 view it's restore (un-archive). */}
           {archivedView ? (

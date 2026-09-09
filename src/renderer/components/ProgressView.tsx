@@ -35,8 +35,11 @@ export const ProgressBar: React.FC<{
   );
 };
 
-/** Inline progress row for the 基本信息 section: bar + latest note + entry
- *  button. The bar is clickable to surface the history timeline. */
+/** Inline progress row for the 基本信息 section:
+ *   ============---- 30%  <latest description>
+ *   The bar itself is the affordance — click it to open an inline panel with
+ *   the entry form (录入新进度) and a "view history ↓" link that jumps to the
+ *   动态 section. There is no separate button; the bar does double duty. */
 export const ProgressInline: React.FC<{
   todoId: string;
   progress: number;
@@ -69,22 +72,14 @@ export const ProgressInline: React.FC<{
         <button
           type="button"
           className="progress-inline__bar-btn"
-          onClick={onViewHistory}
-          title="点击查看进展历史"
-          aria-label="查看进展历史"
+          onClick={() => setOpen((v) => !v)}
+          aria-expanded={open}
+          title="点击录入进度 / 查看历史"
         >
           <ProgressBar value={progress} showLabel />
         </button>
         {latestNote && <span className="progress-inline__note">{latestNote}</span>}
       </div>
-      <button
-        type="button"
-        className="progress-inline__toggle"
-        onClick={() => setOpen((v) => !v)}
-        aria-expanded={open}
-      >
-        {open ? '收起' : '录入进度'}
-      </button>
 
       {open && (
         <div className="progress-view__entry">
@@ -137,6 +132,15 @@ export const ProgressInline: React.FC<{
             >
               取消
             </button>
+            {onViewHistory && (
+              <button
+                type="button"
+                className="progress-inline__history-link"
+                onClick={onViewHistory}
+              >
+                查看历史 ↓
+              </button>
+            )}
           </div>
         </div>
       )}

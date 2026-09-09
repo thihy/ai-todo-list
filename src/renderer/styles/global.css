@@ -2549,6 +2549,145 @@ a:hover {
   color: var(--fg-muted);
   white-space: nowrap;
 }
+/* 基本信息 has no section title — the title is the hero. Its title-line holds
+   the title, the creation date (grey), and the progress bar end-to-end. */
+.editor-pane__section--basic .editor-pane__title-line {
+  align-items: center;
+  gap: var(--space-sm);
+}
+.editor-pane__section--basic .InlineTitle,
+.editor-pane__section--basic .editor-pane__title {
+  flex: 1 1 auto;
+}
+.editor-pane__section--basic .progress-inline {
+  flex: 1 1 240px;
+  min-width: 200px;
+}
+.progress-inline__history-link {
+  margin-left: auto;
+  border: 0;
+  background: transparent;
+  color: var(--accent-primary);
+  font-size: var(--font-xs);
+  cursor: pointer;
+  padding: 3px var(--space-xs);
+}
+.progress-inline__history-link:hover {
+  text-decoration: underline;
+}
+
+/* --- status select (click-to-open picker) --- */
+
+.status-select {
+  position: relative;
+  display: inline-flex;
+}
+.status-select__menu {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 4px);
+  left: 0;
+  min-width: 160px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+}
+.status-select--icon .status-select__menu {
+  left: auto;
+  right: 0;
+}
+.status-select__option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: 6px var(--space-sm);
+  border: 0;
+  background: transparent;
+  border-radius: var(--radius-sm);
+  color: var(--fg-primary);
+  font-size: var(--font-sm);
+  cursor: pointer;
+  text-align: left;
+}
+.status-select__option:hover {
+  background: var(--bg-hover);
+}
+.status-select__option.is-active {
+  background: var(--bg-hover);
+}
+.status-select__option-label {
+  flex: 1 1 auto;
+}
+.status-select__option-check {
+  color: var(--accent-primary);
+}
+
+/* --- prompt dialog (usePrompt) --- */
+
+.prompt-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--bg-canvas) 50%, transparent);
+  backdrop-filter: blur(2px);
+}
+.prompt-dialog {
+  width: min(420px, 90vw);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding: var(--space-md);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+}
+.prompt-dialog__label {
+  font-size: var(--font-sm);
+  color: var(--fg-secondary);
+}
+.prompt-dialog__input {
+  width: 100%;
+  padding: 6px var(--space-sm);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+  color: var(--fg-primary);
+  font-size: var(--font-md);
+}
+.prompt-dialog__input:focus {
+  outline: none;
+  border-color: var(--accent-primary);
+}
+.prompt-dialog__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-sm);
+}
+.prompt-dialog__btn {
+  padding: 6px var(--space-md);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-sm);
+  cursor: pointer;
+}
+.prompt-dialog__btn--ghost {
+  border: 1px solid var(--border-default);
+  background: transparent;
+  color: var(--fg-secondary);
+}
+.prompt-dialog__btn--primary {
+  border: 1px solid var(--accent-primary);
+  background: var(--accent-primary);
+  color: var(--fg-on-accent);
+}
 
 /* --- 链接 section --- */
 

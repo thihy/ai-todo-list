@@ -12,6 +12,7 @@ import { useEditor, EditorContent, type Editor } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Image from '@tiptap/extension-image';
 import Link from '@tiptap/extension-link';
+import { usePrompt } from '../hooks/usePrompt';
 
 function fileToDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -31,6 +32,7 @@ export const WysiwygEditor: React.FC<{
   error: string | null;
 }> = ({ todoId, value, version, onSave, saving, error }) => {
   const [html, setHtml] = useState(value);
+  const { prompt, node: promptNode } = usePrompt();
   const dirty = html !== value && html !== '';
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Keep the latest onSave in a ref so the debounce timer always calls the
@@ -182,9 +184,9 @@ export const WysiwygEditor: React.FC<{
         <Btn
           label="🔗"
           title="链接"
-          onClick={() => {
+          onClick={async () => {
             const prev = editor.getAttributes('link').href as string | undefined;
-            const url = window.prompt('链接地址', prev ?? 'https://');
+            const url = await prompt('链接地址', prev ?? 'https://');
             if (url == null) return;
             if (url === '') editor.chain().focus().extendMarkRange('link').unsetLink().run();
             else editor.chain().focus().extendMarkRange('link').setLink({ href: url }).run();
@@ -204,6 +206,7 @@ export const WysiwygEditor: React.FC<{
         </button>
       </div>
       <EditorContent editor={editor} />
+      {promptNode}
     </div>
   );
 };

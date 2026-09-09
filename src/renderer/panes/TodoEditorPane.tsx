@@ -23,12 +23,13 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useTodo, useDocuments } from '../hooks/useThihyApi';
+import { usePrompt } from '../hooks/usePrompt';
 import { DocumentsView } from '../components/DocumentsView';
 import { InlineTitle } from '../components/InlineTitle';
 import { PriorityPicker } from '../components/PriorityPicker';
 import { TagInput } from '../components/TagInput';
 import { DatePicker } from '../components/DatePicker';
-import { StatusPill } from '../components/StatusPill';
+import { StatusSelect } from '../components/StatusSelect';
 import { ProgressInline, ProgressTimeline } from '../components/ProgressView';
 import { IconLink, IconPlus } from '../components/icons';
 import type { Priority, TodoStatus, TaskDocument } from '../../shared/todo-types';
@@ -37,17 +38,18 @@ import type { Priority, TodoStatus, TaskDocument } from '../../shared/todo-types
  *  (separate from the 文档 workspace, which holds authored content). */
 const LinksView: React.FC<{ todoId: string }> = ({ todoId }) => {
   const { documents, refresh } = useDocuments(todoId);
+  const { prompt, node: promptNode } = usePrompt();
   const links = documents.filter((d) => d.kind === 'link');
 
   const addLink = useCallback(async () => {
-    const url = window.prompt('链接地址', 'https://');
+    const url = await prompt('链接地址', 'https://');
     if (!url) return;
-    const title = window.prompt('链接名称（可留空）') || new URL(url).hostname;
+    const title = (await prompt('链接名称（可留空）')) || new URL(url).hostname;
     const res = await window.thihy.document.create({ todoId, kind: 'link', title, url });
     if (res.ok) {
       await refresh();
     }
-  }, [todoId, refresh]);
+  }, [todoId, refresh, prompt]);
 
   return (
     <div className="links-view">
@@ -59,6 +61,7 @@ const LinksView: React.FC<{ todoId: string }> = ({ todoId }) => {
       <button type="button" className="links-view__add" onClick={() => void addLink()}>
         <IconPlus size={14} /> 添加链接
       </button>
+      {promptNode}
     </div>
   );
 };
@@ -116,21 +119,34 @@ export const TodoEditorPane: React.FC<{
 
   return (
     <div className="editor-pane editor-pane--sections">
-      {/* ===== 基本信息 ===== */}
-      <section className="editor-pane__section">
-        <h2 className="editor-pane__section-title">基本信息</h2>
+      {/* ===== 基本信息 (no heading — the title is the hero) ===== */}
+      <section className="editor-pane__section editor-pane__section--basic">
         <div className="editor-pane__title-line">
           <InlineTitle
             value={todo.title}
             onCommit={(next) => { void commitMeta({ title: next }); }}
           />
-          <StatusPill
-            status={status}
-            onCycle={(v) => { setStatus(v); void commitMeta({ status: v }); }}
+          <span
+            className="editor-pane__created"
+            title={new Date(todo.createdAt).toLocaleString()}
+          >
+            创建于 {new Date(todo.createdAt).toLocaleDateString()}
+          </span>
+          <ProgressInline
+            todoId={todo.id}
+            progress={todo.progress}
+            onViewHistory={() =>
+              activityRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+            }
           />
         </div>
 
         <div className="editor-pane__meta">
+          <StatusSelect
+            status={status}
+            onChange={(v) => { setStatus(v); void commitMeta({ status: v }); }}
+            variant="pill"
+          />
           <PriorityPicker
             value={priority}
             onChange={(p) => { setPriority(p); void commitMeta({ priority: p }); }}
@@ -143,18 +159,6 @@ export const TodoEditorPane: React.FC<{
             value={tagDraft}
             onChange={(tags) => { setTagDraft(tags); void commitMeta({ tags }); }}
           />
-          <span className="editor-pane__created" title={new Date(todo.createdAt).toLocaleString()}>
-            创建于 {new Date(todo.createdAt).toLocaleDateString()}
-          </span>
-          <div className="editor-pane__progress">
-            <ProgressInline
-              todoId={todo.id}
-              progress={todo.progress}
-              onViewHistory={() =>
-                activityRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-              }
-            />
-          </div>
         </div>
       </section>
 

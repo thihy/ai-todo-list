@@ -20,6 +20,7 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useDocuments, useDocument, useDrawings } from '../hooks/useThihyApi';
+import { usePrompt } from '../hooks/usePrompt';
 import { routeToHash } from '../router';
 import { WysiwygEditor } from './WysiwygEditor';
 import { MarkdownEditor } from './MarkdownEditor';
@@ -186,6 +187,7 @@ export const DocumentsView: React.FC<{
 }> = ({ todoId, navigate }) => {
   const { documents, refresh } = useDocuments(todoId);
   const { drawings, refresh: refreshDrawings } = useDrawings(todoId);
+  const { prompt, node: promptNode } = usePrompt();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
 
@@ -230,19 +232,19 @@ export const DocumentsView: React.FC<{
   }, [todoId, refresh]);
 
   const addLink = useCallback(async (): Promise<void> => {
-    const url = window.prompt('链接地址', 'https://');
+    const url = await prompt('链接地址', 'https://');
     if (!url) {
       setAddOpen(false);
       return;
     }
-    const title = window.prompt('链接名称（可留空）') || new URL(url).hostname;
+    const title = (await prompt('链接名称（可留空）')) || new URL(url).hostname;
     const res = await window.thihy.document.create({ todoId, kind: 'link', title, url });
     if (res.ok) {
       await refresh();
       setSelectedId(`d:${res.data.id}`);
     }
     setAddOpen(false);
-  }, [todoId, refresh]);
+  }, [todoId, refresh, prompt]);
 
   const addAttachment = useCallback(async (): Promise<void> => {
     const input = document.createElement('input');
@@ -386,6 +388,7 @@ export const DocumentsView: React.FC<{
           <div className="docs-workspace__empty">选择上方标签开始编辑</div>
         )}
       </div>
+      {promptNode}
     </div>
   );
 };
