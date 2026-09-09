@@ -2098,6 +2098,21 @@ a:hover {
 .task-row__tag {
   color: var(--accent-info);
 }
+/* Metadata chip pair — small leading SVG icon (calendar for due, drawing
+   pencil for drawing count) followed by the value. Icons sit inline-aligned
+   with the text and use the muted color so they don't compete with priority. */
+.task-row__due,
+.task-row__drawings {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--fg-muted);
+}
+.task-row__due-icon,
+.task-row__drawings-icon {
+  flex: 0 0 auto;
+  opacity: 0.85;
+}
 /* Priority chip — small colored dot + label so the eye picks up high/medium
    urgency at a glance even when the row is collapsed. "none" is suppressed
    in markup (no default-state noise). */

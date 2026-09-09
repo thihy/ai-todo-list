@@ -11,6 +11,7 @@
 // chip answers that at a glance; the edit popover is deliberately transient.
 
 import React, { useEffect, useRef, useState } from 'react';
+import { IconCalendar, IconClose } from './icons';
 import { addDays, fromIsoDate, isOverdue, nextMonday, toIsoDate, formatDue } from '../utils/date';
 
 export const DatePicker: React.FC<{
@@ -76,11 +77,7 @@ export const DatePicker: React.FC<{
         aria-expanded={editing}
         onClick={() => setEditing((v) => !v)}
       >
-        <svg className="date-picker__icon" width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
-          <rect x="1.5" y="2.5" width="11" height="10" rx="1.4" stroke="currentColor" strokeWidth="1.2" />
-          <path d="M1.5 5.5H12.5" stroke="currentColor" strokeWidth="1.2" />
-          <path d="M4 1V3.5M10 1V3.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
-        </svg>
+        <IconCalendar size={14} className="date-picker__icon" />
         <span className="date-picker__label">{label}</span>
       </button>
 
@@ -107,7 +104,7 @@ export const DatePicker: React.FC<{
                 title="清除"
                 onClick={() => { setDraft(''); onChange(null); setEditing(false); }}
               >
-                ✕
+                <IconClose size={12} />
               </button>
             )}
           </div>

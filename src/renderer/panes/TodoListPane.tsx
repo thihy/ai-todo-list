@@ -26,6 +26,7 @@ import type { ToastBus } from '../components/Toast';
 import type { Todo, TodoStatus, ULID } from '../../shared/todo-types';
 import { UserMenu } from '../components/UserMenu';
 import { StatusSelect } from '../components/StatusSelect';
+import { IconCalendar, IconDrawing } from '../components/icons';
 
 export const TodoListPane: React.FC<{
   width: number;
@@ -494,12 +495,24 @@ const Subtitle: React.FC<{ todo: Todo; subtaskCount: number; subtaskDoneCount: n
       </span>,
     );
   }
-  if (todo.dueAt) bits.push(<span key="d">📅 {formatDate(todo.dueAt)}</span>);
+  if (todo.dueAt) {
+    bits.push(
+      <span key="d" className="task-row__due">
+        <IconCalendar size={11} className="task-row__due-icon" />
+        {formatDate(todo.dueAt)}
+      </span>,
+    );
+  }
   if (todo.tags?.length) {
     todo.tags.slice(0, 3).forEach((tag) => bits.push(<span key={`t-${tag}`} className="task-row__tag">#{tag}</span>));
   }
   if (todo.drawingIds && todo.drawingIds.length > 0) {
-    bits.push(<span key="dr">✏ {todo.drawingIds.length}</span>);
+    bits.push(
+      <span key="dr" className="task-row__drawings">
+        <IconDrawing size={11} className="task-row__drawings-icon" />
+        {todo.drawingIds.length}
+      </span>,
+    );
   }
   // Subtask progress: "done/total 子任务". When all subtasks are done the
   // chip uses the success colour so a glance tells you the branch is clear.

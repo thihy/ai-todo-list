@@ -2,7 +2,7 @@
 // same convention so they read as one family: 16×16 (scalable via `size`),
 // viewBox 0 0 16 16, `currentColor` stroke, 1.4 stroke width, round caps.
 // Keep this the single source of truth for icon visuals; do not sprinkle
-// ad-hoc emoji or text glyphs (＋/🗂/×) into topbars — they don't scale,
+// ad-hoc emoji or text glyphs (+/-/x) into topbars — they don't scale,
 // render inconsistently across fonts, and break the visual rhythm.
 
 import React from 'react';
@@ -233,6 +233,17 @@ export const IconExternal: React.FC<IconProps> = (p) => (
     <path d="M9 3h4v4" />
     <path d="M13 3 7 9" />
     <path d="M11 9v3a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h3" />
+  </Svg>
+);
+
+/** Calendar — due date. A month-grid glyph with two header ticks; the same
+ *  icon is used wherever a "date / due" affordance appears (task list row,
+ *  detail DatePicker chip) so the visual language stays consistent. */
+export const IconCalendar: React.FC<IconProps> = (p) => (
+  <Svg {...p}>
+    <rect x="2.5" y="3.5" width="11" height="10" rx="1.4" />
+    <path d="M2.5 6.5h11" />
+    <path d="M5.5 2v3M10.5 2v3" />
   </Svg>
 );
 
