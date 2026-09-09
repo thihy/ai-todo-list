@@ -9,7 +9,7 @@ import { ErrorBoundary } from './ErrorBoundary';
 import { Topbar } from './layout/Topbar';
 import { Statusbar } from './layout/Statusbar';
 import { AIPanel } from './layout/AIPanel';
-import { ToastHost, useToastBus } from './components/Toast';
+import { useToastBus } from './components/Toast';
 import { CommandPaletteHost } from './components/CommandPalette';
 import { SettingsModal } from './components/SettingsModal';
 import { Composer } from './components/Composer';
@@ -172,7 +172,6 @@ export const App: React.FC = () => {
           <AIPanel open={aiOpen} width={aiWidth} onToggle={toggleAi} />
         </div>
         <Statusbar route={route} />
-        <ToastHost bus={toast} />
         <CommandPaletteHost open={paletteOpen} onClose={() => setPaletteOpen(false)} navigate={navigate} onCompose={() => { setPaletteOpen(false); setComposing(true); }} />
         <SettingsModal open={settingsOpen} onClose={closeSettings} />
       </div>

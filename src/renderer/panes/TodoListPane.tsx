@@ -21,6 +21,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTodos, useSearch } from '../hooks/useThihyApi';
 import type { ListFilter, SortKey } from '../router';
+import { ToastHost } from '../components/Toast';
 import type { ToastBus } from '../components/Toast';
 import type { Todo, TodoStatus, ULID } from '../../shared/todo-types';
 import { UserMenu } from '../components/UserMenu';
@@ -271,6 +272,10 @@ export const TodoListPane: React.FC<{
       <footer className="task-list__footer">
         <UserMenu onOpenSettings={onOpenSettings} />
       </footer>
+
+      {/* Toasts anchor to the bottom of this task-list column (stacked upward
+          above the footer) — not a global bottom-right overlay. */}
+      <ToastHost bus={toastBus} />
     </section>
   );
 };

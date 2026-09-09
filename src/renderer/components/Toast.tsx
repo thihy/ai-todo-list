@@ -1,4 +1,8 @@
 // Toast bus + host. No external deps.
+//
+// The host renders INSIDE the task-list column (left pane) at the bottom,
+// stacked upward above the footer — not as a fixed bottom-right overlay.
+// See `.toast-host` in global.css for the anchoring.
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 
@@ -60,67 +64,22 @@ export const ToastHost: React.FC<{ bus: ToastBus }> = ({ bus }) => {
     });
   }, [bus, dismiss]);
   return (
-    <div
-      role="region"
-      aria-live="polite"
-      aria-label="通知"
-      style={{
-        position: 'fixed',
-        right: 'var(--space-md)',
-        bottom: 36,
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 'var(--space-sm)',
-        zIndex: 'var(--z-toast)',
-      }}
-    >
+    <div className="toast-host" role="region" aria-live="polite" aria-label="通知">
       {toasts.map((t) => (
-        <div
-          key={t.id}
-          role="status"
-          style={{
-            padding: 'var(--space-sm) var(--space-md)',
-            background: 'var(--bg-surface-elev)',
-            color: kindColor(t.kind),
-            borderRadius: 'var(--radius-md)',
-            boxShadow: '0 8px 32px rgba(0,0,0,.45)',
-            minWidth: 220,
-            maxWidth: 360,
-            display: 'flex',
-            alignItems: 'center',
-            gap: 'var(--space-sm)',
-          }}
-        >
-          <span style={{ flex: 1 }}>{t.message}</span>
+        <div key={t.id} role="status" className={`toast toast--${t.kind}`}>
+          <span className="toast__msg">{t.message}</span>
           {t.action && (
             <button
               type="button"
+              className="toast__action"
               onClick={() => {
                 try { t.action?.run(); } finally { dismiss(t.id); }
-              }}
-              style={{
-                flexShrink: 0,
-                padding: '2px var(--space-sm)',
-                borderRadius: 'var(--radius-sm)',
-                border: '1px solid var(--border-strong)',
-                background: 'transparent',
-                color: 'var(--accent-primary)',
-                fontSize: 'var(--font-xs)',
-                cursor: 'pointer',
               }}
             >
               {t.action.label}
             </button>
           )}
-          <button
-            type="button"
-            onClick={() => dismiss(t.id)}
-            aria-label="关闭通知"
-            style={{
-              flexShrink: 0,
-              color: 'var(--fg-muted)',
-            }}
-          >
+          <button type="button" className="toast__close" onClick={() => dismiss(t.id)} aria-label="关闭通知">
             ×
           </button>
         </div>
@@ -128,12 +87,3 @@ export const ToastHost: React.FC<{ bus: ToastBus }> = ({ bus }) => {
     </div>
   );
 };
-
-function kindColor(k: ToastKind): string {
-  switch (k) {
-    case 'info': return 'var(--fg-primary)';
-    case 'success': return 'var(--accent-success)';
-    case 'warn': return 'var(--accent-warn)';
-    case 'error': return 'var(--accent-danger)';
-  }
-}
