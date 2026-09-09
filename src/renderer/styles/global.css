@@ -2833,13 +2833,20 @@ a:hover {
   flex: 0 1 auto;
   min-width: 0;
 }
-/* Progress sits on its own row below the meta line: a fixed-width bar with
-   the latest progress note trailing it. */
+/* Progress sits on its own row below the meta line. The row fills its
+   available width so the bar (whose own flex sizing then kicks in) can claim
+   the rest of the horizontal space — without this, .progress-inline's
+   flex:0 0 auto locks it to its content width and the bar only gets its
+   min-width. */
 .editor-pane__progress-row {
-  flex: 1 0 auto;
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
 }
 .editor-pane__progress-row .progress-inline {
-  flex: 0 0 auto;
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
 }
 .progress-inline__history-link {
   margin-left: auto;
@@ -3622,11 +3629,11 @@ a:hover {
      the layout can spare (was a fixed 200px — too short for a precision
      target, and the cursor's screen position then didn't match the bar's
      visual extent). min-width guarantees a comfortable drag target even on
-     narrow panes; max-width caps it on wide panes so the inline note still
-     has room to render. */
+     narrow panes; max-width keeps the bar from stretching absurdly on wide
+     detail panes. */
   flex: 1 1 0;
-  min-width: 220px;
-  max-width: 420px;
+  min-width: 240px;
+  max-width: 560px;
   /* Tall enough to be a comfortable drag target; the visible track is 12px
      inside, the rest is padding to give the pointer room to grab. */
   padding: 8px 0;
