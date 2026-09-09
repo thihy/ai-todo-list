@@ -1952,6 +1952,37 @@ a:hover {
 .task-row__tag {
   color: var(--accent-info);
 }
+/* Subtask progress chip when the whole branch is done — accent-success so
+   a glance tells you the branch is clear. */
+.task-row__sub--done {
+  color: var(--accent-success);
+  font-weight: 600;
+}
+/* Quick-delete button — sits at the row's far right, revealed only on
+   hover (and keyboard focus) so the chrome stays calm at rest. Keeps its
+   layout slot when hidden so the row doesn't reflow on hover. */
+.task-row__delete {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: none;
+  background: transparent;
+  color: var(--fg-muted);
+  border-radius: 4px;
+  opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
+}
+.task-row:hover .task-row__delete,
+.task-row:focus-within .task-row__delete {
+  opacity: 1;
+}
+.task-row__delete:hover {
+  color: var(--accent-danger);
+  background: var(--bg-active);
+}
 
 /* ===== Task detail (right column) ===== */
 
@@ -2153,6 +2184,31 @@ a:hover {
   gap: var(--space-sm);
   align-items: stretch;
 }
+.task-list__tools {
+  flex: none;
+  display: inline-flex;
+  gap: 2px;
+  align-items: stretch;
+}
+.task-list__tool-btn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--border-default);
+  background: var(--bg-surface);
+  color: var(--fg-secondary);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
+}
+.task-list__tool-btn:hover {
+  background: var(--bg-hover);
+  color: var(--fg-primary);
+  border-color: var(--border-strong);
+}
 .task-list__add-btn {
   flex: 1;
   display: inline-flex;
@@ -2176,10 +2232,10 @@ a:hover {
 
 /* ===== L5: task row toggle + document icon + subtask nesting ===== */
 
-/* SubTask collapse/expand toggle — sits AFTER the status glyph (not
-   before the document icon), per the L5 request. Only rendered when the
-   task actually has subtasks. Same 16×16 slot as the group toggle so the
-   indicators line up down the right side of the title line. */
+/* SubTask collapse/expand toggle — sits right AFTER the title (before the
+   status dot), so the row reads "name ▸ status". Only rendered when the
+   task actually has subtasks. Same 16×16 slot as the inline controls so
+   the indicators line up down the right side of the title line. */
 .task-row__toggle {
   flex: none;
   display: inline-flex;
