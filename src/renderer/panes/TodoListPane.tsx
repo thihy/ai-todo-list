@@ -418,8 +418,7 @@ const Subtitle: React.FC<{ todo: Todo; hasSubtasks: boolean; subtaskCount: numbe
   const bits: React.ReactNode[] = [];
   if (todo.dueAt) bits.push(<span key="d">📅 {formatDate(todo.dueAt)}</span>);
   if (todo.tags?.length) {
-    todo.tags.slice(0, 3).forEach((tag) => bits.push(<span key={`t-${tag}`} className="task-row__tag">#{tag}</span>);
-    );
+    todo.tags.slice(0, 3).forEach((tag) => bits.push(<span key={`t-${tag}`} className="task-row__tag">#{tag}</span>));
   }
   if (todo.drawingIds && todo.drawingIds.length > 0) {
     bits.push(<span key="dr">✏ {todo.drawingIds.length}</span>);
