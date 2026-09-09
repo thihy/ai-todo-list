@@ -184,21 +184,23 @@ const GroupBranch: React.FC<{
     <section className="task-group" style={{ '--group-depth': depth } as React.CSSProperties}>
       <div
         className="task-group__head"
-        // L5: double-click toggles expand, NOT rename. The rename affordance
-        // moved to a dedicated ✏ icon on the right side of the row, so the
-        // double-click gesture can safely serve the primary expand/collapse
-        // behavior without conflicting with rename.
-        onDoubleClick={() => setExpanded((v) => !v)}
+        role="button"
+        tabIndex={0}
+        aria-expanded={expanded}
+        title={expanded ? '点击折叠' : '点击展开'}
+        // L5: the whole group head is the expand/collapse affordance —
+        // hover shows a hand cursor, single click toggles. The ✏ rename
+        // action and the inline rename input opt out with stopPropagation
+        // so they don't toggle while the user is using them.
+        onClick={() => { if (!editing) setExpanded((v) => !v); }}
+        onKeyDown={(e) => {
+          if (editing) return;
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            setExpanded((v) => !v);
+          }
+        }}
       >
-        <button
-          type="button"
-          className="task-group__chevron"
-          aria-label={expanded ? '折叠' : '展开'}
-          aria-expanded={expanded}
-          onClick={() => setExpanded((v) => !v)}
-        >
-          <ChevronGlyph open={expanded} />
-        </button>
         <span className="task-group__folder" aria-hidden="true">
           <FolderGlyph />
         </span>
@@ -222,12 +224,19 @@ const GroupBranch: React.FC<{
           <span className="task-group__name">{node.group.name}</span>
         )}
         <span className="task-group__count">{counts[node.group.id] ?? 0}</span>
+        {/* Collapse/expand chevron — sits AFTER the name+count (not before
+            the folder icon) per the L5 request. It's a visual indicator;
+            the whole head is the actual toggle, so this is aria-hidden. */}
+        <span className="task-group__toggle" aria-hidden="true">
+          <ChevronGlyph open={expanded} />
+        </span>
 
         {/* Right-aligned action slot. ✏ is the discoverable rename affordance
             (replaces the old double-click-to-rename gesture); 📁+ creates a
             child group; 🗑 removes the group (tasks become root-level). All
-            three sit on the right edge with consistent spacing. */}
-        <span className="task-group__actions">
+            three sit on the right edge with consistent spacing.
+            stopPropagation so clicking an action doesn't also toggle. */}
+        <span className="task-group__actions" onClick={(e) => e.stopPropagation()}>
           <button
             type="button"
             className="task-group__action"
@@ -386,26 +395,6 @@ const TaskRow: React.FC<{
     >
       <div className="task-row__main">
         <div className="task-row__title-line">
-          {/* SubTask expand/collapse chevron — only rendered when this task
-              actually has subtasks, so leaf tasks don't carry dead chrome.
-              Click toggles the subtask list; clicking the row body still
-              selects the task. */}
-          {hasSubtasks ? (
-            <button
-              type="button"
-              className="task-row__chevron"
-              aria-label={subtasksExpanded ? '折叠子任务' : '展开子任务'}
-              aria-expanded={subtasksExpanded}
-              onClick={(e) => {
-                e.stopPropagation();
-                onToggleSubtasks();
-              }}
-            >
-              <ChevronGlyph open={subtasksExpanded} />
-            </button>
-          ) : (
-            <span className="task-row__chevron-spacer" aria-hidden="true" />
-          )}
           {/* Document glyph — same 14×14 size and stroke style as the
               FolderGlyph in group rows, so folders and files read as one
               consistent icon family. Done tasks get a muted glyph; active
@@ -425,6 +414,25 @@ const TaskRow: React.FC<{
           >
             <StatusGlyph status={todo.status} />
           </button>
+          {/* SubTask collapse/expand chevron — sits AFTER the status glyph
+              (not before the document icon), per the L5 request. Only
+              rendered when this task actually has subtasks, so leaf tasks
+              don't carry dead chrome. Click toggles the subtask list;
+              stopPropagation so the row-body click (select) doesn't fire. */}
+          {hasSubtasks && (
+            <button
+              type="button"
+              className="task-row__toggle"
+              aria-label={subtasksExpanded ? '折叠子任务' : '展开子任务'}
+              aria-expanded={subtasksExpanded}
+              onClick={(e) => {
+                e.stopPropagation();
+                onToggleSubtasks();
+              }}
+            >
+              <ChevronGlyph open={subtasksExpanded} />
+            </button>
+          )}
         </div>
         <Subtitle todo={todo} hasSubtasks={hasSubtasks} subtaskCount={undefined} />
       </div>

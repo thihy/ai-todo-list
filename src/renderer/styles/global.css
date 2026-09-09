@@ -1900,7 +1900,13 @@ a:hover {
   display: flex;
   align-items: flex-start;
   gap: var(--space-sm);
-  padding: var(--space-sm) var(--space-lg);
+  padding: var(--space-sm);
+  /* Indentation by nesting depth. --row-depth is set inline (0 = root
+     task or task directly in a root group, 1 = child of a depth-0 task,
+     etc.). SAME formula as .task-group__head's padding-left
+     (var(--space-sm) + depth*14px) so a group and a task at the same
+     depth have their icon + text aligned. */
+  padding-left: calc(var(--space-sm) + var(--row-depth, 0) * 14px);
   cursor: pointer;
   border-left: 3px solid transparent;
   transition: background var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
@@ -2211,14 +2217,17 @@ a:hover {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 4px var(--space-md);
+  padding: 4px var(--space-sm);
+  /* Indentation by nesting depth. --group-depth is set on the
+     .task-group wrapper (0 = root group, 1 = child, ...). Same formula
+     as .task-row's padding-left (var(--space-sm) + depth*14px) so a
+     group and a task at the same depth have their icon + text aligned. */
+  padding-left: calc(var(--space-sm) + var(--group-depth, 0) * 14px);
   border-radius: 6px;
-  margin: 0 var(--space-sm);
-  /* Sub-groups indent under their parent. `--group-depth` is set on the
-     .task-group wrapper (depth 0 = root group, 1 = child, 2 = grandchild).
-     Each level indents 14px so the tree reads as a directory tree. */
-  margin-left: calc(var(--space-sm) + var(--group-depth, 0) * 14px);
-  cursor: default;
+  margin: 0;
+  /* Hand cursor — the whole head is the expand/collapse affordance.
+     Single click toggles (not double-click). */
+  cursor: pointer;
   user-select: none;
 }
 .task-group__head:hover {
@@ -2227,22 +2236,16 @@ a:hover {
 .task-group__head:hover .task-group__action {
   opacity: 1;
 }
-.task-group__chevron {
+/* Visual chevron after the name+count. The whole head toggles, so this
+   is just an indicator (aria-hidden in JSX). */
+.task-group__toggle {
   flex: none;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   width: 16px;
   height: 16px;
-  border: none;
-  background: transparent;
   color: var(--fg-muted);
-  cursor: pointer;
-  border-radius: 4px;
-}
-.task-group__chevron:hover {
-  color: var(--fg-primary);
-  background: var(--bg-active);
 }
 .task-group__folder {
   flex: none;
@@ -2310,15 +2313,17 @@ a:hover {
   background: rgba(220, 38, 38, 0.12);
 }
 .task-group__items .task-row {
-  padding-left: calc(var(--space-lg) + var(--row-depth, 0) * 14px);
+  /* Indentation handled by the base .task-row rule via --row-depth; no
+     extra override needed here. Kept as a no-op selector for clarity. */
 }
 
-/* ===== L5: task row chevron + document icon + subtask nesting ===== */
+/* ===== L5: task row toggle + document icon + subtask nesting ===== */
 
-/* SubTask expand/collapse chevron — same 16×16 slot as the group chevron
-   so the tree gutters line up across group rows and task rows. Only
-   rendered when the task actually has subtasks. */
-.task-row__chevron {
+/* SubTask collapse/expand toggle — sits AFTER the status glyph (not
+   before the document icon), per the L5 request. Only rendered when the
+   task actually has subtasks. Same 16×16 slot as the group toggle so the
+   indicators line up down the right side of the title line. */
+.task-row__toggle {
   flex: none;
   display: inline-flex;
   align-items: center;
@@ -2331,17 +2336,9 @@ a:hover {
   cursor: pointer;
   border-radius: 4px;
 }
-.task-row__chevron:hover {
+.task-row__toggle:hover {
   color: var(--fg-primary);
   background: var(--bg-active);
-}
-/* Spacer that occupies the chevron slot for leaf tasks (no subtasks) so
-   the document icon + title align with the same left edge as tasks that
-   DO have a chevron. */
-.task-row__chevron-spacer {
-  flex: none;
-  width: 16px;
-  height: 16px;
 }
 /* Document glyph slot — 14×14, matches .task-group__folder sizing so
    folders and files read as one icon family. */
@@ -2365,9 +2362,6 @@ a:hover {
   margin: 0;
   padding: 0;
 }
-.task-branch__children .task-row {
-  padding-left: calc(var(--space-lg) + var(--row-depth, 0) * 14px);
-}
 
 /* Root-level tasks (no group) render after the group tree in their own
    list. No section header — the document glyph is enough to signal
@@ -2381,7 +2375,8 @@ a:hover {
   padding-top: var(--space-xs);
 }
 .task-list__root-tasks .task-row {
-  padding-left: var(--space-lg);
+  /* --row-depth is 0 for root tasks, so base padding-left applies; no
+     override needed. Kept for clarity. */
 }
 
 /* ===== Composer (center capture surface) ===== */
