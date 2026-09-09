@@ -1,16 +1,18 @@
 // Resident AI panel — right side of the app, collapsible to a narrow rail.
 // Open state is owned by App; this component renders the expanded chat
-// (AIPane) or a vertical rail with an expand affordance.
+// (AIPane) or a vertical rail with an expand affordance. When open, the
+// aside's width is the persisted pane width (so the user can resize the
+// panel and it survives restart); when collapsed, it shrinks to the rail.
 
 import React from 'react';
 import { AIPane } from '../panes/AIPane';
 
-export const AIPanel: React.FC<{ open: boolean; onToggle: () => void }> = ({ open, onToggle }) => {
+export const AIPanel: React.FC<{ open: boolean; width: number; onToggle: () => void }> = ({ open, width, onToggle }) => {
   return (
     <aside
       className={`ai-panel${open ? ' is-open' : ''}`}
       aria-label="AI 助手"
-      style={{ width: open ? undefined : undefined }}
+      style={open ? { width } : undefined}
     >
       {open ? (
         <>

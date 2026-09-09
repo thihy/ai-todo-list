@@ -19,14 +19,16 @@
 //     a focused row does the same.
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { useTodos } from '../hooks/useThihyApi';
+import { useTodos, useSearch } from '../hooks/useThihyApi';
 import type { ListFilter, SortKey } from '../router';
 import type { ToastBus } from '../components/Toast';
 import type { Todo, TodoStatus, ULID } from '../../shared/todo-types';
 import { UserMenu } from '../components/UserMenu';
 import { StatusSelect } from '../components/StatusSelect';
+import { IconClose } from '../components/icons';
 
 export const TodoListPane: React.FC<{
+  width: number;
   filter: ListFilter;
   sort: SortKey;
   selectedId: string | null;
@@ -34,9 +36,15 @@ export const TodoListPane: React.FC<{
   onOpenSettings: () => void;
   onCompose: () => void;
   toastBus: ToastBus;
-}> = ({ filter, sort, selectedId, onSelect, onOpenSettings, onCompose, toastBus }) => {
+}> = ({ width, filter, sort, selectedId, onSelect, onOpenSettings, onCompose, toastBus }) => {
   const repoFilter = filterToRepoFilter(filter);
   const { data, loading, refresh } = useTodos(repoFilter);
+  // Free-text search across active tasks (FTS). When a query is present the
+  // tree is replaced by a flat result list — the user is looking for a
+  // specific task, not browsing the hierarchy. Cleared → back to the tree.
+  const [query, setQuery] = useState('');
+  const trimmed = query.trim();
+  const { hits } = useSearch(trimmed, 50);
 
   // Auto-refresh when a new todo is created elsewhere (capture window, AI).
   useEffect(() => {
@@ -130,8 +138,9 @@ export const TodoListPane: React.FC<{
       .sort((a, b) => (b.deletedAt ?? 0) - (a.deletedAt ?? 0));
   }, [data, deletedView]);
   const isEmpty = !loading && data.length === 0;
+  const searching = trimmed.length > 0 && !deletedView;
   return (
-    <section className="task-list" aria-label="任务列表">
+    <section className="task-list" aria-label="任务列表" style={{ width }}>
       <header className="task-list__header">
         <button type="button" className="task-list__add-btn" onClick={onCompose}>
           <PlusGlyph /> 新建任务
@@ -148,69 +157,114 @@ export const TodoListPane: React.FC<{
         )}
       </header>
 
-      <div className="task-list__body">
-        {loading && data.length === 0 && (
-          <div className="task-list__hint">加载中…</div>
-        )}
-        {isEmpty && !deletedView && (
-          <div className="task-list__empty">
-            <div className="task-list__empty-glyph" aria-hidden="true">📭</div>
-            <div>暂无任务</div>
-            <div className="task-list__empty-hint">
-              点击上方「新建任务」输入，或按 <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>T</kbd> 快速捕获
-            </div>
-          </div>
-        )}
-        {isEmpty && deletedView && (
-          <div className="task-list__empty">
-            <div className="task-list__empty-glyph" aria-hidden="true">🗑</div>
-            <div>回收站为空</div>
-            <div className="task-list__empty-hint">
-              删除的任务会暂存于此，可随时恢复
-            </div>
-          </div>
-        )}
+      {!deletedView && (
+        <div className="task-list__search">
+          <input
+            type="search"
+            className="task-list__search-input"
+            placeholder="搜索任务…"
+            aria-label="搜索任务"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+          {query && (
+            <button
+              type="button"
+              className="task-list__search-clear"
+              aria-label="清除搜索"
+              title="清除"
+              onClick={() => setQuery('')}
+            >
+              <IconClose size={14} />
+            </button>
+          )}
+        </div>
+      )}
 
-        {deletedView ? (
-          deletedRoots.length > 0 && (
+      <div className="task-list__body">
+        {searching ? (
+          hits.length === 0 ? (
+            <div className="task-list__search-empty">没有匹配「{trimmed}」的任务</div>
+          ) : (
             <ul className="task-list__root-tasks">
-              {deletedRoots.map((t) => (
-                <DeletedRow
-                  key={t.id}
-                  todo={t}
-                  active={t.id === selectedId}
-                  descendantCount={countDescendants(data, t.id)}
-                  onSelect={onSelect}
-                  onRestore={onRestore}
-                />
+              {hits.map((h) => (
+                <li
+                  key={h.todo.id}
+                  className={`task-list__search-row${h.todo.id === selectedId ? ' is-active' : ''}`}
+                  onClick={() => onSelect(h.todo.id)}
+                >
+                  <span className="task-list__search-row-title">{h.todo.title || '(无标题)'}</span>
+                  {h.snippet && <span className="task-list__search-row-snippet">{h.snippet}</span>}
+                </li>
               ))}
             </ul>
           )
         ) : (
-          rootTasks.length > 0 && (
-            <ul className="task-list__root-tasks">
-              {rootTasks.map((t) => (
-                <TaskBranch
-                  key={t.id}
-                  todo={t}
-                  depth={0}
-                  selectedId={selectedId}
-                  onSelect={onSelect}
-                  allTodos={data}
-                  sort={sort}
-                  getExpanded={getExpanded}
-                  toggleExpanded={toggleExpanded}
-                  archivedView={archivedView}
-                  onCycle={async (next) => {
-                    await window.thihy.todo.update(t.id, { status: next });
-                    await refresh();
-                  }}
-                  onDelete={onDelete}
-                  onRestore={onRestore}
-                />
-              ))}
-            </ul>
-          )
+          <>
+            {loading && data.length === 0 && (
+              <div className="task-list__hint">加载中…</div>
+            )}
+            {isEmpty && !deletedView && (
+              <div className="task-list__empty">
+                <div className="task-list__empty-glyph" aria-hidden="true">📭</div>
+                <div>暂无任务</div>
+                <div className="task-list__empty-hint">
+                  点击上方「新建任务」输入，或按 <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>T</kbd> 快速捕获
+                </div>
+              </div>
+            )}
+            {isEmpty && deletedView && (
+              <div className="task-list__empty">
+                <div className="task-list__empty-glyph" aria-hidden="true">🗑</div>
+                <div>回收站为空</div>
+                <div className="task-list__empty-hint">
+                  删除的任务会暂存于此，可随时恢复
+                </div>
+              </div>
+            )}
+
+            {deletedView ? (
+              deletedRoots.length > 0 && (
+                <ul className="task-list__root-tasks">
+                  {deletedRoots.map((t) => (
+                    <DeletedRow
+                      key={t.id}
+                      todo={t}
+                      active={t.id === selectedId}
+                      descendantCount={countDescendants(data, t.id)}
+                      onSelect={onSelect}
+                      onRestore={onRestore}
+                    />
+                  ))}
+                </ul>
+              )
+            ) : (
+              rootTasks.length > 0 && (
+                <ul className="task-list__root-tasks">
+                  {rootTasks.map((t) => (
+                    <TaskBranch
+                      key={t.id}
+                      todo={t}
+                      depth={0}
+                      selectedId={selectedId}
+                      onSelect={onSelect}
+                      allTodos={data}
+                      sort={sort}
+                      getExpanded={getExpanded}
+                      toggleExpanded={toggleExpanded}
+                      archivedView={archivedView}
+                      onCycle={async (next) => {
+                        await window.thihy.todo.update(t.id, { status: next });
+                        await refresh();
+                      }}
+                      onDelete={onDelete}
+                      onRestore={onRestore}
+                    />
+                  ))}
+                </ul>
+              )
+            )}
+          </>
         )}
       </div>
 

@@ -17,6 +17,8 @@ import { TodoListPane } from './panes/TodoListPane';
 import { TodoEditorPane } from './panes/TodoEditorPane';
 import { StatsPane } from './panes/StatsPane';
 import { DrawingPane } from './panes/DrawingPane';
+import { PaneDivider } from './components/PaneDivider';
+import { usePaneWidths } from './hooks/usePaneWidths';
 import { parseHash, routeToHash, type Route, type ListFilter, type SortKey } from './router';
 import { useAppEvent } from './hooks/useThihyApi';
 import { emitDataChanged } from './data-bus';
@@ -51,6 +53,9 @@ export const App: React.FC = () => {
       return true;
     }
   });
+  // Resizable panes: list (left) + AI (right) widths persist across restarts.
+  // The detail pane is flex:1, so it absorbs the remainder.
+  const { listWidth, aiWidth, setListWidth, setAiWidth } = usePaneWidths();
 
   useEffect(() => {
     const onHash = () => setRoute(parseHash(location.hash));
@@ -140,6 +145,7 @@ export const App: React.FC = () => {
             {view === 'list' && (
               <div className="master-detail">
                 <TodoListPane
+                  width={listWidth}
                   filter={listFilter}
                   sort={listSort}
                   selectedId={selectedId}
@@ -148,6 +154,7 @@ export const App: React.FC = () => {
                   onCompose={() => setComposing(true)}
                   toastBus={toast}
                 />
+                <PaneDivider onDrag={(dx) => setListWidth(listWidth + dx)} />
                 <TaskDetail
                   todoId={selectedId}
                   composing={composing}
@@ -161,7 +168,8 @@ export const App: React.FC = () => {
               <DrawingPane todoId={route.id} drawingId={route.drawingId} navigate={navigate} />
             )}
           </main>
-          <AIPanel open={aiOpen} onToggle={toggleAi} />
+          {aiOpen && <PaneDivider onDrag={(dx) => setAiWidth(aiWidth - dx)} />}
+          <AIPanel open={aiOpen} width={aiWidth} onToggle={toggleAi} />
         </div>
         <Statusbar route={route} />
         <ToastHost bus={toast} />

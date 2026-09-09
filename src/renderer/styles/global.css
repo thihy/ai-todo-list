@@ -656,6 +656,10 @@ a:hover {
   background: var(--bg-surface);
   border-left: 1px solid var(--border-default);
   position: relative;
+  /* Default open width; overridden by the persisted inline width set on the
+   * aside in AIPanel. When collapsed (rail) the aside shrinks via the rail
+   * child width and this is irrelevant. */
+  width: var(--ai-panel-w);
   /* The conversation-history dropdown is absolutely positioned INSIDE this
      panel and extends DOWNWARD/LEFTWARD past the panel's right edge to
      cover the underlying editor pane. With overflow:hidden it gets clipped
@@ -728,7 +732,7 @@ a:hover {
   display: flex;
   flex-direction: column;
   height: 100%;
-  width: var(--ai-panel-w);
+  width: 100%;
 }
 
 /* ===== L5: minimal topbar ===== */
@@ -1851,6 +1855,34 @@ a:hover {
   overflow: hidden;
 }
 
+/* Vertical drag handle between two horizontal panes. Sits between list/detail
+ * and main/AI. col-resize cursor + a subtle hover highlight; the handle is
+ * 5px wide with a wider invisible hit area via padding (kept thin to match
+ * the existing divider borders). */
+.pane-divider {
+  flex: 0 0 5px;
+  width: 5px;
+  height: 100%;
+  margin: 0 -2px;
+  position: relative;
+  z-index: 5;
+  cursor: col-resize;
+  background: transparent;
+}
+.pane-divider::after {
+  content: '';
+  position: absolute;
+  inset: 0 2px;
+  border-radius: 2px;
+  background: var(--border-default);
+  opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
+}
+.pane-divider:hover::after {
+  opacity: 1;
+  background: var(--accent-primary);
+}
+
 /* ===== Task list (left column) ===== */
 
 .task-list {
@@ -1862,6 +1894,73 @@ a:hover {
   overflow: hidden;
   background: var(--bg-canvas);
   border-right: 1px solid var(--border-default);
+}
+.task-list__search {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 var(--space-md) var(--space-sm);
+}
+.task-list__search-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 4px var(--space-sm);
+  border: 1px solid var(--border-default);
+  background: var(--bg-input);
+  color: var(--fg-primary);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-sm);
+}
+.task-list__search-input:focus {
+  outline: none;
+  border-color: var(--accent-primary);
+}
+.task-list__search-clear {
+  border: 0;
+  background: transparent;
+  color: var(--fg-muted);
+  cursor: pointer;
+  padding: 2px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+}
+.task-list__search-clear:hover {
+  color: var(--accent-danger);
+}
+.task-list__search-empty {
+  padding: var(--space-md);
+  color: var(--fg-muted);
+  font-size: var(--font-sm);
+}
+.task-list__search-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-xs) var(--space-md);
+  cursor: pointer;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.task-list__search-row:hover {
+  background: var(--bg-hover);
+}
+.task-list__search-row.is-active {
+  background: var(--bg-hover);
+}
+.task-list__search-row-title {
+  font-size: var(--font-sm);
+  color: var(--fg-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.task-list__search-row-snippet {
+  font-size: var(--font-xs);
+  color: var(--fg-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .task-list__header {
   flex: none;
