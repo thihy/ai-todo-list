@@ -32,7 +32,7 @@ export class TrayController {
       { label: '显示主窗口', click: () => this.focusInbox() },
       { type: 'separator' },
       {
-        label: this.clipboardPaused ? '✓ 剪贴板监听已暂停' : '暂停剪贴板监听',
+        label: this.clipboardPaused ? '已暂停 · 剪贴板监听' : '暂停剪贴板监听',
         click: () => this.onPauseClipboard(),
       },
       { type: 'separator' },

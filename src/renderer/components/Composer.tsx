@@ -16,6 +16,7 @@
 //   here is a thin capture shell — the heavy lifting moved to the model.
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { IconClose, IconSend, IconSparkle } from './icons';
 
 interface PastedImage {
   id: string;
@@ -165,7 +166,7 @@ export const Composer: React.FC<{
     >
       <header className="composer__head">
         <h2 className="composer__title">
-          <span className="composer__title-glyph" aria-hidden="true">✦</span>
+          <IconSparkle size={16} className="composer__title-glyph" />
           新建任务
         </h2>
         <button
@@ -175,7 +176,7 @@ export const Composer: React.FC<{
           title="关闭"
           aria-label="关闭"
         >
-          ✕
+          <IconClose size={14} />
         </button>
       </header>
 
@@ -226,7 +227,7 @@ export const Composer: React.FC<{
           onClick={() => void submit()}
         >
           {submitting ? '发送中…' : '发送给 AI 助手'}
-          <span className="composer__send-glyph" aria-hidden="true">➤</span>
+          <IconSend size={14} className="composer__send-glyph" />
         </button>
       </footer>
     </div>

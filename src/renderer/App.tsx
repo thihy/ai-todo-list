@@ -19,6 +19,7 @@ import { StatsPane } from './panes/StatsPane';
 import { DrawingPane } from './panes/DrawingPane';
 import { DocumentsView } from './components/DocumentsView';
 import { PaneDivider } from './components/PaneDivider';
+import { IconCheck } from './components/icons';
 import { usePaneWidths } from './hooks/usePaneWidths';
 import { parseHash, routeToHash, type Route, type ListFilter, type SortKey } from './router';
 import { useAppEvent, useTodo } from './hooks/useThihyApi';
@@ -89,7 +90,7 @@ export const App: React.FC = () => {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
-  // Esc drops out of fullscreen doc mode (the inverse of clicking ⛶).
+  // Esc drops out of fullscreen doc mode (the inverse of clicking the fullscreen icon).
   useEffect(() => {
     if (!fullscreenTodoId) return;
     const onKey = (e: KeyboardEvent): void => {
@@ -223,7 +224,7 @@ const TaskDetail: React.FC<{
   if (!todoId) {
     return (
       <div className="task-detail task-detail--empty">
-        <div className="task-detail__empty-glyph" aria-hidden="true">✓</div>
+        <IconCheck size={28} className="task-detail__empty-glyph" />
         <div className="task-detail__empty-title">未选择任务</div>
         <div className="task-detail__empty-hint">
           从左侧列表选择一个任务查看详情，或点击上方「新建任务」。
@@ -240,7 +241,7 @@ const TaskDetail: React.FC<{
 
 /** FullscreenDoc — the document workspace fills the detail area; the task list
  *  disappears. The AI panel stays so the user can keep asking questions about
- *  whatever they're editing. Esc / the ⛶ button drop back to normal mode. */
+ *  whatever they're editing. Esc / the fullscreen-exit button drop back to normal mode. */
 const FullscreenDoc: React.FC<{ todoId: string; onExit: () => void }> = ({ todoId, onExit }) => {
   const { todo } = useTodo(todoId);
   const taskTitle = todo?.title ?? null;

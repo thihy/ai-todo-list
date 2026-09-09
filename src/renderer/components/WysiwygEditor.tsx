@@ -13,6 +13,7 @@ import StarterKit from '@tiptap/starter-kit';
 import Image from '@tiptap/extension-image';
 import Link from '@tiptap/extension-link';
 import { usePrompt } from '../hooks/usePrompt';
+import { IconLink, IconQuote } from './icons';
 
 function fileToDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -153,11 +154,12 @@ export const WysiwygEditor: React.FC<{
 
   if (!editor) return <div className="wysiwyg wysiwyg--loading">加载编辑器…</div>;
 
-  const Btn: React.FC<{ onClick: () => void; active?: boolean; label: string; title: string }> = ({
+  const Btn: React.FC<{ onClick: () => void; active?: boolean; label?: React.ReactNode; title: string; icon?: React.ReactNode }> = ({
     onClick,
     active,
     label,
     title,
+    icon,
   }) => (
     <button
       type="button"
@@ -166,7 +168,8 @@ export const WysiwygEditor: React.FC<{
       title={title}
       aria-pressed={active}
     >
-      {label}
+      {icon}
+      {label && <span className="wysiwyg__btn-label">{label}</span>}
     </button>
   );
 
@@ -179,10 +182,10 @@ export const WysiwygEditor: React.FC<{
         <Btn label="I" title="斜体" onClick={() => editor.chain().focus().toggleItalic().run()} active={editor.isActive('italic')} />
         <Btn label="• 列表" title="无序列表" onClick={() => editor.chain().focus().toggleBulletList().run()} active={editor.isActive('bulletList')} />
         <Btn label="1. 列表" title="有序列表" onClick={() => editor.chain().focus().toggleOrderedList().run()} active={editor.isActive('orderedList')} />
-        <Btn label="❝" title="引用" onClick={() => editor.chain().focus().toggleBlockquote().run()} active={editor.isActive('blockquote')} />
+        <Btn icon={<IconQuote size={14} />} title="引用" onClick={() => editor.chain().focus().toggleBlockquote().run()} active={editor.isActive('blockquote')} />
         <Btn label="⌗" title="插入图片" onClick={pickImage} />
         <Btn
-          label="🔗"
+          icon={<IconLink size={14} />}
           title="链接"
           onClick={async () => {
             const prev = editor.getAttributes('link').href as string | undefined;

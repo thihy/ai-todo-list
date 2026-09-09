@@ -2,7 +2,7 @@
 // resident right AIPanel; designed for a ~380px column.
 //
 // Layout (L5 redesign):
-//   ┌─ header (minimal): [🗂 history]  [＋ new]                ┐
+//   ┌─ header (minimal): [history]  [＋ new]                  ┐
 //   ├─ content ───────────────────────────────────────────────┤
 //   │  # 当前对话标题  (big sticky heading)                    │
 //   │  ┌─ 当前问题 ────────────────────────────────────────┐  │  ← sticky banner
@@ -16,8 +16,8 @@
 //   └────────────────────────────────────────────────────────┘
 //
 // Why these changes:
-// - 历史: collapsed behind ONE icon (🗂) so the header doesn't compete with
-//   the message area for horizontal space.
+// - 历史: collapsed behind a single IconHistory so the header doesn't
+//   compete with the message area for horizontal space.
 // - 当前对话标题: shown as a sticky heading INSIDE the content area so the
 //   user always sees what thread they're reading (the previous header was
 //   dominated by the conversation-switcher buttons).
@@ -32,7 +32,7 @@ import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from
 import { useAiStream } from '../hooks/useThihyApi';
 import { useDataVersion } from '../data-bus';
 import { Markdown } from '../components/Markdown';
-import { IconHistory, IconPlus } from '../components/icons';
+import { IconAttach, IconHistory, IconPlus, IconSend, IconSparkle, IconThink, IconTool, IconWarn } from '../components/icons';
 import type { AITokenEvent, AIToolCallEvent, AIReasoningEvent, AIStreamEvent } from '../../shared/ai-types';
 import { AI_SUBMIT_EVENT, type ExternalAiSubmitDetail } from '../components/Composer';
 
@@ -114,7 +114,7 @@ export const AIPane: React.FC = () => {
   // changes done by the AI tools (the tool result scope covers it now too).
   const convVersion = useDataVersion(['conversations']);
 
-  // L5: history is collapsed behind ONE icon (🗂). That single button opens
+  // L5: history is collapsed behind ONE icon. That single button opens
   // a dropdown that holds: a search/filter box, the full conversation list,
   // a toggle for showing archived, and a "new conversation" entry. The
   // rename / archive / delete actions for the CURRENT conversation moved
@@ -656,12 +656,12 @@ export const AIPane: React.FC = () => {
             LEFT  : the "AI 助手" brand label so the panel always reads as
                     "this is the AI assistant" even when the conversation
                     title is in the content area.
-            RIGHT : a [+ 新建] icon and the [🗂 历史] icon.
+            RIGHT : a [+ 新建] icon and the [历史] icon.
           The title itself moves out into the content area as a sticky
           heading below — the topbar stops competing for horizontal space. */}
       <header className="aipane__header">
         <div className="aipane__brand">
-          <span className="aipane__brand-glyph" aria-hidden="true">✦</span>
+          <IconSparkle size={14} className="aipane__brand-glyph" />
           <span className="aipane__brand-text">AI 助手</span>
         </div>
         <div className="aipane__actions">
@@ -798,7 +798,7 @@ export const AIPane: React.FC = () => {
       <div className="aipane__body" role="log" aria-live="polite" ref={scrollRef}>
         {bootError && (
           <div className="aipane__empty aipane__empty--error">
-            ⚠ 会话列表加载失败：{bootError}
+            <IconWarn size={14} /> 会话列表加载失败：{bootError}
           </div>
         )}
         {/* The conversation title + current-question banner are wrapped in a
@@ -851,7 +851,7 @@ export const AIPane: React.FC = () => {
                 {activeQuestion.user}
                 {activeQuestion.attached && activeQuestion.attached.length > 0 && (
                   <span className="aipane__currentq-attach">
-                    {' '}📎 {activeQuestion.attached.length} 个附件
+                    {' '}<IconAttach size={12} /> {activeQuestion.attached.length} 个附件
                   </span>
                 )}
               </span>
@@ -885,7 +885,7 @@ export const AIPane: React.FC = () => {
           <div className="aipane__attach-row" role="list" aria-label="已附加的文件">
             {attachments.map((a) => (
               <span key={a.path} className="aipane__attach-chip" role="listitem" title={`${a.path}\n${a.mime} · ${a.size} 字节`}>
-                <span className="aipane__attach-chip-icon" aria-hidden="true">📎</span>
+                <IconAttach size={12} className="aipane__attach-chip-icon" />
                 <span className="aipane__attach-chip-name">{a.name}</span>
                 <button
                   type="button"
@@ -957,7 +957,7 @@ export const AIPane: React.FC = () => {
               title={current ? '发送（Enter）' : '发送并创建对话'}
               aria-label="发送"
             >
-              <span aria-hidden="true">➤</span>
+              <IconSend size={14} />
             </button>
           )}
         </div>
@@ -1017,7 +1017,7 @@ const TurnView: React.FC<{ turn: Turn }> = ({ turn }) => {
         <div className="turn__attachments" aria-label="已附加的文件">
           {turn.attached.map((a) => (
             <span key={a.path} className="turn__attach-chip" title={`${a.path}\n${a.mime} · ${a.size} 字节`}>
-              <span aria-hidden="true">📎</span> {a.name}
+              <IconAttach size={12} /> {a.name}
             </span>
           ))}
         </div>
@@ -1045,7 +1045,7 @@ const TurnView: React.FC<{ turn: Turn }> = ({ turn }) => {
         </div>
       )}
       {turn.status === 'error' && (
-        <div className="bubble bubble--error">⚠ {turn.error}</div>
+        <div className="bubble bubble--error"><IconWarn size={14} /> {turn.error}</div>
       )}
     </div>
   );
@@ -1059,7 +1059,7 @@ const ReasoningView: React.FC<{ text: string; streaming: boolean }> = ({ text, s
   return (
     <div className="reasoning">
       <button type="button" className="reasoning__head" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
-        <span className="reasoning__icon" aria-hidden="true">💭</span>
+        <IconThink size={14} className="reasoning__icon" />
         <span className="reasoning__label">{streaming ? '思考中…' : '思考过程'}</span>
         <span className="reasoning__chevron" aria-hidden="true">{open ? '▾' : '▸'}</span>
       </button>
@@ -1079,7 +1079,7 @@ const ToolCardView: React.FC<{ card: ToolCard }> = ({ card }) => {
   return (
     <div className={`toolcard${card.ok ? '' : ' toolcard--error'}`}>
       <button type="button" className="toolcard__head" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
-        <span className="toolcard__icon" aria-hidden="true">{card.ok ? '🔧' : '⚠'}</span>
+        <span className="toolcard__icon">{card.ok ? <IconTool size={14} /> : <IconWarn size={14} />}</span>
         <span className="toolcard__name">{card.name || 'tool'}</span>
         <span className="toolcard__chevron" aria-hidden="true">{open ? '▾' : '▸'}</span>
       </button>

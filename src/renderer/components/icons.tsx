@@ -213,7 +213,8 @@ export const IconDivider: React.FC<IconProps> = (p) => (
 );
 
 /** Fullscreen — four corner brackets pointing outward (the convention for
- *  "expand to fullscreen"). Used by the DocumentsView tab bar's ⛶ button. */
+ *  "expand to fullscreen"). Used by the DocumentsView tab bar's expand
+ *  button and the FullscreenDoc exit control. */
 export const IconFullscreen: React.FC<IconProps> = (p) => (
   <Svg {...p}>
     <path d="M3 6V3h3M13 6V3h-3M3 10v3h3M13 10v3h-3" />
@@ -244,6 +245,79 @@ export const IconCalendar: React.FC<IconProps> = (p) => (
     <rect x="2.5" y="3.5" width="11" height="10" rx="1.4" />
     <path d="M2.5 6.5h11" />
     <path d="M5.5 2v3M10.5 2v3" />
+  </Svg>
+);
+
+/** Sparkle — AI / magic / auto-generated marker. A four-point star with two
+ *  smaller accent stars; used on AI composer brand, assistant turns, etc. */
+export const IconSparkle: React.FC<IconProps> = (p) => (
+  <Svg {...p}>
+    <path d="M8 2l1.2 3.4L12.5 7l-3.3 1.6L8 12l-1.2-3.4L3.5 7l3.3-1.6z" />
+    <path d="M13 2.5l.5 1.3L14.8 4.3l-1.3.5L13 6.1l-.5-1.3-1.3-.5 1.3-.5z" />
+  </Svg>
+);
+
+/** Send — paper-airplane "submit / send now" affordance. Used on composer
+ *  send button (during input) and AI submit button. */
+export const IconSend: React.FC<IconProps> = (p) => (
+  <Svg {...p}>
+    <path d="M2.5 8l11-5-3 11-3-5z" />
+    <path d="M7.5 9l6-6" />
+  </Svg>
+);
+
+/** Stop — square "abort the running action" affordance. Pairs with Send:
+ *  same button, different icon, toggled by streaming state. */
+export const IconStop: React.FC<IconProps> = (p) => (
+  <Svg {...p}>
+    <rect x="4" y="4" width="8" height="8" rx="1.2" />
+  </Svg>
+);
+
+/** Trash — delete affordance. Outline trash can with lid handle and a few
+ *  interior lines. */
+export const IconTrash: React.FC<IconProps> = (p) => (
+  <Svg {...p}>
+    <path d="M3 4.5h10" />
+    <path d="M6 3h4" />
+    <path d="M4.5 4.5l.7 8.5a1 1 0 0 0 1 1h3.6a1 1 0 0 0 1-1l.7-8.5" />
+    <path d="M6.5 7v4M9.5 7v4" />
+  </Svg>
+);
+
+/** Warning — caution / error inline marker. Triangle with exclamation. */
+export const IconWarn: React.FC<IconProps> = (p) => (
+  <Svg {...p}>
+    <path d="M8 2.5l6 11H2z" />
+    <path d="M8 7v3" />
+    <path d="M8 11.5h.01" />
+  </Svg>
+);
+
+/** Think — speech-bubble outline with three dots. Marks the AI "thinking /
+ *  reasoning" surface (the 思考过程 panel). */
+export const IconThink: React.FC<IconProps> = (p) => (
+  <Svg {...p}>
+    <path d="M3 4.5h10a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1H6.5l-2.5 2v-2H3a1 1 0 0 1-1-1v-5a1 1 0 0 1 1-1z" />
+    <path d="M5.5 8h.01M7.5 8h.01M9.5 8h.01" />
+  </Svg>
+);
+
+/** Tool — wrench + screwdriver crossed. Marks the AI's tool-calls / actions
+ *  surface (function-call chips, tool-result rows). */
+export const IconTool: React.FC<IconProps> = (p) => (
+  <Svg {...p}>
+    <path d="M11 2.5a3 3 0 0 0-2.6 4.6l-5.4 5.4a1 1 0 0 0 1.4 1.4l5.4-5.4A3 3 0 1 0 11 2.5z" />
+    <path d="M13 11l1.5 1.5M14.5 9.5l-1 1" />
+  </Svg>
+);
+
+/** InboxEmpty — empty-state illustration for the AI pane / inbox. A tray
+ *  outline with a small downward arrow indicating "nothing arrived". */
+export const IconInboxEmpty: React.FC<IconProps> = (p) => (
+  <Svg {...p}>
+    <path d="M3 9V5a1 1 0 0 1 1-1h8a1 1 0 0 1 1 1v4" />
+    <path d="M3 9h3l1 2h2l1-2h3v3a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z" />
   </Svg>
 );
 

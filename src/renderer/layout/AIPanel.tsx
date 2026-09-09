@@ -6,6 +6,7 @@
 
 import React from 'react';
 import { AIPane } from '../panes/AIPane';
+import { IconSparkle } from '../components/icons';
 
 export const AIPanel: React.FC<{ open: boolean; width: number; onToggle: () => void }> = ({ open, width, onToggle }) => {
   return (
@@ -29,7 +30,7 @@ export const AIPanel: React.FC<{ open: boolean; width: number; onToggle: () => v
           aria-label="展开 AI 助手"
           aria-expanded={false}
         >
-          <span className="ai-rail__icon" aria-hidden="true">✦</span>
+          <span className="ai-rail__icon"><IconSparkle size={16} /></span>
           <span className="ai-rail__label">AI 助手</span>
           <ChevronLeft />
         </button>

@@ -26,7 +26,7 @@ import type { ToastBus } from '../components/Toast';
 import type { Todo, TodoStatus, ULID } from '../../shared/todo-types';
 import { UserMenu } from '../components/UserMenu';
 import { StatusSelect } from '../components/StatusSelect';
-import { IconCalendar, IconDrawing } from '../components/icons';
+import { IconCalendar, IconDrawing, IconInboxEmpty, IconTrash } from '../components/icons';
 
 export const TodoListPane: React.FC<{
   width: number;
@@ -158,7 +158,7 @@ export const TodoListPane: React.FC<{
           )}
           {isEmpty && !deletedView && (
             <div className="task-list__empty">
-              <div className="task-list__empty-glyph" aria-hidden="true">📭</div>
+              <IconInboxEmpty size={28} className="task-list__empty-glyph" />
               <div>暂无任务</div>
               <div className="task-list__empty-hint">
                 点击上方「新建任务」输入，或按 <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>T</kbd> 快速捕获
@@ -167,7 +167,7 @@ export const TodoListPane: React.FC<{
           )}
           {isEmpty && deletedView && (
             <div className="task-list__empty">
-              <div className="task-list__empty-glyph" aria-hidden="true">🗑</div>
+              <IconTrash size={28} className="task-list__empty-glyph" />
               <div>回收站为空</div>
               <div className="task-list__empty-hint">
                 删除的任务会暂存于此，可随时恢复
