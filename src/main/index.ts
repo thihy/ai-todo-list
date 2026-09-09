@@ -2,7 +2,7 @@
 
 import { app, BrowserWindow, shell, protocol, net, Menu, dialog } from 'electron';
 import { join } from 'node:path';
-import { mkdirSync, copyFileSync, writeFileSync, readFileSync, statSync } from 'node:fs';
+import { mkdirSync, copyFileSync, writeFileSync, readFileSync, statSync, readdirSync } from 'node:fs';
 import { cpSync } from 'node:fs';
 import { basename, extname } from 'node:path';
 import { installRouter, okResult, failResult, register } from './ipc/router';
@@ -451,6 +451,11 @@ function registerSettingsHandlers(
   // new location (DB + markdown + drawings + attachments), persist the new
   // dataDir, then relaunch from the migrated copy. The config.json lives in
   // userData (stable), so it survives untouched.
+  //
+  // If the chosen directory ALREADY contains data, we do NOT silently
+  // overwrite it. We prompt: 替换 (overwrite with current data) / 不替换
+  // (keep the target's existing data, just switch to it) / 取消 (abort,
+  // leave everything untouched).
   register('settings.chooseDataDir', async () => {
     try {
       const { dialog, app: electronApp } = await import('electron');
@@ -471,24 +476,61 @@ function registerSettingsHandlers(
       }
 
       mkdirSync(chosen, { recursive: true });
-      // Flush WAL into the main db file and close the handle so the on-disk
-      // snapshot is consistent before we copy it.
-      try {
-        handle.db.pragma('wal_checkpoint(TRUNCATE)');
-      } catch {
-        // best-effort; copy still works on the live file
-      }
-      handle.close();
 
-      cpSync(oldRootDir, chosen, {
-        recursive: true,
-        force: true,
-        errorOnExist: false,
-        dereference: true,
-      });
+      // Decide whether to copy current data into the target. If the target
+      // already has data, we must NOT silently clobber it — ask the user.
+      //   替换   → overwrite (force copy current data into the target)
+      //   不替换 → keep the target's existing data, just switch dataDir
+      //            (the app loads whatever already lives at `chosen`)
+      //   取消   → abort, leave everything untouched
+      let doCopy = true;       // copy current data into the target?
+      let prompted = false;   // did we ask the overwrite question?
+      const existing = readdirSync(chosen);
+      if (existing.length > 0) {
+        prompted = true;
+        const choice = await dialog.showMessageBox(win as never, {
+          type: 'warning',
+          title: '目标目录已有数据',
+          message: `所选目录「${chosen}」中已存在数据。`,
+          detail:
+            '替换：用当前数据覆盖目标目录中的现有数据。\n' +
+            '不替换：保留目标目录中的现有数据，直接切换到该目录（不复制当前数据）。',
+          buttons: ['替换', '不替换', '取消'],
+          defaultId: 2, // cancel = safe default
+          cancelId: 2,
+          noLink: true, // predictable button order on Windows
+        });
+        if (choice.response === 2) {
+          // Cancel — nothing touched, DB still open.
+          return okResult({ path: null });
+        }
+        doCopy = choice.response === 0; // 0 = 替换 → copy; 1 = 不替换 → skip
+      }
+
+      if (doCopy) {
+        // Flush WAL into the main db file and close the handle so the
+        // on-disk snapshot is consistent before we copy it.
+        try {
+          handle.db.pragma('wal_checkpoint(TRUNCATE)');
+        } catch {
+          // best-effort; copy still works on the live file
+        }
+        handle.close();
+        cpSync(oldRootDir, chosen, {
+          recursive: true,
+          force: true,
+          errorOnExist: false,
+          dereference: true,
+        });
+      } else {
+        // Not copying — the app will load the existing data at `chosen`
+        // after relaunch. Close the current handle cleanly so the
+        // relaunch reopens at the new path without a stale lock.
+        try { handle.close(); } catch { /* best-effort */ }
+      }
 
       store.patch({ dataDir: chosen });
-      logger.info(`dataDir migrated ${oldRootDir} → ${chosen}; relaunching`);
+      logger.info(`dataDir migrated ${oldRootDir} → ${chosen} (copy=${doCopy}, prompted=${prompted}); relaunching`);
       setImmediate(() => {
         electronApp.relaunch();
         electronApp.exit(0);
