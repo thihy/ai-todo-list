@@ -3019,6 +3019,169 @@ a:hover {
 
 /* --- WYSIWYG editor (Tiptap) --- */
 
+/* --- Documents workspace (multi-doc) --- */
+
+.docs-workspace {
+  display: grid;
+  grid-template-columns: 200px 1fr;
+  gap: var(--space-md);
+  min-height: 420px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.docs-workspace__sidebar {
+  border-right: 1px solid var(--border-default);
+  background: var(--bg-canvas);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.docs-workspace__sidebar-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-sm) var(--space-md);
+  border-bottom: 1px solid var(--border-default);
+}
+.docs-workspace__sidebar-title {
+  font-size: var(--font-xs);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--fg-muted);
+}
+
+.docs-workspace__add { position: relative; }
+.docs-workspace__add-btn {
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  color: var(--fg-secondary);
+  font-size: var(--font-md);
+  line-height: 1;
+  cursor: pointer;
+}
+.docs-workspace__add-btn:hover { background: var(--bg-hover); color: var(--fg-primary); }
+.docs-workspace__add-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-xxs, 4px);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  min-width: 180px;
+}
+.docs-workspace__add-menu button {
+  text-align: left;
+  padding: var(--space-xs) var(--space-sm);
+  border: none;
+  background: transparent;
+  color: var(--fg-primary);
+  font-size: var(--font-sm);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.docs-workspace__add-menu button:hover { background: var(--bg-hover); }
+
+.docs-workspace__doc-list {
+  list-style: none;
+  margin: 0;
+  padding: var(--space-xs);
+  overflow-y: auto;
+  flex: 1;
+}
+.docs-workspace__doc-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  color: var(--fg-secondary);
+  font-size: var(--font-sm);
+  transition: background 0.12s;
+}
+.docs-workspace__doc-item:hover { background: var(--bg-hover); }
+.docs-workspace__doc-item.is-active {
+  background: color-mix(in srgb, var(--accent-primary) 12%, transparent);
+  color: var(--fg-primary);
+}
+.docs-workspace__doc-icon { font-size: var(--font-md); }
+.docs-workspace__doc-title {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.docs-workspace__doc-remove {
+  width: 18px;
+  height: 18px;
+  border: none;
+  background: transparent;
+  color: var(--fg-muted);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  opacity: 0;
+  font-size: var(--font-md);
+  line-height: 1;
+}
+.docs-workspace__doc-item:hover .docs-workspace__doc-remove { opacity: 1; }
+.docs-workspace__doc-remove:hover { background: var(--bg-hover); color: var(--accent-danger); }
+
+.docs-workspace__editor {
+  padding: var(--space-md);
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+}
+.docs-workspace__empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  color: var(--fg-muted);
+  font-size: var(--font-sm);
+}
+
+.docs-workspace__attachment,
+.docs-workspace__link {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-sm);
+  padding: var(--space-md);
+}
+.docs-workspace__attachment-img {
+  max-width: 100%;
+  height: auto;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-default);
+}
+.docs-workspace__attachment-file {
+  font-size: var(--font-md);
+  color: var(--fg-primary);
+}
+.docs-workspace__link-title { font-size: var(--font-md); color: var(--fg-primary); }
+.docs-workspace__open-link {
+  color: var(--accent-primary);
+  font-size: var(--font-sm);
+  text-decoration: underline;
+}
+
+/* --- WYSIWYG editor (Tiptap) toolbar etc --- */
+
 .wysiwyg {
   display: flex;
   flex-direction: column;

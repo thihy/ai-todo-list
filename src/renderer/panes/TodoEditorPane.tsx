@@ -21,9 +21,9 @@
 // as the task, not as a footnote to it).
 
 import React, { useEffect, useState } from 'react';
-import { useBody, useHistory, useTodo, useDrawings } from '../hooks/useThihyApi';
+import { useTodo, useDrawings } from '../hooks/useThihyApi';
 import { routeToHash } from '../router';
-import { MarkdownEditor } from '../components/MarkdownEditor';
+import { DocumentsView } from '../components/DocumentsView';
 import { InlineTitle } from '../components/InlineTitle';
 import { PriorityPicker } from '../components/PriorityPicker';
 import { TagInput } from '../components/TagInput';
@@ -38,8 +38,6 @@ export const TodoEditorPane: React.FC<{
   navigate: (to: string) => void;
 }> = ({ todoId, navigate }) => {
   const { todo, loading } = useTodo(todoId);
-  const { body, version, save, saving, error } = useBody(todoId);
-  const { versions } = useHistory(todoId);
   const { drawings, refresh: refreshDrawings } = useDrawings(todoId);
 
   const [tagDraft, setTagDraft] = useState<string[]>([]);
@@ -111,38 +109,7 @@ export const TodoEditorPane: React.FC<{
       <div className="editor-pane__body">
         <ProgressView todoId={todo.id} progress={todo.progress} />
 
-        <MarkdownEditor
-          value={body}
-          version={version}
-          onSave={(md) => save(md, version ?? undefined)}
-          saving={saving}
-          error={error}
-        />
-
-        {versions.length > 0 && (
-          <details className="editor-pane__history">
-            <summary className="editor-pane__history-head">
-              <span>历史版本</span>
-              <span className="editor-pane__history-count">{versions.length}</span>
-            </summary>
-            <ul className="editor-pane__history-list">
-              {versions.map((v) => (
-                <li key={v.id} className="editor-pane__history-item">
-                  <span className="editor-pane__history-time">
-                    {new Date(v.savedAt).toLocaleString()}
-                  </span>
-                  <button
-                    type="button"
-                    className="editor-pane__history-restore"
-                    onClick={() => window.thihy.content.restoreVersion(todo.id, String(v.id))}
-                  >
-                    还原
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </details>
-        )}
+        <DocumentsView todoId={todo.id} />
       </div>
     </div>
   );

@@ -214,6 +214,17 @@ export class DocumentStore {
       this.db
         .prepare('UPDATE task_documents SET updated_at = ? WHERE id = ?')
         .run(now, id);
+      // For note_md docs, mirror the content onto todos.body so the FTS5
+      // external-content table stays in sync (search snippets read todos.body).
+      // The progress doc is HTML and intentionally not FTS-indexed. We look up
+      // the doc's todoId + kind in one statement to avoid an extra round-trip.
+      this.db
+        .prepare(
+          `UPDATE todos SET body = ?, updated_at = ?
+           WHERE id = (SELECT todo_id FROM task_documents WHERE id = ?)
+             AND EXISTS (SELECT 1 FROM task_documents WHERE id = ? AND kind = 'note_md')`,
+        )
+        .run(content, now, id, id);
     });
     tx();
     const version = this.db
