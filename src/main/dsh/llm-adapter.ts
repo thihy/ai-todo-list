@@ -9,11 +9,12 @@
 // registered todo/content/drawing tools. client.ts's invokeChat is text-only,
 // so this module owns the tool-aware streaming + multi-turn message mapping.
 //
-// VERIFY: the chunk protocol + loop plumbing are proven in
-// spikes/dsh-fulltree/boot-mock.ts. The provider-wire tool-call SSE parsing
-// here follows the public OpenAI/Anthropic streaming specs but needs a live
-// tool-calling-capable model (deepseek-chat/gpt-4o/claude-sonnet) + user
-// baseURL+apiKey to exercise end-to-end.
+// VERIFY: the chunk protocol + loop plumbing were proven during DSH
+// integration via boot-mock scripts (later removed as transient); the
+// current regression coverage lives in tests/unit/. Provider-wire tool-call
+// SSE parsing here follows the public OpenAI/Anthropic streaming specs
+// but needs a live tool-calling-capable model (deepseek-chat/gpt-4o/
+// claude-sonnet) + user baseURL+apiKey to exercise end-to-end.
 
 import { LlmAdapter } from '@deepseek-ai/dsh-llm';
 import { ToolCallId } from '@deepseek-ai/dsh-llm/brand';
