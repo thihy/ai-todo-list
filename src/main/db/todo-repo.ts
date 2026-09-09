@@ -319,6 +319,29 @@ export class TodoRepo {
     }));
   }
 
+  /** Update the note on an existing progress_log entry (e.g. the user clicked
+   *  the latest progress description to edit it). Only the note changes; the
+   *  percent + timestamp are preserved. Returns the updated entry, or null if
+   *  the entry id doesn't exist. */
+  updateProgressNote(entryId: string, note: string | null): ProgressLogEntry | null {
+    const row = this.db
+      .prepare<
+        [string],
+        { id: string; todo_id: string; percent: number; note: string | null; created_at: number }
+      >('SELECT id, todo_id, percent, note, created_at FROM progress_log WHERE id = ?')
+      .get(entryId);
+    if (!row) return null;
+    const trimmed = note?.trim() || null;
+    this.db.prepare('UPDATE progress_log SET note = ? WHERE id = ?').run(trimmed, entryId);
+    return {
+      id: row.id,
+      todoId: row.todo_id,
+      percent: row.percent,
+      note: trimmed,
+      createdAt: row.created_at,
+    };
+  }
+
   /** Walk the parent_id chain from `candidate` to see if it eventually
    *  reaches `target` (i.e. candidate is a descendant of target). Used
    *  to reject cyclic re-parenting in update(). */

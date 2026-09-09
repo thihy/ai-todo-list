@@ -14,6 +14,7 @@ const DECLARED_CHANNELS: ReadonlySet<string> = new Set([
   'todo.stats',
   'progress.log',
   'progress.list',
+  'progress.updateNote',
   'document.list',
   'document.create',
   'document.read',

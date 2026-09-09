@@ -108,4 +108,11 @@ export const IconFlag: React.FC<IconProps> = (p) => (
   </Svg>
 );
 
+/** Chevron-down — expand affordance (progress history, collapsibles). */
+export const IconChevronDown: React.FC<IconProps> = (p) => (
+  <Svg {...p}>
+    <path d="M4 6L8 10L12 6" />
+  </Svg>
+);
+
 export default Svg;

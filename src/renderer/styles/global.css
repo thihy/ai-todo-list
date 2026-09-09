@@ -72,6 +72,7 @@
   /* Z */
   --z-base: 0;
   --z-sticky: 10;
+  --z-popover: 50;
   --z-overlay: 100;
   --z-modal: 200;
   --z-toast: 300;
@@ -1896,73 +1897,6 @@ a:hover {
   background: var(--bg-canvas);
   border-right: 1px solid var(--border-default);
 }
-.task-list__search {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 0 var(--space-md) var(--space-sm);
-}
-.task-list__search-input {
-  flex: 1 1 auto;
-  min-width: 0;
-  padding: 4px var(--space-sm);
-  border: 1px solid var(--border-default);
-  background: var(--bg-input);
-  color: var(--fg-primary);
-  border-radius: var(--radius-sm);
-  font-size: var(--font-sm);
-}
-.task-list__search-input:focus {
-  outline: none;
-  border-color: var(--accent-primary);
-}
-.task-list__search-clear {
-  border: 0;
-  background: transparent;
-  color: var(--fg-muted);
-  cursor: pointer;
-  padding: 2px;
-  border-radius: 50%;
-  display: inline-flex;
-  align-items: center;
-}
-.task-list__search-clear:hover {
-  color: var(--accent-danger);
-}
-.task-list__search-empty {
-  padding: var(--space-md);
-  color: var(--fg-muted);
-  font-size: var(--font-sm);
-}
-.task-list__search-row {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: var(--space-xs) var(--space-md);
-  cursor: pointer;
-  border-bottom: 1px solid var(--border-subtle);
-}
-.task-list__search-row:hover {
-  background: var(--bg-hover);
-}
-.task-list__search-row.is-active {
-  background: var(--bg-hover);
-}
-.task-list__search-row-title {
-  font-size: var(--font-sm);
-  color: var(--fg-primary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.task-list__search-row-snippet {
-  font-size: var(--font-xs);
-  color: var(--fg-muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 .task-list__header {
   flex: none;
   padding: var(--space-md) var(--space-md) var(--space-sm);
@@ -2678,14 +2612,36 @@ a:hover {
 }
 
 /* --- sub-section layout (基本信息 / 链接 / 文档 / 动态) --- */
-/* The whole pane scrolls as one column of titled sections. Each section is
-   an addressable facet of the task rather than a fixed top/bottom band. */
-
+/* The pane is a flex column: the 基本信息 header is fixed (does not scroll)
+   so its popovers (status/priority/date/tag/progress-note) are never clipped
+   by an overflow ancestor — they paint in the header's stacking context above
+   the scroll body. The 链接/文档/动态 sections live in .editor-pane__scroll,
+   which is the only overflow:auto element, so the header stays put while the
+   user scrolls through documents and activity. */
 .editor-pane--sections {
-  display: block;
+  display: flex;
+  flex-direction: column;
   grid-template-rows: none;
+  overflow: hidden;
+  padding: 0 var(--space-lg);
+}
+/* Fixed header: its own stacking context above the scroll body so its popovers
+   (absolute, z-index var(--z-popover)) always paint above body content. */
+.editor-pane__section--basic {
+  flex: 0 0 auto;
+  position: relative;
+  z-index: var(--z-popover);
+}
+/* Scroll body — the only element that scrolls. min-height:0 lets it shrink
+   inside the flex column instead of pushing the header off-screen. Its own
+   stacking context (z-index:1) is below the header (var(--z-popover)). */
+.editor-pane__scroll {
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
-  padding: var(--space-md) var(--space-lg) var(--space-xl);
+  position: relative;
+  z-index: 1;
+  padding-bottom: var(--space-xl);
 }
 .editor-pane__section {
   display: flex;
@@ -2707,23 +2663,31 @@ a:hover {
 }
 .editor-pane__created {
   flex: 0 0 auto;
+  margin-left: auto;
   font-size: var(--font-xs);
   color: var(--fg-muted);
   white-space: nowrap;
 }
 /* 基本信息 has no section title — the title is the hero. Its title-line holds
-   the title, the creation date (grey), and the progress bar end-to-end. */
+   the status glyph, the title (natural content width — no flex-grow, so the
+   heading sizes itself like normal HTML), and the creation date pushed right. */
 .editor-pane__section--basic .editor-pane__title-line {
   align-items: center;
   gap: var(--space-sm);
 }
 .editor-pane__section--basic .InlineTitle,
+.editor-pane__section--basic .editor-pane__title-row,
 .editor-pane__section--basic .editor-pane__title {
-  flex: 1 1 auto;
+  flex: 0 1 auto;
+  min-width: 0;
 }
-.editor-pane__section--basic .progress-inline {
-  flex: 1 1 240px;
-  min-width: 200px;
+/* Progress sits on its own row below the meta line: a fixed-width bar with
+   the latest progress note trailing it. */
+.editor-pane__progress-row {
+  flex: 1 0 auto;
+}
+.editor-pane__progress-row .progress-inline {
+  flex: 0 0 auto;
 }
 .progress-inline__history-link {
   margin-left: auto;
@@ -3230,6 +3194,7 @@ a:hover {
 /* --- tag input (chips + trailing +; no resident text field) --- */
 
 .tag-input {
+  position: relative;
   display: inline-flex;
   align-items: center;
   flex-wrap: wrap;
@@ -3445,6 +3410,7 @@ a:hover {
 /* --- inline progress (基本信息 section) --- */
 
 .progress-inline {
+  position: relative;
   display: flex;
   align-items: center;
   flex-wrap: wrap;
@@ -3454,16 +3420,16 @@ a:hover {
   display: flex;
   align-items: center;
   gap: var(--space-sm);
-  flex: 1 1 160px;
-  min-width: 120px;
+  flex: 0 0 auto;
 }
 .progress-inline__bar-btn {
-  flex: 1 1 auto;
-  min-width: 80px;
+  flex: 0 0 200px;
+  width: 200px;
   padding: 0;
   border: 0;
   background: transparent;
-  cursor: pointer;
+  cursor: ew-resize;
+  touch-action: none;
   text-align: left;
 }
 .progress-inline__bar-btn .progress-bar__track {
@@ -3474,13 +3440,67 @@ a:hover {
   filter: brightness(0.96);
 }
 .progress-inline__note {
-  flex: 0 1 auto;
-  max-width: 240px;
+  flex: 1 1 auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: var(--font-sm);
   color: var(--fg-secondary);
+}
+.progress-inline__note.is-editable {
+  cursor: text;
+  border-radius: var(--radius-sm);
+  padding: 1px 4px;
+}
+.progress-inline__note.is-editable:hover {
+  background: var(--bg-hover);
+  color: var(--fg-primary);
+}
+/* [v] history toggle at the far right of the bar. Rotates when open. */
+.progress-inline__history-toggle {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--fg-muted);
+  cursor: pointer;
+  transition: transform var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
+}
+.progress-inline__history-toggle:hover {
+  background: var(--bg-hover);
+  color: var(--fg-primary);
+}
+.progress-inline__history-toggle.is-open {
+  transform: rotate(180deg);
+}
+/* Note popover (drag-end / click-to-edit). Sits below the bar. */
+.progress-inline__note-popover {
+  position: absolute;
+  z-index: var(--z-popover, 30);
+  margin-top: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: var(--space-sm);
+  min-width: 280px;
+  background: var(--bg-surface-elev);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+}
+.progress-inline__note-hint {
+  font-size: var(--font-xs);
+  color: var(--fg-muted);
+}
+/* Inline history expansion below the bar row. */
+.progress-inline__history {
+  padding-top: var(--space-sm);
 }
 .progress-inline__toggle {
   flex: 0 0 auto;

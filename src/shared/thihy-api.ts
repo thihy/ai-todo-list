@@ -135,6 +135,9 @@ export interface ThihyApi {
     log(todoId: string, percent: number, note?: string): Promise<IpcResponse<'progress.log'>>;
     /** Audit timeline for a task, newest-first. */
     list(todoId: string): Promise<IpcResponse<'progress.list'>>;
+    /** Update the note on an existing progress_log entry (click-to-edit the
+     *  latest progress description). Returns the updated entry or null. */
+    updateNote(entryId: string, note: string | null): Promise<IpcResponse<'progress.updateNote'>>;
   };
   document: {
     /** List a task's documents (progress / note_md / drawing / attachment /

@@ -65,6 +65,7 @@ export interface TodoStatsReq { windowDays?: number }
 export interface ProgressLogReq { todoId: ULID; percent: number; note?: string }
 export interface ProgressLogRes { entry: ProgressLogEntry; todo: Todo }
 export interface ProgressListReq { todoId: ULID }
+export interface ProgressUpdateNoteReq { entryId: string; note: string | null }
 
 // ----- document.* -----
 //
@@ -270,6 +271,7 @@ export interface IpcRegistry {
 
   'progress.log': IpcChannel<ProgressLogReq, IpcResult<ProgressLogRes>>;
   'progress.list': IpcChannel<ProgressListReq, IpcResult<ProgressLogEntry[]>>;
+  'progress.updateNote': IpcChannel<ProgressUpdateNoteReq, IpcResult<ProgressLogEntry | null>>;
 
   'document.list': IpcChannel<DocumentListReq, IpcResult<TaskDocument[]>>;
   'document.create': IpcChannel<DocumentCreateReq, IpcResult<TaskDocument>>;

@@ -125,5 +125,15 @@ export function registerTodoHandlers(repo: TodoRepo, md: MarkdownStore): void {
     }
   });
 
+  register('progress.updateNote', (_e, req) => {
+    try {
+      const entry = repo.updateProgressNote(req.entryId, req.note);
+      if (entry) broadcastDataChanged('todos');
+      return Promise.resolve(okResult(entry));
+    } catch (err) {
+      return Promise.resolve(failResult('progress_update_note_failed', (err as Error).message));
+    }
+  });
+
   logger.info('todo.* + progress.* handlers registered');
 }

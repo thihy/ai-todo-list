@@ -152,7 +152,8 @@ export function useHistory(id: string | null): { versions: ContentVersionEntry[]
 
 export function useProgress(todoId: string | null): {
   entries: ProgressLogEntry[];
-  log: (percent: number, note?: string) => Promise<void>;
+  log: (percent: number, note?: string) => Promise<ProgressLogEntry | null>;
+  updateNote: (entryId: string, note: string | null) => Promise<void>;
 } {
   const [entries, setEntries] = useState<ProgressLogEntry[]>([]);
   // progress.log broadcasts app:data-changed { scope: 'todos' }, which bumps
@@ -170,18 +171,32 @@ export function useProgress(todoId: string | null): {
 
   const log = useCallback(
     async (percent: number, note?: string) => {
-      if (!todoId) return;
+      if (!todoId) return null;
       const res = await window.thihy.progress.log(todoId, percent, note);
       if (res.ok) {
         // Optimistic prepend for immediate UI feedback; the data-changed
         // broadcast will also trigger a full re-list via dataVersion.
         setEntries((prev) => [res.data.entry, ...prev]);
+        return res.data.entry;
       }
+      return null;
     },
     [todoId],
   );
 
-  return { entries, log };
+  const updateNote = useCallback(
+    async (entryId: string, note: string | null) => {
+      const res = await window.thihy.progress.updateNote(entryId, note);
+      if (res.ok && res.data) {
+        setEntries((prev) =>
+          prev.map((e) => (e.id === entryId ? { ...e, note: res.data!.note } : e)),
+        );
+      }
+    },
+    [],
+  );
+
+  return { entries, log, updateNote };
 }
 
 export function useDrawings(todoId: string | null): {

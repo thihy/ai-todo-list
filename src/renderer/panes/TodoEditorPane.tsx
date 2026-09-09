@@ -122,6 +122,11 @@ export const TodoEditorPane: React.FC<{
       {/* ===== 基本信息 (no heading — the title is the hero) ===== */}
       <section className="editor-pane__section editor-pane__section--basic">
         <div className="editor-pane__title-line">
+          <StatusSelect
+            status={status}
+            onChange={(v) => { setStatus(v); void commitMeta({ status: v }); }}
+            variant="icon"
+          />
           <InlineTitle
             value={todo.title}
             onCommit={(next) => { void commitMeta({ title: next }); }}
@@ -132,21 +137,9 @@ export const TodoEditorPane: React.FC<{
           >
             创建于 {new Date(todo.createdAt).toLocaleDateString()}
           </span>
-          <ProgressInline
-            todoId={todo.id}
-            progress={todo.progress}
-            onViewHistory={() =>
-              activityRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-            }
-          />
         </div>
 
         <div className="editor-pane__meta">
-          <StatusSelect
-            status={status}
-            onChange={(v) => { setStatus(v); void commitMeta({ status: v }); }}
-            variant="pill"
-          />
           <PriorityPicker
             value={priority}
             onChange={(p) => { setPriority(p); void commitMeta({ priority: p }); }}
@@ -160,25 +153,39 @@ export const TodoEditorPane: React.FC<{
             onChange={(tags) => { setTagDraft(tags); void commitMeta({ tags }); }}
           />
         </div>
+
+        {/* Progress gets its own row so the bar can span the full width and
+            reads as a first-class status of the task, not a tucked-away chip. */}
+        <div className="editor-pane__progress-row">
+          <ProgressInline
+            todoId={todo.id}
+            progress={todo.progress}
+            onViewHistory={() =>
+              activityRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+            }
+          />
+        </div>
       </section>
 
-      {/* ===== 链接 ===== */}
-      <section className="editor-pane__section">
-        <h2 className="editor-pane__section-title">链接</h2>
-        <LinksView todoId={todo.id} />
-      </section>
+      {/* ===== 链接 / 文档 / 动态 — these scroll, the header above does not.
+            Keeping the scroll root here (not on the whole pane) means the
+            基本信息 popovers are never clipped by an overflow ancestor. ===== */}
+      <div className="editor-pane__scroll">
+        <section className="editor-pane__section">
+          <h2 className="editor-pane__section-title">链接</h2>
+          <LinksView todoId={todo.id} />
+        </section>
 
-      {/* ===== 文档 ===== */}
-      <section className="editor-pane__section">
-        <h2 className="editor-pane__section-title">文档</h2>
-        <DocumentsView todoId={todo.id} navigate={navigate} />
-      </section>
+        <section className="editor-pane__section">
+          <h2 className="editor-pane__section-title">文档</h2>
+          <DocumentsView todoId={todo.id} navigate={navigate} />
+        </section>
 
-      {/* ===== 动态 ===== */}
-      <section className="editor-pane__section" ref={activityRef}>
-        <h2 className="editor-pane__section-title">动态</h2>
-        <ProgressTimeline todoId={todo.id} />
-      </section>
+        <section className="editor-pane__section" ref={activityRef}>
+          <h2 className="editor-pane__section-title">动态</h2>
+          <ProgressTimeline todoId={todo.id} />
+        </section>
+      </div>
     </div>
   );
 };

@@ -92,6 +92,7 @@ const api: ThihyApi = {
   progress: {
     log: (todoId, percent, note) => invoke('progress.log', { todoId, percent, note }),
     list: (todoId) => invoke('progress.list', { todoId }),
+    updateNote: (entryId, note) => invoke('progress.updateNote', { entryId, note }),
   },
   document: {
     list: (todoId) => invoke('document.list', { todoId }),
