@@ -3625,15 +3625,12 @@ a:hover {
   min-width: 0;
 }
 .progress-inline__bar-btn {
-  /* Fill the row so the drag affordance covers as much horizontal space as
-     the layout can spare (was a fixed 200px — too short for a precision
-     target, and the cursor's screen position then didn't match the bar's
-     visual extent). min-width guarantees a comfortable drag target even on
-     narrow panes; no max-width — the detail page is wide enough that
-     capping it was leaving obvious whitespace on the right. */
+  /* Bar takes the LEFT half of the row; .progress-inline__note takes the
+     right. Both share the parent .progress-inline__bar (display:flex,
+     flex:1 1 auto), and each gets flex:1 1 0 here so 50/50 stays honest
+     regardless of note length. */
   flex: 1 1 0;
-  min-width: 240px;
-  width: 100%;
+  min-width: 0;
   /* Tall enough to be a comfortable drag target; the visible track is 12px
      inside, the rest is padding to give the pointer room to grab. */
   padding: 8px 0;
@@ -3661,13 +3658,17 @@ a:hover {
   filter: brightness(0.96);
 }
 .progress-inline__note {
-  flex: 1 1 auto;
+  /* Right half of the row (sibling of the bar button). Same flex sizing so
+     50/50 stays honest regardless of note length. */
+  flex: 1 1 0;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: var(--font-sm);
   color: var(--fg-secondary);
+  padding: 0 var(--space-xs);
+  align-self: center;
 }
 .progress-inline__note.is-editable {
   cursor: text;

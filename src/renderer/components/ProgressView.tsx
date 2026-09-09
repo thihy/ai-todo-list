@@ -1,10 +1,12 @@
 // ProgressView — the task's progress surface, split into two pieces:
 //
 //   ProgressInline (基本信息):
-//     [drag-to-set progress bar]
-//     - Drag the bar to set progress; on release a note input pops up below
-//       (auto-dismisses after 1 min idle or on outside-click; the progress is
-//       already saved the moment the drag ends).
+//     [drag-to-set progress bar | latest entry note]
+//     The bar and the note each take half the row. Drag the bar to set
+//     progress; on release a note input pops up below (auto-dismisses after
+//     1 min idle or on outside-click; the progress is already saved the
+//     moment the drag ends). Click the latest note to edit it in the same
+//     popover.
 //
 //   ProgressTimeline (动态 section):
 //     Every progress change (user-entered with a note, or AI/batch note-less)
@@ -35,16 +37,18 @@ export const ProgressBar: React.FC<{
 const IDLE_DISMISS_MS = 60_000;
 
 /** Inline progress row for the 基本信息 section. See file header for the full
- *  interaction model (drag-to-set, post-drag note popover). */
+ *  interaction model (drag-to-set, click-to-edit note, post-drag note popover). */
 export const ProgressInline: React.FC<{
   todoId: string;
   progress: number;
 }> = ({ todoId, progress }) => {
-  const { log, updateNote } = useProgress(todoId);
+  const { entries, log, updateNote } = useProgress(todoId);
   const [percent, setPercent] = useState(progress);
   const [dragging, setDragging] = useState(false);
   // pendingEntryId = an entry just created by a drag, awaiting an optional note.
+  // editingEntryId = an existing entry whose note the user clicked to edit.
   const [pendingEntryId, setPendingEntryId] = useState<string | null>(null);
+  const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
   const [noteDraft, setNoteDraft] = useState('');
 
   const trackRef = useRef<HTMLDivElement>(null);
@@ -52,7 +56,10 @@ export const ProgressInline: React.FC<{
   const noteInputRef = useRef<HTMLInputElement>(null);
   const idleTimer = useRef<number | null>(null);
 
-  const popoverOpen = pendingEntryId !== null;
+  const latest = entries[0] ?? null;
+  const latestNote = latest?.note?.trim() || '';
+  const openEntryId = pendingEntryId ?? editingEntryId;
+  const popoverOpen = openEntryId !== null;
 
   // Keep the local drag value honest with the canonical progress when not
   // actively dragging (e.g. another surface logged progress, or a reload).
@@ -147,6 +154,13 @@ export const ProgressInline: React.FC<{
     return () => document.removeEventListener('mousedown', onDown);
   }, [popoverOpen, closePopover]);
 
+  const onEditLatest = (): void => {
+    if (!latest) return;
+    setPendingEntryId(null);
+    setEditingEntryId(latest.id);
+    setNoteDraft(latest.note ?? '');
+  };
+
   const shownPercent = dragging ? percent : progress;
 
   return (
@@ -170,6 +184,17 @@ export const ProgressInline: React.FC<{
         >
           <ProgressBar value={shownPercent} showLabel />
         </div>
+
+        {/* Latest progress description — click to edit it. Sits in the right
+            half of the row (bar takes the left half; both share via the
+            .progress-inline__bar flex parent). */}
+        <span
+          className={`progress-inline__note${latestNote ? ' is-editable' : ''}`}
+          onClick={onEditLatest}
+          title={latestNote ? '点击编辑描述' : undefined}
+        >
+          {latestNote || (latest ? '添加描述…' : '')}
+        </span>
       </div>
 
       {/* Note popover — opens after a drag completes, for an optional note on
