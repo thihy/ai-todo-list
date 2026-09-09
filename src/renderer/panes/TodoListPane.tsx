@@ -72,6 +72,15 @@ export const TodoListPane: React.FC<{
     await refresh();
   }, [refresh]);
 
+  // In the 归档 view the per-row hover button restores (un-archives) instead
+  // of deleting. Restore = clear archived_at; the task drops back into the
+  // active list.
+  const archivedView = filter.kind === 'archived';
+  const onRestore = useCallback(async (id: string) => {
+    await window.thihy.todo.update(id, { archivedAt: null });
+    await refresh();
+  }, [refresh]);
+
   // Root tasks: top-level (no parentId). SubTasks nest under their parent
   // via TaskBranch, so the root list is just the parentId === null set.
   const rootTasks = useMemo(() => data.filter((t) => !t.parentId), [data]);
@@ -120,11 +129,13 @@ export const TodoListPane: React.FC<{
                 allTodos={data}
                 getExpanded={getExpanded}
                 toggleExpanded={toggleExpanded}
+                archivedView={archivedView}
                 onCycle={async (next) => {
                   await window.thihy.todo.update(t.id, { status: next });
                   await refresh();
                 }}
                 onDelete={onDelete}
+                onRestore={onRestore}
               />
             ))}
           </ul>
@@ -156,9 +167,11 @@ const TaskBranch: React.FC<{
   allTodos: Todo[];
   getExpanded: (id: string) => boolean;
   toggleExpanded: (id: string) => void;
+  archivedView: boolean;
   onCycle: (next: TodoStatus) => Promise<void>;
   onDelete: (id: string) => void;
-}> = ({ todo, depth, selectedId, onSelect, allTodos, getExpanded, toggleExpanded, onCycle, onDelete }) => {
+  onRestore: (id: string) => void;
+}> = ({ todo, depth, selectedId, onSelect, allTodos, getExpanded, toggleExpanded, archivedView, onCycle, onDelete, onRestore }) => {
   const children = subtasksOf(allTodos, todo.id);
   const hasSubtasks = children.length > 0;
   const doneCount = hasSubtasks ? children.filter((c) => c.status === 'done').length : 0;
@@ -177,7 +190,9 @@ const TaskBranch: React.FC<{
         subtaskDoneCount={doneCount}
         subtasksExpanded={expanded}
         onToggleSubtasks={() => toggleExpanded(todo.id)}
+        archivedView={archivedView}
         onDelete={() => onDelete(todo.id)}
+        onRestore={() => onRestore(todo.id)}
       />
       {hasSubtasks && expanded && (
         <ul className="task-branch__children">
@@ -191,10 +206,12 @@ const TaskBranch: React.FC<{
               allTodos={allTodos}
               getExpanded={getExpanded}
               toggleExpanded={toggleExpanded}
+              archivedView={archivedView}
               onCycle={async (next) => {
                 await window.thihy.todo.update(c.id, { status: next });
               }}
               onDelete={onDelete}
+              onRestore={onRestore}
             />
           ))}
         </ul>
@@ -214,8 +231,10 @@ const TaskRow: React.FC<{
   subtaskDoneCount: number;
   subtasksExpanded: boolean;
   onToggleSubtasks: () => void;
+  archivedView: boolean;
   onDelete: () => void;
-}> = ({ todo, depth, active, onSelect, onCycle, hasSubtasks, subtaskCount, subtaskDoneCount, subtasksExpanded, onToggleSubtasks, onDelete }) => {
+  onRestore: () => void;
+}> = ({ todo, depth, active, onSelect, onCycle, hasSubtasks, subtaskCount, subtaskDoneCount, subtasksExpanded, onToggleSubtasks, archivedView, onDelete, onRestore }) => {
   const done = todo.status === 'done';
   return (
     <li
@@ -281,21 +300,35 @@ const TaskRow: React.FC<{
           >
             <StatusGlyph status={todo.status} />
           </button>
-          {/* Quick delete — hidden until the row is hovered so the chrome
-              stays calm at rest. stopPropagation so the row click (select)
-              doesn't fire. */}
-          <button
-            type="button"
-            className="task-row__delete"
-            aria-label="删除任务"
-            title="删除"
-            onClick={(e) => {
-              e.stopPropagation();
-              onDelete();
-            }}
-          >
-            <TrashGlyph />
-          </button>
+          {/* Per-row action — revealed on hover. In the active list it's
+              quick delete; in the 归档 view it's restore (un-archive). */}
+          {archivedView ? (
+            <button
+              type="button"
+              className="task-row__action task-row__restore"
+              aria-label="恢复任务"
+              title="恢复（移回归档前）"
+              onClick={(e) => {
+                e.stopPropagation();
+                onRestore();
+              }}
+            >
+              <RestoreGlyph />
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="task-row__action task-row__delete"
+              aria-label="删除任务"
+              title="删除"
+              onClick={(e) => {
+                e.stopPropagation();
+                onDelete();
+              }}
+            >
+              <TrashGlyph />
+            </button>
+          )}
         </div>
         <Subtitle todo={todo} subtaskCount={subtaskCount} subtaskDoneCount={subtaskDoneCount} />
       </div>
@@ -437,6 +470,15 @@ const TrashGlyph: React.FC = () => (
   </svg>
 );
 
+// Restore (un-archive) — a box-with-up-arrow, the inverse of archiving.
+const RestoreGlyph: React.FC = () => (
+  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+    <path d="M8 11.5V3.8M8 3.8L5 6.8M8 3.8L11 6.8" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+    <path d="M3 10v2.2a.8.8 0 00.8.8h8.4a.8.8 0 00.8-.8V10"
+      stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" fill="none" />
+  </svg>
+);
+
 const ExpandAllGlyph: React.FC = () => (
   // Double downward chevron — "open every branch downward".
   <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -457,6 +499,7 @@ function filterToRepoFilter(f: ListFilter): Parameters<typeof window.thihy.todo.
     case 'today': return { dueBefore: endOfToday(), dueAfter: startOfToday() };
     case 'next7': return { dueBefore: Date.now() + 7 * 24 * 3600_000, dueAfter: startOfToday() };
     case 'inbox': return { status: ['inbox'] };
+    case 'archived': return { archivedOnly: true };
     case 'project': return { tag: [f.tag] };
     case 'status': return { status: [f.status as TodoStatus] };
     case 'priority': return { priority: [f.priority as Todo['priority']] };

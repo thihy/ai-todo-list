@@ -27,6 +27,10 @@ export interface PersistedSettings {
   customProviders: CustomProviderConfig[];
   /** Active custom instance id when provider==='custom'; null = none. */
   customProviderId: string | null;
+  /** Auto-archive: a `done` task is archived once its done_at is older than
+   *  this many days. 0 = never auto-archive (manual archive only). The boot
+   *  sweep + hourly interval in index.ts read this. */
+  archiveAfterDays: number;
 }
 
 const DEFAULTS: PersistedSettings = {
@@ -41,6 +45,7 @@ const DEFAULTS: PersistedSettings = {
   dataDir: null,
   customProviders: [],
   customProviderId: null,
+  archiveAfterDays: 1,
 };
 
 /** Default data root when the user has not picked a directory. */
@@ -129,6 +134,7 @@ export class SettingsStore {
         model: c.model,
       })),
       customProviderId: v.customProviderId,
+      archiveAfterDays: v.archiveAfterDays,
     };
   }
 

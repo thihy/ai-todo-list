@@ -26,6 +26,11 @@ export interface Todo {
    *  rejected at the API boundary; deleting a parent sets this to NULL on
    *  its former children (ON DELETE SET NULL on the self-FK). */
   parentId: ULID | null;
+  /** Soft-archive timestamp. null = active (shown in the default list).
+   *  Set by the auto-archive sweep (done tasks older than the configured
+   *  threshold) or manually. Archived tasks are excluded from the default
+   *  list/search-of-active and surfaced via the 归档 view. */
+  archivedAt: number | null;
 }
 
 export interface TodoCreate {
@@ -49,6 +54,9 @@ export interface TodoPatch {
   /** Re-parent the task (make it a subtask of another task); null = promote
    *  to top-level. Cycles are rejected at the API boundary. */
   parentId?: ULID | null;
+  /** Soft-archive / restore. A number (epoch ms) archives; null restores
+   *  an archived task back to the active list. */
+  archivedAt?: number | null;
 }
 
 export interface TodoFilter {
@@ -61,6 +69,11 @@ export interface TodoFilter {
   search?: string;
   /** Restrict to direct children of this parent id; null = top-level tasks only. */
   parentId?: ULID | null;
+  /** Include already-archived tasks in the result. Default (false/omitted)
+   *  excludes them so the active list stays decluttered. */
+  includeArchived?: boolean;
+  /** Only archived tasks (archived_at IS NOT NULL). For the 归档 view. */
+  archivedOnly?: boolean;
 }
 
 export interface TodoStats {

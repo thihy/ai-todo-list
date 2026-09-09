@@ -7,7 +7,7 @@ const { ulid } = ulidPkg;
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 
-export const SCHEMA_VERSION = 6;
+export const SCHEMA_VERSION = 7;
 
 const MIGRATIONS: ReadonlyArray<{ version: number; sql: string }> = [
   {
@@ -270,6 +270,19 @@ const MIGRATIONS: ReadonlyArray<{ version: number; sql: string }> = [
       DROP INDEX IF EXISTS idx_todos_group;
       DROP TABLE IF EXISTS groups;
       ALTER TABLE todos DROP COLUMN group_id;
+    `,
+  },
+  {
+    version: 7,
+    // Auto-archive: a task can be soft-archived (archived_at) so finished
+    // work declutters the active list without being deleted. Orthogonal to
+    // status — a done task "completed > N days ago" is auto-archived by the
+    // boot sweep (see index.ts); the user can still find/restore it from the
+    // 归档 view. null = active (the common case). Indexed so the default
+    // "WHERE archived_at IS NULL" list query stays cheap as the table grows.
+    sql: `
+      ALTER TABLE todos ADD COLUMN archived_at INTEGER;
+      CREATE INDEX idx_todos_archived ON todos(archived_at);
     `,
   },
 ];

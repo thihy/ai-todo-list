@@ -193,11 +193,14 @@ export interface SettingsSetReq {
   customProviders?: CustomProviderInput[];
   // Select which custom instance is active when provider==='custom'.
   customProviderId?: string | null;
+  // Auto-archive: archive done tasks older than N days. 0 = never.
+  archiveAfterDays?: number;
 }
 export interface SettingsGetRes extends AISettings {
   captureHotkey: string;
   theme: 'system' | 'light' | 'dark';
   dataDir: string;
+  archiveAfterDays: number;
 }
 export interface SettingsChooseDataDirRes {
   /** Chosen path, or null if the user cancelled the dialog. */

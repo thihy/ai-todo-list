@@ -26,6 +26,7 @@ interface TodoRow {
   updated_at: number;
   done_at: number | null;
   parent_id: string | null;
+  archived_at: number | null;
 }
 
 function rowToTodo(row: TodoRow, tags: string[], drawingIds: string[]): Todo {
@@ -44,6 +45,7 @@ function rowToTodo(row: TodoRow, tags: string[], drawingIds: string[]): Todo {
     attachmentIds: [],
     drawingIds,
     parentId: row.parent_id,
+    archivedAt: row.archived_at,
   };
 }
 
@@ -92,6 +94,14 @@ export class TodoRepo {
     } else if (typeof filter.parentId === 'string') {
       where.push('parent_id = ?');
       params.push(filter.parentId);
+    }
+    // Archive scoping. archivedOnly wins over includeArchived (a caller
+    // asking for the 归档 view wants ONLY archived, regardless). Otherwise
+    // the default list excludes archived tasks unless includeArchived.
+    if (filter.archivedOnly) {
+      where.push('archived_at IS NOT NULL');
+    } else if (!filter.includeArchived) {
+      where.push('archived_at IS NULL');
     }
 
     const sql = `SELECT * FROM todos ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY updated_at DESC`;
@@ -150,6 +160,7 @@ export class TodoRepo {
       project: 'project',
       dueAt: 'due_at',
       parentId: 'parent_id',
+      archivedAt: 'archived_at',
     };
     for (const [k, v] of Object.entries(patch)) {
       if (v === undefined) continue;
@@ -224,6 +235,26 @@ export class TodoRepo {
     this.db.prepare('DELETE FROM todos WHERE id = ?').run(id);
   }
 
+  /** Auto-archive sweep: mark every `done` task whose done_at is older than
+   *  `thresholdMs` (and not already archived) as archived. Returns the count
+   *  of newly archived tasks. Called at boot (and periodically) from
+   *  src/main/index.ts using the configured archiveAfterDays setting.
+   *  Idempotent — re-running only touches newly-eligible tasks. */
+  archiveStale(thresholdMs: number): number {
+    const now = Date.now();
+    const res = this.db
+      .prepare(
+        `UPDATE todos
+         SET archived_at = ?
+         WHERE status = 'done'
+           AND done_at IS NOT NULL
+           AND done_at < ?
+           AND archived_at IS NULL`,
+      )
+      .run(now, thresholdMs);
+    return res.changes;
+  }
+
   batchUpdate(ids: ULID[], patch: TodoPatch): Todo[] {
     const tx = this.db.transaction(() => {
       for (const id of ids) this.update(id, patch);
@@ -254,6 +285,7 @@ export class TodoRepo {
       updated_at: number;
       done_at: number | null;
       parent_id: string | null;
+      archived_at: number | null;
       snippet: string;
       score: number;
     };

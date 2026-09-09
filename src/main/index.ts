@@ -222,6 +222,23 @@ function bootstrap(): void {
     // Auto-update
     installAutoUpdater();
 
+    // Auto-archive: sweep done tasks older than the configured threshold
+    // (archiveAfterDays) into the archived bin so the active list stays
+    // decluttered. Runs once at boot and every hour; reads the threshold
+    // fresh each run so a settings change takes effect without a restart.
+    // 0 = auto-archive disabled (the sweep is a no-op). Idempotent — only
+    // newly-eligible tasks get touched.
+    const runArchiveSweep = (): void => {
+      const days = settings.get().archiveAfterDays;
+      if (!days || days <= 0) return;
+      const cutoff = Date.now() - days * 86_400_000;
+      const n = repo.archiveStale(cutoff);
+      if (n > 0) logger.info(`auto-archive: archived ${n} done task(s) older than ${days} day(s)`);
+    };
+    runArchiveSweep();
+    const archiveTimer = setInterval(runArchiveSweep, 3_600_000);
+    app.on('before-quit', () => clearInterval(archiveTimer));
+
     // Close main = hide to tray (don't quit) — but in dev, quit instead so the
     // dev process dies and the single-instance lock releases; otherwise the
     // hidden instance blocks every subsequent `pnpm dev` from coming up.
@@ -436,6 +453,7 @@ function registerSettingsHandlers(
       ...(typeof req.apiKey === 'string' ? { apiKey: req.apiKey } : {}),
       ...(typeof req.dataDir === 'string' ? { dataDir: req.dataDir } : {}),
       ...(req.customProviderId !== undefined ? { customProviderId: req.customProviderId } : {}),
+      ...(req.archiveAfterDays !== undefined ? { archiveAfterDays: req.archiveAfterDays } : {}),
     });
     if (req.customProviders) {
       store.mergeCustomProviders(req.customProviders);

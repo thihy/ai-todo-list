@@ -1958,10 +1958,10 @@ a:hover {
   color: var(--accent-success);
   font-weight: 600;
 }
-/* Quick-delete button — sits at the row's far right, revealed only on
-   hover (and keyboard focus) so the chrome stays calm at rest. Keeps its
-   layout slot when hidden so the row doesn't reflow on hover. */
-.task-row__delete {
+/* Per-row action button (delete / restore) — sits at the row's far right,
+   revealed only on hover (and keyboard focus) so the chrome stays calm at
+   rest. Keeps its layout slot when hidden so the row doesn't reflow. */
+.task-row__action {
   flex: none;
   display: inline-flex;
   align-items: center;
@@ -1975,12 +1975,16 @@ a:hover {
   opacity: 0;
   transition: opacity var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
 }
-.task-row:hover .task-row__delete,
-.task-row:focus-within .task-row__delete {
+.task-row:hover .task-row__action,
+.task-row:focus-within .task-row__action {
   opacity: 1;
 }
 .task-row__delete:hover {
   color: var(--accent-danger);
+  background: var(--bg-active);
+}
+.task-row__restore:hover {
+  color: var(--accent-primary);
   background: var(--bg-active);
 }
 

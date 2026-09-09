@@ -114,6 +114,25 @@ export const SettingsPane: React.FC = () => {
         </select>
       </Field>
 
+      <Field
+        label="自动归档"
+        hint="已完成的任务超过此处设定的天数后，自动进入「归档」以保持列表清爽。设为 0 则关闭自动归档。归档任务可在 过滤→归档 中查看与恢复。"
+      >
+        <div className="row">
+          <input
+            type="number"
+            min={0}
+            className="input mono"
+            value={data.archiveAfterDays}
+            onChange={(e) => {
+              const n = Math.max(0, Math.floor(Number(e.target.value) || 0));
+              void patch({ archiveAfterDays: n });
+            }}
+          />
+          <span className="muted" style={{ alignSelf: 'center' }}>天</span>
+        </div>
+      </Field>
+
       <Field label="用量统计">
         <div className="muted mono">
           本月累计 ${data.monthlyCostUsd.toFixed(2)} · 心跳{' '}

@@ -80,4 +80,40 @@ describe('TodoRepo + MarkdownStore', () => {
     md.restoreVersion(t.id, oldest.id);
     expect(md.readBody(t.id).markdown.trimEnd()).toBe('first');
   });
+
+  it('auto-archives stale done tasks and excludes them from the default list', () => {
+    // A done task finished long ago (well past the threshold).
+    const old = repo.create({ title: 'finished last week', status: 'done' }, 'x');
+    // Pin done_at into the past so it's "older than 1 day".
+    handle.db.prepare('UPDATE todos SET done_at = ? WHERE id = ?').run(Date.now() - 7 * 86_400_000, old.id);
+    // A done task finished just now — should stay active.
+    const fresh = repo.create({ title: 'finished now', status: 'done' }, 'x');
+    // An inbox task — never archived regardless of age.
+    const inbox = repo.create({ title: 'still pending' }, 'x');
+
+    // Default list excludes archived (none yet) and shows all three.
+    expect(repo.list().map((t) => t.id).sort()).toEqual([fresh.id, inbox.id, old.id].sort());
+
+    // Sweep with a 1-day cutoff: only `old` qualifies.
+    const cutoff = Date.now() - 1 * 86_400_000;
+    expect(repo.archiveStale(cutoff)).toBe(1);
+
+    // `old` is now archived; default list hides it.
+    expect(repo.list().map((t) => t.id).sort()).toEqual([fresh.id, inbox.id].sort());
+    // archivedOnly surfaces it; archivedAt is stamped.
+    const bin = repo.list({ archivedOnly: true });
+    expect(bin).toHaveLength(1);
+    expect(bin[0].id).toBe(old.id);
+    expect(bin[0].archivedAt).not.toBeNull();
+    // includeArchived returns everything.
+    expect(repo.list({ includeArchived: true })).toHaveLength(3);
+
+    // Idempotent: re-running the sweep archives nothing new.
+    expect(repo.archiveStale(cutoff)).toBe(0);
+
+    // Restore via update({ archivedAt: null }) returns it to the active list.
+    repo.update(old.id, { archivedAt: null });
+    expect(repo.list().map((t) => t.id)).toContain(old.id);
+    expect(repo.list({ archivedOnly: true })).toHaveLength(0);
+  });
 });

@@ -94,6 +94,7 @@ export interface SettingsPatchArgs {
   dataDir?: string;
   customProviders?: CustomProviderInput[];
   customProviderId?: string | null;
+  archiveAfterDays?: number;
 }
 
 // --- ThihyApi ---

@@ -1043,10 +1043,12 @@ function registerDomainTools(
       dueAfter: { type: 'number', description: 'Only tasks with dueAt >= this unix ms' },
       search: { type: 'string', description: 'Substring match against title (server-side WHERE LIKE)' },
       parentId: { type: 'string', description: 'List direct subtasks of this parent TODO; null/omitted lists all tasks regardless of nesting' },
+      archivedOnly: { type: 'boolean', description: 'Only archived tasks (the 归档 bin). Default false.' },
+      includeArchived: { type: 'boolean', description: 'Include archived tasks alongside active ones. Default false — the list excludes archived tasks (auto-archived done work) to stay decluttered. Pass true when the user asks about old/completed work.' },
       limit: { type: 'number', description: 'Max items to return (default: all)' },
     },
     output: jsonOutput,
-    async execute(args: { status?: string; priority?: string; tag?: string; project?: string; dueBefore?: number; dueAfter?: number; search?: string; parentId?: string; limit?: number }) {
+    async execute(args: { status?: string; priority?: string; tag?: string; project?: string; dueBefore?: number; dueAfter?: number; search?: string; parentId?: string; archivedOnly?: boolean; includeArchived?: boolean; limit?: number }) {
       const filter: TodoFilter = {};
       const st = args.status;
       if (st) {
@@ -1066,6 +1068,8 @@ function registerDomainTools(
       if (args.dueAfter != null) filter.dueAfter = args.dueAfter;
       if (args.search) filter.search = args.search;
       if (args.parentId !== undefined && args.parentId !== '') filter.parentId = args.parentId || null;
+      if (args.archivedOnly) filter.archivedOnly = true;
+      else if (args.includeArchived) filter.includeArchived = true;
       const all = repo.list(filter as never);
       return args.limit && args.limit > 0 ? all.slice(0, args.limit) : all;
     },
@@ -1113,7 +1117,7 @@ function registerDomainTools(
 
   reg(defineTool({
     name: 'todo.update',
-    description: 'Update fields of an existing TODO. Pass only the fields you want to change — null clears the field (e.g. dueAt: null). Setting status="done" automatically stamps doneAt; any other status clears it. Pass parentId to reparent a task (make it a subtask of another); pass parentId=null to promote to top-level. Cycles are rejected.',
+    description: 'Update fields of an existing TODO. Pass only the fields you want to change — null clears the field (e.g. dueAt: null). Setting status="done" automatically stamps doneAt; any other status clears it. Pass parentId to reparent a task (make it a subtask of another); pass parentId=null to promote to top-level. Cycles are rejected. Pass archivedAt to archive (a unix-ms timestamp, e.g. Date.now()) or archivedAt=null to restore an archived task.',
     parameters: {
       id: { type: 'string', required: true, description: 'TODO id' },
       title: { type: 'string' },
@@ -1123,9 +1127,10 @@ function registerDomainTools(
       dueAt: { type: 'number', description: 'Due date as unix ms; null clears' },
       tags: { type: 'string', description: 'JSON array of tag strings; replaces the existing tag set' },
       parentId: { type: 'string', description: 'Parent TODO id to reparent under; null/empty string promotes to top-level.' },
+      archivedAt: { type: 'number', description: 'Archive (unix ms, e.g. Date.now()) or restore (null) a task. Archived tasks leave the active list but stay in the 归档 bin.' },
     },
     output: jsonOutput,
-    async execute(args: { id: string; title?: string; status?: string; priority?: string; project?: string; dueAt?: number; tags?: string; parentId?: string }) {
+    async execute(args: { id: string; title?: string; status?: string; priority?: string; project?: string; dueAt?: number; tags?: string; parentId?: string; archivedAt?: number | null }) {
       const { id, tags, ...rest } = args;
       const patch: TodoPatch = {};
       if (rest.title !== undefined) patch.title = rest.title;
@@ -1134,6 +1139,7 @@ function registerDomainTools(
       if (rest.project !== undefined) patch.project = rest.project || null;
       if (rest.dueAt !== undefined) patch.dueAt = rest.dueAt;
       if (rest.parentId !== undefined) patch.parentId = rest.parentId || null;
+      if (rest.archivedAt !== undefined) patch.archivedAt = rest.archivedAt;
       if (tags !== undefined) {
         try {
           const parsed = JSON.parse(tags);
