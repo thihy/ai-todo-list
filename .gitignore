@@ -10,6 +10,7 @@ release/
 # Electron / Vite caches
 .electron-vite/
 *.tsbuildinfo
+out-tsc/
 
 # Data (runtime DB + content) — never commit user data
 *.sqlite

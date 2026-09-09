@@ -105,6 +105,7 @@
   "build": {
     "appId": "com.thihy.todolist",
     "productName": "A待办",
+    "npmRebuild": false,
     "directories": {
       "output": "dist",
       "buildResources": "resources"
