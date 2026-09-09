@@ -2963,13 +2963,15 @@ a:hover {
   color: var(--accent-primary);
 }
 
-/* --- date picker (read chip / edit panel) --- */
+/* --- date picker (read chip + popover; no in-place swap, no height shift) --- */
 
 .date-picker {
+  position: relative;
+  display: inline-flex;
+}
+.date-picker__chip {
   display: inline-flex;
   align-items: center;
-}
-.date-picker--read {
   gap: 6px;
   padding: 3px var(--space-sm);
   border: 1px solid var(--border-default);
@@ -2980,16 +2982,17 @@ a:hover {
   cursor: pointer;
   transition: background .12s ease, border-color .12s ease, color .12s ease;
 }
-.date-picker--read:hover {
+.date-picker__chip:hover,
+.date-picker__chip.is-active {
   background: var(--bg-hover);
   border-color: var(--border-strong);
   color: var(--fg-primary);
 }
-.date-picker--read.is-overdue {
+.date-picker__chip.is-overdue {
   color: var(--accent-danger);
   border-color: color-mix(in srgb, var(--accent-danger) 40%, var(--border-default));
 }
-.date-picker--read.is-none {
+.date-picker__chip.is-none {
   color: var(--fg-muted);
 }
 .date-picker__icon {
@@ -2998,21 +3001,29 @@ a:hover {
 .date-picker__label {
   white-space: nowrap;
 }
-.date-picker--edit {
-  position: relative;
+/* Popover — absolute so opening it never changes the row's height. */
+.date-picker__popover {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 20;
+  display: flex;
   flex-direction: column;
-  align-items: stretch;
   gap: 4px;
-  padding: 4px;
-  border: 1px solid var(--accent-primary);
+  padding: 6px;
+  border: 1px solid var(--border-default);
   background: var(--bg-surface);
   border-radius: var(--radius-md);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, .12);
-  z-index: 10;
-  min-width: 200px;
+  box-shadow: var(--shadow-md);
+  min-width: 220px;
+}
+.date-picker__row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
 .date-picker__input {
-  width: 100%;
+  flex: 1 1 auto;
   padding: var(--space-xs) var(--space-sm);
   border: 1px solid var(--border-default);
   background: var(--bg-surface);
@@ -3021,19 +3032,18 @@ a:hover {
   font-size: var(--font-sm);
 }
 .date-picker__clear {
-  position: absolute;
-  top: 6px;
-  right: 6px;
-  border: 0;
+  border: 1px solid var(--border-default);
   background: transparent;
   color: var(--fg-muted);
   cursor: pointer;
   font-size: var(--font-sm);
   line-height: 1;
-  padding: 2px 4px;
+  padding: 4px 6px;
+  border-radius: var(--radius-sm);
 }
 .date-picker__clear:hover {
   color: var(--accent-danger);
+  border-color: color-mix(in srgb, var(--accent-danger) 40%, var(--border-default));
 }
 .date-picker__quick {
   display: flex;
@@ -3053,6 +3063,55 @@ a:hover {
 .date-picker__quick button:hover {
   background: var(--bg-hover);
   color: var(--fg-primary);
+}
+
+/* --- tag input (chips + trailing +; no resident text field) --- */
+
+.tag-input {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.tag-input__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 1px var(--space-xs) 1px var(--space-sm);
+  border-radius: var(--radius-pill);
+  background: var(--bg-hover);
+  color: var(--accent-info);
+  font-size: var(--font-xs);
+  white-space: nowrap;
+}
+.tag-input__remove {
+  display: inline-flex;
+  align-items: center;
+  border: 0;
+  background: transparent;
+  color: var(--fg-muted);
+  cursor: pointer;
+  padding: 2px;
+  border-radius: 50%;
+}
+.tag-input__remove:hover {
+  color: var(--accent-danger);
+}
+.tag-input__add {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 1px dashed var(--border-strong);
+  background: transparent;
+  color: var(--fg-muted);
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+}
+.tag-input__add:hover {
+  color: var(--accent-primary);
+  border-color: var(--accent-primary);
 }
 
 /* --- progress bar + progress view --- */
