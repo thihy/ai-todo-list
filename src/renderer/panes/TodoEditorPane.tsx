@@ -37,11 +37,11 @@ import type { Priority, TodoStatus } from '../../shared/todo-types';
 // StatusPicker render the same vocabulary. Single source of truth —
 // don't write status display strings in two places.
 const STATUS_OPTIONS: { value: TodoStatus; label: string }[] = [
-  { value: 'inbox', label: '收件箱' },
-  { value: 'next', label: '待办' },
+  { value: 'next', label: '未完成' },
   { value: 'doing', label: '进行中' },
-  { value: 'blocked', label: '阻塞' },
   { value: 'done', label: '已完成' },
+  { value: 'cancelled', label: '已取消' },
+  { value: 'blocked', label: '阻塞中' },
 ];
 
 export const TodoEditorPane: React.FC<{
@@ -57,7 +57,7 @@ export const TodoEditorPane: React.FC<{
   const [tagDraft, setTagDraft] = useState<string[]>([]);
   const [priority, setPriority] = useState<Priority>('none');
   const [dueAt, setDueAt] = useState<number | null>(null);
-  const [status, setStatus] = useState<TodoStatus>('inbox');
+  const [status, setStatus] = useState<TodoStatus>('next');
 
   useEffect(() => {
     if (!todo) return;

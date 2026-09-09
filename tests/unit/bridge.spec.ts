@@ -19,7 +19,7 @@ const SOCKET = join(tmpdir(), `thihy-bridge-test-${Date.now()}.sock`);
 
 const fakeSdk: ThihySdk = {
   todo: {
-    list: () => [{ id: 't1', title: 'hello', status: 'inbox', priority: 'p2', tags: [], createdAt: 0, updatedAt: 0 } as never],
+    list: () => [{ id: 't1', title: 'hello', status: 'next', priority: 'p2', tags: [], createdAt: 0, updatedAt: 0 } as never],
     get: () => null,
     create: () => ({ id: 't2' } as never),
     update: () => ({ id: 't3' } as never),

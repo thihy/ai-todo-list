@@ -30,7 +30,7 @@ export const Sidebar: React.FC<{
       <NavItem label="全部 TODO" icon="house" target="#/" active={isActive('#/')} onClick={onNavigate} />
       <NavItem label="今天" icon="today" target="#/list/today" active={isActive('#/list/today')} onClick={onNavigate} />
       <NavItem label="未来 7 天" icon="week" target="#/list/next7" active={isActive('#/list/next7')} onClick={onNavigate} />
-      <NavItem label="收件箱" icon="inbox" target="#/list/inbox" active={isActive('#/list/inbox')} onClick={onNavigate} />
+      <NavItem label="未完成" icon="undone" target="#/list/status/next" active={isActive('#/list/status/next')} onClick={onNavigate} />
       <NavItem label="统计" icon="chart" target="#/stats" active={isActive('#/stats')} onClick={onNavigate} />
 
       <SectionLabel>项目</SectionLabel>
@@ -68,7 +68,7 @@ const ICONS: Record<string, string> = {
   house: 'M2 8L8 3L14 8V13.5C14 13.78 13.78 14 13.5 14H2.5C2.22 14 2 13.78 2 13.5V8Z',
   today: 'M3 5H13V13H3V5Z M5 2.5V4 M11 2.5V4 M3 7H13',
   week: 'M2.5 12.5L6 8L9 10.5L13.5 4.5',
-  inbox: 'M2.5 9L4 3H12L13.5 9V13H2.5V9Z M6 9V11H10V9',
+  undone: 'M1.5 8a6.5 6.5 0 1 0 13 0a6.5 6.5 0 1 0 -13 0',
   chart: 'M3 13H13 M5 13V9 M8 13V6 M11 13V3',
   tag: 'M3 3H8L13 8L8 13L3 8V3Z',
   'prio-high': 'M8 2L14 14H2L8 2Z',

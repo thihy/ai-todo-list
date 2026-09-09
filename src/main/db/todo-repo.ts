@@ -119,7 +119,7 @@ export class TodoRepo {
   create(input: TodoCreate, bodyPath: string): Todo {
     const id = newId();
     const now = Date.now();
-    const status = input.status ?? 'inbox';
+    const status = input.status ?? 'next';
     const priority = input.priority ?? 'none';
     const project = input.project ?? null;
     const dueAt = input.dueAt ?? null;
@@ -173,6 +173,14 @@ export class TodoRepo {
     if (fields.length === 0 && !patch.tags) {
       return this.get(id)!;
     }
+
+    // Always stamp updated_at on any mutation. The old schema had a
+    // trg_touch_updated_at AFTER UPDATE trigger that did this, but that
+    // self-UPDATE trigger was removed in the v8 migration (it corrupts the
+    // FTS5 shadow tables after a content-table rebuild), so the repo owns
+    // the timestamp now.
+    fields.push('updated_at = ?');
+    params.push(Date.now());
 
     // Cycle prevention: when re-parenting, refuse to set parent_id to a
     // descendant of the current todo (would create a cycle). Walking
@@ -314,11 +322,11 @@ export class TodoRepo {
       this.db.prepare<[], { c: number }>('SELECT COUNT(*) as c FROM todos').get()
     )?.c ?? 0;
     const byStatus: Record<TodoStatus, number> = {
-      inbox: 0,
       next: 0,
       doing: 0,
-      blocked: 0,
       done: 0,
+      cancelled: 0,
+      blocked: 0,
     };
     const statusRows = this.db
       .prepare<[], { status: TodoStatus; c: number }>(

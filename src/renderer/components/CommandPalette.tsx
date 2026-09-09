@@ -23,7 +23,7 @@ export const CommandPaletteHost: React.FC<{
   const cmds = useMemo(
     () => [
       { label: '新建 TODO', run: () => onCompose() },
-      { label: '收件箱', run: () => navigate('#/list/inbox') },
+      { label: '未完成', run: () => navigate('#/list/status/next') },
       { label: '今天', run: () => navigate('#/list/today') },
       { label: '未来 7 天', run: () => navigate('#/list/next7') },
       { label: '统计', run: () => navigate('#/stats') },

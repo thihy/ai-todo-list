@@ -17,7 +17,7 @@ let md: MarkdownStore;
 function seedTodo(id: string, title = 'test'): void {
   db.prepare(
     `INSERT INTO todos (id, title, status, priority, project, due_at, body_path, created_at, updated_at, done_at)
-     VALUES (?, ?, 'inbox', 'none', NULL, NULL, ?, ?, ?, NULL)`,
+     VALUES (?, ?, 'next', 'none', NULL, NULL, ?, ?, ?, NULL)`,
   ).run(id, title, `${id}.md`, Date.now(), Date.now());
 }
 

@@ -1035,7 +1035,7 @@ function registerDomainTools(
     name: 'todo.list',
     description: 'List TODO items, optionally filtered. Every field is optional; omit all of them to return every todo. The model may pass status/priority/tag as a single string or a JSON array. "all" / unknown values for status/priority mean no filter.',
     parameters: {
-      status: { type: 'string', description: 'Filter by status: inbox | next | doing | blocked | done (or comma-separated)' },
+      status: { type: 'string', description: 'Filter by status: next | doing | done | cancelled | blocked (or comma-separated)' },
       priority: { type: 'string', description: 'Filter by priority: none | low | medium | high (or comma-separated)' },
       tag: { type: 'string', description: 'Filter by a single tag (matches tasks tagged with this string)' },
       project: { type: 'string', description: 'Filter by project path id' },
@@ -1088,7 +1088,7 @@ function registerDomainTools(
     description: 'Create a new TODO. Returns the created item including its generated id. Markdown body starts empty — use content.writeBody to add notes/progress later. Pass parentId to create as a subtask of an existing TODO (e.g. "把这个任务拆成三个子任务").',
     parameters: {
       title: { type: 'string', required: true, description: 'TODO title (required)' },
-      status: { type: 'string', description: 'inbox | next | doing | blocked | done (default inbox)' },
+      status: { type: 'string', description: 'next | doing | done | cancelled | blocked (default next)' },
       priority: { type: 'string', description: 'none | low | medium | high (default none)' },
       project: { type: 'string', description: 'Project id/path; null/omitted means no project' },
       dueAt: { type: 'number', description: 'Due date as unix ms; null/omitted means no due date' },
@@ -1121,7 +1121,7 @@ function registerDomainTools(
     parameters: {
       id: { type: 'string', required: true, description: 'TODO id' },
       title: { type: 'string' },
-      status: { type: 'string', description: 'inbox | next | doing | blocked | done' },
+      status: { type: 'string', description: 'next | doing | done | cancelled | blocked' },
       priority: { type: 'string', description: 'none | low | medium | high' },
       project: { type: 'string', description: 'Project id; null/empty string clears' },
       dueAt: { type: 'number', description: 'Due date as unix ms; null clears' },
@@ -1170,7 +1170,7 @@ function registerDomainTools(
 
   reg(defineTool({
     name: 'todo.batchUpdate',
-    description: 'Apply the same patch to multiple TODOs in one transaction. Useful for "mark all inbox items as done" or "reparent every task under a new parent". Returns the updated rows.',
+    description: 'Apply the same patch to multiple TODOs in one transaction. Useful for "mark all 未完成 items as done" or "reparent every task under a new parent". Returns the updated rows.',
     parameters: {
       ids: { type: 'string', required: true, description: 'JSON array of TODO ids' },
       status: { type: 'string' },

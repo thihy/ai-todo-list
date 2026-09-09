@@ -103,7 +103,7 @@ describe('foldHistory', () => {
   it('pairs tool/call with tool/result by callId and emits one tool turn', () => {
     const events = [
       userMsg('查找'),
-      toolCall('c1', 'todo.list', '{"status":"inbox"}'),
+      toolCall('c1', 'todo.list', '{"status":"next"}'),
       toolResult('c1', true, [{ type: 'text', text: '[]' }]),
       stepEnd(),
     ];
@@ -111,7 +111,7 @@ describe('foldHistory', () => {
     const tools = turns.filter((t) => t.type === 'tool');
     expect(tools).toHaveLength(1);
     expect(tools[0]).toMatchObject({ type: 'tool', name: 'todo.list', ok: true });
-    expect((tools[0] as { args?: string }).args).toBe('{"status":"inbox"}');
+    expect((tools[0] as { args?: string }).args).toBe('{"status":"next"}');
   });
 
   it('emits a tool turn with ok=false when no result follows', () => {

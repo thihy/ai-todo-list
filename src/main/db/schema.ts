@@ -7,7 +7,7 @@ const { ulid } = ulidPkg;
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 
-export const SCHEMA_VERSION = 7;
+export const SCHEMA_VERSION = 8;
 
 const MIGRATIONS: ReadonlyArray<{ version: number; sql: string }> = [
   {
@@ -285,6 +285,89 @@ const MIGRATIONS: ReadonlyArray<{ version: number; sql: string }> = [
       CREATE INDEX idx_todos_archived ON todos(archived_at);
     `,
   },
+  {
+    version: 8,
+    // Status enum cleanup. The old 'inbox' state was confusing (the 收件箱
+    // label read as "a place" rather than a lifecycle stage); it collapses
+    // into 'next' (未完成). A new 'cancelled' (已取消) state is added for
+    // dropped/void work. Final enum: next | doing | done | cancelled | blocked.
+    //
+    // SQLite can't ALTER a CHECK constraint in place, so we rebuild the
+    // todos table: create a copy with the updated CHECK, preserve rowids
+    // (so the FTS5 content_rowid mapping stays valid), migrate inbox→next,
+    // drop the old table + its triggers/indexes, rename, recreate indexes
+    // + triggers. The external-content FTS5 table (todos_fts) is KEPT —
+    // its content='todos' binding re-resolves by name to the rebuilt table.
+    // DO NOT drop+recreate todos_fts inside the migration transaction: doing
+    // so leaves the FTS5 shadow tables inconsistent and subsequent trigger
+    // ops throw SQLITE_CORRUPT ("database disk image is malformed"). Instead
+    // we keep the FTS5 table and run 'rebuild' to repopulate it from the
+    // rebuilt content table. FK enforcement is OFF for the whole migration
+    // phase (see openDb) so DROP TABLE todos doesn't cascade-delete the
+    // tags/drawings/content_versions/inbox_attachments children.
+    sql: `
+      CREATE TABLE todos_new (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('next','doing','blocked','done','cancelled')),
+        priority TEXT NOT NULL CHECK (priority IN ('none','low','medium','high')),
+        project TEXT,
+        due_at INTEGER,
+        body_path TEXT NOT NULL,
+        body TEXT NOT NULL DEFAULT '',
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        done_at INTEGER,
+        parent_id TEXT,
+        archived_at INTEGER,
+        FOREIGN KEY (parent_id) REFERENCES todos(id) ON DELETE SET NULL
+      );
+
+      INSERT INTO todos_new (rowid, id, title, status, priority, project, due_at, body_path, body, created_at, updated_at, done_at, parent_id, archived_at)
+      SELECT rowid, id, title, CASE status WHEN 'inbox' THEN 'next' ELSE status END,
+             priority, project, due_at, body_path, body, created_at, updated_at, done_at, parent_id, archived_at
+      FROM todos;
+
+      -- Drop the FTS + touch triggers BEFORE the content table so they
+      -- don't fire during the rebuild, then DROP the old todos table
+      -- (which also drops its indexes — index names are global in SQLite,
+      -- so the old table must go before we recreate same-named indexes).
+      DROP TRIGGER IF EXISTS todos_fts_insert;
+      DROP TRIGGER IF EXISTS todos_fts_delete;
+      DROP TRIGGER IF EXISTS todos_fts_update;
+      DROP TRIGGER IF EXISTS trg_touch_updated_at;
+      DROP TABLE todos;
+      ALTER TABLE todos_new RENAME TO todos;
+
+      CREATE INDEX idx_todos_status ON todos(status);
+      CREATE INDEX idx_todos_due_at ON todos(due_at);
+      CREATE INDEX idx_todos_project ON todos(project);
+      CREATE INDEX idx_todos_updated_at ON todos(updated_at DESC);
+      CREATE INDEX idx_todos_parent ON todos(parent_id);
+      CREATE INDEX idx_todos_archived ON todos(archived_at);
+
+      CREATE TRIGGER todos_fts_insert AFTER INSERT ON todos BEGIN
+        INSERT INTO todos_fts(rowid, title, body) VALUES (new.rowid, new.title, new.body);
+      END;
+      CREATE TRIGGER todos_fts_delete AFTER DELETE ON todos BEGIN
+        INSERT INTO todos_fts(todos_fts, rowid, title, body) VALUES('delete', old.rowid, old.title, old.body);
+      END;
+      CREATE TRIGGER todos_fts_update AFTER UPDATE ON todos BEGIN
+        INSERT INTO todos_fts(todos_fts, rowid, title, body) VALUES('delete', old.rowid, old.title, old.body);
+        INSERT INTO todos_fts(rowid, title, body) VALUES (new.rowid, new.title, new.body);
+      END;
+
+      -- NOTE: the old trg_touch_updated_at AFTER UPDATE self-UPDATE trigger is
+      -- intentionally NOT recreated. After a content-table rebuild, an AFTER
+      -- UPDATE trigger that itself UPDATEs the same row interacts with the
+      -- FTS5 external-content shadow tables and corrupts them ("database disk
+      -- image is malformed"). updated_at stamping now lives in the app layer
+      -- (TodoRepo.update always sets updated_at = now).
+
+      -- Repopulate the kept FTS5 index from the rebuilt content table.
+      INSERT INTO todos_fts(todos_fts) VALUES('rebuild');
+    `,
+  },
 ];
 
 export interface DbHandle {
@@ -296,8 +379,13 @@ export function openDb(filePath: string): DbHandle {
   mkdirSync(dirname(filePath), { recursive: true });
   const db = new Database(filePath);
   db.pragma('journal_mode = WAL');
-  db.pragma('foreign_keys = ON');
   db.pragma('synchronous = NORMAL');
+  // Disable FK enforcement for the migration phase so a rebuild migration
+  // (which DROPs + recreates tables referenced by FKs, e.g. the v8 todos
+  // rebuild) doesn't cascade-delete child rows. PRAGMA foreign_keys is a
+  // no-op inside a transaction, so it must be set here — outside the
+  // per-migration transactions below. Re-enabled once migrations complete.
+  db.pragma('foreign_keys = OFF');
 
   // Fresh DB has no schema_meta; the query fails with "no such table" until
   // the first migration creates it. Treat any error as v0 and let the loop
@@ -321,6 +409,8 @@ export function openDb(filePath: string): DbHandle {
       tx();
     }
   }
+  // Re-enable FK enforcement for normal runtime now that migrations are done.
+  db.pragma('foreign_keys = ON');
 
   // close() is idempotent: the data-migration path closes the DB early, and
   // before-quit calls close() again — double-close on better-sqlite3 throws.

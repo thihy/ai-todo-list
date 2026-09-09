@@ -5,7 +5,6 @@ export type Route =
   | { name: 'list'; filter: ListFilter }
   | { name: 'todo'; id: string }
   | { name: 'todo-drawing'; id: string; drawingId?: string }
-  | { name: 'inbox' }
   | { name: 'settings' }
   | { name: 'stats' }
   | { name: 'ai' };
@@ -14,7 +13,6 @@ export type ListFilter =
   | { kind: 'all' }
   | { kind: 'today' }
   | { kind: 'next7' }
-  | { kind: 'inbox' }
   | { kind: 'archived' }
   | { kind: 'project'; tag: string }
   | { kind: 'status'; status: string }
@@ -38,8 +36,6 @@ export function parseHash(hash: string): Route {
       }
       return { name: 'todo', id };
     }
-    case 'inbox':
-      return { name: 'inbox' };
     case 'settings':
       return { name: 'settings' };
     case 'stats':
@@ -55,7 +51,6 @@ function parseFilter(s: string): ListFilter {
   if (!s) return { kind: 'all' };
   if (s === 'today') return { kind: 'today' };
   if (s === 'next7') return { kind: 'next7' };
-  if (s === 'inbox') return { kind: 'inbox' };
   if (s === 'archived') return { kind: 'archived' };
   if (s.startsWith('project/')) return { kind: 'project', tag: s.slice('project/'.length) };
   if (s.startsWith('status/')) return { kind: 'status', status: s.slice('status/'.length) };
@@ -73,8 +68,6 @@ export function routeToHash(r: Route): string {
       return `#/todo/${r.id}`;
     case 'todo-drawing':
       return r.drawingId ? `#/todo/${r.id}/drawing/${r.drawingId}` : `#/todo/${r.id}/drawing`;
-    case 'inbox':
-      return '#/inbox';
     case 'settings':
       return '#/settings';
     case 'stats':
@@ -92,8 +85,6 @@ function filterToPath(f: ListFilter): string {
       return 'today';
     case 'next7':
       return 'next7';
-    case 'inbox':
-      return 'inbox';
     case 'archived':
       return 'archived';
     case 'project':

@@ -48,7 +48,7 @@ export const FilterButton: React.FC<{
             <FilterItem active={filter.kind === 'all'} label="全部" onClick={() => choose({ kind: 'all' })} />
             <FilterItem active={filter.kind === 'today'} label="今天" onClick={() => choose({ kind: 'today' })} />
             <FilterItem active={filter.kind === 'next7'} label="未来 7 天" onClick={() => choose({ kind: 'next7' })} />
-            <FilterItem active={filter.kind === 'inbox'} label="收件箱" onClick={() => choose({ kind: 'inbox' })} />
+            <FilterItem active={filter.kind === 'status' && filter.status === 'next'} label="未完成" onClick={() => choose({ kind: 'status', status: 'next' })} />
             <FilterItem active={filter.kind === 'archived'} label="归档" onClick={() => choose({ kind: 'archived' })} />
           </FilterSection>
           <FilterSection title="优先级">

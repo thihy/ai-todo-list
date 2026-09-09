@@ -2,10 +2,16 @@
 
 export type ULID = string;
 
-export type TodoStatus = 'inbox' | 'next' | 'doing' | 'blocked' | 'done';
+// The task lifecycle. "未完成" (next) is the default entry state for any new
+// task; "进行中" (doing) means actively worked; "已完成" (done) stamps doneAt
+// and is eligible for auto-archive; "已取消" (cancelled) is a dropped/void
+// task (terminal, but not done); "阻塞中" (blocked) is waiting on a
+// dependency. There is no "inbox" state — the old 收件箱 concept collapsed
+// into 未完成.
+export type TodoStatus = 'next' | 'doing' | 'done' | 'cancelled' | 'blocked';
 export type Priority = 'none' | 'low' | 'medium' | 'high';
 
-export const TODO_STATUSES: readonly TodoStatus[] = ['inbox', 'next', 'doing', 'blocked', 'done'];
+export const TODO_STATUSES: readonly TodoStatus[] = ['next', 'doing', 'done', 'cancelled', 'blocked'];
 export const PRIORITIES: readonly Priority[] = ['none', 'low', 'medium', 'high'];
 
 export interface Todo {

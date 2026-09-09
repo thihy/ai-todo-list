@@ -26,7 +26,7 @@ describe('TodoRepo + MarkdownStore', () => {
   it('creates a TODO and reads it back', () => {
     const t = repo.create({ title: 'Test' }, join(dir, 'todos', 'fake.md'));
     expect(t.id).toMatch(/^[0-9A-HJKMNP-TV-Z]{26}$/);
-    expect(t.status).toBe('inbox');
+    expect(t.status).toBe('next');
     expect(t.title).toBe('Test');
   });
 
@@ -39,12 +39,12 @@ describe('TodoRepo + MarkdownStore', () => {
   });
 
   it('lists with filter', () => {
-    repo.create({ title: 'A', status: 'inbox' }, 'x');
+    repo.create({ title: 'A', status: 'next' }, 'x');
     repo.create({ title: 'B', status: 'done', priority: 'high' }, 'x');
     const all = repo.list();
     expect(all).toHaveLength(2);
-    const inbox = repo.list({ status: ['inbox'] });
-    expect(inbox).toHaveLength(1);
+    const pending = repo.list({ status: ['next'] });
+    expect(pending).toHaveLength(1);
   });
 
   it('search uses FTS', () => {
@@ -88,18 +88,18 @@ describe('TodoRepo + MarkdownStore', () => {
     handle.db.prepare('UPDATE todos SET done_at = ? WHERE id = ?').run(Date.now() - 7 * 86_400_000, old.id);
     // A done task finished just now — should stay active.
     const fresh = repo.create({ title: 'finished now', status: 'done' }, 'x');
-    // An inbox task — never archived regardless of age.
-    const inbox = repo.create({ title: 'still pending' }, 'x');
+    // A pending task (default status 未完成) — never archived regardless of age.
+    const pending = repo.create({ title: 'still pending' }, 'x');
 
     // Default list excludes archived (none yet) and shows all three.
-    expect(repo.list().map((t) => t.id).sort()).toEqual([fresh.id, inbox.id, old.id].sort());
+    expect(repo.list().map((t) => t.id).sort()).toEqual([fresh.id, pending.id, old.id].sort());
 
     // Sweep with a 1-day cutoff: only `old` qualifies.
     const cutoff = Date.now() - 1 * 86_400_000;
     expect(repo.archiveStale(cutoff)).toBe(1);
 
     // `old` is now archived; default list hides it.
-    expect(repo.list().map((t) => t.id).sort()).toEqual([fresh.id, inbox.id].sort());
+    expect(repo.list().map((t) => t.id).sort()).toEqual([fresh.id, pending.id].sort());
     // archivedOnly surfaces it; archivedAt is stamped.
     const bin = repo.list({ archivedOnly: true });
     expect(bin).toHaveLength(1);

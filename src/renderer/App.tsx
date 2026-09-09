@@ -15,7 +15,6 @@ import { SettingsModal } from './components/SettingsModal';
 import { Composer } from './components/Composer';
 import { TodoListPane } from './panes/TodoListPane';
 import { TodoEditorPane } from './panes/TodoEditorPane';
-import { InboxPane } from './panes/InboxPane';
 import { StatsPane } from './panes/StatsPane';
 import { DrawingPane } from './panes/DrawingPane';
 import { parseHash, routeToHash, type Route, type ListFilter } from './router';
@@ -24,12 +23,10 @@ import { emitDataChanged } from './data-bus';
 
 const AI_OPEN_KEY = 'thihy.aiOpen';
 
-type View = 'list' | 'inbox' | 'stats' | 'drawing';
+type View = 'list' | 'stats' | 'drawing';
 
 function deriveView(route: Route): View {
   switch (route.name) {
-    case 'inbox':
-      return 'inbox';
     case 'stats':
       return 'stats';
     case 'todo-drawing':
@@ -147,7 +144,6 @@ export const App: React.FC = () => {
                 />
               </div>
             )}
-            {view === 'inbox' && <InboxPane />}
             {view === 'stats' && <StatsPane />}
             {view === 'drawing' && route.name === 'todo-drawing' && (
               <DrawingPane todoId={route.id} drawingId={route.drawingId} navigate={navigate} />

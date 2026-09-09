@@ -10,7 +10,6 @@ const ROUTE_LABEL: Record<string, string> = {
   list: '列表',
   todo: '编辑',
   'todo-drawing': '绘图',
-  inbox: '收件箱',
   settings: '设置',
   stats: '统计',
   ai: 'AI',

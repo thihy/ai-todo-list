@@ -360,17 +360,21 @@ const Subtitle: React.FC<{ todo: Todo; subtaskCount: number; subtaskDoneCount: n
 };
 
 const STATUS_LABEL: Record<TodoStatus, string> = {
-  inbox: '收件箱',
-  next: '待办',
+  next: '未完成',
   doing: '进行中',
-  blocked: '阻塞',
   done: '已完成',
+  cancelled: '已取消',
+  blocked: '阻塞中',
 };
 
+// Click the status dot to cycle forward through the lifecycle. The two
+// "off-track" terminal states (已取消 / 阻塞中) are in the cycle so a single
+// click can reach them without a separate UI; the cycle returns to 未完成
+// after 阻塞中 so nothing gets stuck.
 function nextStatus(s: TodoStatus): TodoStatus {
-  const order: TodoStatus[] = ['inbox', 'next', 'doing', 'done'];
+  const order: TodoStatus[] = ['next', 'doing', 'done', 'cancelled', 'blocked'];
   const idx = order.indexOf(s);
-  if (idx < 0) return 'inbox';
+  if (idx < 0) return 'next';
   return order[(idx + 1) % order.length];
 }
 
@@ -404,6 +408,13 @@ const StatusGlyph: React.FC<{ status: TodoStatus }> = ({ status }) => {
         <svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden="true">
           <circle cx="9" cy="9" r="7.2" stroke="var(--accent-danger)" strokeWidth="1.6" />
           <path d="M4 4L14 14" stroke="var(--accent-danger)" strokeWidth="1.6" strokeLinecap="round" />
+        </svg>
+      );
+    case 'cancelled':
+      return (
+        <svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden="true">
+          <circle cx="9" cy="9" r="7.2" stroke="var(--fg-secondary)" strokeWidth="1.6" />
+          <path d="M5 9H13" stroke="var(--fg-secondary)" strokeWidth="1.8" strokeLinecap="round" />
         </svg>
       );
     default:
@@ -498,7 +509,6 @@ function filterToRepoFilter(f: ListFilter): Parameters<typeof window.thihy.todo.
     case 'all': return {};
     case 'today': return { dueBefore: endOfToday(), dueAfter: startOfToday() };
     case 'next7': return { dueBefore: Date.now() + 7 * 24 * 3600_000, dueAfter: startOfToday() };
-    case 'inbox': return { status: ['inbox'] };
     case 'archived': return { archivedOnly: true };
     case 'project': return { tag: [f.tag] };
     case 'status': return { status: [f.status as TodoStatus] };
