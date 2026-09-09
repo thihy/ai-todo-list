@@ -172,8 +172,12 @@ export const ProgressInline: React.FC<{
     <div className="progress-inline">
       <div className="progress-inline__bar">
         {/* The bar is the drag affordance: pointer-down on the track scrubs
-            the value; release commits it. The label reads the live value. */}
+            the value; release commits it. The label reads the live value.
+            trackRef is what pctFromX reads from — it MUST point at the same
+            element that captures pointer events, otherwise getBoundingClientRect
+            returns a stale rect (or null) and the drag silently no-ops. */}
         <div
+          ref={trackRef}
           className="progress-inline__bar-btn"
           role="slider"
           aria-label="任务进度（拖动调整）"
