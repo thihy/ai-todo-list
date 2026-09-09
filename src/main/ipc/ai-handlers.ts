@@ -194,7 +194,18 @@ export function registerAiHandlers(dsh: DshHandle): void {
               // If the tool mutated data, tell the renderer to refresh its stores.
               {
                 const scope = mutatingScope(e.name);
-                if (scope) broadcastDataChanged(scope);
+                if (scope) {
+                  broadcastDataChanged(scope);
+                } else if (e.ok) {
+                  // Unknown successful tool call — broadcast a broad 'todos'
+                  // signal as a safety net so future tools added without a
+                  // mutatingScope() entry still cause the most-critical
+                  // surfaces (task list / detail header) to refresh. Tools
+                  // that should ONLY touch content/drawings should declare so
+                  // explicitly above; this fallback only kicks in for tools
+                  // the map has never heard of.
+                  broadcastDataChanged('todos');
+                }
               }
               break;
             case 'done':
@@ -463,14 +474,16 @@ export function bindAiDeps(d: HandlerDeps): void {
 export type { HandlerDeps };
 
 /** Map an AI tool name to the data scope it mutates (null = read-only/no refresh).
- *  The `conversations` scope is updated by the DSH session-title listener in
- *  dsh-runtime.ts (it pushes app:data-changed directly), not by an AI tool
- *  call — so no `conversation.*` entry here. */
+ *  The `conversations` scope is also updated by the DSH session-title listener in
+ *  dsh-runtime.ts (it pushes app:data-changed directly), but we still keep the
+ *  map here as the single source of truth so adding a new mutating tool is a
+ *  one-line change. */
 function mutatingScope(name: string): DataScope | null {
   switch (name) {
     case 'todo.create':
     case 'todo.update':
     case 'todo.delete':
+    case 'todo.restore':
     case 'todo.batchUpdate':
       return 'todos';
     case 'content.writeBody':
@@ -481,6 +494,16 @@ function mutatingScope(name: string): DataScope | null {
     case 'drawing.rename':
     case 'drawing.setThumb':
       return 'drawings';
+    case 'document.create':
+    case 'document.remove':
+    case 'document.rename':
+      return 'content';
+    case 'progress.log':
+      return 'todos';
+    case 'inbox.attach':
+    case 'inbox.attachBlob':
+    case 'inbox.remove':
+      return 'content';
     case 'conversation.create':
     case 'conversation.rename':
     case 'conversation.archive':

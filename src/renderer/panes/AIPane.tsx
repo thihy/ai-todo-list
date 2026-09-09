@@ -1006,6 +1006,10 @@ function historyToTurn(h: HistoryTurnLike): Turn {
 
 const TurnView: React.FC<{ turn: Turn }> = ({ turn }) => {
   const streaming = turn.status === 'streaming';
+  // Show the "思考中…" chip only when streaming AND there's no reasoning
+  // *and* no tools/answer yet — i.e. we're in the model's pre-tool thinking
+  // phase and haven't seen any reasoning-delta events. Once any reasoning
+  // text lands, ReasoningView takes over with its own "思考中…" header.
   const thinking = streaming && !turn.assistant && turn.tools.length === 0 && !turn.reasoning;
   return (
     <div className="turn">
@@ -1023,7 +1027,14 @@ const TurnView: React.FC<{ turn: Turn }> = ({ turn }) => {
           {turn.user}
         </div>
       )}
-      {turn.reasoning && <ReasoningView text={turn.reasoning} streaming={streaming} />}
+      {/* Show ReasoningView whenever there's reasoning text, OR we're still
+          streaming and the answer hasn't started yet — the latter case keeps
+          the collapsible "思考中…" header visible so the user sees the panel
+          even if reasoning deltas haven't landed. Once the answer starts,
+          this drops out automatically. */}
+      {(turn.reasoning || (streaming && !turn.assistant && turn.tools.length === 0)) && (
+        <ReasoningView text={turn.reasoning} streaming={streaming} />
+      )}
       {turn.tools.map((tc, i) => (
         <ToolCardView key={i} card={tc} />
       ))}
