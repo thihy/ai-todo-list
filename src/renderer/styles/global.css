@@ -2515,6 +2515,109 @@ a:hover {
   color: var(--fg-muted);
 }
 
+/* --- sub-section layout (基本信息 / 链接 / 文档 / 动态) --- */
+/* The whole pane scrolls as one column of titled sections. Each section is
+   an addressable facet of the task rather than a fixed top/bottom band. */
+
+.editor-pane--sections {
+  display: block;
+  grid-template-rows: none;
+  overflow-y: auto;
+  padding: var(--space-md) var(--space-lg) var(--space-xl);
+}
+.editor-pane__section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding: var(--space-md) 0;
+  border-bottom: 1px solid var(--border-default);
+}
+.editor-pane__section:last-child {
+  border-bottom: 0;
+}
+.editor-pane__section-title {
+  margin: 0;
+  font-size: var(--font-xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+}
+.editor-pane__created {
+  flex: 0 0 auto;
+  font-size: var(--font-xs);
+  color: var(--fg-muted);
+  white-space: nowrap;
+}
+
+/* --- 链接 section --- */
+
+.links-view {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+.links-view__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.links-view__item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border-radius: var(--radius-sm);
+  color: var(--fg-secondary);
+}
+.links-view__item:hover {
+  background: var(--bg-hover);
+}
+.links-view__url {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--accent-primary);
+  text-decoration: none;
+}
+.links-view__remove {
+  flex: 0 0 auto;
+  border: 0;
+  background: transparent;
+  color: var(--fg-muted);
+  cursor: pointer;
+  font-size: var(--font-lg);
+  line-height: 1;
+  padding: 0 2px;
+}
+.links-view__remove:hover {
+  color: var(--accent-danger);
+}
+.links-view__add {
+  align-self: flex-start;
+  padding: 3px var(--space-sm);
+  border: 1px dashed var(--border-default);
+  background: transparent;
+  color: var(--fg-secondary);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-sm);
+  cursor: pointer;
+}
+.links-view__add:hover {
+  border-color: var(--border-strong);
+  color: var(--fg-primary);
+}
+.links-view__empty {
+  margin: 0;
+  color: var(--fg-muted);
+  font-size: var(--font-sm);
+}
+
 /* --- summary band: dense chrome that recedes --- */
 
 .editor-pane__summary {
