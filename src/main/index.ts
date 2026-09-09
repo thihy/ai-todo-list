@@ -77,6 +77,13 @@ protocol.registerSchemesAsPrivileged([
     scheme: 'app',
     privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true },
   },
+  {
+    // attachment://<id> serves an inbox_attachments row's file bytes. Lets the
+    // WYSIWYG progress doc embed <img src="attachment://<id>"> without inlining
+    // base64 and without ever exposing the main-process absolute path.
+    scheme: 'attachment',
+    privileges: { secure: true, supportFetchAPI: true, corsEnabled: true },
+  },
 ]);
 
 function bootstrap(): void {
@@ -126,6 +133,25 @@ function bootstrap(): void {
     registerContentHandlers(md, drawings);
     registerDocumentHandlers(docs);
     registerInboxHandlers(inbox);
+
+    // attachment://<id> → serve the inbox_attachments file bytes. Registered
+    // after the inbox store exists so the handler closure can capture it.
+    protocol.handle('attachment', async (req) => {
+      try {
+        const u = new URL(req.url);
+        const id = decodeURIComponent(u.host);
+        const att = inbox.get(id);
+        if (!att) return new Response('not found', { status: 404 });
+        const buf = readFileSync(att.filePath);
+        return new Response(new Uint8Array(buf), {
+          status: 200,
+          headers: { 'Content-Type': att.mime, 'Cache-Control': 'no-cache' },
+        });
+      } catch (err) {
+        logger.error(`attachment protocol: ${(err as Error).message}`);
+        return new Response('not found', { status: 404 });
+      }
+    });
     registerSettingsHandlers(settings, handle, rootDir);
     registerAppHandlers();
     registerCaptureHandlers(repo, md);
