@@ -2,47 +2,35 @@
 //
 //   ┌──────────────────────────────┬─────────────────────────────┐
 //   │ summary band (chrome)        │ body band (workspace)       │
-//   │  ─ title (large, editable)   │  ┌─────────────────────┐    │
-//   │  ─ meta row                  │  │                     │    │
-//   │      [priority] [due]        │  │  markdown editor    │    │
-//   │      [status]   [tags]       │  │  (fills space)      │    │
+//   │  ─ [title (read/dbl-click     │  ┌─────────────────────┐    │
+//   │     edit)] [status pill]     │  │                     │    │
+//   │  ─ meta row                  │  │  markdown editor    │    │
+//   │      [priority] [due] [tags] │  │  (fills space)      │    │
 //   │  ─ drawing strip             │  │                     │    │
 //   │                              │  └─────────────────────┘    │
 //   │                              │  ▾ history drawer (inline)  │
 //   └──────────────────────────────┴─────────────────────────────┘
 //
-// Summary is dense chrome that recedes; body is the work surface.
-//
-// Why this split:
-//   - The summary holds "what is this task?" (identity) — title, status,
-//     priority, due date, tags. It should be glanceable, not scrollable.
-//   - The body holds "what's happening with this task?" — free-form notes,
-//     history. The user scrolls here, the summary stays put via grid
-//     placement (top row is `auto`, bottom row is `1fr` + overflow auto).
-//   - The drawing strip stays in the summary because drawings ARE part of
-//     the task's identity (a sketch attached to a TODO reads as the
-//     task, not as a footnote to it).
+// Summary chrome is "read-first": title shows as a heading (double-click to
+// edit, click-to-copy), status is an inline pill right after the name,
+// priority is a single flag button + popover, due date is a read chip with
+// relative/absolute/overdue phrasing. The summary stays glanceable; the body
+// is the work surface and scrolls independently (grid top row `auto`, bottom
+// `1fr` + overflow auto). The drawing strip stays in the summary because
+// drawings ARE part of the task's identity (a sketch attached to a TODO reads
+// as the task, not as a footnote to it).
 
 import React, { useEffect, useState } from 'react';
 import { useBody, useHistory, useTodo, useDrawings } from '../hooks/useThihyApi';
 import { routeToHash } from '../router';
 import { MarkdownEditor } from '../components/MarkdownEditor';
+import { InlineTitle } from '../components/InlineTitle';
 import { PriorityPicker } from '../components/PriorityPicker';
 import { TagInput } from '../components/TagInput';
 import { DatePicker } from '../components/DatePicker';
+import { StatusPill } from '../components/StatusPill';
 import { DrawingStrip } from '../components/DrawingStrip';
 import type { Priority, TodoStatus } from '../../shared/todo-types';
-
-// Status labels centralised so the <select> options and the future
-// StatusPicker render the same vocabulary. Single source of truth —
-// don't write status display strings in two places.
-const STATUS_OPTIONS: { value: TodoStatus; label: string }[] = [
-  { value: 'next', label: '未完成' },
-  { value: 'doing', label: '进行中' },
-  { value: 'done', label: '已完成' },
-  { value: 'cancelled', label: '已取消' },
-  { value: 'blocked', label: '阻塞中' },
-];
 
 export const TodoEditorPane: React.FC<{
   todoId: string;
@@ -53,7 +41,6 @@ export const TodoEditorPane: React.FC<{
   const { versions } = useHistory(todoId);
   const { drawings, refresh: refreshDrawings } = useDrawings(todoId);
 
-  const [titleDraft, setTitleDraft] = useState('');
   const [tagDraft, setTagDraft] = useState<string[]>([]);
   const [priority, setPriority] = useState<Priority>('none');
   const [dueAt, setDueAt] = useState<number | null>(null);
@@ -61,19 +48,11 @@ export const TodoEditorPane: React.FC<{
 
   useEffect(() => {
     if (!todo) return;
-    setTitleDraft(todo.title);
     setTagDraft(todo.tags ?? []);
     setPriority(todo.priority);
     setDueAt(todo.dueAt ?? null);
     setStatus(todo.status);
   }, [todo]);
-
-  const commitTitle = async (): Promise<void> => {
-    if (!todo) return;
-    if (titleDraft !== todo.title) {
-      await window.thihy.todo.update(todo.id, { title: titleDraft });
-    }
-  };
 
   const commitMeta = async (
     patch: Parameters<typeof window.thihy.todo.update>[1],
@@ -90,14 +69,16 @@ export const TodoEditorPane: React.FC<{
     <div className="editor-pane">
       {/* ===== Summary band ===== */}
       <header className="editor-pane__summary">
-        <input
-          className="editor-pane__title"
-          aria-label="TODO 标题"
-          value={titleDraft}
-          onChange={(e) => setTitleDraft(e.target.value)}
-          onBlur={commitTitle}
-          placeholder="标题"
-        />
+        <div className="editor-pane__title-line">
+          <InlineTitle
+            value={todo.title}
+            onCommit={(next) => { void commitMeta({ title: next }); }}
+          />
+          <StatusPill
+            status={status}
+            onCycle={(v) => { setStatus(v); void commitMeta({ status: v }); }}
+          />
+        </div>
 
         <div className="editor-pane__meta">
           <PriorityPicker
@@ -108,20 +89,6 @@ export const TodoEditorPane: React.FC<{
             value={dueAt}
             onChange={(d) => { setDueAt(d); void commitMeta({ dueAt: d }); }}
           />
-          <select
-            className="editor-pane__status"
-            aria-label="状态"
-            value={status}
-            onChange={(e) => {
-              const v = e.target.value as TodoStatus;
-              setStatus(v);
-              void commitMeta({ status: v });
-            }}
-          >
-            {STATUS_OPTIONS.map((opt) => (
-              <option key={opt.value} value={opt.value}>{opt.label}</option>
-            ))}
-          </select>
           <TagInput
             value={tagDraft}
             onChange={(tags) => { setTagDraft(tags); void commitMeta({ tags }); }}

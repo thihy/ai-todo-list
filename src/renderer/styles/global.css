@@ -2527,40 +2527,282 @@ a:hover {
   /* The summary contains the title input + meta row + drawing strip;
      column layout reads as a card with three sub-rows. */
 }
+/* --- title line: InlineTitle (read h1 / edit input) + inline StatusPill --- */
+
+.editor-pane__title-line {
+  /* Title + status share one row so status sits "right after the name" per
+     the detail-redesign brief, not on a separate chrome line. */
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  min-width: 0;
+}
+.editor-pane__title-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  min-width: 0;
+  flex: 1 1 auto;
+}
 .editor-pane__title {
-  /* Override base input styling — title reads as a heading, not a form
-     field. No border, no padding, large type, weight 600. */
-  width: 100%;
+  /* Read mode: a heading, not a form field. Selectable + copyable text. */
+  margin: 0;
+  min-width: 0;
   border: 0;
   background: transparent;
-  padding: 0;
+  padding: 2px 0;
   font-size: var(--font-2xl);
   font-weight: 600;
   letter-spacing: -0.01em;
   color: var(--fg-primary);
+  cursor: text;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border-radius: var(--radius-sm);
+  outline: none;
 }
-.editor-pane__title:hover,
 .editor-pane__title:focus-visible {
-  border: 0;
-  box-shadow: none;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 35%, transparent);
 }
-.editor-pane__title::placeholder {
+.editor-pane__title-copy {
+  /* Copy button — visible on hover only so it doesn't clutter the read
+     state, but always present for keyboard/assistive users. */
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  background: transparent;
   color: var(--fg-muted);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity .12s ease;
+}
+.editor-pane__title-row:hover .editor-pane__title-copy,
+.editor-pane__title-copy:focus-visible {
+  opacity: 1;
+}
+.editor-pane__title-copy:hover {
+  background: var(--bg-hover);
+  color: var(--fg-primary);
+}
+.editor-pane__title-input {
+  /* Edit mode: a real input, sized to match the heading's metrics. */
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 1px solid var(--accent-primary);
+  background: var(--bg-surface);
+  padding: 2px var(--space-xs);
+  font-size: var(--font-2xl);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--fg-primary);
+  border-radius: var(--radius-sm);
+  outline: none;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-primary) 18%, transparent);
 }
 .editor-pane__meta {
-  /* Single row of controls; wraps to a second line on narrow widths
-     instead of crowding. Gap is tighter than default so 4 controls fit. */
+  /* Single row of pickers; wraps on narrow widths instead of crowding. */
   display: flex;
   align-items: center;
   gap: var(--space-sm);
   flex-wrap: wrap;
 }
-.editor-pane__status {
-  /* Native select — inherits base input/select styling (radius-md,
-     border, hover/focus states) so it matches PriorityPicker / DatePicker
-     visually. Compact padding keeps it aligned with the neighbouring
-     pickers which sit on a single row. */
+
+/* --- inline status pill --- */
+
+.editor-pane__status-pill {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px var(--space-sm) 2px 6px;
+  border: 1px solid var(--border-default);
+  background: var(--bg-surface);
+  color: var(--fg-secondary);
+  border-radius: var(--radius-pill);
+  font-size: var(--font-sm);
+  line-height: 1.4;
+  cursor: pointer;
+  transition: background .12s ease, border-color .12s ease;
+}
+.editor-pane__status-pill:hover {
+  background: var(--bg-hover);
+  border-color: var(--border-strong);
+}
+.editor-pane__status-pill-label {
+  white-space: nowrap;
+}
+.editor-pane__status-pill.is-done { color: var(--accent-success); border-color: color-mix(in srgb, var(--accent-success) 40%, var(--border-default)); }
+.editor-pane__status-pill.is-doing { color: var(--accent-primary); border-color: color-mix(in srgb, var(--accent-primary) 40%, var(--border-default)); }
+.editor-pane__status-pill.is-blocked { color: var(--accent-danger); border-color: color-mix(in srgb, var(--accent-danger) 40%, var(--border-default)); }
+.editor-pane__status-pill.is-cancelled { color: var(--fg-muted); }
+.editor-pane__status-pill.is-next { color: var(--fg-secondary); }
+
+/* --- priority picker (flag button + popover menu) --- */
+
+.priority-picker {
+  position: relative;
+  display: inline-flex;
+}
+.priority-picker__flag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px var(--space-sm);
+  border: 1px solid var(--border-default);
+  background: var(--bg-surface);
+  color: var(--fg-primary);
+  border-radius: var(--radius-pill);
+  font-size: var(--font-sm);
+  cursor: pointer;
+  transition: background .12s ease, border-color .12s ease;
+}
+.priority-picker__flag:hover {
+  background: var(--bg-hover);
+  border-color: var(--border-strong);
+}
+.priority-picker__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
+.priority-picker__label {
+  white-space: nowrap;
+}
+.priority-picker__menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 10;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, .12);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 96px;
+}
+.priority-picker__option {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 4px var(--space-sm);
+  border: 1px solid currentColor;
+  background: transparent;
+  border-radius: var(--radius-sm);
+  font-size: var(--font-sm);
+  cursor: pointer;
+  transition: filter .12s ease;
+}
+.priority-picker__option:hover {
+  filter: brightness(1.05);
+}
+.priority-picker__option.is-selected {
+  font-weight: 600;
+}
+
+/* --- date picker (read chip / edit panel) --- */
+
+.date-picker {
+  display: inline-flex;
+  align-items: center;
+}
+.date-picker--read {
+  gap: 6px;
+  padding: 3px var(--space-sm);
+  border: 1px solid var(--border-default);
+  background: var(--bg-surface);
+  color: var(--fg-secondary);
+  border-radius: var(--radius-pill);
+  font-size: var(--font-sm);
+  cursor: pointer;
+  transition: background .12s ease, border-color .12s ease, color .12s ease;
+}
+.date-picker--read:hover {
+  background: var(--bg-hover);
+  border-color: var(--border-strong);
+  color: var(--fg-primary);
+}
+.date-picker--read.is-overdue {
+  color: var(--accent-danger);
+  border-color: color-mix(in srgb, var(--accent-danger) 40%, var(--border-default));
+}
+.date-picker--read.is-none {
+  color: var(--fg-muted);
+}
+.date-picker__icon {
+  flex: 0 0 auto;
+}
+.date-picker__label {
+  white-space: nowrap;
+}
+.date-picker--edit {
+  position: relative;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--accent-primary);
+  background: var(--bg-surface);
+  border-radius: var(--radius-md);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, .12);
+  z-index: 10;
+  min-width: 200px;
+}
+.date-picker__input {
+  width: 100%;
   padding: var(--space-xs) var(--space-sm);
+  border: 1px solid var(--border-default);
+  background: var(--bg-surface);
+  color: var(--fg-primary);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-sm);
+}
+.date-picker__clear {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  border: 0;
+  background: transparent;
+  color: var(--fg-muted);
+  cursor: pointer;
+  font-size: var(--font-sm);
+  line-height: 1;
+  padding: 2px 4px;
+}
+.date-picker__clear:hover {
+  color: var(--accent-danger);
+}
+.date-picker__quick {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.date-picker__quick button {
+  flex: 1 1 auto;
+  padding: 3px var(--space-xs);
+  border: 1px solid var(--border-default);
+  background: var(--bg-surface);
+  color: var(--fg-secondary);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-xs);
+  cursor: pointer;
+}
+.date-picker__quick button:hover {
+  background: var(--bg-hover);
+  color: var(--fg-primary);
 }
 
 /* --- body band: workspace, scrolls --- */
