@@ -445,11 +445,20 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
     logger.warn(`DSH persistence list failed (non-fatal): ${(err as Error).message}`);
   }
 
-  // 1. Register our LLM adapter for the 'todo-list' route.
+  // 1. Register our LLM adapter for all five real provider routes. The
+  //    PiAiAdapter owns one pi-ai-backed provider per route; `profiles()`
+  //    resolves the live settings on each operation so a key/endpoint/model
+  //    change reaches the next request without restart.
   const llm = ctx.get('llm') as { registerAdapter(providers: string[], adapter: unknown): () => void } | undefined;
   if (!llm) throw new Error('DSH booted but ctx.llm is absent');
-  const { TodoListLlmAdapter } = await import('./llm-adapter');
-  const disposeAdapter = llm.registerAdapter(['todo-list'], new TodoListLlmAdapter({ getEndpoint: deps.getEndpoint }));
+  const { createLlmAdapters, REAL_PROVIDER_ROUTES } = await import('./llm-adapter');
+  const { real: llmAdapter } = createLlmAdapters({
+    getEndpoint: deps.getEndpoint,
+    getCustomProviders: () => deps.settings.get().customProviders,
+    getCustomProviderId: () => deps.settings.get().customProviderId,
+  });
+  const disposeAdapter = llm.registerAdapter([...REAL_PROVIDER_ROUTES], llmAdapter);
+  void REAL_PROVIDER_ROUTES; // exported for type-checking consumers
 
   // 2. Register our typed domain tools.
   const tools = ctx.get('tools') as { register(def: unknown): () => void } | undefined;
@@ -645,9 +654,18 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
     const existing = conversations.get(conversationId);
     if (existing) return existing;
 
+    // Pick the registered PiAiAdapter route from current settings. Each
+    // conversation caches its own agent handle — if the user changes
+    // settings.provider between turns on this conversation, the new value
+    // takes effect on the NEXT conversation the user creates; in-flight
+    // conversations stay on their original route until they're disposed
+    // (deleteConversation / disposeConversation below).
+    const { providerRouteFor } = await import('./llm-adapter');
+    const provider = providerRouteFor(deps.settings.get().provider) ?? 'deepseek';
+
     const handle = await agentsApi!.create({
       sessionId: SessionId(conversationId),
-      agentOptions: { provider: 'todo-list', model },
+      agentOptions: { provider, model },
     });
 
     const entry: ConversationEntry = {
