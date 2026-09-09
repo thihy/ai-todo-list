@@ -738,29 +738,36 @@ function registerAppHandlers(): void {
 // DSH web frontend handle all AI chat / tool / reasoning rendering. We do not
 // self-implement that UI in our renderer (per project directive).
 //
-// The dist is expected at one of:
-//   <DSH_HARNESS_DIST>      explicit override env var (absolute path)
-//   ../deepseek-harness/apps/web/dist   (sibling repo, default layout)
-//   resources/dsh-web/      packaged inside the app (electron-builder copy)
-// When none of these contains an index.html, we serve a friendly placeholder
-// so the panel still renders something useful — not a raw Electron error page.
+// The dist is consumed as an npm package (workspace-installed under
+// node_modules/@deepseek-ai/dsh-web-frontend/dist/). Electron's asar-aware fs
+// reads it transparently from inside app.asar in packaged builds, so the same
+// resolution path works in dev and in prod. An explicit env override
+// (DSH_HARNESS_DIST) lets ops drop in a custom build for testing.
 // ----------------------------------------------------------------------------
+
+import { createRequire } from 'node:module';
+const dshWebRequire = createRequire(import.meta.url);
 
 /** Resolve the on-disk directory holding the DSH web frontend dist. Returns
  *  null when no built dist is available so the caller can fall back to a
- *  placeholder page. The lookup order is the same as the docblock above. */
+ *  placeholder page. The lookup order is npm install (primary) then the
+ *  DSH_HARNESS_DIST env override (secondary). */
 function resolveDshWebDistDir(): string | null {
+  // 1. npm package. The package.json sits next to dist/ (per the package's
+  //    `exports` field which exposes "./dist/*" and "./package.json"). Resolving
+  //    via createRequire honors the exports map and gives an absolute path.
+  //    In packaged builds Electron's asar-aware fs reads inside app.asar, so
+  //    existsSync() and net.fetch() both work transparently.
+  try {
+    const pkgPath = dshWebRequire.resolve('@deepseek-ai/dsh-web-frontend/package.json');
+    const distDir = join(pkgPath, '..', 'dist');
+    if (existsSync(join(distDir, 'index.html'))) return distDir;
+  } catch {
+    // Package not installed (e.g. pnpm install was skipped) — fall through.
+  }
+  // 2. Explicit env var for ops/dev who want to point at a custom build.
   const envOverride = process.env['DSH_HARNESS_DIST'];
   if (envOverride && existsSync(join(envOverride, 'index.html'))) return envOverride;
-  // Sibling repo layout (this app lives at <root>/thihy_todolist, the
-  // harness at <root>/deepseek-harness). The dist path is also where the
-  // monorepo's `pnpm build:web` lands it.
-  const sibling = join(__dirname, '../../../../deepseek-harness/apps/web/dist');
-  if (existsSync(join(sibling, 'index.html'))) return sibling;
-  // Packaged location — electron-builder copies the dist into resources/dsh-web
-  // when the user runs `pnpm dist` after a successful dsh-web-frontend build.
-  const packaged = join(process.resourcesPath ?? '', 'dsh-web');
-  if (existsSync(join(packaged, 'index.html'))) return packaged;
   return null;
 }
 
@@ -799,8 +806,8 @@ function registerDshWebProtocol(): void {
 }
 
 /** Self-contained fallback page for the AIPanel iframe. Renders when the
- *  dsh-web-frontend dist has not been built yet — explains what to do, and
- *  tells the user the AI session/IPC machinery is still wired and ready. */
+ *  npm-installed dsh-web-frontend package is missing or broken — explains the
+ *  recovery step and confirms the AI session/IPC machinery is still wired. */
 const DSH_WEB_PLACEHOLDER_HTML = `<!DOCTYPE html>
 <html lang="zh-Hans">
 <head>
@@ -827,14 +834,14 @@ const DSH_WEB_PLACEHOLDER_HTML = `<!DOCTYPE html>
 </head>
 <body>
   <div class="card">
-    <h1>AI 助手前端未构建</h1>
-    <p>对话、工具调用、思考流的渲染由 <code>@deepseek-ai/dsh-web-frontend</code> 负责，本应用不内置 AI 渲染实现。</p>
+    <h1>AI 助手前端未就绪</h1>
+    <p>本应用通过 npm 包 <code>@deepseek-ai/dsh-web-frontend</code> 加载 AI 对话界面，检测到该包未正确安装。</p>
     <ol>
-      <li>在 <code>D:\\03_Git\\deepseek-harness</code> 下执行 <code>pnpm build:web</code></li>
-      <li>把生成的 <code>apps/web/dist</code> 复制到本应用的 <code>resources/dsh-web/</code></li>
-      <li>重新打包或重启 <code>pnpm dev</code></li>
+      <li>在项目根目录执行 <code>pnpm install</code></li>
+      <li>确认 <code>node_modules/@deepseek-ai/dsh-web-frontend/dist/index.html</code> 存在</li>
+      <li>重启 <code>pnpm dev</code> 或重新打包</li>
     </ol>
-    <p class="ok">AI 会话、IPC 处理器、DSH 运行时均已就绪，构建前端后会自动接管此面板。</p>
+    <p class="ok">AI 会话、IPC 处理器、DSH 运行时均已就绪，前端包就位后会自动接管此面板。</p>
   </div>
 </body>
 </html>`;

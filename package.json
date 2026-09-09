@@ -45,6 +45,7 @@
     "@deepseek-ai/dsh-session-title-llm": "0.1.2-rc.1",
     "@deepseek-ai/dsh-tool-ask-user": "0.1.2-rc.1",
     "@deepseek-ai/dsh-tools": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-web-frontend": "0.1.2-rc.1",
     "@excalidraw/excalidraw": "^0.18.0",
     "@tiptap/extension-image": "^3.31.3",
     "@tiptap/extension-link": "^3.31.3",
