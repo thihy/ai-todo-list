@@ -18,7 +18,7 @@
 // standalone 新绘图 strip) — selecting a drawing tab shows a thumbnail and an
 // "open editor" affordance; the + menu's 绘图 entry creates a new drawing.
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useDocuments, useDocument, useDrawings } from '../hooks/useThihyApi';
 import { usePrompt } from '../hooks/usePrompt';
 import { routeToHash } from '../router';
@@ -190,6 +190,11 @@ export const DocumentsView: React.FC<{
   const { prompt, node: promptNode } = usePrompt();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
+  // Inline tab rename (double-click the label). Works for both document tabs
+  // (document.rename) and drawing tabs (drawing.rename).
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState('');
+  const editInputRef = useRef<HTMLInputElement>(null);
 
   // Build a unified tab list: documents first (progress pinned first by ord),
   // then drawings. Each tab id is namespaced to avoid collisions between
@@ -221,6 +226,51 @@ export const DocumentsView: React.FC<{
     void refresh();
     void refreshDrawings();
   }, [refresh, refreshDrawings]);
+
+  // --- inline tab rename (double-click label → input) ---
+  const startEdit = useCallback((tab: Tab): void => {
+    const id = tabId(tab);
+    const title =
+      tab.kind === 'document'
+        ? tab.doc.title ?? KIND_LABEL[tab.doc.kind]
+        : tab.title ?? '绘图';
+    setEditingId(id);
+    setEditDraft(title);
+  }, []);
+
+  // Focus + select on entry so typing replaces the old label.
+  useEffect(() => {
+    if (editingId) {
+      editInputRef.current?.focus();
+      editInputRef.current?.select();
+    }
+  }, [editingId]);
+
+  const commitEdit = useCallback(async (): Promise<void> => {
+    if (!editingId) return;
+    const id = editingId;
+    const next = editDraft.trim();
+    setEditingId(null);
+    if (!next) return;
+    const tab = tabs.find((t) => tabId(t) === id);
+    if (!tab) return;
+    const current =
+      tab.kind === 'document'
+        ? tab.doc.title ?? KIND_LABEL[tab.doc.kind]
+        : tab.title ?? '绘图';
+    if (next === current) return;
+    if (tab.kind === 'document') {
+      const res = await window.thihy.document.rename(tab.doc.id, next);
+      if (res.ok) await refresh();
+    } else {
+      const res = await window.thihy.drawing.rename(tab.id, next);
+      if (res.ok) await refreshDrawings();
+    }
+  }, [editingId, editDraft, tabs, refresh, refreshDrawings]);
+
+  const cancelEdit = useCallback((): void => {
+    setEditingId(null);
+  }, []);
 
   const addNote = useCallback(async (): Promise<void> => {
     const res = await window.thihy.document.create({ todoId, kind: 'note_md', title: '笔记' });
@@ -314,19 +364,39 @@ export const DocumentsView: React.FC<{
             const Icon = KIND_ICON[kind]!;
             const id = tabId(t);
             const title = t.kind === 'document' ? t.doc.title ?? KIND_LABEL[t.doc.kind] : t.title ?? '绘图';
+            const isEditing = editingId === id;
             return (
               <button
                 key={id}
                 type="button"
                 role="tab"
                 aria-selected={id === selectedId}
-                className={`docs-workspace__tab${id === selectedId ? ' is-active' : ''}`}
+                className={`docs-workspace__tab${id === selectedId ? ' is-active' : ''}${isEditing ? ' is-editing' : ''}`}
                 onClick={() => setSelectedId(id)}
+                onDoubleClick={(e) => { e.stopPropagation(); startEdit(t); }}
                 title={title}
               >
                 <Icon size={14} />
-                <span className="docs-workspace__tab-label">{title}</span>
-                {!(t.kind === 'document' && t.doc.kind === 'progress') && (
+                {isEditing ? (
+                  <input
+                    ref={editInputRef}
+                    type="text"
+                    className="docs-workspace__tab-input"
+                    value={editDraft}
+                    aria-label="重命名"
+                    onChange={(e) => setEditDraft(e.target.value)}
+                    onClick={(e) => e.stopPropagation()}
+                    onDoubleClick={(e) => e.stopPropagation()}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') { e.preventDefault(); void commitEdit(); }
+                      else if (e.key === 'Escape') { e.preventDefault(); cancelEdit(); }
+                    }}
+                    onBlur={() => { void commitEdit(); }}
+                  />
+                ) : (
+                  <span className="docs-workspace__tab-label">{title}</span>
+                )}
+                {!isEditing && !(t.kind === 'document' && t.doc.kind === 'progress') && (
                   <span
                     role="button"
                     className="docs-workspace__tab-close"

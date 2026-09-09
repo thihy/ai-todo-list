@@ -168,6 +168,7 @@ export interface ThihyApi {
       title?: string,
     ): Promise<IpcResponse<'drawing.save'>>;
     delete(id: string): Promise<IpcResponse<'drawing.delete'>>;
+    rename(id: string, title: string): Promise<IpcResponse<'drawing.rename'>>;
     setThumb(id: string, dataUrl: string): Promise<IpcResponse<'drawing.setThumb'>>;
   };
   inbox: {

@@ -31,6 +31,7 @@ const DECLARED_CHANNELS: ReadonlySet<string> = new Set([
   'drawing.read',
   'drawing.save',
   'drawing.delete',
+  'drawing.rename',
   'drawing.setThumb',
   'inbox.attach',
   'inbox.attachBlob',

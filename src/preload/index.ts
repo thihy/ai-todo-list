@@ -110,6 +110,7 @@ const api: ThihyApi = {
     save: (todoId, scene, id, title) =>
       invoke('drawing.save', { todoId, scene, id, title }),
     delete: (id) => invoke('drawing.delete', { id }),
+    rename: (id, title) => invoke('drawing.rename', { id, title }),
     setThumb: (id, dataUrl) => invoke('drawing.setThumb', { id, dataUrl }),
   },
   inbox: {

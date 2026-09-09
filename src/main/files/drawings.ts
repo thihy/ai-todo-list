@@ -37,6 +37,31 @@ export class DrawingStore {
       }));
   }
 
+  /** Single drawing meta by id (for rename return value). Null if missing. */
+  get(id: ULID): DrawingMeta | null {
+    const r = this.db
+      .prepare<[ULID], {
+        id: string;
+        todo_id: string;
+        title: string | null;
+        thumb_path: string | null;
+        created_at: number;
+        updated_at: number;
+      }>(
+        'SELECT id, todo_id, title, thumb_path, created_at, updated_at FROM drawings WHERE id = ?',
+      )
+      .get(id);
+    if (!r) return null;
+    return {
+      id: r.id,
+      todoId: r.todo_id,
+      title: r.title,
+      thumbPath: r.thumb_path,
+      createdAt: r.created_at,
+      updatedAt: r.updated_at,
+    };
+  }
+
   read(id: ULID): unknown {
     const row = this.db
       .prepare<[ULID], { path: string }>('SELECT path FROM drawings WHERE id = ?')
@@ -83,6 +108,15 @@ export class DrawingStore {
 
   delete(id: ULID): void {
     this.db.prepare('DELETE FROM drawings WHERE id = ?').run(id);
+  }
+
+  /** Rename a drawing's title only (no scene rewrite). Mirrors
+   *  DocumentStore.rename so tabs of either kind are renamable inline. */
+  rename(id: ULID, title: string): void {
+    const trimmed = title.trim();
+    this.db
+      .prepare('UPDATE drawings SET title = ?, updated_at = ? WHERE id = ?')
+      .run(trimmed || null, Date.now(), id);
   }
 
   setThumb(id: ULID, dataUrl: string): void {

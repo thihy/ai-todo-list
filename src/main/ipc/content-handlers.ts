@@ -82,6 +82,19 @@ export function registerContentHandlers(
     }
   });
 
+  register('drawing.rename', (_e, req) => {
+    try {
+      drawings.rename(req.id, req.title);
+      // Return the refreshed meta so the renderer can update the tab label
+      // without a second round-trip (mirrors document.rename).
+      const meta = drawings.get(req.id);
+      if (!meta) return Promise.resolve(failResult('rename_failed', 'drawing not found after rename'));
+      return Promise.resolve(okResult(meta));
+    } catch (err) {
+      return Promise.resolve(failResult('rename_failed', (err as Error).message));
+    }
+  });
+
   register('drawing.setThumb', (_e, req) => {
     try {
       drawings.setThumb(req.id, req.dataUrl);

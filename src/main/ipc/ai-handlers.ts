@@ -474,6 +474,7 @@ function mutatingScope(name: string): DataScope | null {
       return 'content';
     case 'drawing.save':
     case 'drawing.delete':
+    case 'drawing.rename':
     case 'drawing.setThumb':
       return 'drawings';
     case 'conversation.create':

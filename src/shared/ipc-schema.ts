@@ -107,6 +107,7 @@ export interface DrawingListReq { todoId: ULID }
 export interface DrawingReadReq { id: ULID }
 export interface DrawingSaveReq { todoId: ULID; id?: ULID; title?: string; scene: unknown }
 export interface DrawingDeleteReq { id: ULID }
+export interface DrawingRenameReq { id: ULID; title: string }
 export interface DrawingThumbSetReq { id: ULID; dataUrl: string }
 
 // ----- inbox.* -----
@@ -291,6 +292,7 @@ export interface IpcRegistry {
   'drawing.read': IpcChannel<DrawingReadReq, IpcResult<unknown>>;
   'drawing.save': IpcChannel<DrawingSaveReq, IpcResult<DrawingMeta>>;
   'drawing.delete': IpcChannel<DrawingDeleteReq, IpcResult<void>>;
+  'drawing.rename': IpcChannel<DrawingRenameReq, IpcResult<DrawingMeta>>;
   'drawing.setThumb': IpcChannel<DrawingThumbSetReq, IpcResult<void>>;
 
   'inbox.attach': IpcChannel<InboxAttachReq, IpcResult<InboxAttachment>>;

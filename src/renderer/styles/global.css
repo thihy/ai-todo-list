@@ -3756,6 +3756,23 @@ a:hover {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* Inline rename input (double-click a tab label). Replaces the label span in
+   place; the tab keeps its icon but drops the close affordance while editing. */
+.docs-workspace__tab.is-editing {
+  max-width: 240px;
+  border-color: var(--accent-primary);
+}
+.docs-workspace__tab-input {
+  flex: 1 1 auto;
+  min-width: 60px;
+  max-width: 160px;
+  padding: 0 2px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  outline: none;
+}
 .docs-workspace__tab-close {
   display: inline-flex;
   align-items: center;
