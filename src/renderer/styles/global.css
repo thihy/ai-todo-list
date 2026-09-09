@@ -837,46 +837,59 @@ a:hover {
   font-weight: inherit;
 }
 
-/* ===== L5: sticky "current question" banner ===== */
+/* ===== L5: scroll-tracked "current question" pin ===== */
 
-/* Surfaces the most recent user message above the message stream so the
-   user can always see what was asked — even after scrolling deep into
-   the history to re-read an earlier answer. */
-.aipane__currentq {
-  /* Static child of .aipane__sticky-head, stacked beneath the title. The
-     wrapper handles stickiness + full-bleed; this banner keeps its tinted
-     background as a visual separator from the title above. */
+/* Overlay (absolute, child of .aipane__sticky-head) that floats just below
+   the title and mirrors whichever user question has scrolled out of view —
+   so the user never reads an answer without seeing what was asked. It is an
+   overlay (out of flow) on purpose: showing/hiding it never shifts the
+   message stream the user is reading. Opaque surface background so content
+   scrolling under it can't show through; right-aligned so the pinned bubble
+   reads as "the user's own question, kept in view" (matching .bubble--user). */
+.aipane__currentq-overlay {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 100%; /* sit just below the sticky header's bottom edge */
+  z-index: 2;
   display: flex;
+  justify-content: flex-end;
   align-items: flex-start;
   gap: var(--space-xs);
-  padding: var(--space-sm) var(--space-lg);
-  margin: 0 0 var(--space-xs);
-  background: color-mix(in srgb, var(--accent-primary, #4F8AF7) 8%, var(--bg-surface));
-  border-top: 1px solid color-mix(in srgb, var(--accent-primary, #4F8AF7) 25%, transparent);
-  border-bottom: 1px solid color-mix(in srgb, var(--accent-primary, #4F8AF7) 18%, transparent);
-  font-size: var(--font-sm);
-  line-height: 1.5;
-  color: var(--fg-primary);
+  padding: var(--space-xs) var(--space-lg) var(--space-sm);
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-default);
+  pointer-events: none; /* the overlay itself never blocks scrolling; the
+                            bubble below re-enables pointer events for its
+                            status pill, but there's nothing to click */
 }
-.aipane__currentq-glyph {
-  color: var(--accent-primary, #4F8AF7);
-  font-size: var(--font-md);
-  line-height: 1.4;
+/* The pinned question bubble. Inherits .bubble--user's accent look so it's
+   visually identical to the original user question, just held in view. Kept
+   compact (2-line clamp + shadow) so it covers as little of the answer below
+   as possible while remaining legible. */
+.aipane__currentq-pin {
+  max-width: 86%;
+  /* .bubble--user sets align-self:flex-end for the .turn (column) layout; in
+     this row overlay justify-content already right-aligns, so neutralise the
+     cross-axis align to keep the bubble top-aligned with the status pill. */
+  align-self: auto;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.16);
+  pointer-events: auto;
 }
 .aipane__currentq-text {
-  flex: 1;
   min-width: 0;
   display: -webkit-box;
-  -webkit-line-clamp: 3;
+  -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
-  /* Preserve line breaks in the user's question so multi-line prompts
-     still show their structure. */
+  /* Preserve line breaks in the user's question so multi-line prompts still
+     show their structure. */
   white-space: pre-wrap;
   word-break: break-word;
 }
 .aipane__currentq-attach {
-  color: var(--fg-muted);
+  color: inherit;
+  opacity: 0.85;
   font-size: var(--font-xs);
   display: inline-block;
   margin-left: 4px;
@@ -886,8 +899,8 @@ a:hover {
   align-self: center;
   padding: 2px 8px;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--accent-primary, #4F8AF7) 18%, transparent);
-  color: var(--accent-primary, #4F8AF7);
+  background: color-mix(in srgb, #fff 22%, transparent);
+  color: inherit;
   font-size: var(--font-xs);
   font-weight: 600;
   display: inline-flex;
@@ -899,7 +912,7 @@ a:hover {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: var(--accent-primary, #4F8AF7);
+  background: currentColor;
   animation: aipane-pulse 1.2s ease-in-out infinite;
 }
 

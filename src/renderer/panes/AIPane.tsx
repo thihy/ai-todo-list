@@ -28,7 +28,7 @@
 //   and the Send/Stop button on the right. Previously the file picker was a
 //   separate left-of-textarea button, which made the affordance feel split.
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useAiStream } from '../hooks/useThihyApi';
 import { useDataVersion } from '../data-bus';
 import { Markdown } from '../components/Markdown';
@@ -138,7 +138,15 @@ export const AIPane: React.FC = () => {
   const renameInputRef = useRef<HTMLInputElement>(null);
   const historySearchRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const stickyHeadRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  // Scroll-tracked "current question": the id of the most recent user turn whose
+  // bubble has scrolled fully under the sticky header (no longer visible).
+  // The pinned banner shows THIS turn's question (not always the latest) so the
+  // user always knows what the answer they're reading is answering — without ever
+  // duplicating a question bubble that's still on screen. null when no user
+  // question has scrolled out of view (e.g. at the top of the conversation).
+  const [activeQuestionId, setActiveQuestionId] = useState<string | null>(null);
 
   // Files the user picked via the composer's + button. We read them as
   // text in main (app.pickFile), so each entry carries the inlined text
@@ -253,6 +261,51 @@ export const AIPane: React.FC = () => {
     if (el) el.scrollTop = el.scrollHeight;
   }, [turnsByConv, currentId]);
 
+  // Scroll-tracked "current question": recompute which user question has
+  // scrolled out of view under the sticky header. The pinned banner mirrors
+  // that question so the user never reads an answer without seeing what was
+  // asked. We measure against the sticky header's BOTTOM edge (not the
+  // viewport top) — once a user bubble's bottom passes under the header it is
+  // "no longer visible" and becomes the pinned question. DOM order of the
+  // bubbles matches conversation order, so we walk them and the last one
+  // scrolled-out-of-view wins. rAF-throttled so scrolling stays smooth.
+  const recomputeActiveQuestion = useCallback(() => {
+    const container = scrollRef.current;
+    if (!container) return;
+    const head = stickyHeadRef.current;
+    // Threshold = bottom of the sticky header (title). A user bubble is
+    // "scrolled out of view" once its bottom edge is at/above this line.
+    const threshold = head ? head.getBoundingClientRect().bottom : container.getBoundingClientRect().top;
+    const bubbles = Array.from(container.querySelectorAll<HTMLElement>('[data-user-q]'));
+    let next: string | null = null;
+    for (const b of bubbles) {
+      if (b.getBoundingClientRect().bottom <= threshold + 1) {
+        next = b.dataset.turnId ?? null;
+      } else {
+        break; // conversation-ordered; the first not-yet-scrolled-out stops us
+      }
+    }
+    setActiveQuestionId((prev) => (prev === next ? prev : next));
+  }, []);
+
+  // Recompute on scroll (rAF-throttled) and whenever the turn list / active
+  // conversation changes (new messages shift layout, so a bubble that was
+  // in view may now be scrolled out).
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    let raf = 0;
+    const onScroll = (): void => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => recomputeActiveQuestion());
+    };
+    el.addEventListener('scroll', onScroll, { passive: true });
+    return () => {
+      cancelAnimationFrame(raf);
+      el.removeEventListener('scroll', onScroll);
+    };
+  }, [recomputeActiveQuestion]);
+
   // Autosize the composer textarea between minHeight and a soft cap. Pure
   // DOM measurement — no external lib. Resets to minHeight when the input is
   // cleared so the box doesn't keep its expanded height with empty content.
@@ -267,16 +320,22 @@ export const AIPane: React.FC = () => {
   const current = conversations.find((c) => c.id === currentId) ?? null;
   const currentTurns: Turn[] = currentId ? turnsByConv[currentId] ?? [] : [];
   const busy = streamingTurnId !== null;
-  // The "current question" is the most recent user turn in this conversation,
-  // whether it's the in-flight one or the last completed one. The sticky
-  // banner surfaces it so the user always knows what they're waiting on /
-  // just got an answer to, even after scrolling deep into the history.
-  const lastUserTurn: Turn | null = (() => {
-    for (let i = currentTurns.length - 1; i >= 0; i--) {
-      if (currentTurns[i]!.user) return currentTurns[i]!;
-    }
-    return null;
-  })();
+  // The question currently pinned at the top of the message stream. This is
+  // NOT "the latest user message" — it's the question whose bubble has scrolled
+  // out of view under the sticky header (so its answer is what the user is
+  // reading right now). null while no user question has scrolled out (top of
+  // the conversation), which also means we never render the pinned question
+  // twice — once it scrolls out of view it becomes the pinned one, and the
+  // instant it scrolls back into view it stops being pinned.
+  const activeQuestion = activeQuestionId
+    ? (currentTurns.find((t) => t.id === activeQuestionId) ?? null)
+    : null;
+  // Recompute the pinned question after layout settles (new messages shift
+  // positions, so a bubble that was in view may now be scrolled out). Runs
+  // after the derivations above so it can depend on currentTurns.
+  useLayoutEffect(() => {
+    recomputeActiveQuestion();
+  }, [recomputeActiveQuestion, currentTurns, currentId]);
   // L3-H: case-insensitive substring filter on title. Empty query = full
   // list. We don't try to be smarter (fuzzy, token-aware) — the list is
   // short enough that an exact substring match is enough to land on the
@@ -717,7 +776,7 @@ export const AIPane: React.FC = () => {
             band ("content penetrates the title"). One shared sticky context
             with an opaque full-bleed background also guarantees scrolling
             messages can't show through the header. */}
-        <div className="aipane__sticky-head">
+        <div className="aipane__sticky-head" ref={stickyHeadRef}>
         {!bootError && current && (
           <h2 className="aipane__conv-title" title={current.title}>
             {renaming ? (
@@ -739,24 +798,31 @@ export const AIPane: React.FC = () => {
           </h2>
         )}
 
-        {/* Sticky "current question" banner. Surfaces the most recent user
-            message so even after the user scrolls deep into the history to
-            re-read an earlier answer, they always see what was actually
-            asked. Hidden when there's no user message yet. */}
-        {!bootError && lastUserTurn && (
-          <div className="aipane__currentq" aria-label="当前问题">
-            <span className="aipane__currentq-glyph" aria-hidden="true">❝</span>
-            <span className="aipane__currentq-text">
-              {lastUserTurn.user}
-              {lastUserTurn.attached && lastUserTurn.attached.length > 0 && (
-                <span className="aipane__currentq-attach">
-                  {' '}📎 {lastUserTurn.attached.length} 个附件
-                </span>
+        {/* Scroll-tracked "current question" pin. This is an OVERLAY (absolute,
+            child of the sticky header) rather than a flow element so that
+            showing/hiding it never shifts the message stream the user is
+            reading — it floats just below the title, covering the top sliver of
+            the answer currently in view, and shows the question that has just
+            scrolled out of sight. Styled like a user bubble (right-aligned,
+            accent) so it reads as "the user's own question, kept in view".
+            Rendered ONLY while a user question has scrolled out of view — the
+            instant the original bubble is visible it isn't pinned, so the user
+            never sees the same question twice. */}
+        {!bootError && activeQuestion && (
+          <div className="aipane__currentq-overlay" aria-hidden="false">
+            <div className="aipane__currentq-pin bubble bubble--user" role="status" aria-label="当前问题">
+              <span className="aipane__currentq-text">
+                {activeQuestion.user}
+                {activeQuestion.attached && activeQuestion.attached.length > 0 && (
+                  <span className="aipane__currentq-attach">
+                    {' '}📎 {activeQuestion.attached.length} 个附件
+                  </span>
+                )}
+              </span>
+              {busy && activeQuestion.id === streamingTurnId && (
+                <span className="aipane__currentq-status" aria-live="polite">生成中…</span>
               )}
-            </span>
-            {busy && (
-              <span className="aipane__currentq-status" aria-live="polite">生成中…</span>
-            )}
+            </div>
           </div>
         )}
         </div>
@@ -916,7 +982,11 @@ const TurnView: React.FC<{ turn: Turn }> = ({ turn }) => {
           ))}
         </div>
       )}
-      {turn.user && <div className="bubble bubble--user">{turn.user}</div>}
+      {turn.user && (
+        <div className="bubble bubble--user" data-user-q data-turn-id={turn.id}>
+          {turn.user}
+        </div>
+      )}
       {turn.reasoning && <ReasoningView text={turn.reasoning} streaming={streaming} />}
       {turn.tools.map((tc, i) => (
         <ToolCardView key={i} card={tc} />
