@@ -11,6 +11,15 @@ export type ULID = string;
 export type TodoStatus = 'next' | 'doing' | 'done' | 'cancelled' | 'blocked';
 export type Priority = 'none' | 'low' | 'medium' | 'high';
 
+/** A tag registry entry. Tags on a todo are plain strings (Todo.tags); this
+ *  registry holds the user-chosen colour for each name, managed in Settings
+ *  and surfaced as autocomplete in the task detail. `name` is the identity
+ *  (case-insensitive unique); `color` is a CSS colour string. */
+export interface TagDef {
+  name: string;
+  color: string;
+}
+
 export const TODO_STATUSES: readonly TodoStatus[] = ['next', 'doing', 'done', 'cancelled', 'blocked'];
 export const PRIORITIES: readonly Priority[] = ['none', 'low', 'medium', 'high'];
 

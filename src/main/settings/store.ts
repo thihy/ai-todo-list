@@ -11,6 +11,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { DEFAULT_CAPTURE_HOTKEY, ROOT_DIR_NAME, CONFIG_FILENAME, DEFAULT_PROVIDER } from '../../shared/constants';
 import type { AIModel, AIProvider, CustomProviderConfig, CustomProviderInput } from '../../shared/ai-types';
+import type { TagDef } from '../../shared/todo-types';
 
 export interface PersistedSettings {
   provider: AIProvider;
@@ -31,6 +32,10 @@ export interface PersistedSettings {
    *  this many days. 0 = never auto-archive (manual archive only). The boot
    *  sweep + hourly interval in index.ts read this. */
   archiveAfterDays: number;
+  /** Tag registry — names with a user-chosen colour. Tagged todos reference
+   *  tags by plain string (Todo.tags); this holds the palette + autocomplete
+   *  source, managed in Settings. */
+  tags: TagDef[];
 }
 
 const DEFAULTS: PersistedSettings = {
@@ -46,6 +51,7 @@ const DEFAULTS: PersistedSettings = {
   customProviders: [],
   customProviderId: null,
   archiveAfterDays: 1,
+  tags: [],
 };
 
 /** Default data root when the user has not picked a directory. */
@@ -135,6 +141,7 @@ export class SettingsStore {
       })),
       customProviderId: v.customProviderId,
       archiveAfterDays: v.archiveAfterDays,
+      tags: v.tags,
     };
   }
 

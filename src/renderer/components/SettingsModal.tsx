@@ -18,12 +18,13 @@ import {
   type CustomProviderInput,
 } from '../../shared/ai-types';
 
-type Category = 'general' | 'model' | 'data' | 'hotkeys' | 'about';
+type Category = 'general' | 'model' | 'data' | 'tags' | 'hotkeys' | 'about';
 
 const CATEGORIES: { key: Category; label: string }[] = [
   { key: 'general', label: '通用' },
   { key: 'model', label: '模型' },
   { key: 'data', label: '数据' },
+  { key: 'tags', label: '标签' },
   { key: 'hotkeys', label: '快捷键' },
   { key: 'about', label: '关于' },
 ];
@@ -80,6 +81,8 @@ export const SettingsModal: React.FC<{ open: boolean; onClose: () => void }> = (
               <ModelPane data={data} patch={patch} />
             ) : cat === 'data' ? (
               <DataPane data={data} patch={patch} chooseDataDir={chooseDataDir} />
+            ) : cat === 'tags' ? (
+              <TagsPane data={data} patch={patch} />
             ) : cat === 'hotkeys' ? (
               <HotkeysPane data={data} patch={patch} />
             ) : (
@@ -486,6 +489,81 @@ const HotkeysPane: React.FC<PaneProps> = ({ data, patch }) => (
     </Field>
   </div>
 );
+
+const TAG_PALETTE = ['#2563eb', '#0d9488', '#9333ea', '#db2777', '#ca8a04', '#ea580c', '#16a34a', '#0891b2'];
+
+const TagsPane: React.FC<PaneProps> = ({ data, patch }) => {
+  const tags = data.tags ?? [];
+  const [name, setName] = useState('');
+  const [color, setColor] = useState(TAG_PALETTE[0]!);
+
+  const commit = (next: { name: string; color: string }[]): void => {
+    void patch({ tags: next });
+  };
+
+  const add = (): void => {
+    const n = name.trim().replace(/^#/, '');
+    if (!n) return;
+    if (tags.some((t) => t.name.toLowerCase() === n.toLowerCase())) {
+      setName('');
+      return;
+    }
+    commit([...tags, { name: n, color }]);
+    setName('');
+    setColor(TAG_PALETTE[tags.length % TAG_PALETTE.length]!);
+  };
+
+  const remove = (n: string): void => commit(tags.filter((t) => t.name !== n));
+  const recolor = (n: string, c: string): void =>
+    commit(tags.map((t) => (t.name === n ? { ...t, color: c } : t)));
+  const rename = (n: string, nn: string): void => {
+    const trimmed = nn.trim();
+    if (!trimmed || trimmed === n) return;
+    if (tags.some((t) => t.name.toLowerCase() === trimmed.toLowerCase())) return;
+    commit(tags.map((t) => (t.name === n ? { ...t, name: trimmed } : t)));
+  };
+
+  return (
+    <div className="settings-pane">
+      <Field label="标签管理" hint="为标签设置颜色；在任务详情中输入即可联想、新建。">
+        <div className="settings-tags">
+          {tags.length === 0 && <div className="muted">还没有标签。在任务详情中新建，或在此添加。</div>}
+          {tags.map((t) => (
+            <div key={t.name} className="settings-tags__row">
+              <input
+                type="color"
+                className="settings-tags__swatch"
+                value={t.color}
+                aria-label={`${t.name} 颜色`}
+                onChange={(e) => recolor(t.name, e.target.value)}
+              />
+              <input
+                className="input settings-tags__name"
+                defaultValue={t.name}
+                onBlur={(e) => rename(t.name, e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+              />
+              <button type="button" className="settings-tags__del" onClick={() => remove(t.name)} aria-label={`删除标签 ${t.name}`}>
+                ×
+              </button>
+            </div>
+          ))}
+          <div className="settings-tags__row settings-tags__row--new">
+            <input type="color" className="settings-tags__swatch" value={color} onChange={(e) => setColor(e.target.value)} aria-label="新标签颜色" />
+            <input
+              className="input settings-tags__name"
+              placeholder="新标签名称"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') add(); }}
+            />
+            <button type="button" className="btn-secondary" onClick={add} disabled={!name.trim()}>添加</button>
+          </div>
+        </div>
+      </Field>
+    </div>
+  );
+};
 
 const AboutPane: React.FC<PaneProps> = ({ data }) => (
   <div className="settings-pane">

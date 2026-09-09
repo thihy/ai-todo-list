@@ -490,9 +490,15 @@ function registerSettingsHandlers(
       ...(typeof req.dataDir === 'string' ? { dataDir: req.dataDir } : {}),
       ...(req.customProviderId !== undefined ? { customProviderId: req.customProviderId } : {}),
       ...(req.archiveAfterDays !== undefined ? { archiveAfterDays: req.archiveAfterDays } : {}),
+      ...(req.tags ? { tags: req.tags } : {}),
     });
     if (req.customProviders) {
       store.mergeCustomProviders(req.customProviders);
+    }
+    // Broadcast so non-modal consumers of settings (e.g. the TagInput
+    // autocomplete in the task detail) refresh their registry live.
+    for (const w of BrowserWindow.getAllWindows()) {
+      if (!w.isDestroyed()) w.webContents.send('app:settings-changed', {});
     }
     return Promise.resolve(okResult(store.publicView()));
   });

@@ -8,6 +8,7 @@ import type {
   InboxAttachment,
   ProgressLogEntry,
   SearchHit,
+  TagDef,
   TaskDocument,
   Todo,
   TodoCreate,
@@ -239,12 +240,15 @@ export interface SettingsSetReq {
   customProviderId?: string | null;
   // Auto-archive: archive done tasks older than N days. 0 = never.
   archiveAfterDays?: number;
+  // Tag registry (name + colour). Replaces the whole list.
+  tags?: TagDef[];
 }
 export interface SettingsGetRes extends AISettings {
   captureHotkey: string;
   theme: 'system' | 'light' | 'dark';
   dataDir: string;
   archiveAfterDays: number;
+  tags: TagDef[];
 }
 export interface SettingsChooseDataDirRes {
   /** Chosen path, or null if the user cancelled the dialog. */

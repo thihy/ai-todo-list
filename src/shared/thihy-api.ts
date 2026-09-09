@@ -26,6 +26,7 @@ import type { ContentVersionEntry } from './todo-types';
 import type { ProgressLogEntry } from './todo-types';
 import type { DocumentVersionEntry, TaskDocument } from './todo-types';
 import type { DrawingMeta, DrawingScene } from './todo-types';
+import type { TagDef } from './todo-types';
 
 // --- App events pushed from main ---
 
@@ -101,6 +102,7 @@ export interface SettingsPatchArgs {
   customProviders?: CustomProviderInput[];
   customProviderId?: string | null;
   archiveAfterDays?: number;
+  tags?: TagDef[];
 }
 
 // --- ThihyApi ---
