@@ -1,13 +1,13 @@
 // Composer — clean NL capture surface shown in the center when the user
 // clicks 新建任务. Captures text + pasted/dropped images, then on Enter
 // dispatches a window event so the right-side AI assistant can pick it up
-// and use its todo.create tools to file it under the right group, with the
-// right priority / status / tags.
+// and use its todo.create tool to file it with the right priority /
+// status / tags, nesting it under a parent task when needed.
 //
 // Why send to the AI instead of creating the task directly:
-// - The AI knows the user's existing groups, current workload, and recent
-//   project context, so it can pick the right group / priority / due-date
-//   automatically — no more "未分组" placeholder or manual priority click.
+// - The AI knows the user's existing tasks, current workload, and recent
+//   project context, so it can pick the right priority / due-date / parent
+//   task automatically — no manual field-filling.
 // - The user keeps typing natural-language descriptions; the AI does the
 //   structured-field extraction that the old parseCapturePreview heuristic
 //   only approximated.
@@ -46,7 +46,6 @@ export const AI_SUBMIT_EVENT = 'thihy:ai-submit-external';
 export const Composer: React.FC<{
   onClose: () => void;
   navigate: (to: string) => void;
-  defaultGroupId?: string | null;
 }> = ({ onClose, navigate: _navigate }) => {
   const [text, setText] = useState('');
   const [images, setImages] = useState<PastedImage[]>([]);
@@ -184,7 +183,7 @@ export const Composer: React.FC<{
         <textarea
           ref={textareaRef}
           className="composer__textarea"
-          placeholder="用自然语言描述这个任务，AI 助手会自动选择分组、优先级、截止日期等。"
+          placeholder="用自然语言描述这个任务，AI 助手会自动选择优先级、截止日期、父任务等。"
           value={text}
           onChange={(e) => setText(e.target.value)}
           onPaste={onPaste}

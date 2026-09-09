@@ -341,15 +341,6 @@ export const AIPane: React.FC = () => {
     setCurrentId(id);
   };
 
-  const beginRename = (): void => {
-    if (!current) return;
-    setRenameDraft(current.title);
-    setRenaming(true);
-    setRowMenuId(null);
-    setShowHistory(false);
-    setTimeout(() => renameInputRef.current?.focus(), 0);
-  };
-
   const commitRename = async (): Promise<void> => {
     if (!current) return;
     const next = renameDraft.trim();
@@ -466,11 +457,10 @@ export const AIPane: React.FC = () => {
     // exact wording.
     const SYSTEM_INSTRUCTION =
       '[系统提示：用户通过"新建任务"界面提交了下面的描述，请使用 todo.create 工具创建一个新的 TODO 任务。' +
-      '自动选择合适的 groupId（根据内容判断应该归入哪个分组；如果没有明显匹配的分组，可以创建新的分组或留空）。' +
       'priority 根据紧迫程度判断（无/低/中/高）；status 默认 inbox，除非用户明确说"待办"、"进行中"、"已完成"等。' +
       '如果描述包含截止日期（"明天"、"下周三"、"12-25" 等），解析为 unix 毫秒并填入 dueAt。' +
       '提取相关 tags。如果描述较长，第一行或核心动词短语作为 title。' +
-      '创建完成后简短回复用户：任务名、分组、优先级，截止日期（如有），不要重复整段描述。]\n\n';
+      '创建完成后简短回复用户：任务名、优先级，截止日期（如有），不要重复整段描述。]\n\n';
     const wirePrompt = override
       ? `${SYSTEM_INSTRUCTION}[用户的描述]:\n${prompt}`
       : prompt;

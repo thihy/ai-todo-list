@@ -1,37 +1,22 @@
-// Task list — left column of the master-detail layout. Renders groups as a
-// hand-edited directory TREE (folders) with tasks as leaves (files).
-// L5 redesign:
-//   - Groups indent by nesting depth (Group > sub-Group > sub-sub-Group).
-//     Indentation is driven by the `--group-depth` CSS custom property,
-//     so sub-groups visibly nest under their parent.
-//   - Tasks inside a group indent ONE more level than the group itself.
-//   - SubTasks (parentId !== null) indent UNDER their parent task, recursively.
-//   - Root-level tasks (no parentId, no groupId) render AFTER the group tree.
-//     A task with no group is "loose" — it sits at the bottom of the pane,
-//     not floating above the groups.
-//   - Double-clicking a group row toggles expand/collapse (NOT rename).
-//   - Each group row has its action icons RIGHT-ALIGNED in a fixed slot:
-//     ✏ 重命名 · 📁 新建子分组 · 🗑 删除. They fade in on hover but the
-//     rename slot is always discoverable, so users don't have to discover
-//     the double-click-to-rename gesture (which used to conflict with
-//     double-click = expand).
-//   - Group rows show a folder glyph (14×14); task rows show a document
-//     glyph of the SAME size and stroke style, so folders and files read
-//     as one consistent icon family.
+// Task list — left column of the master-detail layout. Renders a pure
+// Task tree: every entry is a Task; a Task may have SubTasks (nested via
+// parentId). Root tasks (parentId === null) sit at the top; their subtasks
+// nest underneath, recursively. There is no longer a separate "Group"
+// concept — everything is a Task.
+//
+// Tree behaviour:
+//   - Indentation by nesting depth, driven by the `--row-depth` CSS custom
+//     property so SubTasks visibly nest under their parent.
+//   - A Task with SubTasks shows a collapse/expand chevron AFTER its status
+//     glyph; clicking it toggles the subtask list (stopPropagation so the
+//     row-body click = select still works).
+//   - Task rows show a 14×14 document glyph; done tasks get a muted glyph.
 
 import React, { useEffect, useMemo, useState } from 'react';
-import { useTodos, useGroups } from '../hooks/useThihyApi';
+import { useTodos } from '../hooks/useThihyApi';
 import type { ListFilter } from '../router';
-import type { Todo, TodoStatus, Group, ULID } from '../../shared/todo-types';
+import type { Todo, TodoStatus, ULID } from '../../shared/todo-types';
 import { UserMenu } from '../components/UserMenu';
-
-interface GroupNode {
-  group: Group;
-  children: GroupNode[];
-  /** Tasks filed directly under this group (does NOT include SubTasks —
-   *  SubTasks are rendered under their parent task, not under the group). */
-  tasks: Todo[];
-}
 
 export const TodoListPane: React.FC<{
   filter: ListFilter;
@@ -42,28 +27,19 @@ export const TodoListPane: React.FC<{
 }> = ({ filter, selectedId, onSelect, onOpenSettings, onCompose }) => {
   const repoFilter = filterToRepoFilter(filter);
   const { data, loading, refresh } = useTodos(repoFilter);
-  const groupsApi = useGroups();
 
-  // Auto-refresh the group tree when a new todo is created elsewhere.
+  // Auto-refresh when a new todo is created elsewhere (capture window, AI).
   useEffect(() => {
     const off = window.thihy.on('app:todo-created', () => {
       void refresh();
-      void groupsApi.refresh();
     });
     return off;
-  }, [refresh, groupsApi]);
+  }, [refresh]);
 
-  const tree = useMemo(() => buildTree(groupsApi.groups, data), [groupsApi.groups, data]);
-  // Root-level tasks: top-level (no parentId) AND unfiled (no groupId).
-  // These render AFTER the group tree — a task with no group is "loose",
-  // it sits at the bottom of the pane rather than floating above the
-  // groups (which would push the groups off-screen when there are many
-  // loose tasks).
-  const rootTasks = useMemo(
-    () => data.filter((t) => !t.groupId && !t.parentId),
-    [data],
-  );
-  const isEmpty = !loading && data.length === 0 && groupsApi.groups.length === 0;
+  // Root tasks: top-level (no parentId). SubTasks nest under their parent
+  // via TaskBranch, so the root list is just the parentId === null set.
+  const rootTasks = useMemo(() => data.filter((t) => !t.parentId), [data]);
+  const isEmpty = !loading && data.length === 0;
 
   return (
     <section className="task-list" aria-label="任务列表">
@@ -71,19 +47,10 @@ export const TodoListPane: React.FC<{
         <button type="button" className="task-list__add-btn" onClick={onCompose}>
           <PlusGlyph /> 新建任务
         </button>
-        <button
-          type="button"
-          className="task-list__add-group"
-          aria-label="新建分组"
-          title="新建分组"
-          onClick={() => void groupsApi.create('新建分组')}
-        >
-          <FolderPlusGlyph />
-        </button>
       </header>
 
       <div className="task-list__body">
-        {loading && data.length === 0 && groupsApi.groups.length === 0 && (
+        {loading && data.length === 0 && (
           <div className="task-list__hint">加载中…</div>
         )}
         {isEmpty && (
@@ -96,27 +63,6 @@ export const TodoListPane: React.FC<{
           </div>
         )}
 
-        {tree.map((node) => (
-          <GroupBranch
-            key={node.group.id}
-            node={node}
-            depth={0}
-            selectedId={selectedId}
-            onSelect={onSelect}
-            counts={groupsApi.counts}
-            api={groupsApi}
-            allTodos={data}
-            onCycle={async (t, next) => {
-              await window.thihy.todo.update(t.id, { status: next });
-              await refresh();
-            }}
-          />
-        ))}
-
-        {/* Root-level tasks render AFTER the group tree. A task with no
-            group is "loose" — it sits at the bottom of the pane. There is
-            no "未分组" section header; the row glyph (document icon) is
-            enough to signal "this is a task, not a group". */}
         {rootTasks.length > 0 && (
           <ul className="task-list__root-tasks">
             {rootTasks.map((t) => (
@@ -140,178 +86,6 @@ export const TodoListPane: React.FC<{
       <footer className="task-list__footer">
         <UserMenu onOpenSettings={onOpenSettings} />
       </footer>
-    </section>
-  );
-};
-
-// ----- Group row -----
-
-const GroupBranch: React.FC<{
-  node: GroupNode;
-  depth: number;
-  selectedId: string | null;
-  onSelect: (id: string) => void;
-  counts: Record<string, number>;
-  api: {
-    rename: (id: string, name: string) => Promise<void>;
-    create: (name: string, parentId?: string | null) => Promise<void>;
-    remove: (id: string) => Promise<void>;
-    refresh: () => Promise<void>;
-  };
-  allTodos: Todo[];
-  onCycle: (t: Todo, next: TodoStatus) => Promise<void>;
-}> = ({ node, depth, selectedId, onSelect, counts, api, onCycle, allTodos }) => {
-  // Default expanded; the user can collapse. We deliberately don't persist
-  // expansion across sessions — re-expanding on app launch matches the
-  // user's mental model ("I left it the way I see it now").
-  const [expanded, setExpanded] = useState(true);
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(node.group.name);
-  const hasChildren = node.children.length > 0 || node.tasks.length > 0;
-
-  const commitRename = async (): Promise<void> => {
-    const name = draft.trim();
-    if (!name) {
-      setDraft(node.group.name);
-      setEditing(false);
-      return;
-    }
-    if (name !== node.group.name) await api.rename(node.group.id, name);
-    setEditing(false);
-  };
-
-  return (
-    <section className="task-group" style={{ '--group-depth': depth } as React.CSSProperties}>
-      <div
-        className="task-group__head"
-        role="button"
-        tabIndex={0}
-        aria-expanded={expanded}
-        title={expanded ? '点击折叠' : '点击展开'}
-        // L5: the whole group head is the expand/collapse affordance —
-        // hover shows a hand cursor, single click toggles. The ✏ rename
-        // action and the inline rename input opt out with stopPropagation
-        // so they don't toggle while the user is using them.
-        onClick={() => { if (!editing) setExpanded((v) => !v); }}
-        onKeyDown={(e) => {
-          if (editing) return;
-          if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault();
-            setExpanded((v) => !v);
-          }
-        }}
-      >
-        <span className="task-group__folder" aria-hidden="true">
-          <FolderGlyph />
-        </span>
-        {editing ? (
-          <input
-            className="task-group__name-input"
-            value={draft}
-            autoFocus
-            onChange={(e) => setDraft(e.target.value)}
-            onBlur={() => void commitRename()}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') void commitRename();
-              else if (e.key === 'Escape') {
-                setDraft(node.group.name);
-                setEditing(false);
-              }
-            }}
-            onClick={(e) => e.stopPropagation()}
-          />
-        ) : (
-          <span className="task-group__name">{node.group.name}</span>
-        )}
-        <span className="task-group__count">{counts[node.group.id] ?? 0}</span>
-        {/* Collapse/expand chevron — sits AFTER the name+count (not before
-            the folder icon) per the L5 request. It's a visual indicator;
-            the whole head is the actual toggle, so this is aria-hidden. */}
-        <span className="task-group__toggle" aria-hidden="true">
-          <ChevronGlyph open={expanded} />
-        </span>
-
-        {/* Right-aligned action slot. ✏ is the discoverable rename affordance
-            (replaces the old double-click-to-rename gesture); 📁+ creates a
-            child group; 🗑 removes the group (tasks become root-level). All
-            three sit on the right edge with consistent spacing.
-            stopPropagation so clicking an action doesn't also toggle. */}
-        <span className="task-group__actions" onClick={(e) => e.stopPropagation()}>
-          <button
-            type="button"
-            className="task-group__action"
-            aria-label="重命名分组"
-            title="重命名"
-            onClick={() => {
-              setDraft(node.group.name);
-              setEditing(true);
-            }}
-          >
-            <PencilGlyph />
-          </button>
-          <button
-            type="button"
-            className="task-group__action"
-            aria-label="新建子分组"
-            title="新建子分组"
-            onClick={() => {
-              void api.create('新建分组', node.group.id).then(() => setExpanded(true));
-            }}
-          >
-            <FolderPlusGlyph />
-          </button>
-          <button
-            type="button"
-            className="task-group__action task-group__action--danger"
-            aria-label="删除分组"
-            title="删除分组（子分组一并删除，其中的任务移至根）"
-            onClick={() => {
-              if (hasChildren) {
-                const ok = window.confirm(`删除分组「${node.group.name}」？子分组将一并删除，其中的任务移至根。`);
-                if (!ok) return;
-              }
-              void api.remove(node.group.id);
-            }}
-          >
-            <TrashGlyph />
-          </button>
-        </span>
-      </div>
-      {expanded && (
-        <>
-          {node.children.map((child) => (
-            <GroupBranch
-              key={child.group.id}
-              node={child}
-              depth={depth + 1}
-              selectedId={selectedId}
-              onSelect={onSelect}
-              counts={counts}
-              api={api}
-              allTodos={allTodos}
-              onCycle={onCycle}
-            />
-          ))}
-          {node.tasks.length > 0 && (
-            <ul className="task-group__items">
-              {node.tasks.map((t) => (
-                <TaskBranch
-                  key={t.id}
-                  todo={t}
-                  depth={depth + 1}
-                  selectedId={selectedId}
-                  onSelect={onSelect}
-                  allTodos={allTodos}
-                  onCycle={async (next) => {
-                    await window.thihy.todo.update(t.id, { status: next });
-                    await api.refresh();
-                  }}
-                />
-              ))}
-            </ul>
-          )}
-        </>
-      )}
     </section>
   );
 };
@@ -395,9 +169,7 @@ const TaskRow: React.FC<{
     >
       <div className="task-row__main">
         <div className="task-row__title-line">
-          {/* Document glyph — same 14×14 size and stroke style as the
-              FolderGlyph in group rows, so folders and files read as one
-              consistent icon family. Done tasks get a muted glyph; active
+          {/* Document glyph — 14×14. Done tasks get a muted glyph; active
               tasks get the accent color. */}
           <span className="task-row__icon" aria-hidden="true">
             <TaskGlyph done={done} />
@@ -414,10 +186,9 @@ const TaskRow: React.FC<{
           >
             <StatusGlyph status={todo.status} />
           </button>
-          {/* SubTask collapse/expand chevron — sits AFTER the status glyph
-              (not before the document icon), per the L5 request. Only
-              rendered when this task actually has subtasks, so leaf tasks
-              don't carry dead chrome. Click toggles the subtask list;
+          {/* SubTask collapse/expand chevron — sits AFTER the status glyph.
+              Only rendered when this task actually has subtasks, so leaf
+              tasks don't carry dead chrome. Click toggles the subtask list;
               stopPropagation so the row-body click (select) doesn't fire. */}
           {hasSubtasks && (
             <button
@@ -469,33 +240,6 @@ function nextStatus(s: TodoStatus): TodoStatus {
   return order[(idx + 1) % order.length];
 }
 
-function buildTree(groups: Group[], todos: Todo[]): GroupNode[] {
-  const byParent = new Map<string | null, Group[]>();
-  for (const g of groups) {
-    const key = g.parentId;
-    const arr = byParent.get(key) ?? [];
-    arr.push(g);
-    byParent.set(key, arr);
-  }
-  const tasksByGroup = new Map<string, Todo[]>();
-  for (const t of todos) {
-    if (!t.groupId) continue;
-    // SubTasks follow their parent task, not the group — only top-level
-    // tasks (no parentId) belong in the group's task list.
-    if (t.parentId) continue;
-    const arr = tasksByGroup.get(t.groupId) ?? [];
-    arr.push(t);
-    tasksByGroup.set(t.groupId, arr);
-  }
-  const build = (parentId: string | null): GroupNode[] =>
-    (byParent.get(parentId) ?? []).map((group) => ({
-      group,
-      children: build(group.id),
-      tasks: tasksByGroup.get(group.id) ?? [],
-    }));
-  return build(null);
-}
-
 // ----- Glyphs -----
 
 const StatusGlyph: React.FC<{ status: TodoStatus }> = ({ status }) => {
@@ -544,17 +288,9 @@ const ChevronGlyph: React.FC<{ open: boolean }> = ({ open }) => (
   </svg>
 );
 
-const FolderGlyph: React.FC = () => (
-  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-    <path d="M1.5 4.5C1.5 3.67 2.17 3 3 3h3l1.5 1.5H13c.83 0 1.5.67 1.5 1.5v6c0 .83-.67 1.5-1.5 1.5H3c-.83 0-1.5-.67-1.5-1.5v-7.5z"
-      fill="var(--accent-primary-soft)" stroke="var(--accent-primary)" strokeWidth="1" />
-  </svg>
-);
-
-// TaskGlyph — a document/file glyph. SAME 14×14 size and viewBox (0 0 16 16)
-// as FolderGlyph, and the same fill+stroke pattern (soft accent fill,
-// accent stroke, 1px stroke) so folders and files read as one family.
-// `done` mutes the glyph so completed tasks visually recede.
+// TaskGlyph — a document/file glyph. 14×14, fill+stroke pattern (soft accent
+// fill, accent stroke, 1px stroke). `done` mutes the glyph so completed
+// tasks visually recede.
 const TaskGlyph: React.FC<{ done: boolean }> = ({ done }) => (
   <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
     <path d="M3.5 1.5h6L12.5 4.5v10a.5.5 0 01-.5.5h-8.5a.5.5 0 01-.5-.5v-12.5a.5.5 0 01.5-.5z"
@@ -571,28 +307,6 @@ const TaskGlyph: React.FC<{ done: boolean }> = ({ done }) => (
 const PlusGlyph: React.FC = () => (
   <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
     <path d="M8 3v10M3 8h10" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-  </svg>
-);
-
-const FolderPlusGlyph: React.FC = () => (
-  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-    <path d="M1.5 4.5C1.5 3.67 2.17 3 3 3h3l1.5 1.5H13c.83 0 1.5.67 1.5 1.5v6c0 .83-.67 1.5-1.5 1.5H3c-.83 0-1.5-.67-1.5-1.5v-7.5z"
-      fill="none" stroke="currentColor" strokeWidth="1.2" />
-    <path d="M8 7v4M6 9h4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
-  </svg>
-);
-
-const TrashGlyph: React.FC = () => (
-  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-    <path d="M3 4h10M6.5 4V3a1 1 0 011-1h1a1 1 0 011 1v1M4.5 4l.5 8a1 1 0 001 1h4a1 1 0 001-1l.5-8"
-      stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" fill="none" />
-  </svg>
-);
-
-const PencilGlyph: React.FC = () => (
-  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-    <path d="M11.5 1.5l3 3-9 9H2.5v-3l9-9z" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" fill="none" />
-    <path d="M10 3l3 3" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
   </svg>
 );
 

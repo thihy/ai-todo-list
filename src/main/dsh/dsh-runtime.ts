@@ -33,9 +33,8 @@ import type { TodoRepo } from '../db/todo-repo';
 import type { MarkdownStore } from '../files/markdown';
 import type { DrawingStore } from '../files/drawings';
 import type { ConversationRepo } from '../db/conversation-repo';
-import type { GroupRepo } from '../db/group-repo';
 import type { SettingsStore } from '../settings/store';
-import type { TodoFilter, TodoStatus, TodoCreate, TodoPatch, GroupPatch, Priority } from '../../shared/todo-types';
+import type { TodoFilter, TodoStatus, TodoCreate, TodoPatch, Priority } from '../../shared/todo-types';
 import { TODO_STATUSES, PRIORITIES } from '../../shared/todo-types';
 import type { UserQuestionAnswer, UserQuestionRequest } from '../../shared/ai-types';
 import type Database from 'better-sqlite3';
@@ -66,12 +65,6 @@ export interface DshRuntimeDeps {
    *  back into the renderer's conversation list. Without this, titles stay
    *  in the session log and never appear in the sidebar. */
   conversations: ConversationRepo;
-  /** L4-H: Group CRUD (directory tree) and inbox attachment storage
-   *  locations. The AI tool surface uses both — group.create / move /
-   *  reorder are how the AI organises a user's tasks; attachmentsDir +
-   *  the raw db handle let it attach files / pasted images the same way
-   *  the renderer does, without going through a separate IPC layer. */
-  groups: GroupRepo;
   /** Raw better-sqlite3 handle used ONLY for the inbox_attachments INSERT
    *  path. We keep this isolated from the typed repos because the inbox
    *  schema is intentionally narrow (no rich row class), and going through
@@ -1014,7 +1007,7 @@ function registerDomainTools(
   ctx: DshContext,
 ): () => void {
   const disposers: Array<() => void> = [];
-  const { repo, md, drawings, groups, conversations, db, attachmentsDir, settings } = deps;
+  const { repo, md, drawings, conversations, db, attachmentsDir, settings } = deps;
   const reg = (def: unknown) => disposers.push(tools.register(def));
 
   // DSH's `output.render(args, value)` produces the MODEL-FACING content for a
@@ -1030,12 +1023,12 @@ function registerDomainTools(
   // ---------------------------------------------------------------------------
   // todo.* — CRUD over the TODO table.
   //
-  // L4-H: the tool surface mirrors the renderer's full TodoCreate / TodoPatch
-  // shape so the AI can file tasks by group, tag, due date, or project, not
-  // just title + status. todo.list's filter set also expands to match the
-  // shared TodoFilter type — the AI should be able to answer "what's due this
-  // week in the Design group" without having to fetch everything and filter
-  // in conversation.
+  // The tool surface mirrors the renderer's full TodoCreate / TodoPatch
+  // shape so the AI can file tasks by tag, due date, or project, not just
+  // title + status. todo.list's filter set also expands to match the
+  // shared TodoFilter type — the AI should be able to answer "what's due
+  // this week" without having to fetch everything and filter in
+  // conversation.
   // ---------------------------------------------------------------------------
 
   reg(defineTool({
@@ -1046,14 +1039,14 @@ function registerDomainTools(
       priority: { type: 'string', description: 'Filter by priority: none | low | medium | high (or comma-separated)' },
       tag: { type: 'string', description: 'Filter by a single tag (matches tasks tagged with this string)' },
       project: { type: 'string', description: 'Filter by project path id' },
-      groupIds: { type: 'string', description: 'JSON array of group ids to restrict to (e.g. \'["01H..."]\')' },
       dueBefore: { type: 'number', description: 'Only tasks with dueAt <= this unix ms' },
       dueAfter: { type: 'number', description: 'Only tasks with dueAt >= this unix ms' },
       search: { type: 'string', description: 'Substring match against title (server-side WHERE LIKE)' },
+      parentId: { type: 'string', description: 'List direct subtasks of this parent TODO; null/omitted lists all tasks regardless of nesting' },
       limit: { type: 'number', description: 'Max items to return (default: all)' },
     },
     output: jsonOutput,
-    async execute(args: { status?: string; priority?: string; tag?: string; project?: string; groupIds?: string; dueBefore?: number; dueAfter?: number; search?: string; limit?: number }) {
+    async execute(args: { status?: string; priority?: string; tag?: string; project?: string; dueBefore?: number; dueAfter?: number; search?: string; parentId?: string; limit?: number }) {
       const filter: TodoFilter = {};
       const st = args.status;
       if (st) {
@@ -1069,15 +1062,10 @@ function registerDomainTools(
       }
       if (args.tag) filter.tag = [args.tag];
       if (args.project) filter.project = [args.project];
-      if (args.groupIds) {
-        try {
-          const parsed = JSON.parse(args.groupIds);
-          if (Array.isArray(parsed)) filter.groupIds = parsed.filter((s): s is string => typeof s === 'string');
-        } catch { /* swallow — model passed a malformed string */ }
-      }
       if (args.dueBefore != null) filter.dueBefore = args.dueBefore;
       if (args.dueAfter != null) filter.dueAfter = args.dueAfter;
       if (args.search) filter.search = args.search;
+      if (args.parentId !== undefined && args.parentId !== '') filter.parentId = args.parentId || null;
       const all = repo.list(filter as never);
       return args.limit && args.limit > 0 ? all.slice(0, args.limit) : all;
     },
@@ -1093,7 +1081,7 @@ function registerDomainTools(
 
   reg(defineTool({
     name: 'todo.create',
-    description: 'Create a new TODO. Returns the created item including its generated id. Markdown body starts empty — use content.writeBody to add notes/progress later. Pass parentId to create as a subtask of an existing TODO (e.g. "把这个任务拆成三个子任务"); pass groupId to file the new task under a directory.',
+    description: 'Create a new TODO. Returns the created item including its generated id. Markdown body starts empty — use content.writeBody to add notes/progress later. Pass parentId to create as a subtask of an existing TODO (e.g. "把这个任务拆成三个子任务").',
     parameters: {
       title: { type: 'string', required: true, description: 'TODO title (required)' },
       status: { type: 'string', description: 'inbox | next | doing | blocked | done (default inbox)' },
@@ -1101,11 +1089,10 @@ function registerDomainTools(
       project: { type: 'string', description: 'Project id/path; null/omitted means no project' },
       dueAt: { type: 'number', description: 'Due date as unix ms; null/omitted means no due date' },
       tags: { type: 'string', description: 'JSON array of tag strings (e.g. \'["urgent","design"]\')' },
-      groupId: { type: 'string', description: 'Group (directory) id to file this under; null/omitted means unfiled. Use group.list to discover ids.' },
       parentId: { type: 'string', description: 'Parent TODO id to create as a subtask; null/omitted means top-level. Use subtasks.list on the parent to see existing children before adding more. Cycles are rejected — you cannot nest a task under one of its own descendants.' },
     },
     output: jsonOutput,
-    async execute(args: { title: string; status?: string; priority?: string; project?: string; dueAt?: number; tags?: string; groupId?: string; parentId?: string }) {
+    async execute(args: { title: string; status?: string; priority?: string; project?: string; dueAt?: number; tags?: string; parentId?: string }) {
       const input: TodoCreate = { title: args.title };
       if (args.status && (TODO_STATUSES as readonly string[]).includes(args.status)) input.status = args.status as TodoStatus;
       if (args.priority && (PRIORITIES as readonly string[]).includes(args.priority)) input.priority = args.priority as Priority;
@@ -1117,7 +1104,6 @@ function registerDomainTools(
           if (Array.isArray(parsed)) input.tags = parsed.filter((s): s is string => typeof s === 'string');
         } catch { /* swallow malformed tag list */ }
       }
-      if (args.groupId !== undefined) input.groupId = args.groupId || null;
       if (args.parentId !== undefined) input.parentId = args.parentId || null;
       const todo = repo.create(input, md.filePathFor('placeholder' as never));
       md.writeBody(todo.id as never, '');
@@ -1127,7 +1113,7 @@ function registerDomainTools(
 
   reg(defineTool({
     name: 'todo.update',
-    description: 'Update fields of an existing TODO. Pass only the fields you want to change — null clears the field (e.g. dueAt: null, groupId: null to unfile). Setting status="done" automatically stamps doneAt; any other status clears it. Pass parentId to reparent a task (make it a subtask of another); pass parentId=null to promote to top-level. Cycles are rejected.',
+    description: 'Update fields of an existing TODO. Pass only the fields you want to change — null clears the field (e.g. dueAt: null). Setting status="done" automatically stamps doneAt; any other status clears it. Pass parentId to reparent a task (make it a subtask of another); pass parentId=null to promote to top-level. Cycles are rejected.',
     parameters: {
       id: { type: 'string', required: true, description: 'TODO id' },
       title: { type: 'string' },
@@ -1136,11 +1122,10 @@ function registerDomainTools(
       project: { type: 'string', description: 'Project id; null/empty string clears' },
       dueAt: { type: 'number', description: 'Due date as unix ms; null clears' },
       tags: { type: 'string', description: 'JSON array of tag strings; replaces the existing tag set' },
-      groupId: { type: 'string', description: 'Group id; null/empty string un-files the task' },
       parentId: { type: 'string', description: 'Parent TODO id to reparent under; null/empty string promotes to top-level.' },
     },
     output: jsonOutput,
-    async execute(args: { id: string; title?: string; status?: string; priority?: string; project?: string; dueAt?: number; tags?: string; groupId?: string; parentId?: string }) {
+    async execute(args: { id: string; title?: string; status?: string; priority?: string; project?: string; dueAt?: number; tags?: string; parentId?: string }) {
       const { id, tags, ...rest } = args;
       const patch: TodoPatch = {};
       if (rest.title !== undefined) patch.title = rest.title;
@@ -1148,7 +1133,6 @@ function registerDomainTools(
       if (rest.priority && (PRIORITIES as readonly string[]).includes(rest.priority)) patch.priority = rest.priority as Priority;
       if (rest.project !== undefined) patch.project = rest.project || null;
       if (rest.dueAt !== undefined) patch.dueAt = rest.dueAt;
-      if (rest.groupId !== undefined) patch.groupId = rest.groupId || null;
       if (rest.parentId !== undefined) patch.parentId = rest.parentId || null;
       if (tags !== undefined) {
         try {
@@ -1180,16 +1164,16 @@ function registerDomainTools(
 
   reg(defineTool({
     name: 'todo.batchUpdate',
-    description: 'Apply the same patch to multiple TODOs in one transaction. Useful for "mark all inbox items as done" or "move every task in group X to group Y". Returns the updated rows. Destructive fields (status=done, groupId change) take effect on every id.',
+    description: 'Apply the same patch to multiple TODOs in one transaction. Useful for "mark all inbox items as done" or "reparent every task under a new parent". Returns the updated rows.',
     parameters: {
       ids: { type: 'string', required: true, description: 'JSON array of TODO ids' },
       status: { type: 'string' },
       priority: { type: 'string' },
-      groupId: { type: 'string', description: 'null/empty string to unfile' },
+      parentId: { type: 'string', description: 'Parent TODO id to reparent every task under; null/empty string promotes to top-level' },
       tags: { type: 'string' },
     },
     output: jsonOutput,
-    async execute(args: { ids: string; status?: string; priority?: string; groupId?: string; tags?: string }) {
+    async execute(args: { ids: string; status?: string; priority?: string; parentId?: string; tags?: string }) {
       let ids: string[];
       try {
         const parsed = JSON.parse(args.ids);
@@ -1201,7 +1185,7 @@ function registerDomainTools(
       const patch: TodoPatch = {};
       if (args.status && (TODO_STATUSES as readonly string[]).includes(args.status)) patch.status = args.status as TodoStatus;
       if (args.priority && (PRIORITIES as readonly string[]).includes(args.priority)) patch.priority = args.priority as Priority;
-      if (args.groupId !== undefined) patch.groupId = args.groupId || null;
+      if (args.parentId !== undefined) patch.parentId = args.parentId || null;
       if (args.tags) {
         try {
           const parsed = JSON.parse(args.tags);
@@ -1322,77 +1306,6 @@ function registerDomainTools(
     },
     output: jsonOutput,
     async execute(args: { id: string; dataUrl: string }) { drawings.setThumb(args.id as never, args.dataUrl); return { ok: true }; },
-  }));
-
-  // ---------------------------------------------------------------------------
-  // group.* — directory tree of the TODO list.
-  //
-  // Groups are how the user organises tasks into nested folders. The AI can
-  // create, rename, move, reorder, and delete groups, plus query the current
-  // tree with task counts. The renderer syncs the result via the
-  // `app:data-changed { scope: 'groups' }` bus.
-  // ---------------------------------------------------------------------------
-
-  reg(defineTool({
-    name: 'group.list',
-    description: 'List all groups (directory tree) for the TODO list, plus a count of how many tasks live in each (null key = unfiled). Returns flat rows with parentId; client reconstructs the tree.',
-    parameters: {},
-    output: jsonOutput,
-    async execute() {
-      const list = groups.list();
-      // Count tasks per group (mirrors the IPC group's list response shape).
-      const counts: Record<string, number> = {};
-      for (const t of repo.list({} as never)) counts[t.groupId ?? ''] = (counts[t.groupId ?? ''] ?? 0) + 1;
-      return { groups: list, counts };
-    },
-  }));
-
-  reg(defineTool({
-    name: 'group.create',
-    description: 'Create a new group (folder) at the given parent. Omit parentId to create at the root. Returns the new group row.',
-    parameters: {
-      name: { type: 'string', required: true, description: 'Group name' },
-      parentId: { type: 'string', description: 'Parent group id; omit to create at the root' },
-    },
-    output: jsonOutput,
-    async execute(args: { name: string; parentId?: string }) { return groups.create(args.name, args.parentId ?? null); },
-  }));
-
-  reg(defineTool({
-    name: 'group.update',
-    description: 'Rename, move, or reorder a group. Pass only the fields you want to change. Moving a group under one of its own descendants is rejected (would create a cycle).',
-    parameters: {
-      id: { type: 'string', required: true, description: 'Group id' },
-      name: { type: 'string', description: 'New name' },
-      parentId: { type: 'string', description: 'New parent group id; null/empty string moves to the root' },
-      sortOrder: { type: 'number', description: 'New sort order within its parent' },
-    },
-    output: jsonOutput,
-    async execute(args: { id: string; name?: string; parentId?: string; sortOrder?: number }) {
-      const patch: GroupPatch = {};
-      if (args.name !== undefined) patch.name = args.name;
-      if (args.parentId !== undefined) patch.parentId = args.parentId || null;
-      if (args.sortOrder !== undefined) patch.sortOrder = args.sortOrder;
-      return groups.update(args.id, patch);
-    },
-  }));
-
-  reg(defineTool({
-    name: 'group.delete',
-    description: 'Delete a group. Tasks inside the group become unfiled (groupId set to null). Destructive in the sense of "loses the folder structure" — confirm with the user first. The DB will not allow deleting a group with children; the renderer should call group.update to reparent or delete children first.',
-    parameters: { id: { type: 'string', required: true, description: 'Group id to delete' } },
-    output: jsonOutput,
-    async execute(args: { id: string }) {
-      // GroupRepo.delete() is recursive: it un-files all descendant tasks
-      // (group_id = NULL) and deletes the group + all its descendant
-      // groups. No return value to check — it either succeeds or throws.
-      try {
-        groups.delete(args.id);
-      } catch (err) {
-        throw new Error(`group.delete: ${(err as Error).message}`);
-      }
-      return { ok: true };
-    },
   }));
 
   // ---------------------------------------------------------------------------

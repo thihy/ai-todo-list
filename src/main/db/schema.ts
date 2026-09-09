@@ -7,7 +7,7 @@ const { ulid } = ulidPkg;
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 
-export const SCHEMA_VERSION = 5;
+export const SCHEMA_VERSION = 6;
 
 const MIGRATIONS: ReadonlyArray<{ version: number; sql: string }> = [
   {
@@ -221,6 +221,55 @@ const MIGRATIONS: ReadonlyArray<{ version: number; sql: string }> = [
     sql: `
       ALTER TABLE todos ADD COLUMN parent_id TEXT;
       CREATE INDEX idx_todos_parent ON todos(parent_id);
+    `,
+  },
+  {
+    version: 6,
+    // Remove the Group concept entirely. Everything is a Task now; a Task may
+    // have SubTasks via parent_id (added in v5). Former groups become top-level
+    // tasks; the tasks that were filed under a group become that group's
+    // SubTasks, preserving the hierarchy as a pure Task tree.
+    //
+    // body_path is NOT NULL but vestigial — MarkdownStore.readBody computes the
+    // real path from the id and tolerates a missing file, so former groups get a
+    // placeholder body_path (and body='', the FTS mirror). No .md file is needed.
+    //
+    // Ordering matters for the self-FK parent_id → todos(id): we insert all
+    // former groups AS tasks FIRST (step 1, parent_id NULL), then re-link
+    // parent_id in a separate UPDATE so every referenced id already exists
+    // when the FK check runs.
+    sql: `
+      -- 1. Insert each former group as a top-level Task (parent_id NULL for
+      --    now; step 2 re-links sub-groups to their parent). The WHERE NOT
+      --    EXISTS guards against the (ULID-collision-impossible) case where a
+      --    group id already exists as a todo id.
+      INSERT INTO todos (id, title, status, priority, project, due_at, body_path, body, created_at, updated_at, done_at, parent_id)
+      SELECT g.id, g.name, 'inbox', 'none', NULL, NULL,
+             'todos/' || g.id || '.md', '', g.created_at, g.created_at, NULL, NULL
+      FROM groups g
+      WHERE NOT EXISTS (SELECT 1 FROM todos t WHERE t.id = g.id);
+
+      -- 2. Re-link former sub-groups as subtasks of their parent group (now a
+      --    task). All group ids are already in todos after step 1.
+      UPDATE todos
+      SET parent_id = (SELECT g.parent_id FROM groups g WHERE g.id = todos.id)
+      WHERE id IN (SELECT id FROM groups WHERE parent_id IS NOT NULL);
+
+      -- 3. Former member tasks: adopt their group as the parent task. Tasks
+      --    that already had a parent_id (were already SubTasks) keep it; the
+      --    rest get parent_id = their group_id. This turns the old
+      --    group→task→subtask chain into a uniform task→task→subtask tree.
+      UPDATE todos
+      SET parent_id = group_id
+      WHERE group_id IS NOT NULL AND parent_id IS NULL;
+
+      -- 4. Drop the now-obsolete groups table, its index, and the group_id
+      --    column. group_id has no FK (v2 added it as a plain TEXT column) and
+      --    is only indexed by idx_todos_group, so DROP INDEX must precede
+      --    DROP COLUMN.
+      DROP INDEX IF EXISTS idx_todos_group;
+      DROP TABLE IF EXISTS groups;
+      ALTER TABLE todos DROP COLUMN group_id;
     `,
   },
 ];

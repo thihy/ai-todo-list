@@ -801,17 +801,18 @@ a:hover {
   position: sticky;
   top: 0;
   z-index: 2;
-  margin: 0;
-  padding: var(--space-md) 0 var(--space-sm);
+  /* Full-bleed: extend past the body's side padding so scrolling content
+     can't show through the gutters beside the heading. Solid (opaque)
+     background is required — a gradient fading to transparent lets the
+     message stream bleed through, which is what made the sticky title
+     read as "penetrated" by the content underneath. */
+  margin: 0 calc(-1 * var(--space-lg)) var(--space-sm);
+  padding: var(--space-md) var(--space-lg) var(--space-sm);
   font-size: var(--font-lg);
   font-weight: 650;
   letter-spacing: -0.01em;
   color: var(--fg-primary);
-  background: linear-gradient(
-    to bottom,
-    var(--bg-surface) 75%,
-    color-mix(in srgb, var(--bg-surface) 0%, transparent)
-  );
+  background: var(--bg-surface);
   /* Single-line truncation with ellipsis so a long title doesn't push the
      sticky banner out of the viewport. */
   white-space: nowrap;
@@ -1878,34 +1879,15 @@ a:hover {
   padding: var(--space-xs);
 }
 
-.task-group {
-  margin-bottom: var(--space-sm);
-}
-.task-group__title {
-  margin: 0;
-  padding: var(--space-xs) var(--space-lg);
-  color: var(--fg-muted);
-  font-size: var(--font-xs);
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-}
-.task-group__items {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-
 .task-row {
   display: flex;
   align-items: flex-start;
   gap: var(--space-sm);
   padding: var(--space-sm);
   /* Indentation by nesting depth. --row-depth is set inline (0 = root
-     task or task directly in a root group, 1 = child of a depth-0 task,
-     etc.). SAME formula as .task-group__head's padding-left
-     (var(--space-sm) + depth*14px) so a group and a task at the same
-     depth have their icon + text aligned. */
+     task, 1 = child of a depth-0 task, etc.). The padding-left formula
+     (var(--space-sm) + depth*14px) keeps icon+text aligned down the
+     tree so a parent and its subtask at the next depth line up. */
   padding-left: calc(var(--space-sm) + var(--row-depth, 0) * 14px);
   cursor: pointer;
   border-left: 3px solid transparent;
@@ -2164,7 +2146,7 @@ a:hover {
   padding: var(--space-lg) var(--space-xl);
 }
 
-/* ===== Group tree (left list directories) ===== */
+/* ===== Task tree (left list) ===== */
 
 .task-list__header {
   display: flex;
@@ -2191,131 +2173,6 @@ a:hover {
   background: var(--accent-primary-strong);
   border-color: var(--accent-primary-strong);
 }
-.task-list__add-group {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 34px;
-  height: 34px;
-  border: 1px solid var(--border-strong);
-  background: var(--bg-input);
-  color: var(--fg-secondary);
-  border-radius: 8px;
-  cursor: pointer;
-}
-.task-list__add-group:hover {
-  color: var(--accent-primary);
-  border-color: var(--accent-primary);
-  background: var(--bg-hover);
-}
-
-.task-group {
-  margin-bottom: 1px;
-}
-.task-group__head {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px var(--space-sm);
-  /* Indentation by nesting depth. --group-depth is set on the
-     .task-group wrapper (0 = root group, 1 = child, ...). Same formula
-     as .task-row's padding-left (var(--space-sm) + depth*14px) so a
-     group and a task at the same depth have their icon + text aligned. */
-  padding-left: calc(var(--space-sm) + var(--group-depth, 0) * 14px);
-  border-radius: 6px;
-  margin: 0;
-  /* Hand cursor — the whole head is the expand/collapse affordance.
-     Single click toggles (not double-click). */
-  cursor: pointer;
-  user-select: none;
-}
-.task-group__head:hover {
-  background: var(--bg-hover);
-}
-.task-group__head:hover .task-group__action {
-  opacity: 1;
-}
-/* Visual chevron after the name+count. The whole head toggles, so this
-   is just an indicator (aria-hidden in JSX). */
-.task-group__toggle {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 16px;
-  height: 16px;
-  color: var(--fg-muted);
-}
-.task-group__folder {
-  flex: none;
-  display: inline-flex;
-  color: var(--accent-primary);
-}
-.task-group__name {
-  flex: 1;
-  min-width: 0;
-  font-size: var(--font-md);
-  font-weight: 600;
-  color: var(--fg-primary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  /* default cursor, NOT text — the rename affordance is the ✏ icon on
-     the right; hovering the name should not show an edit (I-beam) cursor
-     because that implies click-to-edit, which we deliberately don't do
-     (double-click = expand/collapse, not rename). */
-  cursor: default;
-}
-.task-group__name-input {
-  flex: 1;
-  min-width: 0;
-  font-size: var(--font-md);
-  font-weight: 600;
-  color: var(--fg-primary);
-  background: var(--bg-input);
-  border: 1px solid var(--accent-primary);
-  border-radius: 4px;
-  padding: 1px 6px;
-  outline: none;
-}
-.task-group__count {
-  flex: none;
-  min-width: 18px;
-  text-align: center;
-  font-size: var(--font-xs);
-  color: var(--fg-muted);
-  background: var(--bg-surface-elev);
-  border-radius: 9px;
-  padding: 1px 6px;
-}
-.task-group__action {
-  flex: none;
-  opacity: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  border: none;
-  background: transparent;
-  color: var(--fg-muted);
-  cursor: pointer;
-  border-radius: 4px;
-  transition: opacity var(--dur-fast), color var(--dur-fast), background var(--dur-fast);
-}
-.task-group__action:hover {
-  color: var(--accent-primary);
-  background: var(--bg-active);
-}
-.task-group__action--danger:hover {
-  color: var(--accent-danger);
-  background: rgba(220, 38, 38, 0.12);
-}
-.task-group__items .task-row {
-  /* Indentation handled by the base .task-row rule via --row-depth; no
-     extra override needed here. Kept as a no-op selector for clarity. */
-}
 
 /* ===== L5: task row toggle + document icon + subtask nesting ===== */
 
@@ -2340,8 +2197,7 @@ a:hover {
   color: var(--fg-primary);
   background: var(--bg-active);
 }
-/* Document glyph slot — 14×14, matches .task-group__folder sizing so
-   folders and files read as one icon family. */
+/* Document glyph slot — 14×14 icon for each task row. */
 .task-row__icon {
   flex: none;
   display: inline-flex;
@@ -2368,15 +2224,8 @@ a:hover {
    "this is a task". */
 .task-list__root-tasks {
   list-style: none;
-  margin: var(--space-sm) 0 0;
+  margin: 0;
   padding: 0;
-  /* Top border separates the loose tasks from the groups above. */
-  border-top: 1px solid var(--border-subtle, #EDEFF2);
-  padding-top: var(--space-xs);
-}
-.task-list__root-tasks .task-row {
-  /* --row-depth is 0 for root tasks, so base padding-left applies; no
-     override needed. Kept for clarity. */
 }
 
 /* ===== Composer (center capture surface) ===== */

@@ -24,7 +24,6 @@ import type {
 import type { Todo, TodoCreate, TodoPatch, TodoFilter, SearchHit, TodoStats } from './todo-types';
 import type { ContentVersionEntry } from './todo-types';
 import type { DrawingMeta, DrawingScene } from './todo-types';
-import type { Group, GroupCreate, GroupPatch } from './todo-types';
 
 // --- App events pushed from main ---
 
@@ -49,7 +48,7 @@ export type AppEvent =
 /** Coarse-grained scope of a data mutation, so the renderer can re-fetch only
  *  the stores that actually changed (e.g. the AI's todo.create tool mutating
  *  the DB in the main process). */
-export type DataScope = 'todos' | 'groups' | 'content' | 'drawings' | 'conversations';
+export type DataScope = 'todos' | 'content' | 'drawings' | 'conversations';
 
 export interface AppEventMap {
   'app:todo-created': { id: string };
@@ -135,12 +134,6 @@ export interface ThihyApi {
   inbox: {
     attach(args: InboxAttachArgs): Promise<IpcResponse<'inbox.attach'>>;
     attachBlob(args: InboxAttachBlobArgs): Promise<IpcResponse<'inbox.attachBlob'>>;
-  };
-  group: {
-    list(): Promise<IpcResponse<'group.list'>>;
-    create(input: GroupCreate): Promise<IpcResponse<'group.create'>>;
-    update(id: string, patch: GroupPatch): Promise<IpcResponse<'group.update'>>;
-    delete(id: string): Promise<IpcResponse<'group.delete'>>;
   };
   settings: {
     get(): Promise<IpcResponse<'settings.get'>>;
@@ -232,6 +225,5 @@ export interface ThihyApi {
 export type { Todo, TodoCreate, TodoPatch, TodoFilter, SearchHit, TodoStats };
 export type { ContentVersionEntry };
 export type { DrawingMeta, DrawingScene };
-export type { Group, GroupCreate, GroupPatch };
 export type { AIModel, AIProvider, AICustomProtocol, CustomProviderInput, CustomProviderView, AIStreamEvent, PermissionRequest, UserQuestionRequest, UserQuestionAnswer, UserQuestionItem, UserQuestionOption, UserQuestionAnswerItem, UserApprovalRequest, UserApprovalAnswer };
 export type { IpcChannelName, IpcRequest, IpcResponse };

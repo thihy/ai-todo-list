@@ -97,12 +97,6 @@ const api: ThihyApi = {
     attach: (args: InboxAttachArgs) => invoke('inbox.attach', args),
     attachBlob: (args: InboxAttachBlobArgs) => invoke('inbox.attachBlob', args),
   },
-  group: {
-    list: () => invoke('group.list', undefined as never),
-    create: (input) => invoke('group.create', { input }),
-    update: (id, patch) => invoke('group.update', { id, patch }),
-    delete: (id) => invoke('group.delete', { id }),
-  },
   settings: {
     get: () => invoke('settings.get', undefined as never),
     set: (patch: SettingsPatchArgs) => invoke('settings.set', patch),

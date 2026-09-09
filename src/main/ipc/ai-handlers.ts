@@ -21,7 +21,6 @@ import { logger } from '../logger';
 import type { AIStreamEvent } from '../../shared/ai-types';
 import type { DataScope } from '../../shared/thihy-api';
 import { TodoRepo } from '../db/todo-repo';
-import { GroupRepo } from '../db/group-repo';
 import { ConversationRepo } from '../db/conversation-repo';
 import { MarkdownStore } from '../files/markdown';
 import { DrawingStore } from '../files/drawings';
@@ -34,7 +33,6 @@ interface HandlerDeps {
   conversations: ConversationRepo;
   md: MarkdownStore;
   drawings: DrawingStore;
-  groups: GroupRepo;
   /** Raw better-sqlite3 handle — used by the AI tool surface for raw
    *  inbox_attachments INSERTs (mirrors inbox.attach IPC). */
   db: Database.Database;
@@ -58,7 +56,6 @@ function buildRuntimeDeps(): DshRuntimeDeps | null {
     md: deps.md,
     drawings: deps.drawings,
     conversations: deps.conversations,
-    groups: deps.groups,
     db: deps.db,
     attachmentsDir: deps.attachmentsDir,
     settings: deps.settings,
@@ -479,10 +476,6 @@ function mutatingScope(name: string): DataScope | null {
     case 'drawing.delete':
     case 'drawing.setThumb':
       return 'drawings';
-    case 'group.create':
-    case 'group.update':
-    case 'group.delete':
-      return 'groups';
     case 'conversation.create':
     case 'conversation.rename':
     case 'conversation.archive':

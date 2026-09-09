@@ -4,10 +4,6 @@
 import type {
   ContentVersionEntry,
   DrawingMeta,
-  Group,
-  GroupCounts,
-  GroupCreate,
-  GroupPatch,
   InboxAttachment,
   SearchHit,
   Todo,
@@ -81,15 +77,6 @@ export interface InboxAttachBlobReq {
   filename: string;
   mime: string;
 }
-
-// ----- group.* -----
-
-export interface GroupListRes {
-  groups: Group[];
-  counts: GroupCounts;
-}
-export interface GroupCreateReq { input: GroupCreate }
-export interface GroupUpdateReq { id: ULID; patch: GroupPatch }
 
 // ----- ai.* -----
 
@@ -242,11 +229,6 @@ export interface IpcRegistry {
 
   'inbox.attach': IpcChannel<InboxAttachReq, IpcResult<InboxAttachment>>;
   'inbox.attachBlob': IpcChannel<InboxAttachBlobReq, IpcResult<InboxAttachment>>;
-
-  'group.list': IpcChannel<undefined, IpcResult<GroupListRes>>;
-  'group.create': IpcChannel<GroupCreateReq, IpcResult<Group>>;
-  'group.update': IpcChannel<GroupUpdateReq, IpcResult<Group>>;
-  'group.delete': IpcChannel<{ id: ULID }, IpcResult<void>>;
 
   'ai.cancel': IpcChannel<AIStreamCancelReq, IpcResult<{ ok: boolean }>>;
   'ai.ask': IpcChannel<AIAskReq, IpcResult<AIAskRes>>;

@@ -8,12 +8,10 @@ import { basename, extname } from 'node:path';
 import { installRouter, okResult, failResult, register } from './ipc/router';
 import { registerTodoHandlers } from './ipc/todo-handlers';
 import { registerContentHandlers } from './ipc/content-handlers';
-import { registerGroupHandlers } from './ipc/group-handlers';
 import { registerCapturePreviewHandler } from './ipc/capture-preview-handler';
 import { logger } from './logger';
 import { openDb, newId, type DbHandle } from './db/schema';
 import { TodoRepo } from './db/todo-repo';
-import { GroupRepo } from './db/group-repo';
 import { ConversationRepo } from './db/conversation-repo';
 import { MarkdownStore } from './files/markdown';
 import { DrawingStore } from './files/drawings';
@@ -115,7 +113,6 @@ function bootstrap(): void {
 
     const handle = openDb(dbPath);
     const repo = new TodoRepo(handle.db);
-    const groups = new GroupRepo(handle.db);
     const conversations = new ConversationRepo(handle.db);
     const md = new MarkdownStore(handle.db, todosDir);
     const drawings = new DrawingStore(handle.db, drawingsDir);
@@ -124,7 +121,6 @@ function bootstrap(): void {
     installRouter();
     registerTodoHandlers(repo, md);
     registerContentHandlers(md, drawings);
-    registerGroupHandlers(groups);
     registerInboxHandlers(handle.db, attachmentsDir);
     registerSettingsHandlers(settings, handle, rootDir);
     registerAppHandlers();
@@ -148,7 +144,7 @@ function bootstrap(): void {
       const dsh = await initDshContainer({ repo, md, drawings, settings, db: handle.db });
       const { registerAiHandlers, bindAiDeps } = await import('./ipc/ai-handlers');
       registerAiHandlers(dsh);
-      bindAiDeps({ dsh, settings, repo, conversations, md, drawings, groups, db: handle.db, attachmentsDir });
+      bindAiDeps({ dsh, settings, repo, conversations, md, drawings, db: handle.db, attachmentsDir });
       logger.info('DSH AI handlers registered');
 
       // L3-C: backfill DB rows for sessions that exist on disk but have no
