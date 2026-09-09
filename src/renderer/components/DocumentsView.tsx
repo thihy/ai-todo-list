@@ -21,9 +21,9 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useDocuments, useDocument, useDrawings } from '../hooks/useThihyApi';
 import { usePrompt } from '../hooks/usePrompt';
-import { routeToHash } from '../router';
 import { WysiwygEditor } from './WysiwygEditor';
 import { MarkdownEditor } from './MarkdownEditor';
+import { ExcalidrawEditor } from './ExcalidrawEditor';
 import {
   IconActivity,
   IconAttach,
@@ -59,7 +59,7 @@ type Tab =
 
 /** Delete (×) affordance on a tab. The default progress doc is not removable
  *  (it's the task's primary work surface). */
-function removeTab(tab: Tab, after: () => void, navigate: (to: string) => void): void {
+function removeTab(tab: Tab, after: () => void): void {
   if (tab.kind === 'document') {
     const doc = tab.doc;
     if (doc.kind === 'progress') return;
@@ -76,7 +76,6 @@ function removeTab(tab: Tab, after: () => void, navigate: (to: string) => void):
   // drawing
   if (!window.confirm(`删除绘图「${tab.title ?? '无标题'}」？`)) return;
   void window.thihy.drawing.delete(tab.id).then(after);
-  void navigate;
 }
 
 const DocEditor: React.FC<{ doc: TaskDocument; todoId: string }> = ({ doc, todoId }) => {
@@ -161,30 +160,18 @@ const LinkView: React.FC<{ doc: TaskDocument }> = ({ doc }) => (
   </div>
 );
 
-/** Drawing tab body: thumbnail + an affordance to open the full Excalidraw
- *  editor (drawings have their own route). */
-const DrawingView: React.FC<{
-  drawingId: string;
-  title: string | null;
-  thumb: string | null;
-  onOpen: () => void;
-}> = ({ title, thumb, onOpen }) => (
+/** Drawing tab body: in-place Excalidraw editor. The legacy "open editor"
+ *  affordance is gone — selecting a drawing tab mounts the editor here,
+ *  mirroring how progress / note_md work in the same workspace. */
+const DrawingView: React.FC<{ todoId: string; drawingId: string }> = ({ todoId, drawingId }) => (
   <div className="docs-workspace__drawing">
-    {thumb ? (
-      <img className="docs-workspace__drawing-thumb" src={thumb} alt={title ?? '绘图'} />
-    ) : (
-      <div className="docs-workspace__drawing-empty">无预览</div>
-    )}
-    <button type="button" className="docs-workspace__open-btn" onClick={onOpen}>
-      打开绘图编辑器
-    </button>
+    <ExcalidrawEditor todoId={todoId} drawingId={drawingId} className="docs-workspace__excalidraw" />
   </div>
 );
 
 export const DocumentsView: React.FC<{
   todoId: string;
-  navigate: (to: string) => void;
-}> = ({ todoId, navigate }) => {
+}> = ({ todoId }) => {
   const { documents, refresh } = useDocuments(todoId);
   const { drawings, refresh: refreshDrawings } = useDrawings(todoId);
   const { prompt, node: promptNode } = usePrompt();
@@ -334,13 +321,23 @@ export const DocumentsView: React.FC<{
     input.click();
   }, [todoId, refresh]);
 
-  // 绘图: open the Excalidraw route in "new drawing" mode; the editor
-  // creates the drawing on first save. Refresh the tab list when the user
-  // returns (the data-bus drawings scope will also refresh it).
-  const addDrawing = useCallback((): void => {
-    navigate(routeToHash({ name: 'todo-drawing', id: todoId }));
+  // 绘图: create the drawing in-place, refresh the tab list, and select it.
+  // The Excalidraw editor mounts directly inside the tab body — no separate
+  // page navigation. (DrawingPane still exists for deep-link back-compat.)
+  const addDrawing = useCallback(async (): Promise<void> => {
+    const res = await window.thihy.drawing.save(
+      todoId,
+      { elements: [], appState: {} },
+      undefined,
+      '新绘图',
+    );
+    if (res.ok) {
+      await refreshDrawings();
+      const d = res.data as { id: string };
+      setSelectedId(`g:${d.id}`);
+    }
     setAddOpen(false);
-  }, [navigate, todoId]);
+  }, [todoId, refreshDrawings]);
 
   // Close the add menu on outside click.
   useEffect(() => {
@@ -403,7 +400,7 @@ export const DocumentsView: React.FC<{
                     aria-label="删除"
                     onClick={(e) => {
                       e.stopPropagation();
-                      removeTab(t, refreshAll, navigate);
+                      removeTab(t, refreshAll);
                     }}
                   >
                     <IconClose size={12} />
@@ -447,12 +444,7 @@ export const DocumentsView: React.FC<{
           selected.kind === 'document' ? (
             <DocEditor key={selected.doc.id} doc={selected.doc} todoId={todoId} />
           ) : (
-            <DrawingView
-              drawingId={selected.id}
-              title={selected.title}
-              thumb={selected.thumb}
-              onOpen={() => navigate(routeToHash({ name: 'todo-drawing', id: todoId, drawingId: selected.id }))}
-            />
+            <DrawingView key={selected.id} todoId={todoId} drawingId={selected.id} />
           )
         ) : (
           <div className="docs-workspace__empty">选择上方标签开始编辑</div>

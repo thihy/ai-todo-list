@@ -3824,14 +3824,24 @@ a:hover {
   color: var(--accent-danger);
 }
 
-/* --- drawing tab body --- */
+/* --- drawing tab body (in-place Excalidraw editor) --- */
 
 .docs-workspace__drawing {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: var(--space-md);
-  padding: var(--space-lg);
+  gap: var(--space-sm);
+  padding: 0;
+}
+/* Excalidraw needs a real height to size its canvas. The docs workspace
+   inside the editor-pane__scroll has no intrinsic height, so we pin a
+   sensible min-height here. Excalidraw itself adapts to the container
+   once the user resizes / opens fullscreen. */
+.docs-workspace__excalidraw {
+  width: 100%;
+  min-height: 520px;
+  background: var(--bg-canvas);
+  border-radius: var(--radius-md);
+  overflow: hidden;
 }
 .docs-workspace__drawing-thumb {
   max-width: 100%;
@@ -3843,18 +3853,6 @@ a:hover {
 .docs-workspace__drawing-empty {
   color: var(--fg-muted);
   padding: var(--space-xl);
-}
-.docs-workspace__open-btn {
-  padding: 6px var(--space-md);
-  border: 1px solid var(--accent-primary);
-  background: var(--accent-primary);
-  color: var(--fg-on-accent);
-  border-radius: var(--radius-sm);
-  font-size: var(--font-sm);
-  cursor: pointer;
-}
-.docs-workspace__open-btn:hover {
-  filter: brightness(0.96);
 }
 
 .docs-workspace__sidebar {

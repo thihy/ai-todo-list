@@ -1,8 +1,10 @@
-// Drawing pane — hosts Excalidraw for one TODO.
+// Drawing pane — legacy standalone route wrapper around ExcalidrawEditor.
+// Kept for deep links / back-compat (`#/todo/<id>/drawing/<id>`). The main
+// drawing edit surface is now embedded in DocumentsView via ExcalidrawEditor.
 
-import React, { useEffect, useRef } from 'react';
-import { createRoot } from 'react-dom/client';
-import { useDrawing, useDrawings } from '../hooks/useThihyApi';
+import React, { useState } from 'react';
+import { useDrawings } from '../hooks/useThihyApi';
+import { ExcalidrawEditor } from '../components/ExcalidrawEditor';
 
 export const DrawingPane: React.FC<{
   todoId: string;
@@ -11,36 +13,21 @@ export const DrawingPane: React.FC<{
 }> = ({ todoId, drawingId, navigate }) => {
   const { drawings, refresh } = useDrawings(todoId);
   const activeId = drawingId ?? drawings[0]?.id ?? null;
-  const { scene } = useDrawing(activeId);
-  const containerRef = useRef<HTMLDivElement>(null);
+  const [creating, setCreating] = useState(false);
 
-  // Lazy-load Excalidraw only on first paint to keep startup snappy.
-  useEffect(() => {
-    if (!activeId || !scene || !containerRef.current) return;
-    let cancelled = false;
-    (async () => {
-      const mod = await import('@excalidraw/excalidraw');
-      if (cancelled || !containerRef.current) return;
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const Excalidraw = (mod as any).Excalidraw;
-      const root = createRoot(containerRef.current);
-      root.render(
-        React.createElement(Excalidraw, {
-          initialData: scene,
-          onChange: debounced(async (els, st) => {
-            await window.thihy.drawing.save(todoId, { elements: els, appState: st }, activeId);
-          }, 600),
-        }),
-      );
-    })().catch((err) => {
-      // eslint-disable-next-line no-console
-      console.error('excalidraw load failed', err);
-    });
-    return () => {
-      cancelled = true;
-      if (containerRef.current) containerRef.current.innerHTML = '';
-    };
-  }, [activeId, scene, todoId]);
+  const onNew = async (): Promise<void> => {
+    setCreating(true);
+    try {
+      const res = await window.thihy.drawing.save(todoId, { elements: [], appState: {} }, undefined, '新绘图');
+      if (res.ok) {
+        await refresh();
+        const d = res.data as { id: string };
+        navigate(`#/todo/${todoId}/drawing/${d.id}`);
+      }
+    } finally {
+      setCreating(false);
+    }
+  };
 
   return (
     <div style={{ display: 'grid', gridTemplateColumns: '200px 1fr', height: '100%' }}>
@@ -62,14 +49,8 @@ export const DrawingPane: React.FC<{
         <h3 style={{ marginTop: 'var(--space-md)' }}>绘图</h3>
         <button
           type="button"
-          onClick={async () => {
-            const res = await window.thihy.drawing.save(todoId, { elements: [], appState: {} }, undefined, '新绘图');
-            if (res.ok) {
-              await refresh();
-              const d = res.data as { id: string };
-              navigate(`#/todo/${todoId}/drawing/${d.id}`);
-            }
-          }}
+          onClick={() => void onNew()}
+          disabled={creating}
           style={{
             padding: 'var(--space-xs) var(--space-sm)',
             border: '1px solid var(--border-default)',
@@ -78,7 +59,7 @@ export const DrawingPane: React.FC<{
             marginTop: 'var(--space-sm)',
           }}
         >
-          + 新绘图
+          {creating ? '创建中…' : '+ 新绘图'}
         </button>
         <ul style={{ listStyle: 'none', padding: 0, marginTop: 'var(--space-md)' }}>
           {drawings.map((d) => (
@@ -104,20 +85,13 @@ export const DrawingPane: React.FC<{
           ))}
         </ul>
       </aside>
-      <div
-        ref={containerRef}
-        style={{ background: 'var(--bg-canvas)' }}
-        aria-label="绘图画布"
-      />
+      {activeId ? (
+        <ExcalidrawEditor todoId={todoId} drawingId={activeId} className="drawing-pane__canvas" />
+      ) : (
+        <div style={{ padding: 'var(--space-xl)', color: 'var(--fg-muted)' }}>
+          还没有绘图。点击「+ 新绘图」创建。
+        </div>
+      )}
     </div>
   );
 };
-
-function debounced<T extends (...args: never[]) => unknown>(fn: T, ms: number): T {
-  let t: ReturnType<typeof setTimeout> | null = null;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return ((...args: any[]) => {
-    if (t) clearTimeout(t);
-    t = setTimeout(() => fn(...(args as never[])), ms);
-  }) as unknown as T;
-}

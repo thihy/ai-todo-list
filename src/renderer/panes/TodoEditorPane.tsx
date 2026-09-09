@@ -88,8 +88,7 @@ const LinkRow: React.FC<{ doc: TaskDocument; onRemoved: () => Promise<void> }> =
 
 export const TodoEditorPane: React.FC<{
   todoId: string;
-  navigate: (to: string) => void;
-}> = ({ todoId, navigate }) => {
+}> = ({ todoId }) => {
   const { todo, loading } = useTodo(todoId);
 
   const [tagDraft, setTagDraft] = useState<string[]>([]);
@@ -178,7 +177,7 @@ export const TodoEditorPane: React.FC<{
 
         <section className="editor-pane__section">
           <h2 className="editor-pane__section-title">文档</h2>
-          <DocumentsView todoId={todo.id} navigate={navigate} />
+          <DocumentsView todoId={todo.id} />
         </section>
 
         <section className="editor-pane__section" ref={activityRef}>

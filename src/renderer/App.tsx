@@ -205,7 +205,7 @@ const TaskDetail: React.FC<{
   }
   return (
     <div className="task-detail">
-      <TodoEditorPane todoId={todoId} navigate={navigate} />
+      <TodoEditorPane todoId={todoId} />
     </div>
   );
 };
