@@ -63,7 +63,7 @@ function buildSubmenus(h: AppMenuHandlers): Record<MenuCategory, MenuItemConstru
       },
       { type: 'separator' },
       {
-        label: '退出 thihy-todolist',
+        label: '退出 A待办',
         accelerator: 'CommandOrControl+Q',
         role: 'quit',
       },
@@ -107,7 +107,7 @@ function buildSubmenus(h: AppMenuHandlers): Record<MenuCategory, MenuItemConstru
     ],
     帮助: [
       {
-        label: '关于 thihy-todolist',
+        label: '关于 A待办',
         click: () => {
           focusMain();
           void showAbout();
@@ -152,8 +152,8 @@ export async function showAbout(): Promise<void> {
   const { dialog } = await import('electron');
   void dialog.showMessageBox(BrowserWindow.getFocusedWindow() ?? undefined as never, {
     type: 'info',
-    title: '关于 thihy-todolist',
-    message: 'thihy-todolist',
+    title: '关于 A待办',
+    message: 'A待办',
     detail: `版本 ${app.getVersion()}\nAI 原生 TODO 清单 · Markdown 进展 · Excalidraw 绘图\nCopyright © 2026 thihy`,
     buttons: ['确定'],
   });

@@ -264,7 +264,7 @@ function createMainWindow(): BrowserWindow {
     minHeight: 600,
     show: false,
     backgroundColor: '#FFFFFF',
-    title: 'thihy-todolist',
+    title: 'A待办',
     // Frameless with themed native caption buttons (Window Controls Overlay):
     // removes the Windows title bar so the top bar blends with the app chrome.
     // Light overlay matches the topbar surface; native min/max/close stay.

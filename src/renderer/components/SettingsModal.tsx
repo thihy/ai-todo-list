@@ -490,7 +490,7 @@ const HotkeysPane: React.FC<PaneProps> = ({ data, patch }) => (
 const AboutPane: React.FC<PaneProps> = ({ data }) => (
   <div className="settings-pane">
     <p className="muted" style={{ lineHeight: 1.8 }}>
-      thihy-todolist — AI 原生 TODO 清单 · Markdown 进展 · Excalidraw 绘图
+      A待办 — AI 原生 TODO 清单 · Markdown 进展 · Excalidraw 绘图
     </p>
     <Field label="用量统计">
       <div className="muted mono">

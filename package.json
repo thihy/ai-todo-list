@@ -4,7 +4,7 @@
   "private": true,
   "description": "AI-native Electron TODO list with Markdown content and Excalidraw drawings, built on DeepSeek Harness (DSH)",
   "appId": "com.thihy.todolist",
-  "productName": "thihy-todolist",
+  "productName": "A待办",
   "author": "thihy",
   "copyright": "Copyright © 2026 thihy",
   "main": "out/main/index.js",
@@ -98,7 +98,7 @@
   },
   "build": {
     "appId": "com.thihy.todolist",
-    "productName": "thihy-todolist",
+    "productName": "A待办",
     "directories": {
       "output": "dist",
       "buildResources": "resources"
@@ -139,7 +139,7 @@
       "allowToChangeInstallationDirectory": false,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "thihy-todolist"
+      "shortcutName": "A待办"
     },
     "mac": {
       "target": [
