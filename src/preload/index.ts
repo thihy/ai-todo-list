@@ -90,6 +90,16 @@ const api: ThihyApi = {
     log: (todoId, percent, note) => invoke('progress.log', { todoId, percent, note }),
     list: (todoId) => invoke('progress.list', { todoId }),
   },
+  document: {
+    list: (todoId) => invoke('document.list', { todoId }),
+    create: (req) => invoke('document.create', req),
+    read: (id) => invoke('document.read', { id }),
+    write: (id, content, expectVersion) => invoke('document.write', { id, content, expectVersion }),
+    rename: (id, title) => invoke('document.rename', { id, title }),
+    remove: (id) => invoke('document.remove', { id }),
+    history: (id) => invoke('document.history', { id }),
+    restoreVersion: (id, versionId) => invoke('document.restoreVersion', { id, versionId: Number(versionId) }),
+  },
   drawing: {
     list: (todoId) => invoke('drawing.list', { todoId }),
     read: (id) => invoke('drawing.read', { id }),

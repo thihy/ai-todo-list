@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ThihyApi, AppEvent, AppEventMap, SettingsPatchArgs } from '../../shared/thihy-api';
 import type { Todo, TodoFilter, SearchHit, TodoStats } from '../../shared/todo-types';
 import type { ContentVersionEntry, ProgressLogEntry } from '../../shared/todo-types';
+import type { TaskDocument } from '../../shared/todo-types';
 import type { DrawingMeta, DrawingScene } from '../../shared/todo-types';
 import type { AIModel, AIStreamEvent } from '../../shared/ai-types';
 import type { SettingsGetRes } from '../../shared/ipc-schema';
@@ -201,6 +202,79 @@ export function useDrawings(todoId: string | null): {
     void refresh();
   }, [refresh, dataVersion]);
   return { drawings, refresh };
+}
+
+// ----- Multi-document workspace (schema v11) -----
+
+export function useDocuments(todoId: string | null): {
+  documents: TaskDocument[];
+  refresh: () => Promise<void>;
+} {
+  const [documents, setDocuments] = useState<TaskDocument[]>([]);
+  // 'content' scope: document.write/create/remove broadcast app:data-changed
+  // { scope: 'content' } so this list + the open editor re-fetch.
+  const dataVersion = useDataVersion(['content']);
+  const refresh = useCallback(async () => {
+    if (!todoId) {
+      setDocuments([]);
+      return;
+    }
+    const res = await window.thihy.document.list(todoId);
+    setDocuments(unwrap(res, []));
+  }, [todoId]);
+  useEffect(() => {
+    void refresh();
+  }, [refresh, dataVersion]);
+  return { documents, refresh };
+}
+
+export function useDocument(docId: string | null): {
+  content: string;
+  version: number | null;
+  save: (next: string, expectVersion?: number) => Promise<void>;
+  saving: boolean;
+  error: string | null;
+} {
+  const [content, setContent] = useState('');
+  const [version, setVersion] = useState<number | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const dataVersion = useDataVersion(['content']);
+
+  useEffect(() => {
+    if (!docId) {
+      setContent('');
+      setVersion(null);
+      return;
+    }
+    window.thihy.document.read(docId).then((res) => {
+      const d = unwrap(res, { content: '', version: 0 });
+      setContent(d.content);
+      setVersion(d.version);
+    });
+  }, [docId, dataVersion]);
+
+  const save = useCallback(
+    async (next: string, expectVersion?: number) => {
+      if (!docId) return;
+      setSaving(true);
+      setError(null);
+      const res = await window.thihy.document.write(
+        docId,
+        next,
+        expectVersion ?? version ?? undefined,
+      );
+      if (!res.ok) {
+        setError(res.message ?? 'save_failed');
+      } else {
+        setVersion(res.data.version);
+      }
+      setSaving(false);
+    },
+    [docId, version],
+  );
+
+  return { content, version, save, saving, error };
 }
 
 export function useDrawing(id: string | null): { scene: DrawingScene | null } {

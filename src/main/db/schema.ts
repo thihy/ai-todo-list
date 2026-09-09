@@ -7,7 +7,7 @@ const { ulid } = ulidPkg;
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 
-export const SCHEMA_VERSION = 10;
+export const SCHEMA_VERSION = 11;
 
 const MIGRATIONS: ReadonlyArray<{ version: number; sql: string }> = [
   {
@@ -412,6 +412,72 @@ const MIGRATIONS: ReadonlyArray<{ version: number; sql: string }> = [
         FOREIGN KEY (todo_id) REFERENCES todos(id) ON DELETE CASCADE
       );
       CREATE INDEX idx_progress_log_todo ON progress_log(todo_id, created_at DESC);
+    `,
+  },
+  {
+    version: 11,
+    // Multi-document workspace. Each task owns a list of `task_documents`
+    // rows (kind ∈ progress | note_md | drawing | attachment | link). The
+    // default `progress` doc is auto-created for every todo; the existing
+    // single .md body is migrated into a `note_md` doc with its full
+    // content_versions history copied into `document_versions` (re-keyed to
+    // the new doc id), so no user content is lost.
+    //
+    // Content for progress / note_md lives in `document_versions` (DB text,
+    // same pattern as the legacy content_versions table — no file-path
+    // management, no file-migration churn). Drawings / attachments / links
+    // carry no versioned content here; their content is referenced via refId
+    // / url and managed by their own stores.
+    //
+    // Ids for migrated/default docs are deterministic ('<todoId>:progress',
+    // '<todoId>:note_md') so the INSERT...NOT EXISTS guards make this
+    // idempotent; user-created docs get ULIDs from DocumentStore.create.
+    //
+    // Pure DDL + data-copy migration — no FTS / trigger churn, safe.
+    sql: `
+      CREATE TABLE task_documents (
+        id TEXT PRIMARY KEY,
+        todo_id TEXT NOT NULL,
+        kind TEXT NOT NULL CHECK (kind IN ('progress','note_md','drawing','attachment','link')),
+        title TEXT,
+        ref_id TEXT,
+        url TEXT,
+        ord INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        FOREIGN KEY (todo_id) REFERENCES todos(id) ON DELETE CASCADE
+      );
+      CREATE INDEX idx_task_docs_todo ON task_documents(todo_id, ord);
+
+      CREATE TABLE document_versions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        document_id TEXT NOT NULL,
+        content TEXT NOT NULL,
+        saved_at INTEGER NOT NULL,
+        FOREIGN KEY (document_id) REFERENCES task_documents(id) ON DELETE CASCADE
+      );
+      CREATE INDEX idx_doc_versions_doc ON document_versions(document_id, saved_at DESC);
+
+      -- Default WYSIWYG progress doc for every existing todo (ord 0).
+      INSERT INTO task_documents (id, todo_id, kind, title, ref_id, url, ord, created_at, updated_at)
+      SELECT id || ':progress', id, 'progress', '进展', NULL, NULL, 0, created_at, created_at
+      FROM todos
+      WHERE NOT EXISTS (SELECT 1 FROM task_documents d WHERE d.id = todos.id || ':progress');
+
+      -- Migrate the existing .md body (mirrored on todos.body) into a note_md
+      -- doc, for todos that actually have content. Deterministic id => idempotent.
+      INSERT INTO task_documents (id, todo_id, kind, title, ref_id, url, ord, created_at, updated_at)
+      SELECT id || ':note_md', id, 'note_md', '笔记', NULL, NULL, 1, created_at, created_at
+      FROM todos
+      WHERE body != ''
+        AND NOT EXISTS (SELECT 1 FROM task_documents d WHERE d.id = todos.id || ':note_md');
+
+      -- Copy the full content_versions history for the migrated note_md docs,
+      -- re-keyed to the new document id. Preserves every saved version.
+      INSERT INTO document_versions (document_id, content, saved_at)
+      SELECT cv.todo_id || ':note_md', cv.body, cv.saved_at
+      FROM content_versions cv
+      WHERE EXISTS (SELECT 1 FROM task_documents d WHERE d.id = cv.todo_id || ':note_md');
     `,
   },
 ];

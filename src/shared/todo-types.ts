@@ -128,6 +128,44 @@ export interface ProgressLogEntry {
   createdAt: number;
 }
 
+// ----- Multi-document workspace (schema v11) -----
+//
+// A task owns a list of `task_documents` rows. Each row is one document the
+// user can open in the detail body workspace. `kind` decides where the
+// content lives and which editor renders it:
+//
+//   progress   — the default WYSIWYG rich-text doc (one per task, auto-created).
+//                 Content (HTML) is versioned in `document_versions`.
+//   note_md    — a Markdown doc. Content versioned in `document_versions`.
+//   drawing    — an Excalidraw drawing; refId → rows in the `drawings` table.
+//   attachment — a file (incl. pasted images); refId → `inbox_attachments`.
+//   link       — a hyperlink; `url` holds the URL, no file.
+
+export type DocumentKind = 'progress' | 'note_md' | 'drawing' | 'attachment' | 'link';
+
+export interface TaskDocument {
+  id: ULID;
+  todoId: ULID;
+  kind: DocumentKind;
+  title: string | null;
+  /** Points to the kind-specific record: a drawings.id (drawing) or an
+   *  inbox_attachments.id (attachment). null for progress / note_md / link. */
+  refId: string | null;
+  /** URL for kind === 'link'. null otherwise. */
+  url: string | null;
+  /** Display order within the task (0 = first; progress is always 0). */
+  ord: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface DocumentVersionEntry {
+  id: number;
+  documentId: ULID;
+  content: string;
+  savedAt: number;
+}
+
 export interface DrawingMeta {
   id: ULID;
   todoId: ULID;

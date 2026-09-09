@@ -8,6 +8,7 @@ import { basename, extname } from 'node:path';
 import { installRouter, okResult, failResult, register } from './ipc/router';
 import { registerTodoHandlers } from './ipc/todo-handlers';
 import { registerContentHandlers } from './ipc/content-handlers';
+import { registerDocumentHandlers } from './ipc/document-handlers';
 import { registerCapturePreviewHandler } from './ipc/capture-preview-handler';
 import { logger } from './logger';
 import { openDb, newId, type DbHandle } from './db/schema';
@@ -15,6 +16,7 @@ import { TodoRepo } from './db/todo-repo';
 import { ConversationRepo } from './db/conversation-repo';
 import { MarkdownStore } from './files/markdown';
 import { DrawingStore } from './files/drawings';
+import { DocumentStore } from './files/documents';
 import { SettingsStore } from './settings/store';
 import { CaptureController } from './shortcuts/capture';
 import { TrayController } from './tray/tray';
@@ -116,11 +118,13 @@ function bootstrap(): void {
     const conversations = new ConversationRepo(handle.db);
     const md = new MarkdownStore(handle.db, todosDir);
     const drawings = new DrawingStore(handle.db, drawingsDir);
+    const docs = new DocumentStore(handle.db);
 
     // Wire IPC router
     installRouter();
     registerTodoHandlers(repo, md);
     registerContentHandlers(md, drawings);
+    registerDocumentHandlers(docs);
     registerInboxHandlers(handle.db, attachmentsDir);
     registerSettingsHandlers(settings, handle, rootDir);
     registerAppHandlers();

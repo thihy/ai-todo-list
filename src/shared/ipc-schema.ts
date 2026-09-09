@@ -3,10 +3,12 @@
 
 import type {
   ContentVersionEntry,
+  DocumentVersionEntry,
   DrawingMeta,
   InboxAttachment,
   ProgressLogEntry,
   SearchHit,
+  TaskDocument,
   Todo,
   TodoCreate,
   TodoFilter,
@@ -62,6 +64,31 @@ export interface TodoStatsReq { windowDays?: number }
 export interface ProgressLogReq { todoId: ULID; percent: number; note?: string }
 export interface ProgressLogRes { entry: ProgressLogEntry; todo: Todo }
 export interface ProgressListReq { todoId: ULID }
+
+// ----- document.* -----
+//
+// Multi-document workspace (schema v11). Each task owns task_documents rows;
+// progress / note_md docs carry versioned text content in document_versions.
+// document.read/write operate on that versioned content; document.create /
+// remove / rename manage list metadata for ALL kinds (incl. drawing /
+// attachment / link, whose content lives elsewhere via refId / url).
+
+export interface DocumentListReq { todoId: ULID }
+export interface DocumentCreateReq {
+  todoId: ULID;
+  kind: TaskDocument['kind'];
+  title?: string | null;
+  refId?: string | null;
+  url?: string | null;
+}
+export interface DocumentReadReq { id: ULID }
+export interface DocumentReadRes { content: string; version: number }
+export interface DocumentWriteReq { id: ULID; content: string; expectVersion?: number }
+export interface DocumentWriteRes { version: number; updatedAt: number }
+export interface DocumentRenameReq { id: ULID; title: string }
+export interface DocumentRemoveReq { id: ULID }
+export interface DocumentHistoryReq { id: ULID }
+export interface DocumentRestoreVersionReq { id: ULID; versionId: number }
 
 // ----- content.* -----
 
@@ -235,6 +262,15 @@ export interface IpcRegistry {
 
   'progress.log': IpcChannel<ProgressLogReq, IpcResult<ProgressLogRes>>;
   'progress.list': IpcChannel<ProgressListReq, IpcResult<ProgressLogEntry[]>>;
+
+  'document.list': IpcChannel<DocumentListReq, IpcResult<TaskDocument[]>>;
+  'document.create': IpcChannel<DocumentCreateReq, IpcResult<TaskDocument>>;
+  'document.read': IpcChannel<DocumentReadReq, IpcResult<DocumentReadRes>>;
+  'document.write': IpcChannel<DocumentWriteReq, IpcResult<DocumentWriteRes>>;
+  'document.rename': IpcChannel<DocumentRenameReq, IpcResult<TaskDocument>>;
+  'document.remove': IpcChannel<DocumentRemoveReq, IpcResult<void>>;
+  'document.history': IpcChannel<DocumentHistoryReq, IpcResult<DocumentVersionEntry[]>>;
+  'document.restoreVersion': IpcChannel<DocumentRestoreVersionReq, IpcResult<void>>;
 
   'content.readBody': IpcChannel<ContentReadBodyReq, IpcResult<ContentReadBodyRes>>;
   'content.writeBody': IpcChannel<ContentWriteBodyReq, IpcResult<ContentWriteBodyRes>>;

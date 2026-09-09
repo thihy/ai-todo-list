@@ -24,6 +24,7 @@ import type {
 import type { Todo, TodoCreate, TodoPatch, TodoFilter, SearchHit, TodoStats } from './todo-types';
 import type { ContentVersionEntry } from './todo-types';
 import type { ProgressLogEntry } from './todo-types';
+import type { DocumentVersionEntry, TaskDocument } from './todo-types';
 import type { DrawingMeta, DrawingScene } from './todo-types';
 
 // --- App events pushed from main ---
@@ -128,6 +129,25 @@ export interface ThihyApi {
     log(todoId: string, percent: number, note?: string): Promise<IpcResponse<'progress.log'>>;
     /** Audit timeline for a task, newest-first. */
     list(todoId: string): Promise<IpcResponse<'progress.list'>>;
+  };
+  document: {
+    /** List a task's documents (progress / note_md / drawing / attachment /
+     *  link), ordered by ord. Ensures the default progress doc exists. */
+    list(todoId: string): Promise<IpcResponse<'document.list'>>;
+    create(req: {
+      todoId: string;
+      kind: TaskDocument['kind'];
+      title?: string | null;
+      refId?: string | null;
+      url?: string | null;
+    }): Promise<IpcResponse<'document.create'>>;
+    /** Read the latest versioned content of a progress / note_md doc. */
+    read(id: string): Promise<IpcResponse<'document.read'>>;
+    write(id: string, content: string, expectVersion?: number): Promise<IpcResponse<'document.write'>>;
+    rename(id: string, title: string): Promise<IpcResponse<'document.rename'>>;
+    remove(id: string): Promise<IpcResponse<'document.remove'>>;
+    history(id: string): Promise<IpcResponse<'document.history'>>;
+    restoreVersion(id: string, versionId: number): Promise<IpcResponse<'document.restoreVersion'>>;
   };
   drawing: {
     list(todoId: string): Promise<IpcResponse<'drawing.list'>>;
@@ -235,6 +255,7 @@ export interface ThihyApi {
 export type { Todo, TodoCreate, TodoPatch, TodoFilter, SearchHit, TodoStats };
 export type { ContentVersionEntry };
 export type { ProgressLogEntry };
+export type { DocumentVersionEntry, TaskDocument };
 export type { DrawingMeta, DrawingScene };
 export type { AIModel, AIProvider, AICustomProtocol, CustomProviderInput, CustomProviderView, AIStreamEvent, PermissionRequest, UserQuestionRequest, UserQuestionAnswer, UserQuestionItem, UserQuestionOption, UserQuestionAnswerItem, UserApprovalRequest, UserApprovalAnswer };
 export type { IpcChannelName, IpcRequest, IpcResponse };
