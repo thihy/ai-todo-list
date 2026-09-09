@@ -115,20 +115,24 @@ export const TodoEditorPane: React.FC<{
     await window.thihy.todo.update(todo.id, patch);
   };
 
-  if (loading || !todo) {
-    return <div className="editor-pane__loading">加载中…</div>;
-  }
-
   // Push a task-level focus pointer. DocumentsView will push a more-specific
   // document/drawing focus as the user picks tabs; this broader pointer is
   // what the AI sees when the user is in the basic-info / links / activity
   // regions (no doc open yet) — giving the AI at minimum the task's id and
   // title so it can ground its answers.
-  useFocusSync({
-    kind: 'task',
-    todoId: todo.id,
-    taskTitle: todo.title,
-  });
+  //
+  // MUST be called unconditionally on every render (hooks rules). When the
+  // task isn't loaded yet we pass null — main treats that as "nothing
+  // focused" and the AI's app.currentContext tool returns null.
+  useFocusSync(
+    todo
+      ? { kind: 'task', todoId: todo.id, taskTitle: todo.title }
+      : null,
+  );
+
+  if (loading || !todo) {
+    return <div className="editor-pane__loading">加载中…</div>;
+  }
 
   return (
     <div className="editor-pane editor-pane--sections">
