@@ -4176,6 +4176,56 @@ a:hover {
   color: var(--fg-muted);
   cursor: default;
 }
+/* Format toolbar (H1/H2/H3, B/I/S/code/link/quote/list/divider). Sits below
+   the tabs bar, above the textarea. Hidden in pure preview mode. */
+.md-editor__toolbar {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  padding: 4px var(--space-sm);
+  border-bottom: 1px solid var(--border-default);
+  background: var(--bg-surface);
+}
+.md-editor__tb-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 26px;
+  height: 26px;
+  padding: 0 6px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--fg-secondary);
+  font-size: var(--font-sm);
+  cursor: pointer;
+}
+.md-editor__tb-btn:hover {
+  background: var(--bg-hover);
+  color: var(--fg-primary);
+}
+.md-editor__tb-btn:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: -1px;
+}
+.md-editor__tb-text {
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.md-editor__tb-sep {
+  width: 1px;
+  height: 18px;
+  margin: 0 4px;
+  background: var(--border-default);
+}
+.md-editor__tb-hint {
+  margin-left: auto;
+  font-size: var(--font-xs);
+  color: var(--fg-muted);
+  cursor: help;
+}
 .md-editor__body {
   flex: 1 1 auto;
   display: block;
@@ -4197,9 +4247,12 @@ a:hover {
   color: var(--fg-primary);
   font-family: var(--font-mono);
   font-size: var(--font-md);
-  line-height: 1.6;
+  line-height: 1.7;
+  caret-color: var(--accent-primary);
+  tab-size: 2;
   resize: none;
 }
+.md-editor__textarea::placeholder { color: var(--fg-muted); }
 .md-editor__textarea:focus { outline: none; }
 .md-editor__body--split .md-editor__textarea { border: 1px solid var(--border-default); border-radius: var(--radius-md); }
 

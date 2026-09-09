@@ -115,4 +115,101 @@ export const IconChevronDown: React.FC<IconProps> = (p) => (
   </Svg>
 );
 
+/** Bold — the only filled icon in the family (intentional: reads as "weight"). */
+export const IconBold: React.FC<IconProps> = (p) => (
+  <Svg {...p} fill="currentColor" stroke="none">
+    <path d="M5 3h4.6a2.2 2.2 0 0 1 0 4.4H5V3zm0 4.4h5.2a2.4 2.4 0 0 1 0 4.8H5V7.4z" />
+  </Svg>
+);
+
+/** Italic — slanted I. */
+export const IconItalic: React.FC<IconProps> = (p) => (
+  <Svg {...p}>
+    <path d="M10 3 6 13" />
+    <path d="M8 3h4" />
+    <path d="M4 13h4" />
+  </Svg>
+);
+
+/** Strike-through — an S with a horizontal line through it. */
+export const IconStrike: React.FC<IconProps> = (p) => (
+  <Svg {...p}>
+    <path d="M4.8 5.2a2.6 2.6 0 0 1 4.9-.4" />
+    <path d="M4.8 10.8a2.6 2.6 0 0 0 4.9.4" />
+    <path d="M2.8 8h10.4" />
+  </Svg>
+);
+
+/** Inline code — angle brackets. */
+export const IconCode: React.FC<IconProps> = (p) => (
+  <Svg {...p}>
+    <path d="M5.5 5 2.5 8l3 3" />
+    <path d="M10.5 5l3 3-3 3" />
+  </Svg>
+);
+
+/** Code block — brackets with a horizontal divider. */
+export const IconCodeBlock: React.FC<IconProps> = (p) => (
+  <Svg {...p}>
+    <path d="M5 4 2 8l3 4" />
+    <path d="M11 4l3 4-3 4" />
+    <path d="M9 4 7 12" />
+  </Svg>
+);
+
+/** Quote — a curly opening quote with a left bar. */
+export const IconQuote: React.FC<IconProps> = (p) => (
+  <Svg {...p}>
+    <path d="M3.5 9c0-2.5 1.5-4.5 4-5.2" />
+    <path d="M3.5 9h2v3.5h-2z" />
+    <path d="M9.5 9c0-2.5 1.5-4.5 4-5.2" />
+    <path d="M9.5 9h2v3.5h-2z" />
+  </Svg>
+);
+
+/** Heading — an H. */
+export const IconHeading: React.FC<IconProps> = (p) => (
+  <Svg {...p}>
+    <path d="M4 3v10" />
+    <path d="M12 3v10" />
+    <path d="M4 8h8" />
+  </Svg>
+);
+
+/** Unordered list — three dots with lines. */
+export const IconListUl: React.FC<IconProps> = (p) => (
+  <Svg {...p}>
+    <circle cx="3" cy="4.5" r="0.8" fill="currentColor" />
+    <circle cx="3" cy="8" r="0.8" fill="currentColor" />
+    <circle cx="3" cy="11.5" r="0.8" fill="currentColor" />
+    <path d="M6 4.5h7M6 8h7M6 11.5h7" />
+  </Svg>
+);
+
+/** Ordered list — 1, 2, 3 with lines. */
+export const IconListOl: React.FC<IconProps> = (p) => (
+  <Svg {...p}>
+    <path d="M2.5 3v1.5M2.5 7.5h1l-1 1h1.2" />
+    <path d="M5.5 4.5h8M5.5 11.5h8" />
+    <path d="M3.5 12.5v-1.2c0-.4-.5-.5-.8-.3" />
+  </Svg>
+);
+
+/** Task list — checkbox with lines. */
+export const IconListCheck: React.FC<IconProps> = (p) => (
+  <Svg {...p}>
+    <rect x="2" y="3" width="3.2" height="3.2" rx="0.5" />
+    <path d="M2.8 4.5l0.8 0.9 1.6-1.8" />
+    <rect x="2" y="9.5" width="3.2" height="3.2" rx="0.5" />
+    <path d="M7 4.5h7M7 11.5h7" />
+  </Svg>
+);
+
+/** Divider — horizontal rule. */
+export const IconDivider: React.FC<IconProps> = (p) => (
+  <Svg {...p}>
+    <path d="M2 8h12" />
+  </Svg>
+);
+
 export default Svg;
