@@ -296,17 +296,24 @@ export const AIPane: React.FC = () => {
       else break; // conversation-ordered; first not-yet-at-top stops us
     }
     const next = activeIdx >= 0 ? (bubbles[activeIdx]!.dataset.turnId ?? null) : null;
-    // Push-up: while the active bubble's bottom pokes below T (still partially
-    // visible just under the header), translate the banner up by that overflow
-    // so it recedes into the header and the visible bubble takes over — never
-    // two copies of the same question. Capped at bannerH (fully hidden).
-    // Once the bubble's bottom passes fully under the header (<= T) the banner
-    // sits at rest (0) and shows the question.
+    // Push-up driven by the NEXT user question rising toward the header, so the
+    // pinned banner recedes UP — the SAME direction the source question is
+    // moving — instead of sliding down (which read as reversed). bannerBottom
+    // = title bottom + banner height (the banner's lower edge). While no
+    // question is approaching, the banner sits at rest (0) showing the active
+    // question. As the next question's top enters the banner band (nextTop <
+    // bannerBottom) the banner is pushed up to meet it; it is fully hidden
+    // (-bannerH) exactly when the next question's top reaches the title line,
+    // which is the instant it becomes the new active — so the old banner is
+    // gone by the time the new one takes over, never two copies overlapping.
+    const bannerBottom = t + bannerH;
     let pinY = 0;
     if (activeIdx >= 0 && bannerH > 0) {
-      const activeBottom = bubbles[activeIdx]!.getBoundingClientRect().bottom;
-      const overflow = Math.max(0, activeBottom - t);
-      pinY = -Math.min(overflow, bannerH);
+      const nextBubble = activeIdx + 1 < bubbles.length ? bubbles[activeIdx + 1]! : null;
+      if (nextBubble) {
+        const nextTop = nextBubble.getBoundingClientRect().top;
+        pinY = Math.max(-bannerH, Math.min(nextTop - bannerBottom, 0));
+      }
     }
     setActiveQuestionId((prev) => (prev === next ? prev : next));
     setPinTranslateY((prev) => (prev === pinY ? prev : pinY));
