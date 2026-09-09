@@ -22,8 +22,7 @@
 // activity) has its own addressable region.
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { useTodo, useDrawings, useDocuments } from '../hooks/useThihyApi';
-import { routeToHash } from '../router';
+import { useTodo, useDocuments } from '../hooks/useThihyApi';
 import { DocumentsView } from '../components/DocumentsView';
 import { InlineTitle } from '../components/InlineTitle';
 import { PriorityPicker } from '../components/PriorityPicker';
@@ -31,7 +30,6 @@ import { TagInput } from '../components/TagInput';
 import { DatePicker } from '../components/DatePicker';
 import { StatusPill } from '../components/StatusPill';
 import { ProgressInline, ProgressTimeline } from '../components/ProgressView';
-import { DrawingStrip } from '../components/DrawingStrip';
 import { IconLink } from '../components/icons';
 import type { Priority, TodoStatus, TaskDocument } from '../../shared/todo-types';
 
@@ -94,7 +92,6 @@ export const TodoEditorPane: React.FC<{
   navigate: (to: string) => void;
 }> = ({ todoId, navigate }) => {
   const { todo, loading } = useTodo(todoId);
-  const { drawings, refresh: refreshDrawings } = useDrawings(todoId);
 
   const [tagDraft, setTagDraft] = useState<string[]>([]);
   const [priority, setPriority] = useState<Priority>('none');
@@ -163,13 +160,6 @@ export const TodoEditorPane: React.FC<{
             />
           </div>
         </div>
-
-        <DrawingStrip
-          drawings={drawings}
-          onAdd={() => navigate(routeToHash({ name: 'todo-drawing', id: todo.id }))}
-          onOpen={(id) => navigate(routeToHash({ name: 'todo-drawing', id: todo.id, drawingId: id }))}
-          onRefresh={refreshDrawings}
-        />
       </section>
 
       {/* ===== 链接 ===== */}
@@ -181,7 +171,7 @@ export const TodoEditorPane: React.FC<{
       {/* ===== 文档 ===== */}
       <section className="editor-pane__section">
         <h2 className="editor-pane__section-title">文档</h2>
-        <DocumentsView todoId={todo.id} />
+        <DocumentsView todoId={todo.id} navigate={navigate} />
       </section>
 
       {/* ===== 动态 ===== */}

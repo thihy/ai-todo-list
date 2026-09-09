@@ -3194,13 +3194,108 @@ a:hover {
 
 .docs-workspace {
   display: grid;
-  grid-template-columns: 200px 1fr;
-  gap: var(--space-md);
+  grid-template-columns: 1fr;
+  grid-template-rows: auto 1fr;
+  gap: 0;
   min-height: 420px;
   background: var(--bg-surface);
   border: 1px solid var(--border-default);
   border-radius: var(--radius-md);
   overflow: hidden;
+}
+
+/* --- horizontal tab bar --- */
+
+.docs-workspace__tabbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: 4px var(--space-sm);
+  border-bottom: 1px solid var(--border-default);
+  background: var(--bg-canvas);
+}
+.docs-workspace__tabs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+.docs-workspace__tab {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 200px;
+  padding: 4px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--fg-secondary);
+  font-size: var(--font-sm);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.docs-workspace__tab:hover {
+  background: var(--bg-hover);
+}
+.docs-workspace__tab.is-active {
+  background: var(--bg-surface);
+  border-color: var(--border-default);
+  color: var(--fg-primary);
+}
+.docs-workspace__tab-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.docs-workspace__tab-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: var(--radius-sm);
+  color: var(--fg-muted);
+  cursor: pointer;
+}
+.docs-workspace__tab-close:hover {
+  background: var(--bg-hover);
+  color: var(--accent-danger);
+}
+
+/* --- drawing tab body --- */
+
+.docs-workspace__drawing {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-md);
+  padding: var(--space-lg);
+}
+.docs-workspace__drawing-thumb {
+  max-width: 100%;
+  max-height: 360px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  object-fit: contain;
+}
+.docs-workspace__drawing-empty {
+  color: var(--fg-muted);
+  padding: var(--space-xl);
+}
+.docs-workspace__open-btn {
+  padding: 6px var(--space-md);
+  border: 1px solid var(--accent-primary);
+  background: var(--accent-primary);
+  color: var(--fg-on-accent);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-sm);
+  cursor: pointer;
+}
+.docs-workspace__open-btn:hover {
+  filter: brightness(0.96);
 }
 
 .docs-workspace__sidebar {
