@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { mkdirSync, readFileSync, statSync, readdirSync } from 'node:fs';
 import { cpSync } from 'node:fs';
 import { basename, extname } from 'node:path';
+import { userInfo } from 'node:os';
 import { installRouter, okResult, failResult, register } from './ipc/router';
 import { registerTodoHandlers } from './ipc/todo-handlers';
 import { registerContentHandlers } from './ipc/content-handlers';
@@ -683,6 +684,17 @@ function registerAppHandlers(): void {
       return okResult(undefined);
     } catch (err) {
       return failResult('app_action_failed', (err as Error).message);
+    }
+  });
+  // OS username for the bottom-left user chip — no hardcoded preset. Uses
+  // os.userInfo().username (on Windows, the login name). null if it can't be
+  // resolved, in which case the chip renders a neutral avatar only.
+  register('app.osUser', async () => {
+    try {
+      const username = userInfo().username ?? null;
+      return okResult({ username });
+    } catch (err) {
+      return failResult('os_user_failed', (err as Error).message);
     }
   });
   logger.info('app.* handlers registered');

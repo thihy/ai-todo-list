@@ -192,6 +192,8 @@ export interface ThihyApi {
     pickFile(opts?: { maxBytes?: number }): Promise<IpcResponse<'app.pickFile'>>;
     /** User-menu actions (bottom-left chip). */
     action(a: 'about' | 'checkUpdate' | 'quit'): Promise<IpcResponse<'app.action'>>;
+    /** OS username for the bottom-left chip (no hardcoded preset identity). */
+    osUser(): Promise<IpcResponse<'app.osUser'>>;
   };
   capture: {
     submit(args: CaptureSubmitArgs): Promise<IpcResponse<'capture.submit'>>;

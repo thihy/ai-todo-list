@@ -128,6 +128,7 @@ const api: ThihyApi = {
     popupMenuCategory: (category: string) => invoke('app.popupMenuCategory', { category }),
     pickFile: (opts) => invoke('app.pickFile', opts ?? {}),
     action: (action) => invoke('app.action', { action }),
+    osUser: () => invoke('app.osUser', undefined as never),
   },
   capture: {
     submit: (args: CaptureSubmitArgs) => invoke('capture.submit', args),

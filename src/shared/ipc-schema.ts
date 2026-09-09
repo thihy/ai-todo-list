@@ -364,6 +364,10 @@ export interface IpcRegistry {
 
   // User-menu actions (bottom-left chip): about dialog, check-for-update, quit.
   'app.action': IpcChannel<AppActionReq, IpcResult<void>>;
+
+  // The OS username for the bottom-left user chip (so we don't hardcode a
+  // preset identity). Returns the login name from os.userInfo().
+  'app.osUser': IpcChannel<undefined, IpcResult<{ username: string | null }>>;
 }
 
 export interface AppActionReq {

@@ -70,6 +70,7 @@ const DECLARED_CHANNELS: ReadonlySet<string> = new Set([
   'app.popupMenuCategory',
   'app.pickFile',
   'app.action',
+  'app.osUser',
 ]);
 
 export function isKnownChannel(name: string): name is IpcChannelName {
