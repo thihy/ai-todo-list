@@ -803,7 +803,10 @@ a:hover {
   position: sticky;
   top: 0;
   z-index: 2;
-  margin: 0 calc(-1 * var(--space-lg)) var(--space-md);
+  /* Full-bleed (negative side margins) so the opaque header spans the body's
+     full width. No bottom margin — the body's flex gap separates the header
+     from the first message. */
+  margin: 0 calc(-1 * var(--space-lg));
   padding: 0;
   background: var(--bg-surface);
 }
@@ -811,9 +814,10 @@ a:hover {
 .aipane__conv-title {
   /* Static child of .aipane__sticky-head. The wrapper owns the sticky
      position and opaque full-bleed background; the title keeps its own
-     padding so the text insets to align with the message stream. */
+     padding so the text insets to align with the message stream. Top
+     padding is tight so the title sits flush at the top of the header. */
   margin: 0 0 var(--space-sm);
-  padding: var(--space-md) var(--space-lg) var(--space-sm);
+  padding: var(--space-sm) var(--space-lg) var(--space-sm);
   font-size: var(--font-lg);
   font-weight: 650;
   letter-spacing: -0.01em;
@@ -1244,7 +1248,11 @@ a:hover {
 .aipane__body {
   flex: 1;
   overflow: auto;
-  padding: var(--space-lg);
+  /* No top padding: the sticky header sits flush at the top of the body
+     (right under the topbar). Side + bottom padding keep the message
+     stream guttered. Previously padding-top created a blank strip above
+     the sticky header that read as "transparent space above the title". */
+  padding: 0 var(--space-lg) var(--space-lg);
   display: flex;
   flex-direction: column;
   gap: var(--space-md);
