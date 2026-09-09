@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ThihyApi, AppEvent, AppEventMap, SettingsPatchArgs } from '../../shared/thihy-api';
 import type { Todo, TodoFilter, SearchHit, TodoStats } from '../../shared/todo-types';
-import type { ContentVersionEntry } from '../../shared/todo-types';
+import type { ContentVersionEntry, ProgressLogEntry } from '../../shared/todo-types';
 import type { DrawingMeta, DrawingScene } from '../../shared/todo-types';
 import type { AIModel, AIStreamEvent } from '../../shared/ai-types';
 import type { SettingsGetRes } from '../../shared/ipc-schema';
@@ -147,6 +147,40 @@ export function useHistory(id: string | null): { versions: ContentVersionEntry[]
     window.thihy.content.history(id).then((res) => setVersions(unwrap(res, [])));
   }, [id]);
   return { versions };
+}
+
+export function useProgress(todoId: string | null): {
+  entries: ProgressLogEntry[];
+  log: (percent: number, note?: string) => Promise<void>;
+} {
+  const [entries, setEntries] = useState<ProgressLogEntry[]>([]);
+  // progress.log broadcasts app:data-changed { scope: 'todos' }, which bumps
+  // the todos data version. Re-list on that bump so the timeline stays in
+  // sync even if the optimistic insert (in `log`) races the broadcast.
+  const dataVersion = useDataVersion(['todos']);
+
+  useEffect(() => {
+    if (!todoId) {
+      setEntries([]);
+      return;
+    }
+    window.thihy.progress.list(todoId).then((res) => setEntries(unwrap(res, [])));
+  }, [todoId, dataVersion]);
+
+  const log = useCallback(
+    async (percent: number, note?: string) => {
+      if (!todoId) return;
+      const res = await window.thihy.progress.log(todoId, percent, note);
+      if (res.ok) {
+        // Optimistic prepend for immediate UI feedback; the data-changed
+        // broadcast will also trigger a full re-list via dataVersion.
+        setEntries((prev) => [res.data.entry, ...prev]);
+      }
+    },
+    [todoId],
+  );
+
+  return { entries, log };
 }
 
 export function useDrawings(todoId: string | null): {

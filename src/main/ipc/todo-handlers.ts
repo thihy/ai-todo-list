@@ -1,9 +1,19 @@
-// IPC handlers for todo.* channels.
+// IPC handlers for todo.* + progress.* channels.
 
+import { BrowserWindow } from 'electron';
 import { okResult, failResult, register } from './router';
 import type { TodoRepo } from '../db/todo-repo';
 import type { MarkdownStore } from '../files/markdown';
 import { logger } from '../logger';
+
+/** Push a coarse-grained data-changed event so the renderer's todo / list /
+ *  stats hooks re-fetch after a mutation the user just made here (mirrors the
+ *  AI-tool broadcast in ai-handlers, but for direct user IPC like progress.log). */
+function broadcastDataChanged(scope: 'todos' | 'content' | 'drawings' | 'conversations'): void {
+  for (const w of BrowserWindow.getAllWindows()) {
+    if (!w.isDestroyed()) w.webContents.send('app:data-changed', { scope });
+  }
+}
 
 export function registerTodoHandlers(repo: TodoRepo, md: MarkdownStore): void {
   register('todo.list', (_e, req) => {
@@ -83,5 +93,25 @@ export function registerTodoHandlers(repo: TodoRepo, md: MarkdownStore): void {
     }
   });
 
-  logger.info('todo.* handlers registered');
+  register('progress.log', (_e, req) => {
+    try {
+      const result = repo.logProgress(req.todoId, req.percent, req.note);
+      // The todos.progress column changed — broadcast so the editor's todo
+      // object (progress bar) and any list view refresh.
+      broadcastDataChanged('todos');
+      return Promise.resolve(okResult(result));
+    } catch (err) {
+      return Promise.resolve(failResult('progress_log_failed', (err as Error).message));
+    }
+  });
+
+  register('progress.list', (_e, req) => {
+    try {
+      return Promise.resolve(okResult(repo.listProgress(req.todoId)));
+    } catch (err) {
+      return Promise.resolve(failResult('progress_list_failed', (err as Error).message));
+    }
+  });
+
+  logger.info('todo.* + progress.* handlers registered');
 }

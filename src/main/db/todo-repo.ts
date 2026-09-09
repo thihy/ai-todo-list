@@ -4,6 +4,7 @@ import type Database from 'better-sqlite3';
 import { newId } from './schema';
 import type {
   Priority,
+  ProgressLogEntry,
   SearchHit,
   Todo,
   TodoCreate,
@@ -28,6 +29,7 @@ interface TodoRow {
   parent_id: string | null;
   archived_at: number | null;
   deleted_at: number | null;
+  progress: number;
 }
 
 function rowToTodo(row: TodoRow, tags: string[], drawingIds: string[]): Todo {
@@ -48,6 +50,7 @@ function rowToTodo(row: TodoRow, tags: string[], drawingIds: string[]): Todo {
     parentId: row.parent_id,
     archivedAt: row.archived_at,
     deletedAt: row.deleted_at,
+    progress: row.progress,
   };
 }
 
@@ -174,6 +177,7 @@ export class TodoRepo {
       dueAt: 'due_at',
       parentId: 'parent_id',
       archivedAt: 'archived_at',
+      progress: 'progress',
     };
     for (const [k, v] of Object.entries(patch)) {
       if (v === undefined) continue;
@@ -211,6 +215,17 @@ export class TodoRepo {
     }
 
     const tx = this.db.transaction(() => {
+      // Capture the old progress before the UPDATE so we can append an audit
+      // row only when the value actually changed (avoids log noise from
+      // no-op patches). note is null here — the user-facing "record progress
+      // with a note" path is progress.log(), which does its own transaction.
+      let oldProgress: number | undefined;
+      if (patch.progress !== undefined) {
+        const row = this.db
+          .prepare('SELECT progress FROM todos WHERE id = ?')
+          .get(id) as { progress: number } | undefined;
+        oldProgress = row?.progress;
+      }
       if (fields.length) {
         this.db
           .prepare(`UPDATE todos SET ${fields.join(', ')} WHERE id = ?`)
@@ -229,9 +244,75 @@ export class TodoRepo {
         // Anything other than 'done' clears done_at.
         this.db.prepare('UPDATE todos SET done_at = NULL WHERE id = ?').run(id);
       }
+      if (
+        patch.progress !== undefined &&
+        oldProgress !== undefined &&
+        oldProgress !== patch.progress
+      ) {
+        this.db
+          .prepare(
+            'INSERT INTO progress_log (id, todo_id, percent, note, created_at) VALUES (?, ?, ?, NULL, ?)',
+          )
+          .run(newId(), id, patch.progress, Date.now());
+      }
     });
     tx();
     return this.get(id)!;
+  }
+
+  /** Record a progress entry: sets the todos.progress column AND appends a
+   *  progress_log row with the user's (optional) one-line note. This is the
+   *  user-facing "录入进展" path. It does NOT go through update() (which
+   *  would append a second, note-less log row) — it owns its own transaction.
+   *  percent is clamped to [0, 100] and rounded. Returns the new entry plus
+   *  the refreshed todo so the renderer can update both at once. */
+  logProgress(
+    todoId: ULID,
+    percent: number,
+    note?: string,
+  ): { entry: ProgressLogEntry; todo: Todo } {
+    const clamped = Math.max(0, Math.min(100, Math.round(percent)));
+    const id = newId();
+    const now = Date.now();
+    const tx = this.db.transaction(() => {
+      this.db
+        .prepare(
+          'INSERT INTO progress_log (id, todo_id, percent, note, created_at) VALUES (?, ?, ?, ?, ?)',
+        )
+        .run(id, todoId, clamped, note ?? null, now);
+      this.db
+        .prepare('UPDATE todos SET progress = ?, updated_at = ? WHERE id = ?')
+        .run(clamped, now, todoId);
+    });
+    tx();
+    const entry: ProgressLogEntry = {
+      id,
+      todoId,
+      percent: clamped,
+      note: note ?? null,
+      createdAt: now,
+    };
+    return { entry, todo: this.get(todoId)! };
+  }
+
+  /** Audit timeline for a task, newest-first. Used by the detail editor's
+   *  collapsible progress history. */
+  listProgress(todoId: ULID): ProgressLogEntry[] {
+    const rows = this.db
+      .prepare<
+        [ULID],
+        { id: string; todo_id: string; percent: number; note: string | null; created_at: number }
+      >(
+        'SELECT id, todo_id, percent, note, created_at FROM progress_log WHERE todo_id = ? ORDER BY created_at DESC',
+      )
+      .all(todoId);
+    return rows.map((r) => ({
+      id: r.id,
+      todoId: r.todo_id,
+      percent: r.percent,
+      note: r.note,
+      createdAt: r.created_at,
+    }));
   }
 
   /** Walk the parent_id chain from `candidate` to see if it eventually
@@ -344,6 +425,7 @@ export class TodoRepo {
       parent_id: string | null;
       archived_at: number | null;
       deleted_at: number | null;
+      progress: number;
       snippet: string;
       score: number;
     };

@@ -29,6 +29,7 @@ import { PriorityPicker } from '../components/PriorityPicker';
 import { TagInput } from '../components/TagInput';
 import { DatePicker } from '../components/DatePicker';
 import { StatusPill } from '../components/StatusPill';
+import { ProgressBar, ProgressView } from '../components/ProgressView';
 import { DrawingStrip } from '../components/DrawingStrip';
 import type { Priority, TodoStatus } from '../../shared/todo-types';
 
@@ -93,6 +94,9 @@ export const TodoEditorPane: React.FC<{
             value={tagDraft}
             onChange={(tags) => { setTagDraft(tags); void commitMeta({ tags }); }}
           />
+          <div className="editor-pane__progress">
+            <ProgressBar value={todo.progress} showLabel />
+          </div>
         </div>
 
         <DrawingStrip
@@ -105,6 +109,8 @@ export const TodoEditorPane: React.FC<{
 
       {/* ===== Body band ===== */}
       <div className="editor-pane__body">
+        <ProgressView todoId={todo.id} progress={todo.progress} />
+
         <MarkdownEditor
           value={body}
           version={version}

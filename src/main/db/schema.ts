@@ -7,7 +7,7 @@ const { ulid } = ulidPkg;
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 
-export const SCHEMA_VERSION = 9;
+export const SCHEMA_VERSION = 10;
 
 const MIGRATIONS: ReadonlyArray<{ version: number; sql: string }> = [
   {
@@ -382,6 +382,36 @@ const MIGRATIONS: ReadonlyArray<{ version: number; sql: string }> = [
     sql: `
       ALTER TABLE todos ADD COLUMN deleted_at INTEGER;
       CREATE INDEX idx_todos_deleted ON todos(deleted_at);
+    `,
+  },
+  {
+    version: 10,
+    // Progress system. Each task carries a `progress` percent (0–100,
+    // default 0) on the todos row for at-a-glance bar rendering, plus a
+    // `progress_log` audit table recording every change (percent + optional
+    // one-line note + timestamp). The user-facing "录入进展" path is
+    // progress.log() (sets the column + appends a log row with a note);
+    // todo.update({progress}) sets the column AND appends a note-less log row
+    // when the value actually changes, so the timeline stays a complete audit
+    // of every progress mutation regardless of source (AI tool, batch op, UI).
+    //
+    // ALTER TABLE ADD COLUMN is safe here — no FTS rebuild, no trigger churn.
+    // The FTS triggers only reference title/body, never progress, so adding a
+    // column can't corrupt the external-content shadow tables (see the
+    // trg-touch-fts5-corruption note in memory: only a self-UPDATE trigger
+    // after a content-table rebuild is the danger; neither applies here).
+    sql: `
+      ALTER TABLE todos ADD COLUMN progress INTEGER NOT NULL DEFAULT 0;
+
+      CREATE TABLE progress_log (
+        id TEXT PRIMARY KEY,
+        todo_id TEXT NOT NULL,
+        percent INTEGER NOT NULL,
+        note TEXT,
+        created_at INTEGER NOT NULL,
+        FOREIGN KEY (todo_id) REFERENCES todos(id) ON DELETE CASCADE
+      );
+      CREATE INDEX idx_progress_log_todo ON progress_log(todo_id, created_at DESC);
     `,
   },
 ];

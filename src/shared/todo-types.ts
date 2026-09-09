@@ -43,6 +43,11 @@ export interface Todo {
    *  the 已删除 filter view (deletedOnly). The row + markdown + drawings
    *  survive so a delete is always undoable. */
   deletedAt: number | null;
+  /** Progress percent 0–100, mirrored on the todos row for at-a-glance bar
+   *  rendering. Source of truth for "how far along is this task". Every
+   *  change is appended to `progress_log` (with an optional one-line note)
+   *  so the timeline is a complete audit — see ProgressLogEntry. */
+  progress: number;
 }
 
 export interface TodoCreate {
@@ -69,6 +74,11 @@ export interface TodoPatch {
   /** Soft-archive / restore. A number (epoch ms) archives; null restores
    *  an archived task back to the active list. */
   archivedAt?: number | null;
+  /** Progress percent 0–100. Setting it via todo.update writes the column
+   *  AND appends a note-less progress_log row when the value changes, so the
+   *  audit timeline stays complete even for AI/batch mutations. For the
+   *  user-facing "record progress with a note" path, prefer progress.log. */
+  progress?: number;
 }
 
 export interface TodoFilter {
@@ -104,6 +114,18 @@ export interface ContentVersionEntry {
   todoId: ULID;
   body: string;
   savedAt: number;
+}
+
+/** One entry in a task's progress audit log. Every progress mutation appends
+ *  a row: progress.log() with the user's optional one-line note, or
+ *  todo.update({progress}) with a null note when an AI/batch path sets the
+ *  value. Newest-first is the canonical listing order (progress.list). */
+export interface ProgressLogEntry {
+  id: ULID;
+  todoId: ULID;
+  percent: number;
+  note: string | null;
+  createdAt: number;
 }
 
 export interface DrawingMeta {

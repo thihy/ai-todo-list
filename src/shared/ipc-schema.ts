@@ -5,6 +5,7 @@ import type {
   ContentVersionEntry,
   DrawingMeta,
   InboxAttachment,
+  ProgressLogEntry,
   SearchHit,
   Todo,
   TodoCreate,
@@ -50,6 +51,17 @@ export interface TodoRestoreReq { id: ULID }
 export interface TodoBatchUpdateReq { ids: ULID[]; patch: TodoPatch }
 export interface TodoSearchReq { query: string; limit?: number }
 export interface TodoStatsReq { windowDays?: number }
+
+// ----- progress.* -----
+//
+// User-facing progress system (schema v10). progress.log is the "录入进展"
+// path: sets the todos.progress column AND appends a progress_log row with
+// the user's optional one-line note, returning the new entry + refreshed
+// todo. progress.list returns the audit timeline newest-first.
+
+export interface ProgressLogReq { todoId: ULID; percent: number; note?: string }
+export interface ProgressLogRes { entry: ProgressLogEntry; todo: Todo }
+export interface ProgressListReq { todoId: ULID }
 
 // ----- content.* -----
 
@@ -220,6 +232,9 @@ export interface IpcRegistry {
   'todo.batchUpdate': IpcChannel<TodoBatchUpdateReq, IpcResult<Todo[]>>;
   'todo.search': IpcChannel<TodoSearchReq, IpcResult<SearchHit[]>>;
   'todo.stats': IpcChannel<TodoStatsReq, IpcResult<TodoStats>>;
+
+  'progress.log': IpcChannel<ProgressLogReq, IpcResult<ProgressLogRes>>;
+  'progress.list': IpcChannel<ProgressListReq, IpcResult<ProgressLogEntry[]>>;
 
   'content.readBody': IpcChannel<ContentReadBodyReq, IpcResult<ContentReadBodyRes>>;
   'content.writeBody': IpcChannel<ContentWriteBodyReq, IpcResult<ContentWriteBodyRes>>;

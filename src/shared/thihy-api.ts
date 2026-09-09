@@ -23,6 +23,7 @@ import type {
 } from './ai-types';
 import type { Todo, TodoCreate, TodoPatch, TodoFilter, SearchHit, TodoStats } from './todo-types';
 import type { ContentVersionEntry } from './todo-types';
+import type { ProgressLogEntry } from './todo-types';
 import type { DrawingMeta, DrawingScene } from './todo-types';
 
 // --- App events pushed from main ---
@@ -120,6 +121,13 @@ export interface ThihyApi {
     ): Promise<IpcResponse<'content.writeBody'>>;
     history(id: string): Promise<IpcResponse<'content.history'>>;
     restoreVersion(id: string, versionId: string): Promise<IpcResponse<'content.restoreVersion'>>;
+  };
+  progress: {
+    /** Record a progress entry: sets the percent + appends an audit-log row
+     *  with an optional one-line note. Returns the new entry + refreshed todo. */
+    log(todoId: string, percent: number, note?: string): Promise<IpcResponse<'progress.log'>>;
+    /** Audit timeline for a task, newest-first. */
+    list(todoId: string): Promise<IpcResponse<'progress.list'>>;
   };
   drawing: {
     list(todoId: string): Promise<IpcResponse<'drawing.list'>>;
@@ -226,6 +234,7 @@ export interface ThihyApi {
 // Re-exports for renderer convenience.
 export type { Todo, TodoCreate, TodoPatch, TodoFilter, SearchHit, TodoStats };
 export type { ContentVersionEntry };
+export type { ProgressLogEntry };
 export type { DrawingMeta, DrawingScene };
 export type { AIModel, AIProvider, AICustomProtocol, CustomProviderInput, CustomProviderView, AIStreamEvent, PermissionRequest, UserQuestionRequest, UserQuestionAnswer, UserQuestionItem, UserQuestionOption, UserQuestionAnswerItem, UserApprovalRequest, UserApprovalAnswer };
 export type { IpcChannelName, IpcRequest, IpcResponse };

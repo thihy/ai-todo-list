@@ -12,6 +12,8 @@ const DECLARED_CHANNELS: ReadonlySet<string> = new Set([
   'todo.batchUpdate',
   'todo.search',
   'todo.stats',
+  'progress.log',
+  'progress.list',
   'content.readBody',
   'content.writeBody',
   'content.history',

@@ -2805,6 +2805,200 @@ a:hover {
   color: var(--fg-primary);
 }
 
+/* --- progress bar + progress view --- */
+
+.editor-pane__progress {
+  /* Compact at-a-glance bar in the summary meta row. Sits after the pickers. */
+  display: inline-flex;
+  align-items: center;
+  margin-left: auto;
+}
+.progress-bar {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.progress-bar__track {
+  position: relative;
+  width: 100px;
+  height: 8px;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--fg-primary) 12%, transparent);
+  overflow: hidden;
+}
+.progress-bar__fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  background: var(--accent-primary);
+  border-radius: var(--radius-pill);
+  transition: width .25s ease;
+}
+.progress-bar__label {
+  font-size: var(--font-xs);
+  font-weight: 600;
+  color: var(--fg-secondary);
+  white-space: nowrap;
+  min-width: 28px;
+  text-align: right;
+}
+.progress-view {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding: var(--space-md);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+}
+.progress-view__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+.progress-view__bar {
+  flex: 1 1 auto;
+}
+.progress-view__bar .progress-bar__track {
+  width: 100%;
+  height: 10px;
+}
+.progress-view__bar .progress-bar__label {
+  min-width: 36px;
+  font-size: var(--font-sm);
+}
+.progress-view__toggle {
+  flex: 0 0 auto;
+  padding: 3px var(--space-sm);
+  border: 1px solid var(--border-default);
+  background: var(--bg-surface);
+  color: var(--fg-primary);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-sm);
+  cursor: pointer;
+}
+.progress-view__toggle:hover {
+  background: var(--bg-hover);
+  border-color: var(--border-strong);
+}
+.progress-view__entry {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding-top: var(--space-xs);
+}
+.progress-view__entry-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+.progress-view__entry-row input[type='range'] {
+  flex: 1 1 auto;
+  accent-color: var(--accent-primary);
+}
+.progress-view__percent {
+  width: 48px;
+  padding: 2px var(--space-xs);
+  border: 1px solid var(--border-default);
+  background: var(--bg-surface);
+  color: var(--fg-primary);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-sm);
+  text-align: right;
+}
+.progress-view__percent-sign {
+  color: var(--fg-muted);
+}
+.progress-view__note {
+  width: 100%;
+  padding: var(--space-xs) var(--space-sm);
+  border: 1px solid var(--border-default);
+  background: var(--bg-surface);
+  color: var(--fg-primary);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-sm);
+}
+.progress-view__note:focus {
+  border-color: var(--accent-primary);
+  outline: none;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-primary) 18%, transparent);
+}
+.progress-view__entry-actions {
+  display: flex;
+  gap: var(--space-xs);
+  justify-content: flex-end;
+}
+.progress-view__submit {
+  padding: 4px var(--space-md);
+  border: 0;
+  background: var(--accent-primary);
+  color: var(--fg-on-accent, #fff);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-sm);
+  cursor: pointer;
+}
+.progress-view__submit:hover {
+  filter: brightness(1.05);
+}
+.progress-view__cancel {
+  padding: 4px var(--space-md);
+  border: 1px solid var(--border-default);
+  background: var(--bg-surface);
+  color: var(--fg-secondary);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-sm);
+  cursor: pointer;
+}
+.progress-view__cancel:hover {
+  background: var(--bg-hover);
+  color: var(--fg-primary);
+}
+.progress-view__timeline {
+  border-top: 1px solid var(--border-default);
+  padding-top: var(--space-xs);
+}
+.progress-view__timeline-head {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  cursor: pointer;
+  font-size: var(--font-sm);
+  color: var(--fg-secondary);
+}
+.progress-view__timeline-count {
+  font-size: var(--font-xs);
+  color: var(--fg-muted);
+}
+.progress-view__timeline-list {
+  list-style: none;
+  margin: var(--space-xs) 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+.progress-view__timeline-item {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-sm);
+  font-size: var(--font-sm);
+}
+.progress-view__timeline-time {
+  color: var(--fg-muted);
+  font-size: var(--font-xs);
+  white-space: nowrap;
+}
+.progress-view__timeline-percent {
+  font-weight: 600;
+  color: var(--accent-primary);
+  min-width: 36px;
+}
+.progress-view__timeline-note {
+  color: var(--fg-primary);
+  flex: 1 1 auto;
+}
+
 /* --- body band: workspace, scrolls --- */
 
 .editor-pane__body {

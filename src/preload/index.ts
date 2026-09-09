@@ -86,6 +86,10 @@ const api: ThihyApi = {
     restoreVersion: (id, versionId) =>
       invoke('content.restoreVersion', { id, versionId: Number(versionId) }),
   },
+  progress: {
+    log: (todoId, percent, note) => invoke('progress.log', { todoId, percent, note }),
+    list: (todoId) => invoke('progress.list', { todoId }),
+  },
   drawing: {
     list: (todoId) => invoke('drawing.list', { todoId }),
     read: (id) => invoke('drawing.read', { id }),
