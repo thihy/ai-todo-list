@@ -3629,11 +3629,11 @@ a:hover {
      the layout can spare (was a fixed 200px — too short for a precision
      target, and the cursor's screen position then didn't match the bar's
      visual extent). min-width guarantees a comfortable drag target even on
-     narrow panes; max-width keeps the bar from stretching absurdly on wide
-     detail panes. */
+     narrow panes; no max-width — the detail page is wide enough that
+     capping it was leaving obvious whitespace on the right. */
   flex: 1 1 0;
   min-width: 240px;
-  max-width: 560px;
+  width: 100%;
   /* Tall enough to be a comfortable drag target; the visible track is 12px
      inside, the rest is padding to give the pointer room to grab. */
   padding: 8px 0;
