@@ -118,6 +118,10 @@ export interface InboxAttachBlobReq {
   mime: string;
 }
 
+export interface InboxListReq { todoId: ULID }
+export interface InboxReadRes { dataUrl: string; mime: string; filename: string }
+export interface InboxIdReq { id: ULID }
+
 // ----- ai.* -----
 
 /** Renderer -> main: kick off a streaming AI invocation. */
@@ -285,6 +289,9 @@ export interface IpcRegistry {
 
   'inbox.attach': IpcChannel<InboxAttachReq, IpcResult<InboxAttachment>>;
   'inbox.attachBlob': IpcChannel<InboxAttachBlobReq, IpcResult<InboxAttachment>>;
+  'inbox.list': IpcChannel<InboxListReq, IpcResult<InboxAttachment[]>>;
+  'inbox.read': IpcChannel<InboxIdReq, IpcResult<InboxReadRes>>;
+  'inbox.remove': IpcChannel<InboxIdReq, IpcResult<null>>;
 
   'ai.cancel': IpcChannel<AIStreamCancelReq, IpcResult<{ ok: boolean }>>;
   'ai.ask': IpcChannel<AIAskReq, IpcResult<AIAskRes>>;

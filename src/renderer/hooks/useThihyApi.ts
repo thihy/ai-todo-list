@@ -5,7 +5,7 @@ import type { ThihyApi, AppEvent, AppEventMap, SettingsPatchArgs } from '../../s
 import type { Todo, TodoFilter, SearchHit, TodoStats } from '../../shared/todo-types';
 import type { ContentVersionEntry, ProgressLogEntry } from '../../shared/todo-types';
 import type { TaskDocument } from '../../shared/todo-types';
-import type { DrawingMeta, DrawingScene } from '../../shared/todo-types';
+import type { DrawingMeta, DrawingScene, InboxAttachment } from '../../shared/todo-types';
 import type { AIModel, AIStreamEvent } from '../../shared/ai-types';
 import type { SettingsGetRes } from '../../shared/ipc-schema';
 import { useDataVersion } from '../data-bus';
@@ -202,6 +202,31 @@ export function useDrawings(todoId: string | null): {
     void refresh();
   }, [refresh, dataVersion]);
   return { drawings, refresh };
+}
+
+// ----- Attachments (inbox.*) -----
+
+export function useAttachments(todoId: string | null): {
+  attachments: InboxAttachment[];
+  refresh: () => Promise<void>;
+} {
+  const [attachments, setAttachments] = useState<InboxAttachment[]>([]);
+  // 'content' scope: inbox.remove broadcasts app:data-changed { scope: 'content' }
+  // (attachments are also surfaced as task_documents of kind 'attachment', so
+  // they share the content scope with the document workspace).
+  const dataVersion = useDataVersion(['content']);
+  const refresh = useCallback(async () => {
+    if (!todoId) {
+      setAttachments([]);
+      return;
+    }
+    const res = await window.thihy.inbox.list({ todoId });
+    setAttachments(unwrap(res, []));
+  }, [todoId]);
+  useEffect(() => {
+    void refresh();
+  }, [refresh, dataVersion]);
+  return { attachments, refresh };
 }
 
 // ----- Multi-document workspace (schema v11) -----

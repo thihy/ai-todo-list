@@ -32,7 +32,7 @@ interface TodoRow {
   progress: number;
 }
 
-function rowToTodo(row: TodoRow, tags: string[], drawingIds: string[]): Todo {
+function rowToTodo(row: TodoRow, tags: string[], drawingIds: string[], attachmentIds: string[]): Todo {
   return {
     id: row.id,
     title: row.title,
@@ -45,7 +45,7 @@ function rowToTodo(row: TodoRow, tags: string[], drawingIds: string[]): Todo {
     updatedAt: row.updated_at,
     doneAt: row.done_at,
     tags,
-    attachmentIds: [],
+    attachmentIds,
     drawingIds,
     parentId: row.parent_id,
     archivedAt: row.archived_at,
@@ -122,14 +122,18 @@ export class TodoRepo {
 
     const sql = `SELECT * FROM todos ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY updated_at DESC`;
     const rows = this.db.prepare<typeof params, TodoRow>(sql).all(...params);
-    return rows.map((r) => rowToTodo(r, this.tagsFor(r.id), this.drawingsFor(r.id)));
+    return rows.map((r) =>
+      rowToTodo(r, this.tagsFor(r.id), this.drawingsFor(r.id), this.attachmentsFor(r.id)),
+    );
   }
 
   get(id: ULID): Todo | null {
     const row = this.db
       .prepare<[ULID], TodoRow>('SELECT * FROM todos WHERE id = ?')
       .get(id);
-    return row ? rowToTodo(row, this.tagsFor(id), this.drawingsFor(id)) : null;
+    return row
+      ? rowToTodo(row, this.tagsFor(id), this.drawingsFor(id), this.attachmentsFor(id))
+      : null;
   }
 
   create(input: TodoCreate, bodyPath: string): Todo {
@@ -443,7 +447,7 @@ export class TodoRepo {
       .all(ftsQuery, limit);
 
     return rows.map((r) => ({
-      todo: rowToTodo(r, this.tagsFor(r.id), this.drawingsFor(r.id)),
+      todo: rowToTodo(r, this.tagsFor(r.id), this.drawingsFor(r.id), this.attachmentsFor(r.id)),
       snippet: r.snippet,
       score: r.score,
     }));
@@ -507,6 +511,13 @@ export class TodoRepo {
   private drawingsFor(id: ULID): ULID[] {
     return this.db
       .prepare<[ULID], { id: string }>('SELECT id FROM drawings WHERE todo_id = ?')
+      .all(id)
+      .map((r) => r.id);
+  }
+
+  private attachmentsFor(id: ULID): ULID[] {
+    return this.db
+      .prepare<[ULID], { id: string }>('SELECT id FROM inbox_attachments WHERE todo_id = ?')
       .all(id)
       .map((r) => r.id);
   }

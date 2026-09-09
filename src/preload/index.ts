@@ -16,6 +16,9 @@ import type {
   CaptureSubmitArgs,
   InboxAttachArgs,
   InboxAttachBlobArgs,
+  InboxListArgs,
+  InboxReadArgs,
+  InboxRemoveArgs,
   SettingsPatchArgs,
 } from '../shared/thihy-api';
 
@@ -111,6 +114,9 @@ const api: ThihyApi = {
   inbox: {
     attach: (args: InboxAttachArgs) => invoke('inbox.attach', args),
     attachBlob: (args: InboxAttachBlobArgs) => invoke('inbox.attachBlob', args),
+    list: (args: InboxListArgs) => invoke('inbox.list', args),
+    read: (args: InboxReadArgs) => invoke('inbox.read', args),
+    remove: (args: InboxRemoveArgs) => invoke('inbox.remove', args),
   },
   settings: {
     get: () => invoke('settings.get', undefined as never),

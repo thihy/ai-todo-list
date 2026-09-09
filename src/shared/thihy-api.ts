@@ -86,6 +86,10 @@ export interface InboxAttachBlobArgs {
   mime: string;
 }
 
+export interface InboxListArgs { todoId: string }
+export interface InboxReadArgs { id: string }
+export interface InboxRemoveArgs { id: string }
+
 export interface SettingsPatchArgs {
   provider?: AIProvider;
   apiKey?: string;
@@ -164,6 +168,9 @@ export interface ThihyApi {
   inbox: {
     attach(args: InboxAttachArgs): Promise<IpcResponse<'inbox.attach'>>;
     attachBlob(args: InboxAttachBlobArgs): Promise<IpcResponse<'inbox.attachBlob'>>;
+    list(args: InboxListArgs): Promise<IpcResponse<'inbox.list'>>;
+    read(args: InboxReadArgs): Promise<IpcResponse<'inbox.read'>>;
+    remove(args: InboxRemoveArgs): Promise<IpcResponse<'inbox.remove'>>;
   };
   settings: {
     get(): Promise<IpcResponse<'settings.get'>>;

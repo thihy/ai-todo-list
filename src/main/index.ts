@@ -2,7 +2,7 @@
 
 import { app, BrowserWindow, shell, protocol, net, Menu, dialog } from 'electron';
 import { join } from 'node:path';
-import { mkdirSync, copyFileSync, writeFileSync, readFileSync, statSync, readdirSync } from 'node:fs';
+import { mkdirSync, readFileSync, statSync, readdirSync } from 'node:fs';
 import { cpSync } from 'node:fs';
 import { basename, extname } from 'node:path';
 import { installRouter, okResult, failResult, register } from './ipc/router';
@@ -11,16 +11,16 @@ import { registerContentHandlers } from './ipc/content-handlers';
 import { registerDocumentHandlers } from './ipc/document-handlers';
 import { registerCapturePreviewHandler } from './ipc/capture-preview-handler';
 import { logger } from './logger';
-import { openDb, newId, type DbHandle } from './db/schema';
+import { openDb, type DbHandle } from './db/schema';
 import { TodoRepo } from './db/todo-repo';
 import { ConversationRepo } from './db/conversation-repo';
 import { MarkdownStore } from './files/markdown';
 import { DrawingStore } from './files/drawings';
 import { DocumentStore } from './files/documents';
+import { InboxStore } from './files/inbox';
 import { SettingsStore } from './settings/store';
 import { CaptureController } from './shortcuts/capture';
 import { TrayController } from './tray/tray';
-import { mimeExt as _mimeExt, sanitizeName as _sanitizeName } from './util/mime';
 import { ClipboardWatcher } from './clipboard/watcher';
 import { installAutoUpdater } from './updater/updater';
 import { installAppMenu, showAbout, popupCategory } from './menu';
@@ -31,7 +31,6 @@ import {
   ATTACHMENTS_SUBDIR,
   APP_NAME,
 } from '../shared/constants';
-import type Database from 'better-sqlite3';
 
 // Single-instance lock. In PROD this ensures only one app instance runs (the
 // tray app: close hides to tray, so a relaunch should surface the existing
@@ -119,13 +118,14 @@ function bootstrap(): void {
     const md = new MarkdownStore(handle.db, todosDir);
     const drawings = new DrawingStore(handle.db, drawingsDir);
     const docs = new DocumentStore(handle.db);
+    const inbox = new InboxStore(handle.db, attachmentsDir);
 
     // Wire IPC router
     installRouter();
     registerTodoHandlers(repo, md);
     registerContentHandlers(md, drawings);
     registerDocumentHandlers(docs);
-    registerInboxHandlers(handle.db, attachmentsDir);
+    registerInboxHandlers(inbox);
     registerSettingsHandlers(settings, handle, rootDir);
     registerAppHandlers();
     registerCaptureHandlers(repo, md);
@@ -318,19 +318,10 @@ function createMainWindow(): BrowserWindow {
   return win;
 }
 
-function registerInboxHandlers(db: Database.Database, attachmentsDir: string): void {
+function registerInboxHandlers(inbox: InboxStore): void {
   register('inbox.attach', async (_e, req) => {
     try {
-      const id = newId();
-      mkdirSync(attachmentsDir, { recursive: true });
-      const filename = `${id}-${basename(req.filePath)}`;
-      const target = join(attachmentsDir, filename);
-      copyFileSync(req.filePath, target);
-      const now = Date.now();
-      db.prepare(
-        'INSERT INTO inbox_attachments (id, todo_id, file_path, mime, created_at) VALUES (?, ?, ?, ?, ?)',
-      ).run(id, req.id, target, req.mime, now);
-      return okResult({ id, todoId: req.id, filePath: target, mime: req.mime, createdAt: now });
+      return okResult(inbox.attach(req.id, req.filePath, req.mime));
     } catch (err) {
       return failResult('attach_failed', (err as Error).message);
     }
@@ -339,35 +330,49 @@ function registerInboxHandlers(db: Database.Database, attachmentsDir: string): v
   // Pasted image from the renderer arrives as a data: URL. Decode + persist.
   register('inbox.attachBlob', async (_e, req) => {
     try {
-      const id = newId();
-      mkdirSync(attachmentsDir, { recursive: true });
-      const comma = req.dataUrl.indexOf(',');
-      const header = req.dataUrl.slice(0, comma);
-      const isBase64 = /;base64/i.test(header);
-      const payload = req.dataUrl.slice(comma + 1);
-      const buf = isBase64
-        ? Buffer.from(payload, 'base64')
-        : Buffer.from(decodeURIComponent(payload), 'utf8');
-      const ext = _mimeExt(req.mime);
-      const filename = `${id}-${_sanitizeName(req.filename) || 'pasted'}.${ext}`;
-      const target = join(attachmentsDir, filename);
-      writeFileSync(target, buf);
-      const now = Date.now();
-      db.prepare(
-        'INSERT INTO inbox_attachments (id, todo_id, file_path, mime, created_at) VALUES (?, ?, ?, ?, ?)',
-      ).run(id, req.todoId, target, req.mime, now);
-      return okResult({
-        id,
-        todoId: req.todoId,
-        filePath: target,
-        mime: req.mime,
-        createdAt: now,
-      });
+      return okResult(inbox.attachBlob(req.todoId, req.dataUrl, req.filename, req.mime));
     } catch (err) {
       return failResult('attach_blob_failed', (err as Error).message);
     }
   });
+
+  register('inbox.list', (_e, req) => {
+    try {
+      return Promise.resolve(okResult(inbox.list(req.todoId)));
+    } catch (err) {
+      return Promise.resolve(failResult('inbox_list_failed', (err as Error).message));
+    }
+  });
+
+  // Return file bytes as a data: URL so the renderer can embed them (e.g.
+  // <img src>) without ever learning the main-process absolute path.
+  register('inbox.read', (_e, req) => {
+    try {
+      return Promise.resolve(okResult(inbox.read(req.id)));
+    } catch (err) {
+      return Promise.resolve(failResult('inbox_read_failed', (err as Error).message));
+    }
+  });
+
+  register('inbox.remove', (_e, req) => {
+    try {
+      inbox.remove(req.id);
+      broadcastDataChanged('content');
+      return Promise.resolve(okResult(undefined as never));
+    } catch (err) {
+      return Promise.resolve(failResult('inbox_remove_failed', (err as Error).message));
+    }
+  });
+
   logger.info('inbox.* handlers registered');
+}
+
+/** Broadcast a content-scope data-changed so attachment list/views refetch
+ *  after a remove (mirrors the document/progress broadcast pattern). */
+function broadcastDataChanged(scope: 'content'): void {
+  for (const w of BrowserWindow.getAllWindows()) {
+    if (!w.isDestroyed()) w.webContents.send('app:data-changed', { scope });
+  }
 }
 
 /** Best-effort mime-type from extension. Returns 'application/octet-stream'
