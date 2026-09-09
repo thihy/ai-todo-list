@@ -2,17 +2,22 @@
 // hand-edited directory TREE (folders) with tasks as leaves (files).
 // L5 redesign:
 //   - Groups indent by nesting depth (Group > sub-Group > sub-sub-Group).
+//     Indentation is driven by the `--group-depth` CSS custom property,
+//     so sub-groups visibly nest under their parent.
 //   - Tasks inside a group indent ONE more level than the group itself.
 //   - SubTasks (parentId !== null) indent UNDER their parent task, recursively.
-//   - Root-level tasks (no parentId, no groupId) render INLINE at the top
-//     of the tree; there is no "未分组" section header — "no group" is just
-//     "depth 0 in the tree".
+//   - Root-level tasks (no parentId, no groupId) render AFTER the group tree.
+//     A task with no group is "loose" — it sits at the bottom of the pane,
+//     not floating above the groups.
 //   - Double-clicking a group row toggles expand/collapse (NOT rename).
 //   - Each group row has its action icons RIGHT-ALIGNED in a fixed slot:
 //     ✏ 重命名 · 📁 新建子分组 · 🗑 删除. They fade in on hover but the
 //     rename slot is always discoverable, so users don't have to discover
 //     the double-click-to-rename gesture (which used to conflict with
 //     double-click = expand).
+//   - Group rows show a folder glyph (14×14); task rows show a document
+//     glyph of the SAME size and stroke style, so folders and files read
+//     as one consistent icon family.
 
 import React, { useEffect, useMemo, useState } from 'react';
 import { useTodos, useGroups } from '../hooks/useThihyApi';
@@ -50,7 +55,10 @@ export const TodoListPane: React.FC<{
 
   const tree = useMemo(() => buildTree(groupsApi.groups, data), [groupsApi.groups, data]);
   // Root-level tasks: top-level (no parentId) AND unfiled (no groupId).
-  // These render inline above the group tree with no section header.
+  // These render AFTER the group tree — a task with no group is "loose",
+  // it sits at the bottom of the pane rather than floating above the
+  // groups (which would push the groups off-screen when there are many
+  // loose tasks).
   const rootTasks = useMemo(
     () => data.filter((t) => !t.groupId && !t.parentId),
     [data],
@@ -88,7 +96,27 @@ export const TodoListPane: React.FC<{
           </div>
         )}
 
-        {/* Root-level tasks render INLINE here — no "未分组" section header. */}
+        {tree.map((node) => (
+          <GroupBranch
+            key={node.group.id}
+            node={node}
+            depth={0}
+            selectedId={selectedId}
+            onSelect={onSelect}
+            counts={groupsApi.counts}
+            api={groupsApi}
+            allTodos={data}
+            onCycle={async (t, next) => {
+              await window.thihy.todo.update(t.id, { status: next });
+              await refresh();
+            }}
+          />
+        ))}
+
+        {/* Root-level tasks render AFTER the group tree. A task with no
+            group is "loose" — it sits at the bottom of the pane. There is
+            no "未分组" section header; the row glyph (document icon) is
+            enough to signal "this is a task, not a group". */}
         {rootTasks.length > 0 && (
           <ul className="task-list__root-tasks">
             {rootTasks.map((t) => (
@@ -107,23 +135,6 @@ export const TodoListPane: React.FC<{
             ))}
           </ul>
         )}
-
-        {tree.map((node) => (
-          <GroupBranch
-            key={node.group.id}
-            node={node}
-            depth={0}
-            selectedId={selectedId}
-            onSelect={onSelect}
-            counts={groupsApi.counts}
-            api={groupsApi}
-            allTodos={data}
-            onCycle={async (t, next) => {
-              await window.thihy.todo.update(t.id, { status: next });
-              await refresh();
-            }}
-          />
-        ))}
       </div>
 
       <footer className="task-list__footer">
@@ -395,6 +406,13 @@ const TaskRow: React.FC<{
           ) : (
             <span className="task-row__chevron-spacer" aria-hidden="true" />
           )}
+          {/* Document glyph — same 14×14 size and stroke style as the
+              FolderGlyph in group rows, so folders and files read as one
+              consistent icon family. Done tasks get a muted glyph; active
+              tasks get the accent color. */}
+          <span className="task-row__icon" aria-hidden="true">
+            <TaskGlyph done={done} />
+          </span>
           <span className="task-row__title">{todo.title || '(无标题)'}</span>
           <button
             type="button"
@@ -522,6 +540,23 @@ const FolderGlyph: React.FC = () => (
   <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
     <path d="M1.5 4.5C1.5 3.67 2.17 3 3 3h3l1.5 1.5H13c.83 0 1.5.67 1.5 1.5v6c0 .83-.67 1.5-1.5 1.5H3c-.83 0-1.5-.67-1.5-1.5v-7.5z"
       fill="var(--accent-primary-soft)" stroke="var(--accent-primary)" strokeWidth="1" />
+  </svg>
+);
+
+// TaskGlyph — a document/file glyph. SAME 14×14 size and viewBox (0 0 16 16)
+// as FolderGlyph, and the same fill+stroke pattern (soft accent fill,
+// accent stroke, 1px stroke) so folders and files read as one family.
+// `done` mutes the glyph so completed tasks visually recede.
+const TaskGlyph: React.FC<{ done: boolean }> = ({ done }) => (
+  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+    <path d="M3.5 1.5h6L12.5 4.5v10a.5.5 0 01-.5.5h-8.5a.5.5 0 01-.5-.5v-12.5a.5.5 0 01.5-.5z"
+      fill={done ? 'transparent' : 'var(--accent-primary-soft)'}
+      stroke={done ? 'var(--fg-muted)' : 'var(--accent-primary)'}
+      strokeWidth="1" />
+    <path d="M9 1.5V4.5h3"
+      fill="none"
+      stroke={done ? 'var(--fg-muted)' : 'var(--accent-primary)'}
+      strokeWidth="1" strokeLinejoin="round" />
   </svg>
 );
 

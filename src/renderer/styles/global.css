@@ -2214,6 +2214,10 @@ a:hover {
   padding: 4px var(--space-md);
   border-radius: 6px;
   margin: 0 var(--space-sm);
+  /* Sub-groups indent under their parent. `--group-depth` is set on the
+     .task-group wrapper (depth 0 = root group, 1 = child, 2 = grandchild).
+     Each level indents 14px so the tree reads as a directory tree. */
+  margin-left: calc(var(--space-sm) + var(--group-depth, 0) * 14px);
   cursor: default;
   user-select: none;
 }
@@ -2254,7 +2258,11 @@ a:hover {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  cursor: text;
+  /* default cursor, NOT text — the rename affordance is the ✏ icon on
+     the right; hovering the name should not show an edit (I-beam) cursor
+     because that implies click-to-edit, which we deliberately don't do
+     (double-click = expand/collapse, not rename). */
+  cursor: default;
 }
 .task-group__name-input {
   flex: 1;
@@ -2303,6 +2311,77 @@ a:hover {
 }
 .task-group__items .task-row {
   padding-left: calc(var(--space-lg) + var(--row-depth, 0) * 14px);
+}
+
+/* ===== L5: task row chevron + document icon + subtask nesting ===== */
+
+/* SubTask expand/collapse chevron — same 16×16 slot as the group chevron
+   so the tree gutters line up across group rows and task rows. Only
+   rendered when the task actually has subtasks. */
+.task-row__chevron {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border: none;
+  background: transparent;
+  color: var(--fg-muted);
+  cursor: pointer;
+  border-radius: 4px;
+}
+.task-row__chevron:hover {
+  color: var(--fg-primary);
+  background: var(--bg-active);
+}
+/* Spacer that occupies the chevron slot for leaf tasks (no subtasks) so
+   the document icon + title align with the same left edge as tasks that
+   DO have a chevron. */
+.task-row__chevron-spacer {
+  flex: none;
+  width: 16px;
+  height: 16px;
+}
+/* Document glyph slot — 14×14, matches .task-group__folder sizing so
+   folders and files read as one icon family. */
+.task-row__icon {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  color: var(--accent-primary);
+}
+.is-done .task-row__icon {
+  color: var(--fg-muted);
+}
+
+/* SubTask children nest under their parent. Indentation is driven by
+   `--row-depth` so the recursion (sub-sub-tasks) keeps nesting. */
+.task-branch__children {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.task-branch__children .task-row {
+  padding-left: calc(var(--space-lg) + var(--row-depth, 0) * 14px);
+}
+
+/* Root-level tasks (no group) render after the group tree in their own
+   list. No section header — the document glyph is enough to signal
+   "this is a task". */
+.task-list__root-tasks {
+  list-style: none;
+  margin: var(--space-sm) 0 0;
+  padding: 0;
+  /* Top border separates the loose tasks from the groups above. */
+  border-top: 1px solid var(--border-subtle, #EDEFF2);
+  padding-top: var(--space-xs);
+}
+.task-list__root-tasks .task-row {
+  padding-left: var(--space-lg);
 }
 
 /* ===== Composer (center capture surface) ===== */
