@@ -128,7 +128,14 @@ export const ProgressInline: React.FC<{
   };
 
   const closePopover = useCallback((): void => {
+    // Close BOTH modes: pending (just-logged via drag) and editing (clicked
+    // an existing note). Without clearing editingEntryId, outside-click and
+    // the 1-min idle timer only dismiss the post-drag variant — clicking an
+    // existing note to edit it makes the popover sticky to outside clicks,
+    // which reads as "I can't dismiss it". Both modes share the popover, so
+    // both must be cleared to actually close it.
     setPendingEntryId(null);
+    setEditingEntryId(null);
     setNoteDraft('');
   }, []);
 
