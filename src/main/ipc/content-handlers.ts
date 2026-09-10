@@ -1,11 +1,13 @@
 // IPC handlers for content.* + drawing.* channels.
 
+import { relative, sep } from 'node:path';
 import { okResult, failResult, register } from './router';
 import type { MarkdownStore } from '../files/markdown';
 import type { DrawingStore } from '../files/drawings';
 import type { TodoRepo } from '../db/todo-repo';
 import { logger } from '../logger';
 import * as gitHistory from '../git-history';
+import * as paths from '../files/paths';
 import type { ULID } from '../../shared/todo-types';
 
 export function registerContentHandlers(
@@ -24,13 +26,25 @@ export function registerContentHandlers(
     /* swallow — see comment above */
   });
 
+  // Resolve the git relPath (path of the progress doc relative to the
+  // todosDir repo root) for a given todo. Post-refactor the file lives at
+  // {todosDir}/{slug}/progress.html, so relPath = {slug}/progress.html.
+  // We read it from the task dir MarkdownStore already resolves, so the
+  // path tracks renames + collision suffixes without re-deriving the slug.
+  const progressRelPath = (todoId: ULID): string => {
+    const taskDir = md.filePathFor(todoId);
+    // relative(todosDir, …/progress.html) → `{slug}/progress.html` with OS
+    // separators; git wants forward slashes.
+    return relative(todosDir, paths.progressFile(taskDir)).split(sep).join('/');
+  };
+
   // Capture the repo in a closure so commitWriteToGit can look up the title
   // for the commit message without re-importing anything.
   const commitWriteToGit = async (todoId: ULID, version: number): Promise<void> => {
     try {
       if (!(await gitHistory.gitAvailable())) return;
       const title = repo.get(todoId)?.title ?? 'task';
-      await gitHistory.commitOnSave(todosDir, todoId, title, version);
+      await gitHistory.commitOnSave(todosDir, progressRelPath(todoId), title, version);
     } catch {
       /* swallow — git is best-effort */
     }
@@ -83,7 +97,7 @@ export function registerContentHandlers(
     try {
       const available = await gitHistory.gitAvailable();
       if (!available) return okResult({ available: false, entries: [] });
-      const entries = (await gitHistory.getFileLog(todosDir, req.id)) ?? [];
+      const entries = (await gitHistory.getFileLog(todosDir, progressRelPath(req.id))) ?? [];
       return okResult({ available: true, entries });
     } catch (err) {
       return failResult('git_history_failed', (err as Error).message);
@@ -92,7 +106,7 @@ export function registerContentHandlers(
 
   register('content.gitRestore', async (_e, req) => {
     try {
-      const ok = await gitHistory.restoreFileAtSha(todosDir, req.id, req.sha);
+      const ok = await gitHistory.restoreFileAtSha(todosDir, progressRelPath(req.id), req.sha);
       if (!ok) return failResult('git_restore_failed', `git restore failed for ${req.sha}`);
       // After a restore, the renderer re-reads the body via content.readBody.
       return okResult(undefined as never);

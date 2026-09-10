@@ -21,7 +21,6 @@ import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import { promisify } from 'node:util';
-import type { ULID } from '../shared/todo-types';
 
 const execFileAsync = promisify(execFile);
 
@@ -97,18 +96,22 @@ async function ensureLocalIdentity(todosDir: string): Promise<void> {
   }
 }
 
-/** Stage + commit the todo's markdown file. Idempotent: if there's nothing
- *  to commit (the file hasn't changed since the last commit), no commit is
- *  created and the call is a no-op. Returns the new commit SHA, or null if
- *  nothing changed / git isn't available / the commit failed. */
+/** Stage + commit a single file in the todos/.git/ repo. Idempotent: if
+ *  there's nothing to commit (the file hasn't changed since the last
+ *  commit), no commit is created and the call is a no-op. Returns the new
+ *  commit SHA, or null if nothing changed / git isn't available / the commit
+ *  failed.
+ *
+ *  `relPath` is the path of the file relative to `todosDir` (the repo root),
+ *  e.g. `{slug}/progress.html` after the per-task refactor. `todoTitle` +
+ *  `version` only shape the commit message — they don't locate the file. */
 export async function commitOnSave(
   todosDir: string,
-  todoId: ULID,
+  relPath: string,
   todoTitle: string,
   version: number,
 ): Promise<string | null> {
   if (!(await gitAvailable())) return null;
-  const relPath = `${todoId}.md`;
   const filePath = join(todosDir, relPath);
   if (!existsSync(filePath)) return null;
   try {
@@ -149,17 +152,16 @@ export async function commitOnSave(
   }
 }
 
-/** Read the commit log for a single todo file, newest-first. Uses
- *  `--follow` so renames stay linked (e.g. if the todo id is ever recycled
- *  in a future migration). `limit` defaults to 100 — enough for a lifetime
- *  of saves on one task without flooding the popover. */
+/** Read the commit log for a single file, newest-first. Uses `--follow` so
+ *  renames stay linked across the v1→v2 layout migration (the bridge commit
+ *  recorded via git-history.mv keeps `--follow` working when the file moved
+ *  from `{ulid}.md` to `{slug}/progress.html`). `limit` defaults to 100. */
 export async function getFileLog(
   todosDir: string,
-  todoId: ULID,
+  relPath: string,
   limit = 100,
 ): Promise<GitLogEntry[] | null> {
   if (!(await gitAvailable())) return null;
-  const relPath = `${todoId}.md`;
   if (!existsSync(join(todosDir, '.git'))) return [];
   try {
     // Custom format: SHA + author timestamp + subject (%s), tab-separated so
@@ -192,11 +194,10 @@ export async function getFileLog(
  *  available or the SHA is unknown to the repo. */
 export async function getFileAtSha(
   todosDir: string,
-  todoId: ULID,
+  relPath: string,
   sha: string,
 ): Promise<string | null> {
   if (!(await gitAvailable())) return null;
-  const relPath = `${todoId}.md`;
   try {
     const { stdout } = await execFileAsync(
       'git',
@@ -211,41 +212,33 @@ export async function getFileAtSha(
 
 /** Restore the working tree's copy of the file to a given commit. Writes
  *  the file directly (we DON'T checkout — that would touch the whole
- *  working tree). Used by the history popover's "恢复此版本" action. */
+ *  working tree). Used by the history popover's "恢复此版本" action.
+ *
+ *  Post-refactor the file is raw HTML (progress.html) with no front-matter,
+ *  so the restored bytes are written verbatim. */
 export async function restoreFileAtSha(
   todosDir: string,
-  todoId: ULID,
+  relPath: string,
   sha: string,
 ): Promise<boolean> {
   if (!(await gitAvailable())) return false;
-  const relPath = `${todoId}.md`;
   try {
     const { stdout } = await execFileAsync(
       'git',
       ['show', `${sha}:${relPath}`],
       { cwd: todosDir, timeout: 10_000 },
     );
-    // Strip the YAML front-matter (between the leading --- pair) so the
-    // restored body matches the shape the MarkdownStore writes — git stores
-    // the raw file including front-matter, but the renderer's editor works
-    // on body-only markdown.
-    const body = stripFrontMatter(stdout);
-    const { writeFileSync } = await import('node:fs');
-    writeFileSync(join(todosDir, relPath), stdout, 'utf8');
+    const { writeFileSync, mkdirSync } = await import('node:fs');
+    const { dirname } = await import('node:path');
+    const abs = join(todosDir, relPath);
+    // The target dir may not exist yet if the task dir was removed; recreate
+    // it so the restore lands where the editor expects to find the file.
+    mkdirSync(dirname(abs), { recursive: true });
+    writeFileSync(abs, stdout, 'utf8');
     return true;
-    void body; // (body extracted for future use if we choose to push only body via IPC)
   } catch {
     return false;
   }
-}
-
-/** Drop the YAML front-matter block at the top of a gray-matter-encoded
- *  markdown file. We don't import gray-matter here because we already pay
- *  the dependency cost in markdown.ts; the format is small + stable. */
-function stripFrontMatter(raw: string): string {
-  const m = raw.match(/^---\n[\s\S]*?\n---\n?/);
-  if (!m) return raw;
-  return raw.slice(m[0].length);
 }
 
 /** Rename (or add) a single path inside the todos/.git/ repo. Used by the
