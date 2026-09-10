@@ -28,6 +28,13 @@ export class MarkdownStore {
     mkdirSync(todosDir, { recursive: true });
   }
 
+  /** Absolute path to the folder where task .md files live. Used by the
+   *  git-history wiring so commitOnSave / getFileLog / restoreFileAtSha
+   *  can scope operations to the right directory. */
+  get todosDirPath(): string {
+    return this.todosDir;
+  }
+
   filePathFor(id: ULID): string {
     return join(this.todosDir, `${id}.md`);
   }

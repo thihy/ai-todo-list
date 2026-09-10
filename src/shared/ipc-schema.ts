@@ -5,6 +5,7 @@ import type {
   ContentVersionEntry,
   DocumentVersionEntry,
   DrawingMeta,
+  GitHistoryEntry,
   InboxAttachment,
   ProgressLogEntry,
   SearchHit,
@@ -100,6 +101,16 @@ export interface ContentWriteBodyReq { id: ULID; markdown: string; expectVersion
 export interface ContentWriteBodyRes { version: number; updatedAt: number }
 export interface ContentHistoryReq { id: ULID }
 export interface ContentRestoreVersionReq { id: ULID; versionId: number }
+
+/** Git-backed save history (separate from the DB content_versions used for
+ *  AI session restore). `available: false` means git isn't on PATH — the
+ *  editor's History button then quietly hides itself. */
+export interface ContentGitHistoryReq { id: ULID }
+export interface ContentGitHistoryRes {
+  available: boolean;
+  entries: GitHistoryEntry[];
+}
+export interface ContentGitRestoreReq { id: ULID; sha: string }
 
 // ----- drawing.* -----
 
@@ -287,6 +298,8 @@ export interface IpcRegistry {
   'content.writeBody': IpcChannel<ContentWriteBodyReq, IpcResult<ContentWriteBodyRes>>;
   'content.history': IpcChannel<ContentHistoryReq, IpcResult<ContentVersionEntry[]>>;
   'content.restoreVersion': IpcChannel<ContentRestoreVersionReq, IpcResult<void>>;
+  'content.gitHistory': IpcChannel<ContentGitHistoryReq, IpcResult<ContentGitHistoryRes>>;
+  'content.gitRestore': IpcChannel<ContentGitRestoreReq, IpcResult<void>>;
 
   'drawing.list': IpcChannel<DrawingListReq, IpcResult<DrawingMeta[]>>;
   'drawing.read': IpcChannel<DrawingReadReq, IpcResult<unknown>>;

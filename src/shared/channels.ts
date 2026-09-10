@@ -27,6 +27,8 @@ const DECLARED_CHANNELS: ReadonlySet<string> = new Set([
   'content.writeBody',
   'content.history',
   'content.restoreVersion',
+  'content.gitHistory',
+  'content.gitRestore',
   'drawing.list',
   'drawing.read',
   'drawing.save',

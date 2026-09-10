@@ -28,9 +28,11 @@ import {
   IconListOl,
   IconListUl,
   IconQuote,
+  IconSave,
   IconStrike,
 } from './icons';
 import { MarkdownText, type MarkdownLabels } from '@deepseek-ai/dsh-client-ui-primitives';
+import { HistoryPopover } from './HistoryPopover';
 
 /** A textarea + value transform, returning the new value and selection. */
 interface EditResult {
@@ -173,12 +175,13 @@ function continuationMarker(line: string): { insert: string; exit: boolean } | n
 }
 
 export const MarkdownEditor: React.FC<{
+  todoId: string;
   value: string;
   version: number | null;
   onSave: (markdown: string) => Promise<void>;
   saving: boolean;
   error: string | null;
-}> = ({ value, version, onSave, saving, error }) => {
+}> = ({ todoId, value, version, onSave, saving, error }) => {
   const [md, setMd] = useState(value);
   const [view, setView] = useState<'write' | 'preview' | 'split'>('write');
   const [lastSavedAt, setLastSavedAt] = useState<number | null>(null);
@@ -351,6 +354,21 @@ export const MarkdownEditor: React.FC<{
           a single, focused row of format affordances. Status + save still
           float right within the same row. */}
       <div className="md-editor__topbar">
+        {/* Save + History sit at the START of the toolbar so the user sees
+            "is my work safe?" the moment they glance at the editor —
+            mirrors the WYSIWYG toolbar above. Save is icon-only (IconSave
+            floppy); History opens a popover of git commits for this task. */}
+        <button
+          type="button"
+          className={`md-editor__save md-editor__save--icon${dirty ? ' is-dirty' : ''}${saving ? ' is-saving' : ''}`}
+          onClick={() => void onSaveWrapped(md)}
+          disabled={!dirty || saving}
+          title={dirty ? '保存 (Ctrl/Cmd+S)' : '已保存'}
+          aria-label={dirty ? '保存' : '已保存'}
+        >
+          <IconSave size={14} />
+        </button>
+        <HistoryPopover todoId={todoId} onRestored={() => undefined} />
         {view !== 'preview' && (
           <div className="md-editor__toolbar" role="toolbar" aria-label="格式">
               <ToolbarBtn label="H1" title="一级标题 (Ctrl+Alt+1)" onClick={() => doLine('# ')}>
@@ -402,14 +420,6 @@ export const MarkdownEditor: React.FC<{
         <span className="md-editor__spacer" />
         {saving && <span className="md-editor__status">保存中…</span>}
         {error && <span className="md-editor__status md-editor__status--error">{error}</span>}
-        <button
-          type="button"
-          className={`md-editor__save${dirty ? ' is-dirty' : ''}`}
-          onClick={() => void onSaveWrapped(md)}
-          disabled={!dirty || saving}
-        >
-          {dirty ? '保存' : '已保存'}
-        </button>
       </div>
 
       <div className={`md-editor__body md-editor__body--${view}`}>

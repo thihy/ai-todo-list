@@ -99,6 +99,7 @@ const DocEditor: React.FC<{ doc: TaskDocument; todoId: string }> = ({ doc, todoI
     case 'note_md':
       return (
         <MarkdownEditor
+          todoId={todoId}
           value={content}
           version={version}
           onSave={save}

@@ -13,7 +13,7 @@ import StarterKit from '@tiptap/starter-kit';
 import Image from '@tiptap/extension-image';
 import Link from '@tiptap/extension-link';
 import { usePrompt } from '../hooks/usePrompt';
-import { IconLink, IconQuote } from './icons';
+import { IconLink, IconQuote, IconSave } from './icons';
 
 function fileToDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -184,6 +184,21 @@ export const WysiwygEditor: React.FC<{
   return (
     <div className="wysiwyg">
       <div className="wysiwyg__toolbar">
+        {/* Save + History sit at the START of the toolbar so the user sees
+            "is my work safe?" the moment they glance at the editor — same
+            pattern as MarkdownEditor. Save is icon-only (IconSave floppy);
+            disabled state reads the canonical "已保存"/dirty styling. */}
+        <button
+          type="button"
+          className={`wysiwyg__save wysiwyg__save--icon${dirty ? ' is-dirty' : ''}${saving ? ' is-saving' : ''}`}
+          onClick={() => void onSaveWrapped(html)}
+          disabled={!dirty || saving}
+          title={dirty ? '保存 (Ctrl/Cmd+S)' : '已保存'}
+          aria-label={dirty ? '保存' : '已保存'}
+        >
+          <IconSave size={14} />
+        </button>
+        <span className="wysiwyg__spacer" />
         <Btn label="H1" title="一级标题" onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()} active={editor.isActive('heading', { level: 1 })} />
         <Btn label="H2" title="二级标题" onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()} active={editor.isActive('heading', { level: 2 })} />
         <Btn label="B" title="粗体" onClick={() => editor.chain().focus().toggleBold().run()} active={editor.isActive('bold')} />
@@ -204,17 +219,8 @@ export const WysiwygEditor: React.FC<{
           }}
           active={editor.isActive('link')}
         />
-        <span className="wysiwyg__spacer" />
         {saving && <span className="wysiwyg__status">保存中…</span>}
         {error && <span className="wysiwyg__status wysiwyg__status--error">{error}</span>}
-        <button
-          type="button"
-          className="wysiwyg__save"
-          onClick={() => void onSaveWrapped(html)}
-          disabled={!dirty || saving}
-        >
-          {dirty ? '保存' : '已保存'}
-        </button>
       </div>
       <EditorContent editor={editor} />
       {/* Status bar — same shape as MarkdownEditor so the user has one

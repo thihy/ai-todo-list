@@ -4421,6 +4421,22 @@ a:hover {
   color: var(--fg-muted);
   cursor: default;
 }
+/* Icon-only variant for the "save icon at the start of the toolbar" form.
+   Same visual language as md-editor__save--icon below; both editors share
+   the floppy glyph so the affordance reads as "save" in either mode. */
+.wysiwyg__save--icon {
+  width: 28px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.wysiwyg__save--icon.is-dirty {
+  /* Distinct color when there's unsaved work — visually different from the
+     muted "已保存" state so the user knows action is needed. */
+  background: var(--accent-warning, #d97706);
+  color: var(--fg-on-accent, #fff);
+}
 
 .wysiwyg__content {
   min-height: 320px;
@@ -4560,6 +4576,22 @@ a:hover {
   color: var(--fg-muted);
   cursor: default;
 }
+/* Icon-only variant — sits at the start of the topbar next to the History
+   popover. Same width as a toolbar button so the topbar rhythm stays even. */
+.md-editor__save--icon {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.md-editor__save--icon.is-dirty {
+  /* Visually distinct from the muted "已保存" state — there IS work to save. */
+  background: var(--accent-warning, #d97706);
+  border-color: var(--accent-warning, #d97706);
+  color: var(--fg-on-accent);
+}
 /* Format toolbar (H1/H2/H3, B/I/S/code/link/quote/list/divider). Sits below
    the tabs bar, above the textarea. Hidden in pure preview mode. */
 .md-editor__toolbar {
@@ -4646,6 +4678,106 @@ a:hover {
 .md-editor__textarea::placeholder { color: var(--fg-muted); }
 .md-editor__textarea:focus { outline: none; }
 .md-editor__body--split .md-editor__textarea { border: 1px solid var(--border-default); border-radius: var(--radius-md); }
+
+/* History popover — git-backed save history, anchored to the clock-arrow
+   trigger in the editor topbar. Panel anchors below-right of the button. */
+.history-popover {
+  position: relative;
+  display: inline-flex;
+}
+.history-popover__btn {
+  height: 28px;
+  width: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--fg-muted);
+  cursor: pointer;
+}
+.history-popover__btn:hover { background: var(--bg-hover); color: var(--fg-primary); }
+.history-popover__btn.is-open { background: var(--bg-hover); color: var(--fg-primary); }
+.history-popover__panel {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 50;
+  min-width: 320px;
+  max-width: 380px;
+  max-height: 360px;
+  overflow-y: auto;
+  padding: var(--space-xs);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-popover, 0 4px 16px rgba(15, 18, 22, 0.08));
+}
+.history-popover__head {
+  font-size: var(--font-xs);
+  font-weight: 600;
+  color: var(--fg-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: var(--space-xs) var(--space-sm);
+}
+.history-popover__empty {
+  padding: var(--space-md);
+  font-size: var(--font-sm);
+  color: var(--fg-muted);
+  text-align: center;
+}
+.history-popover__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.history-popover__item {
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius-sm);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.history-popover__item:hover { background: var(--bg-hover); }
+.history-popover__row1 {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-sm);
+  font-size: var(--font-xs);
+}
+.history-popover__time {
+  color: var(--fg-muted);
+  font-variant-numeric: tabular-nums;
+}
+.history-popover__sha {
+  color: var(--fg-muted);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
+}
+.history-popover__msg {
+  font-size: var(--font-sm);
+  color: var(--fg-primary);
+}
+.history-popover__restore {
+  align-self: flex-start;
+  margin-top: 2px;
+  padding: 2px var(--space-xs);
+  font-size: var(--font-xs);
+  border: 1px solid var(--border-default);
+  background: transparent;
+  border-radius: var(--radius-sm);
+  color: var(--fg-secondary);
+  cursor: pointer;
+}
+.history-popover__restore:hover {
+  background: var(--bg-hover);
+  border-color: var(--border-strong);
+}
+.history-popover__restore:disabled { opacity: 0.5; cursor: default; }
 
 /* Bottom status bar shared by both editors (RICH + MD). Sits inside the
    editor column below the body so it always reports the active document's

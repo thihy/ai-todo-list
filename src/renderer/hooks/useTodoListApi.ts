@@ -8,7 +8,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { TodoListApi, AppEvent, AppEventMap, SettingsPatchArgs } from '../../shared/todo-list-api';
 import type { Todo, TodoFilter, SearchHit, TodoStats } from '../../shared/todo-types';
-import type { ContentVersionEntry, ProgressLogEntry } from '../../shared/todo-types';
+import type { ContentVersionEntry, GitHistoryEntry, ProgressLogEntry } from '../../shared/todo-types';
 import type { TaskDocument } from '../../shared/todo-types';
 import type { DrawingMeta, DrawingScene, InboxAttachment } from '../../shared/todo-types';
 import type { AIModel, AIStreamEvent } from '../../shared/ai-types';
@@ -250,6 +250,49 @@ export function useAttachments(todoId: string | null): {
 }
 
 // ----- Multi-document workspace (schema v11) -----
+
+/** Git-backed save history for the task's markdown body. `available: false`
+ *  means git isn't on PATH — the History button then hides itself. The
+ *  caller can `refresh()` after a save to pull the new commit. */
+export function useGitHistory(todoId: string | null): {
+  available: boolean;
+  entries: GitHistoryEntry[];
+  refresh: () => Promise<void>;
+  restore: (sha: string) => Promise<boolean>;
+} {
+  const [available, setAvailable] = useState(false);
+  const [entries, setEntries] = useState<GitHistoryEntry[]>([]);
+  const refresh = useCallback(async () => {
+    if (!todoId) {
+      setAvailable(false);
+      setEntries([]);
+      return;
+    }
+    const res = await window.todoList.content.gitHistory(todoId);
+    if (res.ok) {
+      setAvailable(res.data.available);
+      setEntries(res.data.entries);
+    } else {
+      setAvailable(false);
+      setEntries([]);
+    }
+  }, [todoId]);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  const restore = useCallback(
+    async (sha: string): Promise<boolean> => {
+      if (!todoId) return false;
+      const res = await window.todoList.content.gitRestore(todoId, sha);
+      return res.ok;
+    },
+    [todoId],
+  );
+
+  return { available, entries, refresh, restore };
+}
 
 export function useDocuments(todoId: string | null): {
   documents: TaskDocument[];

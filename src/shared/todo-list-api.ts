@@ -128,6 +128,13 @@ export interface TodoListApi {
     ): Promise<IpcResponse<'content.writeBody'>>;
     history(id: string): Promise<IpcResponse<'content.history'>>;
     restoreVersion(id: string, versionId: string): Promise<IpcResponse<'content.restoreVersion'>>;
+    /** Git-backed save history (separate from the DB content_versions above,
+     *  which is used for AI session restore). `available: false` on the
+     *  response means git isn't on PATH — the editor then hides the
+     *  History button. */
+    gitHistory(id: string): Promise<IpcResponse<'content.gitHistory'>>;
+    /** Restore the working-tree markdown file to a given git commit SHA. */
+    gitRestore(id: string, sha: string): Promise<IpcResponse<'content.gitRestore'>>;
   };
   progress: {
     /** Record a progress entry: sets the percent + appends an audit-log row

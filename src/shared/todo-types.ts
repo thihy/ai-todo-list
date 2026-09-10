@@ -125,6 +125,16 @@ export interface ContentVersionEntry {
   savedAt: number;
 }
 
+/** One entry in a task's git-backed save history (separate from the DB
+ *  content_versions used for AI session restore). Returned by
+ *  content.gitHistory. `available: false` means git isn't on PATH — the
+ *  editor's History button then quietly hides itself. */
+export interface GitHistoryEntry {
+  sha: string;
+  message: string;
+  authorTs: number;
+}
+
 /** One entry in a task's progress audit log. Every progress mutation appends
  *  a row: progress.log() with the user's optional one-line note, or
  *  todo.update({progress}) with a null note when an AI/batch path sets the

@@ -88,6 +88,8 @@ const api: TodoListApi = {
     history: (id) => invoke('content.history', { id }),
     restoreVersion: (id, versionId) =>
       invoke('content.restoreVersion', { id, versionId: Number(versionId) }),
+    gitHistory: (id) => invoke('content.gitHistory', { id }),
+    gitRestore: (id, sha) => invoke('content.gitRestore', { id, sha }),
   },
   progress: {
     log: (todoId, percent, note) => invoke('progress.log', { todoId, percent, note }),
