@@ -3010,7 +3010,11 @@ a:hover {
 }
 .status-select__menu {
   position: absolute;
-  z-index: 20;
+  /* Match the project's popover scale so the menu paints above sibling
+     pickers in the same header (PriorityPicker / DatePicker / TagInput all
+     use --z-popover). The hardcoded 20 left it under-painted relative to
+     them. */
+  z-index: var(--z-popover);
   top: calc(100% + 4px);
   left: 0;
   min-width: 160px;
@@ -3023,9 +3027,13 @@ a:hover {
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-md);
 }
+/* The icon trigger sits at the LEFT edge of both the list row and the detail
+   header title-line. Right-aligning the 160px menu to it pushed the menu ~140px
+   off-screen to the left, where .editor-pane--sections { overflow: hidden }
+   clipped it. Left-align so the menu extends rightward into the visible area. */
 .status-select--icon .status-select__menu {
-  left: auto;
-  right: 0;
+  left: 0;
+  right: auto;
 }
 .status-select__option {
   display: flex;
