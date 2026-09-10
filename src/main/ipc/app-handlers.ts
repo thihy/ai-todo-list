@@ -9,9 +9,14 @@ import { getFocus, setFocus } from '../app-context';
 import { logger } from '../logger';
 
 export interface AppHandlersDeps {
-  /** Per-task directory (e.g. <rootDir>/todos/<todoId>). Resolved at
-   *  register-time so we don't have to thread the dataDir through every call. */
-  resolveTaskDir: (todoId: string) => string;
+  /** Absolute path to the task's markdown file (e.g. <rootDir>/todos/<todoId>.md).
+   *  Per-task data is stored as a single .md file alongside its siblings in the
+   *  shared todos/ directory — there is no per-task directory. We use
+   *  shell.showItemInFolder so the OS file manager opens the shared folder
+   *  with the task's file highlighted, which is the closest analogue to
+   *  "opening the task's folder" without inventing a directory layout that
+   *  doesn't exist. */
+  resolveTaskFile: (todoId: string) => string;
 }
 
 export function registerAppFocusHandlers(deps: AppHandlersDeps): void {
@@ -37,15 +42,17 @@ export function registerAppFocusHandlers(deps: AppHandlersDeps): void {
 
   register('app.openTaskDir', async (_e, req) => {
     try {
-      const dir = deps.resolveTaskDir(req.todoId);
-      const err = await shell.openPath(dir);
-      if (err) {
-        // shell.openPath returns a non-empty string with an error message
-        // when the path doesn't exist or couldn't be opened; surface it
-        // instead of silently succeeding.
-        return failResult('open_failed', err);
-      }
-      return okResult({ path: dir });
+      const filePath = deps.resolveTaskFile(req.todoId);
+      // showItemInFolder opens the parent directory in the OS file manager
+      // and highlights the file — that is the user-visible "open the
+      // task's folder and show me my file" experience even though the
+      // storage is a flat file in a shared todos/ directory. It returns
+      // void; failures (e.g. path doesn't exist on disk yet) surface as
+      // the OS file manager simply not opening, which the user will
+      // notice as nothing happening — that's the existing behaviour for
+      // shell APIs that can't introspect the file manager's state.
+      shell.showItemInFolder(filePath);
+      return okResult({ path: filePath });
     } catch (err) {
       return failResult('open_failed', (err as Error).message);
     }

@@ -33,24 +33,31 @@ import {
   APP_NAME,
 } from '../shared/constants';
 
-// Single-instance lock. In PROD this ensures only one app instance runs (the
-// tray app: close hides to tray, so a relaunch should surface the existing
-// window, not start a second). In DEV we SKIP the lock entirely: when a
-// `pnpm dev` process is Ctrl+C'd on Windows the electron child is often
-// orphaned and keeps holding the lock, so the next `pnpm dev` would get
-// gotLock=false, call app.quit(), and open NO window — the #1 cause of
-// "pnpm dev 没有打开主窗口". Skipping the lock in dev lets a fresh dev
-// instance come up regardless of stale orphans.
-const isDev = !app.isPackaged;
-const gotLock = isDev ? true : app.requestSingleInstanceLock();
+// Single-instance lock. A second launch (e.g. clicking the shortcut while the
+// tray app is alive) should surface the existing window, NOT start a second
+// process — `app.quit()` on the loser + `second-instance` on the winner handles
+// this without ever creating a duplicate window. Applies in both prod and dev:
+// in dev each `pnpm dev` previously opened its own window, which contradicts
+// the "one app = one window" expectation.
+//
+// DEV escape hatch: Windows often orphans the electron child when `pnpm dev`
+// is Ctrl+C'd, and that orphan keeps holding the lock so the next `pnpm dev`
+// gets gotLock=false → app.quit() → no window. Set
+// `ELECTRON_ALLOW_MULTI_INSTANCE=1` to bypass the lock in that scenario
+// (one-off: kill the orphan or restart Windows, then unset it).
+const allowMulti = process.env['ELECTRON_ALLOW_MULTI_INSTANCE'] === '1';
+if (allowMulti) {
+  logger.warn('ELECTRON_ALLOW_MULTI_INSTANCE=1 — 单实例锁已禁用,可启动多个窗口');
+}
+const gotLock = allowMulti ? true : app.requestSingleInstanceLock();
 if (!gotLock) {
   app.quit();
 } else {
   app.on('second-instance', () => {
-    // PROD path: a second launch tried to start while this one is alive
-    // (likely hidden to tray). Surface the existing window — restore()+focus()
-    // alone leave a hidden window hidden, which looks like "the app won't come
-    // up" to the user.
+    // A second launch tried to start while this one is alive (likely hidden to
+    // tray, or just an idle window). Surface the existing window — restore()+
+    // focus() alone leave a hidden window hidden, which looks like "the app
+    // won't come up" to the user.
     const all = BrowserWindow.getAllWindows();
     if (all[0]) {
       if (all[0].isMinimized()) all[0].restore();
@@ -159,11 +166,13 @@ function bootstrap(): void {
     registerCapturePreviewHandler();
 
     // AI-context: focus pointer (renderer→main "what's open") + open task dir.
-    // Needs `todosDir` + `todoId` so the openTaskDir handler can resolve a
-    // directory per-task; the focus handlers don't need any closure deps.
+    // Tasks are stored as flat .md files under <rootDir>/todos/; there is no
+    // per-task directory. The openTaskDir handler resolves to the file and
+    // uses shell.showItemInFolder so the OS file manager opens todos/ with
+    // the task's .md file highlighted — see ipc/app-handlers.ts.
     const { registerAppFocusHandlers } = await import('./ipc/app-handlers');
     registerAppFocusHandlers({
-      resolveTaskDir: (todoId: string) => join(todosDir, todoId),
+      resolveTaskFile: (todoId: string) => join(todosDir, `${todoId}.md`),
     });
 
     // Set DSH_SESSIONS_ROOT BEFORE importing the DSH container, because the
