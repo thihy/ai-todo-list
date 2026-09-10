@@ -1360,6 +1360,9 @@ a:hover {
 .aipane__body {
   flex: 1;
   overflow: auto;
+  /* Reserve the scrollbar gutter so the message stream + composer don't
+     shift when a long turn pushes the body past the fold. */
+  scrollbar-gutter: stable;
   /* No top padding: the sticky header sits flush at the top of the body
      (right under the topbar). Side + bottom padding keep the message
      stream guttered. Previously padding-top created a blank strip above
@@ -2041,6 +2044,10 @@ a:hover {
 .task-list__body {
   flex: 1;
   overflow: auto;
+  /* Reserve the scrollbar gutter even when no scrollbar is shown so the
+     content width stays constant — otherwise the list reflows sideways
+     when a task tips the list past the fold. */
+  scrollbar-gutter: stable;
   padding: var(--space-sm) 0;
 }
 .task-list__hint {
@@ -2921,6 +2928,10 @@ a:hover {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
+  /* Reserve the scrollbar gutter so the editor body doesn't shift sideways
+     when content grows past the fold (the WYSIWYG/Markdown editors are
+     width-sensitive and re-render on resize). */
+  scrollbar-gutter: stable;
   position: relative;
   z-index: 1;
   padding-bottom: var(--space-xl);
