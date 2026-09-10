@@ -1091,30 +1091,64 @@ export const AIPane: React.FC = () => {
   }
 };
 
-/** Convert a HistoryTurn (from JSONL decode) into the renderer's Turn shape. */
+/** Convert a HistoryTurn (from JSONL decode) into the renderer's Turn shape.
+ *  Each history item becomes one Turn in the UI; the temporal interleaving
+ *  promised by `blocks` only matters when several events share a turn — so
+ *  the user / tool items stay blockless and the assistant item gets the
+ *  ordered [reasoning?, text?] pair (reasoning always before text inside
+ *  one assistant step). */
 function historyToTurn(h: HistoryTurnLike): Turn {
   if (h.type === 'user') {
-    return { id: crypto.randomUUID(), user: h.text ?? '', reasoning: '', assistant: '', tools: [], blocks: [], status: 'done' };
-  }
-  if (h.type === 'assistant') {
     return {
       id: crypto.randomUUID(),
-      user: '',
-      reasoning: h.reasoning ?? '',
-      assistant: h.text ?? '',
+      user: h.text ?? '',
+      reasoning: '',
+      assistant: '',
       tools: [],
       blocks: [],
       status: 'done',
     };
   }
-  // tool
+  if (h.type === 'assistant') {
+    const blocks: TurnBlock[] = [];
+    const reasoning = h.reasoning ?? '';
+    const text = h.text ?? '';
+    // Order matters: the historical JSONL flattens each assistant step
+    // into a single record with both fields; reasoning always precedes
+    // the answer text inside that step, so blocks are built in that order.
+    if (reasoning) blocks.push({ kind: 'reasoning', text: reasoning });
+    if (text) blocks.push({ kind: 'text', text });
+    return {
+      id: crypto.randomUUID(),
+      user: '',
+      reasoning,
+      assistant: text,
+      tools: [],
+      blocks,
+      status: 'done',
+    };
+  }
+  // tool — synthesise a stable callId because the historical record does
+  // not carry one (it lives in DSH's session stream, not in the persisted
+  // JSONL). The card name + args act as a tie-breaker so reloading the
+  // same history produces the same React key.
+  const argsKey = (() => {
+    try { return JSON.stringify(h.args ?? null); } catch { return ''; }
+  })();
   return {
     id: crypto.randomUUID(),
     user: '',
     reasoning: '',
     assistant: '',
     tools: [{ name: h.name ?? '', args: h.args, result: h.ok ? h.data : h.error, ok: h.ok ?? false }],
-    blocks: [],
+    blocks: [{
+      kind: 'tool-call',
+      callId: `hist-${h.name ?? 'tool'}-${argsKey}`,
+      name: h.name ?? '',
+      args: h.args,
+      result: h.ok ? h.data : h.error,
+      ok: h.ok ?? false,
+    }],
     status: 'done',
   };
 }
