@@ -629,15 +629,14 @@ export const AIPane: React.FC = () => {
     // instruction so the AI correctly interprets the Composer modal as a
     // capture surface (not a free-form chat). The user prompt stays
     // verbatim at the end so the model can ground its decisions in the
-    // exact wording.
+    // exact wording. Keep this framing short and explicit — verbose rule
+    // lists have been observed to let some models fall through to
+    // executing the user's raw text (e.g. treating a pasted snippet as a
+    // shell command). One sentence, one instruction, then the user's text.
     const SYSTEM_INSTRUCTION =
-      '[系统提示：用户通过"新建任务"界面提交了下面的描述，请使用 todo.create 工具创建一个新的 TODO 任务。' +
-      'priority 根据紧迫程度判断（无/低/中/高）；status 默认 next（未完成），除非用户明确说"进行中"、"已完成"、"已取消"、"阻塞中"等。' +
-      '如果描述包含截止日期（"明天"、"下周三"、"12-25" 等），解析为 unix 毫秒并填入 dueAt。' +
-      '提取相关 tags。如果描述较长，第一行或核心动词短语作为 title。' +
-      '创建完成后简短回复用户：任务名、优先级，截止日期（如有），不要重复整段描述。]\n\n';
+      '请根据用户输入创建一个任务，选择或创建合适的分组、标签。\n\n';
     const wirePrompt = override
-      ? `${SYSTEM_INSTRUCTION}[用户的描述]:\n${prompt}`
+      ? `${SYSTEM_INSTRUCTION}[用户输入]：\n${prompt}`
       : prompt;
 
     let convId = currentId;
