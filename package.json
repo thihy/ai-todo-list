@@ -4,7 +4,7 @@
   "private": true,
   "description": "AI-native Electron TODO list with Markdown content and Excalidraw drawings, built on DeepSeek Harness (DSH)",
   "appId": "com.todolist.app",
-  "productName": "A待办",
+  "productName": "AI待办",
   "author": "todo-list",
   "copyright": "Copyright © 2026 todo-list",
   "main": "out/main/index.js",
@@ -38,7 +38,8 @@
     "@deepseek-ai/cordis-plugin-loader": "1.0.3",
     "@deepseek-ai/dsh-app-boot": "0.1.2-rc.1",
     "@deepseek-ai/dsh-base": "0.1.2-rc.1",
-    "@deepseek-ai/dsh-client-ui-primitives": "0.1.5-alpha.2",
+    "@deepseek-ai/dsh-client-ui-primitives": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-credentials": "0.1.2-rc.1",
     "@deepseek-ai/dsh-llm": "0.1.2-rc.1",
     "@deepseek-ai/dsh-llm-pi-ai": "0.1.2-rc.1",
     "@deepseek-ai/dsh-session": "0.1.2-rc.1",
@@ -47,6 +48,7 @@
     "@deepseek-ai/dsh-session-title-llm": "0.1.2-rc.1",
     "@deepseek-ai/dsh-tool-ask-user": "0.1.2-rc.1",
     "@deepseek-ai/dsh-tools": "0.1.2-rc.1",
+    "@earendil-works/pi-ai": "0.84.4",
     "@excalidraw/excalidraw": "^0.18.0",
     "@shikijs/langs": "^4.4.3",
     "@tiptap/extension-image": "^3.31.3",
@@ -108,20 +110,9 @@
     "node": ">=20.19.0",
     "pnpm": ">=9"
   },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "better-sqlite3",
-      "electron",
-      "esbuild",
-      "electron-winstaller"
-    ],
-    "overrides": {
-      "@electron/node-gyp": "10.2.0-electron.2"
-    }
-  },
   "build": {
     "appId": "com.todolist.app",
-    "productName": "A待办",
+    "productName": "AI待办",
     "npmRebuild": false,
     "directories": {
       "output": "dist",
@@ -163,7 +154,7 @@
       "allowToChangeInstallationDirectory": false,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "A待办"
+      "shortcutName": "AI待办"
     },
     "mac": {
       "target": [

@@ -21,7 +21,7 @@ export const Topbar: React.FC<{
     <header className="topbar">
       <div className="topbar__brand">
         <Logo />
-        <strong className="topbar__name">A待办</strong>
+        <strong className="topbar__name">AI待办</strong>
       </div>
 
       <div className="topbar__tools">

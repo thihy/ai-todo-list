@@ -1,3 +1,19 @@
 packages:
   - "."
   - "src/**"
+
+allowBuilds:
+  '@deepseek-ai/dsh-subprocess-local': true
+  '@google/genai': true
+  # false: ships N-API prebuilds (prebuilds/win32-x64.node) that work in both
+  # Node and Electron. Allowing the build would trigger node-gyp's default
+  # binding.gyp rebuild and require a Visual Studio C++ toolchain for nothing.
+  better-sqlite3: false
+  electron-winstaller: true
+  esbuild: true
+  koffi: true
+  node-pty: true
+  protobufjs: true
+
+overrides:
+  "@electron/node-gyp": "10.2.0-electron.2"

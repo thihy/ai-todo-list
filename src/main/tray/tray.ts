@@ -25,7 +25,7 @@ export class TrayController {
   refreshMenu(): boolean {
     if (!this.tray) return false;
     const menu = Menu.buildFromTemplate([
-      { label: 'A待办', enabled: false },
+      { label: 'AI待办', enabled: false },
       { type: 'separator' },
       { label: '快速捕获  Ctrl+Shift+T', click: () => this.onCapture() },
       { type: 'separator' },
@@ -62,7 +62,7 @@ export class TrayController {
     try {
       this.tray = new Tray(this.iconPath);
       this.refreshMenu();
-      this.tray.setToolTip('A待办');
+      this.tray.setToolTip('AI待办');
       // Clicking the tray icon shows the main window — it must NOT trigger quick
       // capture, because the user expects the tray icon to behave like every
       // other app's tray icon (show/restore the app). Quick capture stays
