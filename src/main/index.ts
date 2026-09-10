@@ -182,7 +182,8 @@ function bootstrap(): void {
     // the task's .md file highlighted — see ipc/app-handlers.ts.
     const { registerAppFocusHandlers } = await import('./ipc/app-handlers');
     registerAppFocusHandlers({
-      resolveTaskFile: (todoId: string) => join(todosDir, `${todoId}.md`),
+      resolveTaskDir: (todoId) => resolveTaskDir(todoId as ULID),
+      todosDir,
     });
 
     // Set DSH_SESSIONS_ROOT BEFORE importing the DSH container, because the

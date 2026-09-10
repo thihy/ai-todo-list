@@ -3,20 +3,21 @@
 // the on-disk layout in main/index.ts (we receive the directory handles via
 // closures — see registerAppHandlers below).
 
+import { existsSync } from 'node:fs';
 import { shell } from 'electron';
 import { okResult, failResult, register } from './router';
 import { getFocus, setFocus } from '../app-context';
 import { logger } from '../logger';
 
 export interface AppHandlersDeps {
-  /** Absolute path to the task's markdown file (e.g. <rootDir>/todos/<todoId>.md).
-   *  Per-task data is stored as a single .md file alongside its siblings in the
-   *  shared todos/ directory — there is no per-task directory. We use
-   *  shell.showItemInFolder so the OS file manager opens the shared folder
-   *  with the task's file highlighted, which is the closest analogue to
-   *  "opening the task's folder" without inventing a directory layout that
-   *  doesn't exist. */
-  resolveTaskFile: (todoId: string) => string;
+  /** Resolve the per-task directory for a given TODO id. Post-refactor every
+   *  task has its own folder (dataDir/todos/{slug}/); the affordance opens
+   *  that folder directly so the user sees all the task's files together. */
+  resolveTaskDir: (todoId: string) => string;
+  /** Fallback parent when the per-task dir doesn't exist yet (e.g. a brand-
+   *  new task that hasn't been touched on disk). We open the todos/ root so
+   *  the user lands somewhere sensible instead of getting a silent no-op. */
+  todosDir: string;
 }
 
 export function registerAppFocusHandlers(deps: AppHandlersDeps): void {
@@ -41,20 +42,24 @@ export function registerAppFocusHandlers(deps: AppHandlersDeps): void {
   });
 
   register('app.openTaskDir', async (_e, req) => {
+    const taskDir = deps.resolveTaskDir(req.todoId);
+    const target = existsSync(taskDir) ? taskDir : deps.todosDir;
     try {
-      const filePath = deps.resolveTaskFile(req.todoId);
-      // showItemInFolder opens the parent directory in the OS file manager
-      // and highlights the file — that is the user-visible "open the
-      // task's folder and show me my file" experience even though the
-      // storage is a flat file in a shared todos/ directory. It returns
-      // void; failures (e.g. path doesn't exist on disk yet) surface as
-      // the OS file manager simply not opening, which the user will
-      // notice as nothing happening — that's the existing behaviour for
-      // shell APIs that can't introspect the file manager's state.
-      shell.showItemInFolder(filePath);
-      return okResult({ path: filePath });
+      const errMsg = await shell.openPath(target);
+      if (errMsg) {
+        // Surface the offending path in the error so the user can tell at
+        // a glance whether the taskDir or the todosDir fallback failed —
+        // a missing-permission on the task dir is a different problem from
+        // a missing-permission on the root.
+        const message = `Failed to open path: ${target} (${errMsg})`;
+        logger.warn(`openTaskDir: ${message}`);
+        return failResult('open_failed', message);
+      }
+      return okResult({ path: target, dir: taskDir });
     } catch (err) {
-      return failResult('open_failed', (err as Error).message);
+      const message = `Failed to open path: ${target} (${(err as Error).message})`;
+      logger.warn(`openTaskDir: ${message}`);
+      return failResult('open_failed', message);
     }
   });
 
