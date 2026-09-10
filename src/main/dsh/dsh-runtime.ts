@@ -848,10 +848,6 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
     entry.callMeta.clear();
     entry.turnTokensIn = 0;
     entry.turnTokensOut = 0;
-    // Cross-chunk state for the <think>...</think> stripper — see the
-    // assistant/chunk handler below. Reset every turn.
-    let thinkMode: 'body' | 'thinking' = 'body';
-    let thinkPending = '';
     const off = ctx.on('session/event', (session: unknown, event: { type: string; data?: unknown }) => {
       // session.id is a branded string; conversationId is a plain string.
       // String compare is the safe check.
@@ -862,66 +858,18 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
         const d = event.data as { chunk?: { type?: string; text?: string } } | undefined;
         const chunk = d?.chunk;
         if (chunk?.type === 'text-delta' && chunk.text) {
-          // Strip <think>...</think> out of the streamed text into the
-          // dedicated `reasoning` channel. The provider observed at
-          // 2026-09-10 does NOT emit a reasoning_content channel — its
-          // reasoning-delta is absent across whole turns, and the
-          // chain-of-thought arrives inlined in the content stream with
-          // tags that routinely straddle chunk boundaries (the closing
-          // `</think>` may even fuse with the start of the visible answer
-          // in a single text-delta). A per-chunk regex can't handle that,
-          // so we run a small state machine: hold back the longest suffix
-          // that could still be a prefix of `<think>`/`</think>`, and on
-          // finding the marker, route the between-tag text to `reasoning`
-          // and keep the rest on `token` (which also feeds entry.fullText —
-          // the persisted JSONL history must not leak the chain of thought).
-          for (let cursor = chunk.text; cursor.length > 0; ) {
-            const combined = thinkPending + cursor;
-            if (thinkMode === 'thinking') {
-              const endIdx = combined.indexOf('</think>');
-              if (endIdx >= 0) {
-                if (endIdx > 0) onEvent({ type: 'reasoning', text: combined.slice(0, endIdx) });
-                thinkMode = 'body';
-                thinkPending = '';
-                cursor = combined.slice(endIdx + '</think>'.length);
-              } else {
-                // `</think>` is 8 chars, so a 7-char suffix is the longest
-                // we have to hold back until we can decide.
-                const HOLD = '</think>'.length - 1;
-                const flushLen = Math.max(0, combined.length - HOLD);
-                if (flushLen > 0) onEvent({ type: 'reasoning', text: combined.slice(0, flushLen) });
-                thinkPending = combined.slice(flushLen);
-                cursor = '';
-              }
-            } else {
-              const startIdx = combined.indexOf('<think>');
-              if (startIdx >= 0) {
-                if (startIdx > 0) {
-                  const visible = combined.slice(0, startIdx);
-                  entry.fullText += visible;
-                  onEvent({ type: 'token', text: visible });
-                }
-                thinkMode = 'thinking';
-                thinkPending = '';
-                cursor = combined.slice(startIdx + '<think>'.length);
-              } else {
-                // `<think>` is 7 chars, so a 6-char suffix is the longest
-                // we have to hold back until we can decide.
-                const HOLD = '<think>'.length - 1;
-                const flushLen = Math.max(0, combined.length - HOLD);
-                if (flushLen > 0) {
-                  const visible = combined.slice(0, flushLen);
-                  entry.fullText += visible;
-                  onEvent({ type: 'token', text: visible });
-                }
-                thinkPending = combined.slice(flushLen);
-                cursor = '';
-              }
-            }
-          }
+          // Pass text straight through. Earlier versions tried to strip
+          // <think>...</think> out of text-delta (chain-of-thought arriving
+          // inlined because the provider didn't emit a separate
+          // reasoning-delta channel), but that masking was fighting the
+          // adapter — when a provider misroutes reasoning into the content
+          // stream, the fix belongs in the adapter, not here. We treat
+          // text-delta as visible text.
+          entry.fullText += chunk.text;
+          onEvent({ type: 'token', text: chunk.text });
         } else if (chunk?.type === 'reasoning-delta' && chunk.text) {
-          // Future-proofing: if a provider ever starts emitting a separate
-          // reasoning channel, route it through the same UI event.
+          // Real provider-side reasoning channel. Routed to its own UI
+          // event so the renderer can show "thinking…" in a separate row.
           onEvent({ type: 'reasoning', text: chunk.text });
         }
       } else if (t === 'assistant/message') {
