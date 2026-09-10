@@ -143,7 +143,7 @@ function bootstrap(): void {
     const md = new MarkdownStore(handle.db, todosDir, resolveTaskDir);
     const drawings = new DrawingStore(handle.db, drawingsDir, resolveTaskDir);
     const docs = new DocumentStore(handle.db);
-    const inbox = new InboxStore(handle.db, attachmentsDir);
+    const inbox = new InboxStore(handle.db, attachmentsDir, todosDir, resolveTaskDir);
 
     // Wire IPC router
     installRouter();

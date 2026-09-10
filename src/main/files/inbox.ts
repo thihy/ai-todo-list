@@ -1,20 +1,30 @@
-// Inbox attachment storage. Each attachment is a file on disk under
-// <dataDir>/inbox-attachments/ referenced by an `inbox_attachments` DB row.
+// Inbox attachment storage. Each attachment is a file on disk referenced by
+// an `inbox_attachments` DB row.
 //
-// This store owns the full lifecycle: attach (copy a file path), attachBlob
-// (decode a data: URL), list, read (→ data: URL for the renderer, so the
-// renderer never learns the main-process absolute path), remove (file + row).
+// Per-task layout (post-refactor):
 //
-// `task_documents` rows of kind 'attachment' carry a refId pointing at an
-// inbox_attachments.id — this store is the content-of-truth; DocumentStore
-// only owns the list metadata for that kind.
+//   {dataDir}/todos/{slug}/attachments/{id}-{name}
+//
+// The DB row's `file_path` column stores the absolute on-disk path (so the
+// `attachment://` protocol handler can stream bytes without re-resolving
+// anything). `task_documents` rows of kind 'attachment' carry a refId
+// pointing at inbox_attachments.id — this store is the content-of-truth;
+// DocumentStore only owns the list metadata for that kind.
 
 import type Database from 'better-sqlite3';
-import { copyFileSync, mkdirSync, readFileSync, writeFileSync, existsSync, unlinkSync } from 'node:fs';
-import { basename, join } from 'node:path';
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
+import { basename } from 'node:path';
 import { newId } from '../db/schema';
 import { mimeExt, sanitizeName } from '../util/mime';
 import type { InboxAttachment, ULID } from '../../shared/todo-types';
+import { attachmentFile } from './paths';
 
 interface AttachRow {
   id: string;
@@ -35,11 +45,44 @@ function rowToAttach(row: AttachRow): InboxAttachment {
 }
 
 export class InboxStore {
+  /** Cache id → taskDir so the uniqueTodoDir collision-suffix logic in
+   *  resolveTaskDir can't bounce a single task between two dirs across
+   *  calls. Same pattern as MarkdownStore / DrawingStore. */
+  private readonly taskDirCache = new Map<ULID, string>();
+
   constructor(
     private db: Database.Database,
+    /** Legacy root used to keep any pre-refactor flat files findable for
+     *  the migration sweep (Commit 8). New writes go under per-task
+     *  {todosDir}/{slug}/attachments/. */
     private attachmentsDir: string,
+    private todosDir: string,
+    private resolveTaskDir: (todoId: ULID) => string,
   ) {
     mkdirSync(attachmentsDir, { recursive: true });
+    mkdirSync(todosDir, { recursive: true });
+  }
+
+  private taskDirFor(todoId: ULID): string {
+    const cached = this.taskDirCache.get(todoId);
+    if (cached) return cached;
+    const dir = this.resolveTaskDir(todoId);
+    this.taskDirCache.set(todoId, dir);
+    return dir;
+  }
+
+  /** Legacy flat attachments root. New writes go under per-task
+   *  {todosDir}/{slug}/attachments/; the migration sweep (Commit 8) reads
+   *  this directory to relocate pre-refactor attachments. */
+  get legacyAttachmentsDir(): string {
+    return this.attachmentsDir;
+  }
+
+  /** Per-task attachments root (shared parent of all {slug}/attachments/
+   *  subdirs). Kept on the store so the migration sweep can relocate the
+   *  old flat files without re-importing the todosDir constant. */
+  get todosRoot(): string {
+    return this.todosDir;
   }
 
   /** List a task's attachments, newest first. */
@@ -62,12 +105,14 @@ export class InboxStore {
     return row ? rowToAttach(row) : null;
   }
 
-  /** Copy a file from `filePath` into the attachments dir + record the row.
-   *  `id` param is the todoId (matches the legacy `inbox.attach` arg shape). */
+  /** Copy a file from `filePath` into the per-task attachments dir + record
+   *  the row. `id` param is the todoId (matches the legacy `inbox.attach`
+   *  arg shape). */
   attach(todoId: ULID, filePath: string, mime: string): InboxAttachment {
     const id = newId();
+    const taskDir = this.taskDirFor(todoId);
     const filename = `${id}-${basename(filePath)}`;
-    const target = join(this.attachmentsDir, filename);
+    const target = attachmentFile(taskDir, filename);
     copyFileSync(filePath, target);
     const now = Date.now();
     this.db
@@ -91,7 +136,8 @@ export class InboxStore {
       : Buffer.from(decodeURIComponent(payload), 'utf8');
     const ext = mimeExt(mime);
     const fname = `${id}-${sanitizeName(filename) || 'pasted'}.${ext}`;
-    const target = join(this.attachmentsDir, fname);
+    const taskDir = this.taskDirFor(todoId);
+    const target = attachmentFile(taskDir, fname);
     writeFileSync(target, buf);
     const now = Date.now();
     this.db
