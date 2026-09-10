@@ -130,6 +130,117 @@ export interface DshRuntime {
 
 let runtimePromise: Promise<DshRuntime | null> | null = null;
 
+/**
+ * Minimal agent handle shape used by `ensureAgent`. Both `agents.create`
+ * and `agents.resume` return this shape; we only call a small number of
+ * methods on it so the tests don't need the full `Agent` interface.
+ */
+export interface AgentHandle {
+  agent: {
+    followup(m: unknown): void;
+    whenIdle(): Promise<void>;
+    cancel(
+      cause: { kind: 'user' } | { kind: 'parent' } | { kind: 'hook'; reason: string } | { kind: 'disposed' },
+      options?: { keepInbox?: boolean },
+    ): void;
+    id: unknown;
+  };
+  dispose(): Promise<void>;
+}
+
+/** Minimal persistence facade needed by `resumeOrCreate`. */
+export interface PersistenceFacade {
+  load?: (id: string, signal?: AbortSignal) => Promise<unknown>;
+  list?: (signal?: AbortSignal) => Promise<ReadonlyArray<{ id: string; createdAt?: number }>>;
+}
+
+/** Minimal agent-registry facade needed by `resumeOrCreate`. */
+export interface AgentsFacade {
+  create(o: { sessionId: string; agentOptions?: { provider?: string; model?: string } }): Promise<AgentHandle>;
+  resume(o: { resumeSessionId: string; agentOptions?: { provider?: string; model?: string } }): Promise<AgentHandle>;
+}
+
+/** Minimal logger facade — anything with `.warn`/`.info` will do. */
+export interface ResumeLogger {
+  warn: (msg: string) => void;
+  info: (msg: string) => void;
+}
+
+/** Dependencies for {@link resumeOrCreate}. Bundled so the helper is pure
+ *  and unit-testable without booting the full DSH runtime. */
+export interface ResumeOrCreateDeps {
+  agents: AgentsFacade;
+  persistence?: PersistenceFacade;
+  logger: ResumeLogger;
+}
+
+/**
+ * Always prefer `agents.resume({ resumeSessionId })` over `agents.create({ sessionId })`
+ * when the conversation already has a persisted session log.
+ *
+ * Why: `create()` on an existing id routes through `ctx.sessions.prepare(id, { meta })`
+ * with an EMPTY seed. The persistence coordinator's `session/created` listener then
+ * runs `onCreated` (at `coordinator.ts:1256`) which checks
+ * `seedMatchesPersisted(id, seed=[], cursor=N)` and throws
+ * `"session ... is already persisted with N event(s) that do not match this live
+ * session (id collision)"`. The throw is silently swallowed inside
+ * `void this.initFor(session)`, but the next `loadHistory()` call from the renderer
+ * (which iterates every conversation on app open — `ai-handlers.ts:270-294`)
+ * surfaces the rejection as `loadHistory(id) failed: ... (id collision)`.
+ *
+ * `resume()` routes through `persistence.prepare(id)` which loads the stored
+ * events into the Session seed first, so `seedMatchesPersisted` passes and the
+ * collision never fires.
+ *
+ * Fallback to `create()` mirrors DSH's own `restoreOrCreateConfigured`
+ * (`packages/core/agent-loop/src/index.ts:407`): on a resume failure, only fall
+ * back to create when the artifact is GENUINELY absent; a corrupt log must stay
+ * loud so the user notices instead of starting an empty session that would
+ * clobber a broken one.
+ *
+ * Exported so unit tests can verify the resume-vs-create branch without
+ * booting the full DSH runtime.
+ */
+export async function resumeOrCreate(
+  deps: ResumeOrCreateDeps,
+  conversationId: string,
+  agentOptions: { provider: string; model: string },
+): Promise<AgentHandle> {
+  let resumeError: unknown;
+  try {
+    return await deps.agents.resume({
+      resumeSessionId: conversationId,
+      agentOptions,
+    });
+  } catch (err) {
+    resumeError = err;
+  }
+  // Distinguish "no persisted log" from "corruption / backend failure" by
+  // asking the backend directly. Only a confirmed-absent id falls back to
+  // create(). Anything else rethrows so the user sees a loud failure rather
+  // than an empty session that would clobber a broken one.
+  let isAbsent = false;
+  if (deps.persistence?.list) {
+    try {
+      const headers = await deps.persistence.list();
+      isAbsent = !headers.some((h) => h.id === conversationId);
+    } catch (err) {
+      // list() failing means we can't decide — keep the resume error loud.
+      deps.logger.warn(`resumeOrCreate(${conversationId}): persistence.list() failed during fallback probe: ${(err as Error).message}`);
+      throw resumeError;
+    }
+  }
+  if (!isAbsent) {
+    deps.logger.warn(`resumeOrCreate(${conversationId}): resume failed for an existing persisted session, not falling back: ${(resumeError as Error).message}`);
+    throw resumeError;
+  }
+  deps.logger.info(`resumeOrCreate(${conversationId}): no persisted session; creating fresh agent`);
+  return deps.agents.create({
+    sessionId: conversationId,
+    agentOptions,
+  });
+}
+
 // ===== L4-G: Human-in-the-loop bridges =====
 //
 // DSH ships the user-questions + user-approval seams (@deepseek-ai/dsh-user-questions
@@ -469,7 +580,6 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
   // 3. Conversation registry. One agent handle per conversation, cached for
   //    the conversation's lifetime. ensureAgent() idempotent: a second call
   //    for the same id returns the existing entry without recreating.
-  const { SessionId } = await import('@deepseek-ai/dsh-session');
   const agentsApi = ctx.get('agents') as {
     create(o: unknown): Promise<{
       agent: {
@@ -485,6 +595,15 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
          * handle survives so the next followup() runs on the same agent and
          * the same persisted session JSONL.
          */
+        cancel(cause: { kind: 'user' } | { kind: 'parent' } | { kind: 'hook'; reason: string } | { kind: 'disposed' }, options?: { keepInbox?: boolean }): void;
+        id: unknown;
+      };
+      dispose(): Promise<void>;
+    }>;
+    resume(o: unknown): Promise<{
+      agent: {
+        followup(m: unknown): void;
+        whenIdle(): Promise<void>;
         cancel(cause: { kind: 'user' } | { kind: 'parent' } | { kind: 'hook'; reason: string } | { kind: 'disposed' }, options?: { keepInbox?: boolean }): void;
         id: unknown;
       };
@@ -622,6 +741,7 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
         data?: unknown;
       }>;
     } | undefined>;
+    list?: (signal?: AbortSignal) => Promise<ReadonlyArray<{ id: string; createdAt: number }>>;
     config?: { root?: string };
   } | undefined;
 
@@ -663,10 +783,38 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
     const { providerRouteFor } = await import('./llm-adapter');
     const provider = providerRouteFor(deps.settings.get().provider) ?? 'deepseek';
 
-    const handle = await agentsApi!.create({
-      sessionId: SessionId(conversationId),
-      agentOptions: { provider, model },
-    });
+    // Always prefer resume() over create() when the conversation already has a
+    // persisted session log. create() on an existing id routes through
+    // `ctx.sessions.prepare(id, { meta })` with an EMPTY seed, then the
+    // persistence coordinator's `session/created` listener runs `onCreated`
+    // with `seed=[]` against the persisted 133-event prefix — that hits
+    // `coordinator.ts:1256` ("already persisted with N event(s) that do not
+    // match this live session (id collision)"). The throw is silently
+    // swallowed inside `void this.initFor(session)`, but the next loadHistory
+    // call from the renderer (which iterates every conversation on app open)
+    // surfaces it as `loadHistory(id) failed: ... (id collision)`. resume()
+    // routes through `persistence.prepare(id)` which loads the stored events
+    // into the Session seed first, so `seedMatchesPersisted` passes and the
+    // collision never fires.
+    //
+    // Fallback to create() mirrors DSH's own `restoreOrCreateConfigured`
+    // (packages/core/agent-loop/src/index.ts:407): on a resume failure, only
+    // fall back to create when the artifact is GENUINELY absent; a corrupt
+    // log must stay loud so the user notices instead of starting an empty
+    // session that would overwrite the broken one.
+    const handle = await resumeOrCreate(
+      {
+        // The runtime's agentsApi uses `o: unknown` for both create() and
+        // resume() — wrap it in a typed facade so resumeOrCreate stays pure
+        // and unit-testable. The runtime objects satisfy the `AgentHandle`
+        // shape structurally.
+        agents: agentsApi as unknown as AgentsFacade,
+        persistence: persistenceApi,
+        logger,
+      },
+      conversationId,
+      { provider, model },
+    );
 
     const entry: ConversationEntry = {
       id: conversationId,
