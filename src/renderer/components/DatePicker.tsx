@@ -21,12 +21,22 @@ export const DatePicker: React.FC<{
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value != null ? toIsoDate(value) : '');
   const rootRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  // Mirror of `draft` written into a ref on every change so commit() (called
+  // from onBlur) can read the *latest* value, not the stale closure value.
+  // Without this, picking a date in the native picker would close our
+  // popover (onBlur fires → setEditing(false)) but commit() would still see
+  // the pre-pick draft because React batches the onChange setDraft before
+  // the blur handler runs — so the picked date never made it to onChange.
+  const draftRef = useRef(draft);
 
   // Reset the draft whenever the canonical value changes (e.g. external edit
   // or re-entry of the todo) so the popover opens with the current truth.
   useEffect(() => {
     setDraft(value != null ? toIsoDate(value) : '');
   }, [value]);
+
+  useEffect(() => { draftRef.current = draft; }, [draft]);
 
   // Auto-close the popover on outside click. Escape also cancels (restores
   // the canonical draft). The native date input doesn't fire blur reliably
@@ -48,18 +58,22 @@ export const DatePicker: React.FC<{
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editing]);
 
+  // Read the live input value via the ref so we never commit a stale draft
+  // (matters when blur fires immediately after change in the same tick).
   const commit = (): void => {
     setEditing(false);
-    if (!draft) {
+    const live = inputRef.current?.value ?? draftRef.current;
+    if (!live) {
       if (value != null) onChange(null);
       return;
     }
-    const ms = fromIsoDate(draft);
+    const ms = fromIsoDate(live);
     if (ms !== value) onChange(ms);
   };
 
   const pick = (ms: number): void => {
     setDraft(toIsoDate(ms));
+    draftRef.current = toIsoDate(ms);
     onChange(ms);
     setEditing(false);
   };
@@ -85,12 +99,16 @@ export const DatePicker: React.FC<{
         <div className="date-picker__popover">
           <div className="date-picker__row">
             <input
+              ref={inputRef}
               type="date"
               className="date-picker__input"
               aria-label="截止日期"
               value={draft}
               autoFocus
-              onChange={(e) => setDraft(e.target.value)}
+              onChange={(e) => {
+                setDraft(e.target.value);
+                draftRef.current = e.target.value;
+              }}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') { e.preventDefault(); commit(); }
               }}
