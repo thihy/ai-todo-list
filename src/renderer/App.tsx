@@ -53,6 +53,12 @@ export const App: React.FC = () => {
   // chrome, keeps the AI panel. The DocumentsView's tab bar shows an exit
   // button (IconFullscreenExit) so the user can drop back out.
   const [fullscreenTodoId, setFullscreenTodoId] = useState<string | null>(null);
+  // Per-task active document tab. Lives in App (not in DocumentsView) because
+  // entering fullscreen unmounts the normal-mode DocumentsView and mounts a
+  // fresh fullscreen-mode one — without lifting state, every fullscreen
+  // toggle snapped the user back to the first tab of the same task. Keyed
+  // by todoId so multiple open tasks keep their own selection.
+  const [selectedDocByTodo, setSelectedDocByTodo] = useState<Record<string, string>>({});
   const [aiOpen, setAiOpen] = useState<boolean>(() => {
     try {
       return localStorage.getItem(AI_OPEN_KEY) !== '0';
@@ -167,6 +173,8 @@ export const App: React.FC = () => {
               <FullscreenDoc
                 todoId={selectedId}
                 onExit={() => setFullscreenTodoId(null)}
+                selectedDocId={selectedDocByTodo[selectedId] ?? null}
+                onSelectDoc={(tabId) => setSelectedDocByTodo((m) => ({ ...m, [selectedId]: tabId }))}
               />
             )}
             {view === 'list' && !showFullscreen && (
@@ -188,6 +196,11 @@ export const App: React.FC = () => {
                   onCloseCompose={() => setComposing(false)}
                   navigate={navigate}
                   onFullscreen={(todoId) => setFullscreenTodoId(todoId)}
+                  selectedDocId={selectedId ? selectedDocByTodo[selectedId] ?? null : null}
+                  onSelectDoc={(tabId) => {
+                    if (!selectedId) return;
+                    setSelectedDocByTodo((m) => ({ ...m, [selectedId]: tabId }));
+                  }}
                 />
               </div>
             )}
@@ -213,7 +226,9 @@ const TaskDetail: React.FC<{
   onCloseCompose: () => void;
   navigate: (to: string) => void;
   onFullscreen: (todoId: string) => void;
-}> = ({ todoId, composing, onCloseCompose, navigate, onFullscreen }) => {
+  selectedDocId: string | null;
+  onSelectDoc: (tabId: string) => void;
+}> = ({ todoId, composing, onCloseCompose, navigate, onFullscreen, selectedDocId, onSelectDoc }) => {
   if (composing) {
     return (
       <div className="task-detail task-detail--compose">
@@ -234,7 +249,12 @@ const TaskDetail: React.FC<{
   }
   return (
     <div className="task-detail">
-      <TodoEditorPane todoId={todoId} onFullscreen={() => onFullscreen(todoId)} />
+      <TodoEditorPane
+        todoId={todoId}
+        onFullscreen={() => onFullscreen(todoId)}
+        selectedDocId={selectedDocId}
+        onSelectDoc={onSelectDoc}
+      />
     </div>
   );
 };
@@ -242,7 +262,12 @@ const TaskDetail: React.FC<{
 /** FullscreenDoc — the document workspace fills the detail area; the task list
  *  disappears. The AI panel stays so the user can keep asking questions about
  *  whatever they're editing. Esc / the fullscreen-exit button drop back to normal mode. */
-const FullscreenDoc: React.FC<{ todoId: string; onExit: () => void }> = ({ todoId, onExit }) => {
+const FullscreenDoc: React.FC<{
+  todoId: string;
+  onExit: () => void;
+  selectedDocId: string | null;
+  onSelectDoc: (tabId: string) => void;
+}> = ({ todoId, onExit, selectedDocId, onSelectDoc }) => {
   const { todo } = useTodo(todoId);
   const taskTitle = todo?.title ?? null;
   return (
@@ -265,6 +290,8 @@ const FullscreenDoc: React.FC<{ todoId: string; onExit: () => void }> = ({ todoI
             todoId={todoId}
             taskTitle={taskTitle}
             onFullscreen={onExit}
+            selectedDocId={selectedDocId}
+            onSelectDoc={onSelectDoc}
           />
         </div>
       </div>

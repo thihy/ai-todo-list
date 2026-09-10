@@ -91,7 +91,14 @@ export const TodoEditorPane: React.FC<{
   todoId: string;
   /** Open the document workspace fullscreen (hides the task list; AI stays). */
   onFullscreen?: () => void;
-}> = ({ todoId, onFullscreen }) => {
+  /** Currently active document tab id for this task — lifted to the App
+   *  so it survives the normal-mode ↔ fullscreen-mode unmount/remount of
+   *  DocumentsView (without lifting, fullscreen snapped back to the first
+   *  tab). Optional; DocumentsView falls back to its own state when
+   *  omitted. */
+  selectedDocId?: string | null;
+  onSelectDoc?: (tabId: string) => void;
+}> = ({ todoId, onFullscreen, selectedDocId, onSelectDoc }) => {
   const { todo, loading } = useTodo(todoId);
 
   const [tagDraft, setTagDraft] = useState<string[]>([]);
@@ -193,9 +200,20 @@ export const TodoEditorPane: React.FC<{
             <button
               type="button"
               className="editor-pane__section-action"
-              title="在文件管理器中打开此任务的目录"
-              aria-label="打开任务目录"
-              onClick={() => { void window.todoList.app.openTaskDir(todo.id); }}
+              title="在文件管理器中显示此任务的 Markdown 文件"
+              aria-label="在文件管理器中显示任务文件"
+              onClick={() => {
+                // Surface failures instead of swallowing them silently —
+                // before the fix, a missing per-task directory made
+                // shell.openPath fail without any user feedback. The button
+                // appeared inert, which read as "the click isn't wired up".
+                void window.todoList.app.openTaskDir(todo.id).then((res) => {
+                  if (!res.ok) {
+                    // eslint-disable-next-line no-console
+                    console.warn('openTaskDir failed:', res.code, res.message);
+                  }
+                });
+              }}
             >
               <IconExternal size={14} />
             </button>
@@ -204,6 +222,8 @@ export const TodoEditorPane: React.FC<{
             todoId={todo.id}
             taskTitle={todo.title}
             onFullscreen={onFullscreen}
+            selectedDocId={selectedDocId ?? null}
+            onSelectDoc={onSelectDoc ?? null}
           />
         </section>
 

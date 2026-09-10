@@ -179,11 +179,35 @@ export const DocumentsView: React.FC<{
   taskTitle?: string | null;
   /** Open the editor fullscreen (hides the task list; AI pane stays). */
   onFullscreen?: () => void;
-}> = ({ todoId, taskTitle, onFullscreen }) => {
+  /** Controlled active tab id, lifted to the App so the selection survives
+   *  the normal ↔ fullscreen unmount/remount of this component. Optional;
+   *  when omitted, DocumentsView falls back to its own internal state. */
+  selectedDocId?: string | null;
+  onSelectDoc?: ((tabId: string) => void) | null;
+}> = ({ todoId, taskTitle, onFullscreen, selectedDocId, onSelectDoc }) => {
   const { documents, refresh } = useDocuments(todoId);
   const { drawings, refresh: refreshDrawings } = useDrawings(todoId);
   const { prompt, node: promptNode } = usePrompt();
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  // Controlled vs uncontrolled: when the parent passes selectedDocId + a
+  // setter, the parent's state is the source of truth (so fullscreen-mode
+  // mount can pick up where normal-mode left off). Without those props we
+  // fall back to internal state — backwards-compat for any existing caller
+  // that doesn't (yet) wire the lift.
+  const isControlled = selectedDocId !== undefined && selectedDocId !== null && onSelectDoc != null
+    ? true
+    : selectedDocId !== undefined && onSelectDoc != null;
+  const [internalSelected, setInternalSelected] = useState<string | null>(null);
+  const effectiveSelected = isControlled ? selectedDocId : internalSelected;
+  const setSelected = useCallback(
+    (id: string): void => {
+      if (isControlled && onSelectDoc) {
+        onSelectDoc(id);
+      } else {
+        setInternalSelected(id);
+      }
+    },
+    [isControlled, onSelectDoc],
+  );
   const [addOpen, setAddOpen] = useState(false);
   // Inline tab rename (double-click the label). Works for both document tabs
   // (document.rename) and drawing tabs (drawing.rename).
@@ -208,14 +232,17 @@ export const DocumentsView: React.FC<{
   const tabId = (t: Tab): string => (t.kind === 'document' ? `d:${t.doc.id}` : `g:${t.id}`);
 
   // Auto-select the progress doc (first, ord 0) when the list loads or the
-  // selection is no longer present (e.g. after a delete).
+  // selection is no longer present (e.g. after a delete). Skip the
+  // auto-pick when controlled and the parent hasn't picked yet — the
+  // parent may intentionally be holding for a re-render; we don't want to
+  // race it and write a default back into its state.
   useEffect(() => {
     if (tabs.length === 0) return;
-    if (!selectedId || !tabs.some((t) => tabId(t) === selectedId)) {
+    if (!effectiveSelected || !tabs.some((t) => tabId(t) === effectiveSelected)) {
       const first = tabs[0]!;
-      setSelectedId(tabId(first));
+      setSelected(tabId(first));
     }
-  }, [tabs, selectedId]);
+  }, [tabs, effectiveSelected, setSelected]);
 
   const refreshAll = useCallback(() => {
     void refresh();
@@ -271,7 +298,7 @@ export const DocumentsView: React.FC<{
     const res = await window.todoList.document.create({ todoId, kind: 'note_md', title: '笔记' });
     if (res.ok) {
       await refresh();
-      setSelectedId(`d:${res.data.id}`);
+      setSelected(`d:${res.data.id}`);
     }
     setAddOpen(false);
   }, [todoId, refresh]);
@@ -286,10 +313,10 @@ export const DocumentsView: React.FC<{
     const res = await window.todoList.document.create({ todoId, kind: 'link', title, url });
     if (res.ok) {
       await refresh();
-      setSelectedId(`d:${res.data.id}`);
+      setSelected(`d:${res.data.id}`);
     }
     setAddOpen(false);
-  }, [todoId, refresh, prompt]);
+  }, [todoId, refresh, prompt, setSelected]);
 
   const addAttachment = useCallback(async (): Promise<void> => {
     const input = document.createElement('input');
@@ -321,13 +348,13 @@ export const DocumentsView: React.FC<{
         });
         if (docRes.ok) {
           await refresh();
-          setSelectedId(`d:${docRes.data.id}`);
+          setSelected(`d:${docRes.data.id}`);
         }
       }
       setAddOpen(false);
     };
     input.click();
-  }, [todoId, refresh]);
+  }, [todoId, refresh, setSelected]);
 
   // 绘图: create the drawing in-place, refresh the tab list, and select it.
   // The Excalidraw editor mounts directly inside the tab body — no separate
@@ -342,10 +369,10 @@ export const DocumentsView: React.FC<{
     if (res.ok) {
       await refreshDrawings();
       const d = res.data as { id: string };
-      setSelectedId(`g:${d.id}`);
+      setSelected(`g:${d.id}`);
     }
     setAddOpen(false);
-  }, [todoId, refreshDrawings]);
+  }, [todoId, refreshDrawings, setSelected]);
 
   // Close the add menu on outside click.
   useEffect(() => {
@@ -358,7 +385,7 @@ export const DocumentsView: React.FC<{
     return () => window.removeEventListener('mousedown', onDown);
   }, [addOpen]);
 
-  const selected = tabs.find((t) => tabId(t) === selectedId) ?? null;
+  const selected = tabs.find((t) => tabId(t) === effectiveSelected) ?? null;
 
   // Push the document/drawing focus to main on every tab change so the AI's
   // `app.currentContext` tool knows what's open. We push the most-specific
@@ -402,9 +429,9 @@ export const DocumentsView: React.FC<{
                 key={id}
                 type="button"
                 role="tab"
-                aria-selected={id === selectedId}
-                className={`docs-workspace__tab${id === selectedId ? ' is-active' : ''}${isEditing ? ' is-editing' : ''}`}
-                onClick={() => setSelectedId(id)}
+                aria-selected={id === effectiveSelected}
+                className={`docs-workspace__tab${id === effectiveSelected ? ' is-active' : ''}${isEditing ? ' is-editing' : ''}`}
+                onClick={() => setSelected(id)}
                 onDoubleClick={(e) => { e.stopPropagation(); startEdit(t); }}
                 title={title}
               >
