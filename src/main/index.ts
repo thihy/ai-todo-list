@@ -141,7 +141,7 @@ function bootstrap(): void {
       return paths.todoDir(todosDir, title, id);
     };
     const md = new MarkdownStore(handle.db, todosDir, resolveTaskDir);
-    const drawings = new DrawingStore(handle.db, drawingsDir);
+    const drawings = new DrawingStore(handle.db, drawingsDir, resolveTaskDir);
     const docs = new DocumentStore(handle.db);
     const inbox = new InboxStore(handle.db, attachmentsDir);
 
