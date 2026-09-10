@@ -275,6 +275,7 @@ export const AIPane: React.FC = () => {
     if (mine.length === 0) return;
     const blocks: TurnBlock[] = [];
     let toolSeq = 0;
+    let createdTodoId: string | null = null;
     for (const ev of mine) {
       if (ev.type === 'reasoning') {
         if (!ev.text) continue;
@@ -299,7 +300,33 @@ export const AIPane: React.FC = () => {
           result: ev.result,
           ok: ev.ok,
         });
+        // When the AI creates a task, jump to its detail pane so the user
+        // immediately sees what was filed. We only fire on the FIRST
+        // successful todo.create per turn — re-runs from the event-stream
+        // dedupe are guarded by `createdTodoId` being already set. The
+        // result shape from src/main/dsh/dsh-runtime.ts todo.create is the
+        // full Todo row (`repo.get(todo.id)`), so the id lives at result.id.
+        if (
+          !createdTodoId &&
+          ev.ok &&
+          ev.toolName === 'todo.create' &&
+          ev.result &&
+          typeof ev.result === 'object'
+        ) {
+          const id = (ev.result as { id?: unknown }).id;
+          if (typeof id === 'string' && id.length > 0) createdTodoId = id;
+        }
       }
+    }
+    if (createdTodoId) {
+      // Same hash-mutation the App-level navigate() uses. The App's
+      // hashchange listener picks it up and routes to the task detail pane.
+      // Wrapped in requestAnimationFrame so the navigate lands after the
+      // current event-batch flushes (avoids racing the data-changed
+      // broadcast that lands microseconds later).
+      requestAnimationFrame(() => {
+        location.hash = `#/todo/${createdTodoId}`;
+      });
     }
     const done = mine.some((e) => e.type === 'done');
     const errEvt = mine.find((e): e is Extract<AIStreamEvent, { type: 'error' }> => e.type === 'error');
@@ -625,19 +652,13 @@ export const AIPane: React.FC = () => {
       attached = attachments;
     }
 
-    // Wrap the user's literal description in a clear "create a task"
-    // instruction so the AI correctly interprets the Composer modal as a
-    // capture surface (not a free-form chat). The user prompt stays
-    // verbatim at the end so the model can ground its decisions in the
-    // exact wording. Keep this framing short and explicit — verbose rule
-    // lists have been observed to let some models fall through to
-    // executing the user's raw text (e.g. treating a pasted snippet as a
-    // shell command). One sentence, one instruction, then the user's text.
-    const SYSTEM_INSTRUCTION =
-      '请根据用户输入创建一个任务，选择或创建合适的分组、标签。\n\n';
-    const wirePrompt = override
-      ? `${SYSTEM_INSTRUCTION}[用户输入]：\n${prompt}`
-      : prompt;
+    // No per-message wrapper needed any more: the DSH system prompt now
+    // declares the "Composer input → todo.create" framing (see
+    // resources/dsh/cordis.yml, 输入源与默认行为 section). The model sees
+    // exactly what the user typed and decides from context which path to
+    // take. The user bubble still renders `prompt` (not `wirePrompt`) so no
+    // framing text ever bleeds into the visible chat.
+    const wirePrompt = prompt;
 
     let convId = currentId;
     if (!convId) {
