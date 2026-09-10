@@ -1396,9 +1396,12 @@ a:hover {
   border-radius: var(--radius-md);
 }
 
-/* Inline tool-call card: collapsible, shows name + args + result. */
-.toolcard {
-  align-self: flex-start;
+/* Inline tool-call card: collapsible, shows name + args + result. The
+   header chrome is rendered by DisclosureRow (DSH primitive) — we only own
+   the outer container, the expanded body, and the running-sweep animation
+   that runs while the latest block is still streaming. */
+.tool-call-row {
+  align-self: stretch;
   width: 100%;
   border: 1px solid var(--border-default);
   border-radius: var(--radius-md);
@@ -1406,48 +1409,42 @@ a:hover {
   overflow: hidden;
   font-size: var(--font-xs);
 }
-.toolcard--error {
+.tool-call-row--error {
   border-color: color-mix(in srgb, var(--accent-danger) 40%, transparent);
   background: color-mix(in srgb, var(--accent-danger) 6%, var(--bg-surface));
 }
-.toolcard__head {
-  display: flex;
-  align-items: center;
-  gap: var(--space-xs);
-  width: 100%;
-  padding: var(--space-xs) var(--space-sm);
-  background: transparent;
-  border: none;
-  cursor: pointer;
+.tool-call-row__sep {
+  display: inline-block;
+  width: 2px;
+  height: 2px;
+  margin: 0 8px;
+  border-radius: 50%;
+  background: var(--fg-muted);
+  vertical-align: middle;
+}
+.tool-call-row__summary {
+  font-size: var(--font-xs);
+  line-height: 24px;
   color: var(--fg-secondary);
-  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  overflow: hidden;
 }
-.toolcard__head:hover { background: color-mix(in srgb, var(--fg-primary) 5%, transparent); }
-.toolcard__icon { font-size: var(--font-sm); }
-.toolcard__name {
-  font-weight: 600;
-  font-family: var(--font-mono);
-  color: var(--fg-primary);
-}
-.toolcard__chevron {
-  margin-left: auto;
-  color: var(--fg-muted);
-}
-.toolcard__body {
+.tool-call-row__body {
   border-top: 1px solid var(--border-default);
   padding: var(--space-xs) var(--space-sm);
   display: flex;
   flex-direction: column;
   gap: var(--space-xs);
 }
-.toolcard__label {
+.tool-call-row__label {
   font-size: var(--font-xs);
   color: var(--fg-muted);
   text-transform: uppercase;
   letter-spacing: 0.04em;
   margin-bottom: 2px;
 }
-.toolcard__pre {
+.tool-call-row__pre {
   margin: 0;
   padding: var(--space-xs);
   background: var(--bg-canvas);
@@ -1460,44 +1457,83 @@ a:hover {
   white-space: pre;
 }
 
-/* Collapsible reasoning / "思考过程" panel — shown above the assistant bubble
- * for reasoning models (glm-5.2 / deepseek-reasoner). Collapsed by default;
- * the header pulses while the model is still thinking. */
-.reasoning {
+/* Collapsible reasoning / "思考过程" panel — sibling row inside the turn,
+   rendered as a DisclosureRow (DSH primitive) so the chrome matches the
+   rest of the DSH-aligned flow. While the latest block is still streaming
+   the header shows "思考中…" and runs the sweep animation; once the answer
+   lands it collapses back to default. */
+.reasoning-row {
+  align-self: stretch;
+  width: 100%;
   border: 1px solid var(--border-default);
   border-radius: var(--radius-sm);
   background: color-mix(in srgb, var(--fg-muted) 4%, var(--bg-surface));
-  margin-bottom: var(--space-xs);
+  overflow: hidden;
 }
-.reasoning__head {
-  display: flex;
-  align-items: center;
-  gap: var(--space-xs);
-  width: 100%;
-  padding: var(--space-xs) var(--space-sm);
-  background: transparent;
-  border: none;
-  cursor: pointer;
-  color: var(--fg-muted);
+.reasoning-row__sep {
+  display: inline-block;
+  width: 2px;
+  height: 2px;
+  margin: 0 8px;
+  border-radius: 50%;
+  background: var(--fg-muted);
+  vertical-align: middle;
+}
+.reasoning-row__summary {
   font-size: var(--font-xs);
-  text-align: left;
-}
-.reasoning__head:hover { background: color-mix(in srgb, var(--fg-primary) 4%, transparent); }
-.reasoning__icon { font-size: var(--font-sm); }
-.reasoning__label {
+  line-height: 24px;
   color: var(--fg-secondary);
-  font-style: italic;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  overflow: hidden;
 }
-.reasoning__chevron { margin-left: auto; color: var(--fg-muted); }
-.reasoning__body {
+.reasoning-row__body {
   border-top: 1px solid var(--border-default);
-  padding: var(--space-xs) var(--space-sm);
+  padding: 4px 0 4px 22px;
   color: var(--fg-secondary);
   font-size: var(--font-xs);
+  line-height: 24px;
   max-height: 280px;
   overflow: auto;
 }
-.reasoning__body .markdown { color: var(--fg-secondary); }
+.reasoning-row__body .markdown { color: var(--fg-secondary); }
+
+/* Running-sweep animation: a 300px gradient that travels left-to-right
+   across the disclosure row header. Target the DisclosureRow inner row via
+   the data-disclosure-row attribute (CSS-module class names are hashed at
+   build time, but React data-* props survive), which is already
+   position:relative + overflow:hidden — so the pseudo-element is clipped
+   exactly to the row width. The animation is the visual cue that the
+   model is still thinking / calling tools; once the next event lands the
+   `data-state` flips off and the sweep disappears. */
+@keyframes dsh-row-sweep {
+  from { transform: translateX(-100%); }
+  to   { transform: translateX(calc(100% + 300px)); }
+}
+.reasoning-row[data-state='running'] [data-disclosure-row]::after,
+.tool-call-row[data-state='running'] [data-disclosure-row]::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 300px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    color-mix(in srgb, var(--accent-bright) 25%, transparent) 55%,
+    transparent 100%
+  );
+  animation: dsh-row-sweep 2.6s linear infinite;
+  pointer-events: none;
+  z-index: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  .reasoning-row[data-state='running'] [data-disclosure-row]::after,
+  .tool-call-row[data-state='running'] [data-disclosure-row]::after {
+    animation: none;
+  }
+}
 
 /* Markdown content inside assistant bubbles. */
 .markdown > :first-child { margin-top: 0; }
