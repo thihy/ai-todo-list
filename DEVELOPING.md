@@ -111,3 +111,29 @@ pnpm dist                       # native installer
 7. Tray icon → right-click → menu shows.
 
 If any step fails, check `thihy.log` in your userData dir.
+
+## Troubleshooting
+
+### `pnpm dev` opens no window (orphaned single-instance lock)
+
+The app takes a single-instance lock on startup (`app.requestSingleInstanceLock()`
+in `src/main/index.ts`). On Windows, Ctrl+C'ing `pnpm dev` sometimes orphans the
+Electron child process, which keeps holding the lock — so the next `pnpm dev`
+gets `gotLock=false`, calls `app.quit()`, and never opens a window.
+
+The fix is the `ELECTRON_ALLOW_MULTI_INSTANCE` escape hatch:
+
+```bash
+# Bypass the single-instance lock for this one run (dev only).
+ELECTRON_ALLOW_MULTI_INSTANCE=1 pnpm dev
+```
+
+This makes the process skip the lock entirely (it logs
+`ELECTRON_ALLOW_MULTI_INSTANCE=1 — 单实例锁已禁用` on boot). Use it only to get
+unblocked — the proper fix is to kill the orphaned electron process (Task Manager
+→ `electron.exe`, or `taskkill /F /IM electron.exe`) and then run `pnpm dev`
+normally without the env var. Restarting Windows also clears it.
+
+The env var is read at line 50 of `index.ts` (`allowMulti`), before
+`app.requestSingleInstanceLock()`, so it must be set in the environment that
+launches `pnpm dev` — not in renderer code.
