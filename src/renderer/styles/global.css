@@ -4613,12 +4613,6 @@ a:hover {
   margin: 0 4px;
   background: var(--border-default);
 }
-.md-editor__tb-hint {
-  margin-left: auto;
-  font-size: var(--font-xs);
-  color: var(--fg-muted);
-  cursor: help;
-}
 .md-editor__body {
   flex: 1 1 auto;
   display: block;

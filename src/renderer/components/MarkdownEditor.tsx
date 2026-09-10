@@ -397,10 +397,6 @@ export const MarkdownEditor: React.FC<{
               <ToolbarBtn label="分割线" title="分割线" onClick={() => insertAtCursor('\n---\n')}>
                 <IconDivider size={14} />
               </ToolbarBtn>
-              <span className="md-editor__tb-sep" aria-hidden="true" />
-              <span className="md-editor__tb-hint" title="Ctrl/Cmd+B 粗体 · Ctrl/Cmd+I 斜体 · Ctrl/Cmd+K 链接 · Tab 缩进 · Shift+Tab 减少缩进 · 回车续行">
-                快捷键
-              </span>
           </div>
         )}
         <span className="md-editor__spacer" />
