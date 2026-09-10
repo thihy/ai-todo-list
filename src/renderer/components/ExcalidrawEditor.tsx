@@ -28,6 +28,12 @@ export const ExcalidrawEditor: React.FC<{
     if (!drawingId || !scene || !hostRef.current) return;
     let cancelled = false;
     (async () => {
+      // 必须先于 import('@excalidraw/excalidraw') 设置：excalidraw 在模块加载
+      // 时就解析 ASSETS_FALLBACK_URL（默认 https://esm.sh/...），用 window 全局
+      // 覆盖后，所有 canvas 字体（Assistant / Cascadia / Virgil 等）都会走本地的
+      // /excalidraw/fonts/ 路径，由 app:// 协议返回本地文件，避免联网下载。
+      const basePath = `${window.location.origin}/excalidraw/fonts/`;
+      (window as unknown as { EXCALIDRAW_ASSET_PATH?: string }).EXCALIDRAW_ASSET_PATH = basePath;
       const mod = await import('@excalidraw/excalidraw');
       if (cancelled || !hostRef.current) return;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any

@@ -1,22 +1,22 @@
-// DocumentsView — the task's multi-document workspace (schema v11). A single
-// horizontal tab bar at the top of the editor area, with the active document's
-// editor filling the space below:
+// DocumentsView — 任务的多文档工作区（schema v11）。顶部一条横向 tab 栏，
+// 选中文档的编辑器填满下方空间：
 //
 //   ┌──────────────────────────────────────────────────────────────┐
-//   │ [进展] [笔记] [绘图] [附件] [链接]                  [+]      │  ← tab bar
+//   │ [进展] [笔记] [绘图]                              [+]      │  ← tab 栏
 //   ├──────────────────────────────────────────────────────────────┤
-//   │  (per-kind editor fills the space)                          │
+//   │  按 kind 渲染对应编辑器：                                    │
 //   │   progress → WysiwygEditor                                  │
 //   │   note_md   → MarkdownEditor                                │
-//   │   drawing   → thumbnail + open Excalidraw                   │
-//   │   attachment→ preview/open/remove                           │
-//   │   link      → open url                                      │
+//   │   drawing   → Excalidraw 编辑器                              │
 //   └──────────────────────────────────────────────────────────────┘
 //
-// The default progress doc (WYSIWYG) is ord 0 and auto-selected on first
-// open. Drawings are surfaced here as tabs (merged out of the old
-// standalone 新绘图 strip) — selecting a drawing tab shows a thumbnail and an
-// "open editor" affordance; the + menu's 绘图 entry creates a new drawing.
+// 默认 progress 文档（WYSIWYG）ord 为 0，首次打开自动选中。绘图以 tab 形式
+// 展示（合并自原来的 新绘图 独立入口）—— 选中绘图 tab 直接挂载 Excalidraw
+// 编辑器；+ 菜单里的 绘图 项用于新建。
+//
+// 注意：链接 和 附件 类文档在此视图里被刻意过滤掉。它们在 TodoEditorPane 里
+// 有专属 section（自己的增删 UI），因为它们属于任务身份区的一部分，而不是
+// "用户创作内容"，不像 progress / note_md / drawing 那样。
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useDocuments, useDocument, useDrawings } from '../hooks/useTodoListApi';
@@ -42,14 +42,16 @@ const KIND_ICON: Record<DocumentKind, React.FC<{ size?: number }>> = {
   progress: IconActivity,
   note_md: IconDoc,
   drawing: IconDrawing,
-  attachment: IconAttach,
-  link: IconLink,
+  // 下面两种 kind 在此视图被过滤掉，占位用避免 Record 出现 undefined 洞
+  attachment: IconActivity,
+  link: IconActivity,
 };
 
 const KIND_LABEL: Record<DocumentKind, string> = {
   progress: '进展',
   note_md: '笔记',
   drawing: '绘图',
+  // 同上，被过滤；保留以让 Record 完整
   attachment: '附件',
   link: '链接',
 };
@@ -188,7 +190,7 @@ export const DocumentsView: React.FC<{
 }> = ({ todoId, taskTitle, onFullscreen, selectedDocId, onSelectDoc }) => {
   const { documents, refresh } = useDocuments(todoId);
   const { drawings, refresh: refreshDrawings } = useDrawings(todoId);
-  const { prompt, node: promptNode } = usePrompt();
+  const { node: promptNode } = usePrompt();
   // Controlled vs uncontrolled: when the parent passes selectedDocId + a
   // setter, the parent's state is the source of truth (so fullscreen-mode
   // mount can pick up where normal-mode left off). Without those props we
@@ -216,11 +218,16 @@ export const DocumentsView: React.FC<{
   const [editDraft, setEditDraft] = useState('');
   const editInputRef = useRef<HTMLInputElement>(null);
 
-  // Build a unified tab list: documents first (progress pinned first by ord),
-  // then drawings. Each tab id is namespaced to avoid collisions between
-  // document ids and drawing ids.
+  // 拼装统一的 tab 列表：documents 在前（progress 按 ord 排首位），drawings 在后。
+  // tab id 加前缀以避免 document id 和 drawing id 冲突。
+  //
+  // 链接 / 附件 在 TodoEditorPane 里已有专属 section，它们属于任务身份区
+  // 而非文档工作区——所以在这里过滤掉（document 行还在磁盘上，只是不再
+  // 当成 tab 暴露）。
   const tabs: Tab[] = useMemo(() => {
-    const docs: Tab[] = documents.map((d) => ({ kind: 'document', doc: d }));
+    const docs: Tab[] = documents
+      .filter((d) => d.kind !== 'link' && d.kind !== 'attachment')
+      .map((d) => ({ kind: 'document', doc: d }));
     const draws: Tab[] = drawings.map((d) => ({
       kind: 'drawing',
       id: d.id,
@@ -303,59 +310,6 @@ export const DocumentsView: React.FC<{
     }
     setAddOpen(false);
   }, [todoId, refresh]);
-
-  const addLink = useCallback(async (): Promise<void> => {
-    const url = await prompt('链接地址', 'https://');
-    if (!url) {
-      setAddOpen(false);
-      return;
-    }
-    const title = (await prompt('链接名称（可留空）')) || new URL(url).hostname;
-    const res = await window.todoList.document.create({ todoId, kind: 'link', title, url });
-    if (res.ok) {
-      await refresh();
-      setSelected(`d:${res.data.id}`);
-    }
-    setAddOpen(false);
-  }, [todoId, refresh, prompt, setSelected]);
-
-  const addAttachment = useCallback(async (): Promise<void> => {
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.onchange = async () => {
-      const file = input.files?.[0];
-      if (!file) {
-        setAddOpen(false);
-        return;
-      }
-      const dataUrl = await new Promise<string>((resolve, reject) => {
-        const r = new FileReader();
-        r.onload = () => resolve(r.result as string);
-        r.onerror = () => reject(r.error);
-        r.readAsDataURL(file);
-      });
-      const attRes = await window.todoList.inbox.attachBlob({
-        todoId,
-        dataUrl,
-        filename: file.name,
-        mime: file.type || 'application/octet-stream',
-      });
-      if (attRes.ok) {
-        const docRes = await window.todoList.document.create({
-          todoId,
-          kind: 'attachment',
-          title: file.name,
-          refId: attRes.data.id,
-        });
-        if (docRes.ok) {
-          await refresh();
-          setSelected(`d:${docRes.data.id}`);
-        }
-      }
-      setAddOpen(false);
-    };
-    input.click();
-  }, [todoId, refresh, setSelected]);
 
   // 绘图: create the drawing in-place, refresh the tab list, and select it.
   // The Excalidraw editor mounts directly inside the tab body — no separate
@@ -501,12 +455,6 @@ export const DocumentsView: React.FC<{
               </button>
               <button type="button" onClick={addDrawing}>
                 <IconDrawing size={14} /> 绘图
-              </button>
-              <button type="button" onClick={addAttachment}>
-                <IconAttach size={14} /> 附件
-              </button>
-              <button type="button" onClick={addLink}>
-                <IconLink size={14} /> 链接
               </button>
             </div>
           )}

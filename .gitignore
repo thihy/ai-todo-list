@@ -32,6 +32,9 @@ Thumbs.db
 # CodeGraph
 .codegraph/
 
+# Build-time font copies (rebuilt by resources/copy-excalidraw-fonts.mjs)
+src/renderer/public/excalidraw/
+
 # OpenSpec generated
 .claude/skills/openspec/generated/
 /.claude
