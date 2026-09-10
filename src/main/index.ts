@@ -149,7 +149,7 @@ function bootstrap(): void {
     installRouter();
     registerTodoHandlers(repo, md);
     registerContentHandlers(md, drawings, repo);
-    registerDocumentHandlers(docs);
+    registerDocumentHandlers(docs, resolveTaskDir);
     registerInboxHandlers(inbox);
 
     // attachment://<id> → serve the inbox_attachments file bytes. Registered

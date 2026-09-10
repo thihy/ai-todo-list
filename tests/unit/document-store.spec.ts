@@ -4,7 +4,7 @@
 // create/read/write/rename/remove + version trim behave like MarkdownStore.
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, readFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openDb } from '../../src/main/db/schema';
@@ -95,5 +95,75 @@ describe('DocumentStore + v11 migration', () => {
     expect(renamed.title).toBe('G');
     docs.remove(link.id);
     expect(docs.get(link.id)).toBeNull();
+  });
+});
+
+describe('DocumentStore file mirrors (per-task layout)', () => {
+  let dir: string;
+  let handle: ReturnType<typeof openDb>;
+  let repo: TodoRepo;
+  let docs: DocumentStore;
+  let todosDir: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'todo-list-fs-'));
+    handle = openDb(join(dir, 'db.sqlite'));
+    repo = new TodoRepo(handle.db);
+    todosDir = join(dir, 'todos');
+    docs = new DocumentStore(handle.db);
+  });
+  afterEach(() => {
+    handle.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('writeToFile mirrors progress doc to {taskDir}/progress.html', () => {
+    const t = repo.create({ title: 'T' }, 'x');
+    docs.ensureDefaultDocs(t.id);
+    const prog = docs.list(t.id).find((d) => d.kind === 'progress')!;
+    const taskDir = paths.todoDir(todosDir, t.title, t.id);
+    docs.writeToFile(taskDir, 'progress', prog.title!, '<p>hi</p>');
+    const path = paths.progressFile(taskDir);
+    expect(existsSync(path)).toBe(true);
+    expect(readFileSync(path, 'utf8')).toBe('<p>hi</p>');
+  });
+
+  it('writeToFile mirrors note_md doc to {taskDir}/{slug}.md', () => {
+    const t = repo.create({ title: 'T' }, 'x');
+    const note = docs.create(t.id, 'note_md', '会议记录');
+    const taskDir = paths.todoDir(todosDir, t.title, t.id);
+    docs.writeToFile(taskDir, 'note_md', note.title!, '# 议程');
+    const path = paths.noteFile(taskDir, '会议记录');
+    expect(existsSync(path)).toBe(true);
+    expect(readFileSync(path, 'utf8')).toBe('# 议程');
+  });
+
+  it('removeFile unlinks the on-disk backing file', () => {
+    const t = repo.create({ title: 'T' }, 'x');
+    const note = docs.create(t.id, 'note_md', 'X');
+    const taskDir = paths.todoDir(todosDir, t.title, t.id);
+    docs.writeToFile(taskDir, 'note_md', note.title!, 'data');
+    const path = paths.noteFile(taskDir, 'X');
+    expect(existsSync(path)).toBe(true);
+    docs.removeFile(taskDir, 'note_md', note.title!);
+    expect(existsSync(path)).toBe(false);
+  });
+
+  it('renameFile moves note_md files between slugs; progress is no-op', () => {
+    const t = repo.create({ title: 'T' }, 'x');
+    const taskDir = paths.todoDir(todosDir, t.title, t.id);
+    docs.writeToFile(taskDir, 'note_md', 'Old', 'body');
+    const oldPath = paths.noteFile(taskDir, 'Old');
+    const newPath = paths.noteFile(taskDir, 'New');
+    expect(existsSync(oldPath)).toBe(true);
+    docs.renameFile(taskDir, 'note_md', 'Old', 'New');
+    expect(existsSync(oldPath)).toBe(false);
+    expect(existsSync(newPath)).toBe(true);
+    expect(readFileSync(newPath, 'utf8')).toBe('body');
+
+    // progress rename is a no-op: file path doesn't depend on title.
+    docs.writeToFile(taskDir, 'progress', '进展', '<p>x</p>');
+    docs.renameFile(taskDir, 'progress', '进展', 'Whatever');
+    expect(existsSync(paths.progressFile(taskDir))).toBe(true);
   });
 });

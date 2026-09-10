@@ -12,6 +12,8 @@
 // those kinds (create / remove / rename / list).
 
 import type Database from 'better-sqlite3';
+import { existsSync, mkdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { newId } from '../db/schema';
 import type {
   DocumentKind,
@@ -20,6 +22,8 @@ import type {
   ULID,
 } from '../../shared/todo-types';
 import { MAX_BODY_VERSIONS } from '../../shared/constants';
+import { noteFile, progressFile } from './paths';
+import { logger } from '../logger';
 
 interface DocRow {
   id: string;
@@ -258,6 +262,50 @@ export class DocumentStore {
     this.db
       .prepare('UPDATE task_documents SET title = ?, updated_at = ? WHERE id = ?')
       .run(title, Date.now(), id);
+  }
+
+  /** Mirror the latest content of a progress / note_md doc to its on-disk file.
+   *  Best-effort: try/catch + logger.warn + swallow. The DB is the authority;
+   *  the file is a write-through projection for git history + file explorer.
+   *  Drawing / attachment / link docs are NOT mirrored here — DrawingStore and
+   *  InboxStore own their own file paths. */
+  writeToFile(taskDir: string, kind: 'progress' | 'note_md', title: string, content: string): void {
+    try {
+      const path = kind === 'progress' ? progressFile(taskDir) : noteFile(taskDir, title);
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(path, content, 'utf8');
+    } catch (err) {
+      logger.warn(`DocumentStore.writeToFile(${kind}) failed: ${(err as Error).message}`);
+    }
+  }
+
+  /** Remove the on-disk file backing a progress / note_md doc. Best-effort. */
+  removeFile(taskDir: string, kind: 'progress' | 'note_md', title: string): void {
+    try {
+      const path = kind === 'progress' ? progressFile(taskDir) : noteFile(taskDir, title);
+      if (existsSync(path)) unlinkSync(path);
+    } catch (err) {
+      logger.warn(`DocumentStore.removeFile(${kind}) failed: ${(err as Error).message}`);
+    }
+  }
+
+  /** Rename the on-disk file for a note_md doc when its title changes.
+   *  Progress docs are at a fixed path (progress.html) so this is a no-op for
+   *  kind === 'progress'. Best-effort. */
+  renameFile(
+    taskDir: string,
+    kind: 'progress' | 'note_md',
+    oldTitle: string,
+    newTitle: string,
+  ): void {
+    if (kind === 'progress') return;
+    try {
+      const oldPath = noteFile(taskDir, oldTitle);
+      const newPath = noteFile(taskDir, newTitle);
+      if (existsSync(oldPath) && oldPath !== newPath) renameSync(oldPath, newPath);
+    } catch (err) {
+      logger.warn(`DocumentStore.renameFile(${kind}) failed: ${(err as Error).message}`);
+    }
   }
 
   /** Remove a document row. document_versions cascade via FK. For drawing /
