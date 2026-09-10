@@ -1120,12 +1120,12 @@ function historyToTurn(h: HistoryTurnLike): Turn {
 }
 
 const TurnView: React.FC<{ turn: Turn }> = ({ turn }) => {
-  const streaming = turn.status === 'streaming';
-  // Show the "思考中…" chip only when streaming AND there's no reasoning
-  // *and* no tools/answer yet — i.e. we're in the model's pre-tool thinking
-  // phase and haven't seen any reasoning-delta events. Once any reasoning
-  // text lands, ReasoningView takes over with its own "思考中…" header.
-  const thinking = streaming && !turn.assistant && turn.tools.length === 0 && !turn.reasoning;
+  const { blocks, status } = turn;
+  const streaming = status === 'streaming';
+  // Pre-thinking chip: shown only while streaming and no block has landed
+  // yet. Once the first reasoning / tool-call / text event arrives, the
+  // block itself takes over with its own header label.
+  const thinking = streaming && blocks.length === 0;
   return (
     <div className="turn">
       {turn.attached && turn.attached.length > 0 && (
@@ -1142,23 +1142,32 @@ const TurnView: React.FC<{ turn: Turn }> = ({ turn }) => {
           {turn.user}
         </div>
       )}
-      {/* Show ReasoningView whenever there's reasoning text, OR we're still
-          streaming and the answer hasn't started yet — the latter case keeps
-          the collapsible "思考中…" header visible so the user sees the panel
-          even if reasoning deltas haven't landed. */}
-      {(turn.reasoning || (streaming && !turn.assistant && turn.tools.length === 0)) && (
-        <ReasoningView text={turn.reasoning} streaming={streaming} />
-      )}
-      {turn.tools.map((tc, i) => (
-        <ToolCardView key={i} card={tc} />
-      ))}
+      {/* Iterate blocks in temporal order so reasoning ↔ tool-call ↔ text
+          appear as sibling rows in the order the events arrived. Step 4
+          will replace ReasoningView / ToolCardView with ReasoningRow /
+          ToolCallRow built on the DisclosureRow primitive; for now we keep
+          the same components so this commit is purely a data-flow change. */}
+      {blocks.map((block, i) => {
+        if (block.kind === 'reasoning') {
+          return <ReasoningView key={`r-${i}`} text={block.text} streaming={streaming} />;
+        }
+        if (block.kind === 'tool-call') {
+          return (
+            <ToolCardView
+              key={block.callId}
+              card={{ name: block.name, args: block.args, result: block.result, ok: block.ok }}
+            />
+          );
+        }
+        // text
+        return (
+          <div key={`t-${i}`} className="bubble bubble--assistant">
+            <Markdown text={block.text} streaming={streaming} />
+          </div>
+        );
+      })}
       {thinking && <div className="aipane__thinking"><span className="aipane__dot" />思考中…</div>}
-      {turn.assistant && (
-        <div className="bubble bubble--assistant">
-          <Markdown text={turn.assistant} streaming={streaming} />
-        </div>
-      )}
-      {turn.status === 'error' && (
+      {status === 'error' && (
         <div className="bubble bubble--error"><IconWarn size={14} /> {turn.error}</div>
       )}
     </div>
