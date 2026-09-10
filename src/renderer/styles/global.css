@@ -4074,9 +4074,16 @@ a:hover {
   grid-template-rows: auto 1fr;
   gap: 0;
   min-height: 420px;
+  /* Keep the card on --bg-surface so the tab bar (--bg-canvas) and the
+     editor body (also --bg-canvas, see .docs-workspace__editor below) read
+     as distinct surfaces inside it. The card itself is now bordered with
+     --border-strong + a subtle shadow so the user can locate the editor's
+     boundary at a glance — previously the textarea bg matched the card
+     bg, so the editor's actual area blended with the surroundings. */
   background: var(--bg-surface);
-  border: 1px solid var(--border-default);
+  border: 1px solid var(--border-strong);
   border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card, 0 1px 2px rgba(15, 18, 22, 0.04));
   overflow: hidden;
 }
 
@@ -4299,6 +4306,11 @@ a:hover {
 
 .docs-workspace__editor {
   padding: var(--space-md);
+  /* Editor body uses --bg-canvas (white) inside the --bg-surface card, so
+     the textarea / preview / drawings sit on a visible "page" surface and
+     the card's boundary reads clearly. Previously this inherited the
+     card's --bg-surface and the editor content merged with the card. */
+  background: var(--bg-canvas);
   overflow: auto;
   display: flex;
   flex-direction: column;
@@ -4343,8 +4355,12 @@ a:hover {
   display: flex;
   flex-direction: column;
   background: var(--bg-surface);
-  border: 1px solid var(--border-default);
+  /* Match the docs-workspace card: stronger border + subtle shadow so the
+     editor's actual area reads as a clear boundary against the surrounding
+     canvas, not a flat continuation of the surroundings. */
+  border: 1px solid var(--border-strong);
   border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card, 0 1px 2px rgba(15, 18, 22, 0.04));
   overflow: hidden;
 }
 
@@ -4352,9 +4368,16 @@ a:hover {
   display: flex;
   align-items: center;
   gap: var(--space-xxs, 2px);
-  padding: var(--space-xs) var(--space-sm);
+  /* No left/right/top padding — the toolbar sits edge-to-edge inside the
+     .wysiwyg card so it reads as a solid chrome bar, not a floating strip.
+     A small bottom padding keeps the button row from kissing the editor
+     body's top border. Buttons own their own horizontal padding. */
+  padding: 0 0 var(--space-xs) 0;
   border-bottom: 1px solid var(--border-default);
-  background: var(--bg-canvas);
+  /* Slightly darker than the .wysiwyg card so the toolbar pops as a
+     distinct chrome row. Same shade as the MD editor's topbar so the two
+     editors share a consistent visual rhythm — see .md-editor__topbar. */
+  background: var(--bg-surface-elev, #ECEEF1);
   flex-wrap: wrap;
 }
 
@@ -4463,16 +4486,22 @@ a:hover {
 }
 /* Single-row topbar that holds tabs, format toolbar, and the status/save
    trailing cluster. Previously tabs and toolbar lived on separate rows; now
-   they share one row so the editor's vertical chrome is half as tall. */
+   they share one row so the editor's vertical chrome is half as tall.
+
+   Edge-to-edge: no left/right/top padding so the bar fills the card width
+   like a real chrome row. Padding-bottom only, so the format buttons don't
+   kiss the editor body's top border. Background is one shade darker than
+   the card so the bar reads as a distinct functional region — same shade
+   as the WYSIWYG toolbar so the two editors share a visual rhythm. */
 .md-editor__topbar {
   flex: none;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-sm);
-  padding: var(--space-xs) var(--space-sm);
+  padding: 0 0 var(--space-xs) 0;
   border-bottom: 1px solid var(--border-default);
-  background: var(--bg-surface);
+  background: var(--bg-surface-elev, #ECEEF1);
 }
 .md-editor__topbar .md-editor__toolbar {
   /* Inside the topbar the toolbar doesn't need its own padding/background —
@@ -4547,9 +4576,11 @@ a:hover {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 26px;
-  height: 26px;
-  padding: 0 6px;
+  /* Match .wysiwyg__btn (28px tall, padding 0 var(--space-xs)) so the
+     RICH + MD editors share a consistent toolbar button rhythm. */
+  min-width: 28px;
+  height: 28px;
+  padding: 0 var(--space-xs);
   border: 1px solid transparent;
   border-radius: var(--radius-sm);
   background: transparent;
@@ -4564,6 +4595,13 @@ a:hover {
 .md-editor__tb-btn:focus-visible {
   outline: 2px solid var(--accent-primary);
   outline-offset: -1px;
+}
+.md-editor__tb-btn.is-active {
+  /* Same active treatment as .wysiwyg__btn.is-active so format toggles
+     (bold/italic/heading) look the same in both editors. */
+  background: color-mix(in srgb, var(--accent-primary) 14%, transparent);
+  color: var(--accent-primary);
+  border-color: color-mix(in srgb, var(--accent-primary) 30%, transparent);
 }
 .md-editor__tb-text {
   font-weight: 600;
@@ -4598,7 +4636,11 @@ a:hover {
   min-height: 320px;
   padding: var(--space-md);
   border: 0;
-  background: var(--bg-surface);
+  /* Match the editor body's --bg-canvas so the textarea reads as a
+     continuous "page" inside the card; previously it shared the card's
+     --bg-surface which made the editor's actual area disappear into
+     the surroundings. */
+  background: var(--bg-canvas);
   color: var(--fg-primary);
   font-family: var(--font-mono);
   font-size: var(--font-md);
@@ -4685,7 +4727,12 @@ a:hover {
  * for markdown typography — the WYSIWYG content uses its own rules. */
 .md-preview {
   padding: var(--space-md);
-  background: var(--bg-surface);
+  /* Match the editor body's --bg-canvas so the rendered preview reads as
+     a continuous page inside the card; previously the surface bg made
+     the preview pop as a darker rectangle and competed with the card
+     boundary. The thin border still keeps it visually distinct in
+     split mode where it sits beside the textarea. */
+  background: var(--bg-canvas);
   border: 1px solid var(--border-default);
   border-radius: var(--radius-md);
   min-height: 320px;
