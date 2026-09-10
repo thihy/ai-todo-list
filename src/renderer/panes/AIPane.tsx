@@ -62,6 +62,18 @@ interface ToolCard {
   ok: boolean;
 }
 
+/** One ordered row inside a turn's body. Mirrors DeepSeek's `AssistantBlock`
+ *  union (see packages/client/ui-conversation in deepseek-harness) with our
+ *  own narrowing for the tool-call block: DSH aggregates a call's args +
+ *  result into a single `toolCall` event, so we don't need the
+ *  running/settled distinction the upstream `RunningToolCall | ToolResultNode`
+ *  carries. The chat-flow renders the three kinds as sibling rows so the
+ *  temporal order of reasoning ↔ tool-call ↔ text is preserved end-to-end. */
+type TurnBlock =
+  | { kind: 'reasoning'; text: string }
+  | { kind: 'tool-call'; callId: string; name: string; argsRaw: string; result: unknown; ok: boolean }
+  | { kind: 'text'; text: string };
+
 /** A file the user picked via the composer's + button. main reads the file
  *  and gives us the inlined text body so the prompt can carry the content
  *  directly. Path/name stay around for the chip label and the mention in
@@ -80,6 +92,11 @@ interface Turn {
   reasoning: string;
   assistant: string;
   tools: ToolCard[];
+  /** Ordered trace of the assistant turn: reasoning ↔ tool-call ↔ text
+   *  blocks in the order events arrived. New code should read this; the
+   *  three string/array fields above are kept as derived fallbacks during
+   *  the migration and will be removed once every reader switches over. */
+  blocks: TurnBlock[];
   status: 'streaming' | 'done' | 'error';
   error?: string;
   /** Files the user attached to this turn. Rendered as chips above the
@@ -643,7 +660,7 @@ export const AIPane: React.FC = () => {
         // Display the user's literal prompt in the bubble, NOT the wrapped
         // system-instruction version — the user should see exactly what
         // they typed.
-        { id, user: prompt, reasoning: '', assistant: '', tools: [], status: 'streaming', attached: attached.length > 0 ? attached : undefined },
+        { id, user: prompt, reasoning: '', assistant: '', tools: [], blocks: [], status: 'streaming', attached: attached.length > 0 ? attached : undefined },
       ],
     }));
     if (!override) {
@@ -1035,7 +1052,7 @@ export const AIPane: React.FC = () => {
 /** Convert a HistoryTurn (from JSONL decode) into the renderer's Turn shape. */
 function historyToTurn(h: HistoryTurnLike): Turn {
   if (h.type === 'user') {
-    return { id: crypto.randomUUID(), user: h.text ?? '', reasoning: '', assistant: '', tools: [], status: 'done' };
+    return { id: crypto.randomUUID(), user: h.text ?? '', reasoning: '', assistant: '', tools: [], blocks: [], status: 'done' };
   }
   if (h.type === 'assistant') {
     return {
@@ -1044,6 +1061,7 @@ function historyToTurn(h: HistoryTurnLike): Turn {
       reasoning: h.reasoning ?? '',
       assistant: h.text ?? '',
       tools: [],
+      blocks: [],
       status: 'done',
     };
   }
@@ -1054,6 +1072,7 @@ function historyToTurn(h: HistoryTurnLike): Turn {
     reasoning: '',
     assistant: '',
     tools: [{ name: h.name ?? '', args: h.args, result: h.ok ? h.data : h.error, ok: h.ok ?? false }],
+    blocks: [],
     status: 'done',
   };
 }
