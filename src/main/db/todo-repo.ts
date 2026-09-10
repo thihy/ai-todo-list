@@ -18,8 +18,16 @@ import type {
 /** Burst-merge window for progress_log: when a user drags the bar several
  *  times within this window, all writes collapse into the latest row (same
  *  id, updated percent). Without this, a single drag session produced 5-20
- *  "进度 X% → Y%" entries that obscured real audit signal in 动态. */
-export const PROGRESS_MERGE_WINDOW_MS = 60_000;
+ *  "进度 X% → Y%" entries that obscured real audit signal in 动态.
+ *
+ *  The window also covers the post-drag description flow: the user drags to
+ *  some value, then types a one-line note in the popover. updateProgressNote
+ *  preserves the original timestamp, so the final timeline reads as
+ *  "进度 0% → 28% XXXX" (one entry), matching the user's expectation that
+ *  "添加描述成功后，动态中要记录 + 短时间内的进度更新要合并为一条". 60s felt
+ *  too tight for users who type slowly; bumped to 5min so the burst covers
+ *  a normal drag → popover → type → save round-trip comfortably. */
+export const PROGRESS_MERGE_WINDOW_MS = 5 * 60_000;
 
 interface TodoRow {
   id: string;
