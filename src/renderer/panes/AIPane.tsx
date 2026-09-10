@@ -28,7 +28,7 @@ import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from
 import { useAiStream, useAppEvent } from '../hooks/useTodoListApi';
 import { useDataVersion } from '../data-bus';
 import { Markdown } from '../components/Markdown';
-import { Button, Pill } from '@deepseek-ai/dsh-client-ui-primitives';
+import { Button, DisclosureRow, Pill } from '@deepseek-ai/dsh-client-ui-primitives';
 import {
   IconHistory,
   IconPlus,
@@ -1122,6 +1122,14 @@ function historyToTurn(h: HistoryTurnLike): Turn {
 const TurnView: React.FC<{ turn: Turn }> = ({ turn }) => {
   const { blocks, status } = turn;
   const streaming = status === 'streaming';
+  // Last reasoning block — only this one runs the sweep while streaming
+  // and the answer has not started yet. Earlier reasoning blocks sit
+  // static so the model can't fake a "live" sweep on settled text.
+  const lastReasoningIdx = blocks.reduce(
+    (acc, b, i) => (b.kind === 'reasoning' ? i : acc), -1
+  );
+  const hasAnswer = blocks.some((b) => b.kind === 'text');
+  const lastIdx = blocks.length - 1;
   // Pre-thinking chip: shown only while streaming and no block has landed
   // yet. Once the first reasoning / tool-call / text event arrives, the
   // block itself takes over with its own header label.
@@ -1142,20 +1150,21 @@ const TurnView: React.FC<{ turn: Turn }> = ({ turn }) => {
           {turn.user}
         </div>
       )}
-      {/* Iterate blocks in temporal order so reasoning ↔ tool-call ↔ text
-          appear as sibling rows in the order the events arrived. Step 4
-          will replace ReasoningView / ToolCardView with ReasoningRow /
-          ToolCallRow built on the DisclosureRow primitive; for now we keep
-          the same components so this commit is purely a data-flow change. */}
+      {/* Sibling rows in event order — reasoning ↔ tool-call ↔ text. Each
+          row knows whether it's the active one so only the live one runs
+          the sweep; earlier rows sit static under their disclosure header. */}
       {blocks.map((block, i) => {
         if (block.kind === 'reasoning') {
-          return <ReasoningView key={`r-${i}`} text={block.text} streaming={streaming} />;
+          const running = streaming && i === lastReasoningIdx && !hasAnswer;
+          return <ReasoningRow key={`r-${i}`} text={block.text} running={running} />;
         }
         if (block.kind === 'tool-call') {
+          const running = streaming && i === lastIdx;
           return (
-            <ToolCardView
+            <ToolCallRow
               key={block.callId}
               card={{ name: block.name, args: block.args, result: block.result, ok: block.ok }}
+              running={running}
             />
           );
         }
@@ -1174,54 +1183,103 @@ const TurnView: React.FC<{ turn: Turn }> = ({ turn }) => {
   );
 };
 
-const ReasoningView: React.FC<{ text: string; streaming: boolean }> = ({ text, streaming }) => {
-  // Collapsed by default — the reasoning is verbose; expand to inspect.
-  // While streaming, show a live "思考中…" hint in the header so the user
-  // sees the model is thinking even before any answer token lands.
-  const [open, setOpen] = useState(false);
+/** One reasoning block, rendered as a DisclosureRow aligned with DeepSeek's
+ *  ReasoningRow (see deepseek-harness/packages/client/ui-conversation/src/
+ *  client/chat/ReasoningRow.tsx). Defaults to collapsed; the running flag
+ *  forces open + running sweep and switches the title to "思考中…". Once
+ *  running clears the user's manual open/closed state takes over. */
+const ReasoningRow: React.FC<{ text: string; running: boolean }> = ({ text, running }) => {
+  const [userOpen, setUserOpen] = useState(false);
+  const open = running || userOpen;
+  const title = running ? '思考中…' : '思考过程';
+  // First non-empty line, truncated — visible in the collapsed header so
+  // the user has a hint without expanding. While running this re-derives
+  // per render so the trailing summary follows the live text.
+  const summary = (() => {
+    const line = text.split('\n').map((s) => s.trim()).find((s) => s.length > 0);
+    if (!line) return '';
+    return line.length > 60 ? line.slice(0, 60) + '…' : line;
+  })();
   return (
-    <div className="reasoning">
-      <button type="button" className="reasoning__head" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
-        <span className="reasoning__icon" aria-hidden="true"><IconThink size={14} /></span>
-        <span className="reasoning__label">{streaming ? '思考中…' : '思考过程'}</span>
-        <span className="reasoning__chevron" aria-hidden="true">{open ? '▾' : '▸'}</span>
-      </button>
-      {open && (
-        <div className="reasoning__body">
-          <Markdown text={text} streaming={streaming} />
+    <div className="reasoning-row" data-state={running ? 'running' : 'ok'}>
+      <DisclosureRow
+        icon={<IconThink size={14} />}
+        title={title}
+        open={open}
+        expandable
+        expandOnRowClick
+        onToggle={() => setUserOpen((o) => !o)}
+        collapsedContent={
+          summary ? (
+            <>
+              <span className="reasoning-row__sep" aria-hidden />
+              <span className="reasoning-row__summary">{summary}</span>
+            </>
+          ) : undefined
+        }
+      >
+        <div className="reasoning-row__body">
+          <Markdown text={text} streaming={running} />
         </div>
-      )}
+      </DisclosureRow>
     </div>
   );
 };
 
-const ToolCardView: React.FC<{ card: ToolCard }> = ({ card }) => {
+/** One tool-call block, rendered as a DisclosureRow aligned with DeepSeek's
+ *  ToolRow single-line-summary pattern (see deepseek-harness/packages/
+ *  client/ui-tool/src/client/tool/components/ToolRow.tsx). Defaults to
+ *  collapsed; never auto-opens — the user inspects args/result on demand.
+ *  Running sweep only while streaming AND the block is the latest block. */
+const ToolCallRow: React.FC<{
+  card: { name: string; args?: unknown; result?: unknown; ok: boolean };
+  running: boolean;
+}> = ({ card, running }) => {
   const [open, setOpen] = useState(false);
   const argsText = formatValue(card.args);
   const resultText = formatValue(card.result);
+  const state = running ? 'running' : card.ok ? 'ok' : 'error';
+  // Collapsed summary: a one-line preview of the args. Falls back to the
+  // tool name when args are empty/absent.
+  const argsFirstLine = argsText.split('\n').map((s) => s.trim()).find((s) => s.length > 0);
+  const summary = (argsFirstLine && argsFirstLine.length > 0
+    ? argsFirstLine.length > 60 ? argsFirstLine.slice(0, 60) + '…' : argsFirstLine
+    : card.name);
   return (
-    <div className={`toolcard${card.ok ? '' : ' toolcard--error'}`}>
-      <button type="button" className="toolcard__head" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
-        <span className="toolcard__icon" aria-hidden="true">{card.ok ? <IconTool size={14} /> : <IconWarn size={14} />}</span>
-        <span className="toolcard__name">{card.name || 'tool'}</span>
-        <span className="toolcard__chevron" aria-hidden="true">{open ? '▾' : '▸'}</span>
-      </button>
-      {open && (argsText || resultText) && (
-        <div className="toolcard__body">
-          {argsText && (
-            <div className="toolcard__section">
-              <div className="toolcard__label">参数</div>
-              <pre className="toolcard__pre">{argsText}</pre>
-            </div>
-          )}
-          {resultText && (
-            <div className="toolcard__section">
-              <div className="toolcard__label">{card.ok ? '结果' : '错误'}</div>
-              <pre className="toolcard__pre">{resultText}</pre>
-            </div>
-          )}
-        </div>
-      )}
+    <div className={`tool-call-row${card.ok ? '' : ' tool-call-row--error'}`} data-state={state}>
+      <DisclosureRow
+        icon={card.ok ? <IconTool size={14} /> : <IconWarn size={14} />}
+        title={card.name || 'tool'}
+        open={open}
+        expandable
+        expandOnRowClick
+        onToggle={() => setOpen((o) => !o)}
+        collapsedContent={
+          summary ? (
+            <>
+              <span className="tool-call-row__sep" aria-hidden />
+              <span className="tool-call-row__summary">{summary}</span>
+            </>
+          ) : undefined
+        }
+      >
+        {(argsText || resultText) && (
+          <div className="tool-call-row__body">
+            {argsText && (
+              <div className="tool-call-row__section">
+                <div className="tool-call-row__label">参数</div>
+                <pre className="tool-call-row__pre">{argsText}</pre>
+              </div>
+            )}
+            {resultText && (
+              <div className="tool-call-row__section">
+                <div className="tool-call-row__label">{card.ok ? '结果' : '错误'}</div>
+                <pre className="tool-call-row__pre">{resultText}</pre>
+              </div>
+            )}
+          </div>
+        )}
+      </DisclosureRow>
     </div>
   );
 };
