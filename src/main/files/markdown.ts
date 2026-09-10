@@ -1,51 +1,66 @@
-// Markdown file storage. Each TODO has a .md file with YAML front-matter + Markdown body.
-// DB is the authority; the file is projected. Version history kept in DB content_versions.
+// Progress doc file storage. Per-task layout (post-refactor):
+//
+//   {dataDir}/todos/{slug}/progress.html      ← raw HTML (no front-matter)
+//
+// DB is still the authority: `todos.body` (mirror for FTS5 snippets) and
+// `content_versions.body` (version history). The file is a write-through
+// projection so other tools (git history, file explorer) can see it without
+// opening the DB.
 
 import type Database from 'better-sqlite3';
-import matter from 'gray-matter';
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
-import { join, dirname } from 'node:path';
-import type { ContentVersionEntry, Priority, TodoStatus, ULID } from '../../shared/todo-types';
+import { join } from 'node:path';
+import type { ContentVersionEntry, ULID } from '../../shared/todo-types';
 import { MAX_BODY_VERSIONS } from '../../shared/constants';
 
-interface FrontMatter {
-  id: ULID;
-  title: string;
-  status: TodoStatus;
-  priority: Priority;
-  project: string | null;
-  dueAt: number | null;
-  createdAt: number;
-  updatedAt: number;
-  tags: string[];
-}
-
 export class MarkdownStore {
+  /** Cache of id → taskDir so repeated `resolveTaskDir(id)` calls return the
+   *  same path. `paths.todoDir` adds a ULID suffix when the base dir already
+   *  exists (collision avoidance at creation), so without this cache a
+   *  second lookup of an existing task would resolve to a different (empty)
+   *  dir than the one its files actually live in. Tests must reset this
+   *  between cases; production gets a fresh store per boot. */
+  private readonly taskDirCache = new Map<ULID, string>();
+
   constructor(
     private db: Database.Database,
     private todosDir: string,
+    /** Resolve the per-task directory for a given TODO id. Injected at
+     *  construction time so this store stays DB-only — title lookups live in
+     *  the wiring layer. */
+    private resolveTaskDir: (id: ULID) => string,
   ) {
     mkdirSync(todosDir, { recursive: true });
   }
 
-  /** Absolute path to the folder where task .md files live. Used by the
-   *  git-history wiring so commitOnSave / getFileLog / restoreFileAtSha
-   *  can scope operations to the right directory. */
+  /** Absolute path to the folder that holds the per-task sub-directories.
+   *  Used by git-history wiring (commitOnSave, getFileLog, …) as the `.git/`
+   *  parent. The per-task dir itself is resolved via `resolveTaskDir(id)`. */
   get todosDirPath(): string {
     return this.todosDir;
   }
 
+  /** The per-task dir for a given id. Compat helper — git-history treats
+   *  this as the dir that owns the file. After Commit 9, callers will pass
+   *  the taskDir explicitly. */
   filePathFor(id: ULID): string {
-    return join(this.todosDir, `${id}.md`);
+    return this.taskDirFor(id);
+  }
+
+  /** Internal: cached, deterministic taskDir lookup. */
+  private taskDirFor(id: ULID): string {
+    const cached = this.taskDirCache.get(id);
+    if (cached) return cached;
+    const dir = this.resolveTaskDir(id);
+    this.taskDirCache.set(id, dir);
+    return dir;
   }
 
   readBody(id: ULID): { markdown: string; version: number } {
-    const path = this.filePathFor(id);
+    const path = join(this.taskDirFor(id), 'progress.html');
     let body = '';
     if (existsSync(path)) {
-      const raw = readFileSync(path, 'utf8');
-      const parsed = matter(raw);
-      body = parsed.content.trimStart();
+      body = readFileSync(path, 'utf8');
     }
     const version = (
       this.db
@@ -57,19 +72,9 @@ export class MarkdownStore {
     return { markdown: body, version };
   }
 
-  writeBody(id: ULID, markdown: string, expectVersion?: number): { version: number; updatedAt: number } {
+  writeBody(id: ULID, html: string, expectVersion?: number): { version: number; updatedAt: number } {
     const todo = this.db
-      .prepare<[ULID], {
-        id: string;
-        title: string;
-        status: TodoStatus;
-        priority: Priority;
-        project: string | null;
-        due_at: number | null;
-        created_at: number;
-      }>(
-        'SELECT id, title, status, priority, project, due_at, created_at FROM todos WHERE id = ?',
-      )
+      .prepare<[ULID], { id: string }>('SELECT id FROM todos WHERE id = ?')
       .get(id);
     if (!todo) throw new Error(`todo_not_found: ${id}`);
 
@@ -87,33 +92,16 @@ export class MarkdownStore {
     }
 
     const now = Date.now();
-    const tags = this.db
-      .prepare<[ULID], { tag: string }>('SELECT tag FROM tags WHERE todo_id = ?')
-      .all(id)
-      .map((r) => r.tag);
-
-    const fm: FrontMatter = {
-      id: todo.id,
-      title: todo.title,
-      status: todo.status,
-      priority: todo.priority,
-      project: todo.project,
-      dueAt: todo.due_at,
-      createdAt: todo.created_at,
-      updatedAt: now,
-      tags,
-    };
-    const content = matter.stringify(markdown.startsWith('\n') ? markdown : `\n${markdown}`, fm);
-    const path = this.filePathFor(id);
-    mkdirSync(dirname(path), { recursive: true });
-    writeFileSync(path, content, 'utf8');
+    const taskDir = this.taskDirFor(id);
+    mkdirSync(taskDir, { recursive: true });
+    writeFileSync(join(taskDir, 'progress.html'), html, 'utf8');
 
     const tx = this.db.transaction(() => {
       this.db
         .prepare(
           `INSERT INTO content_versions (todo_id, body, saved_at) VALUES (?, ?, ?)`,
         )
-        .run(id, markdown, now);
+        .run(id, html, now);
       // Trim to MAX_BODY_VERSIONS, keeping newest.
       this.db
         .prepare(
@@ -127,7 +115,7 @@ export class MarkdownStore {
       // table has non-empty body text for snippet() to highlight.
       this.db
         .prepare(`UPDATE todos SET body = ?, updated_at = ? WHERE id = ?`)
-        .run(markdown, now, id);
+        .run(html, now, id);
     });
     tx();
 

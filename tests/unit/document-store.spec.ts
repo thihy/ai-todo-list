@@ -11,6 +11,7 @@ import { openDb } from '../../src/main/db/schema';
 import { TodoRepo } from '../../src/main/db/todo-repo';
 import { MarkdownStore } from '../../src/main/files/markdown';
 import { DocumentStore } from '../../src/main/files/documents';
+import * as paths from '../../src/main/files/paths';
 
 describe('DocumentStore + v11 migration', () => {
   let dir: string;
@@ -18,12 +19,17 @@ describe('DocumentStore + v11 migration', () => {
   let repo: TodoRepo;
   let md: MarkdownStore;
   let docs: DocumentStore;
+  let todosDir: string;
 
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'todo-list-'));
     handle = openDb(join(dir, 'db.sqlite'));
     repo = new TodoRepo(handle.db);
-    md = new MarkdownStore(handle.db, join(dir, 'todos'));
+    todosDir = join(dir, 'todos');
+    md = new MarkdownStore(handle.db, todosDir, (id) => {
+      const t = repo.get(id);
+      return paths.todoDir(todosDir, (t?.title as string | undefined) ?? paths.UNTITLED_SLUG, id);
+    });
     docs = new DocumentStore(handle.db);
   });
   afterEach(() => {

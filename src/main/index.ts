@@ -16,6 +16,7 @@ import { openDb, type DbHandle } from './db/schema';
 import { TodoRepo } from './db/todo-repo';
 import { ConversationRepo } from './db/conversation-repo';
 import { MarkdownStore } from './files/markdown';
+import * as paths from './files/paths';
 import { DrawingStore } from './files/drawings';
 import { DocumentStore } from './files/documents';
 import { InboxStore } from './files/inbox';
@@ -32,6 +33,7 @@ import {
   ATTACHMENTS_SUBDIR,
   APP_NAME,
 } from '../shared/constants';
+import type { ULID } from '../shared/todo-types';
 
 // Single-instance lock. A second launch (e.g. clicking the shortcut while the
 // tray app is alive) should surface the existing window, NOT start a second
@@ -130,7 +132,15 @@ function bootstrap(): void {
     const handle = openDb(dbPath);
     const repo = new TodoRepo(handle.db);
     const conversations = new ConversationRepo(handle.db);
-    const md = new MarkdownStore(handle.db, todosDir);
+    // Per-task dir lookup. Used by MarkdownStore (progress.html) and other
+    // file writers to resolve {todosDir}/{slug}/. Title is read from the
+    // current DB row so renames flow through on next access.
+    const resolveTaskDir = (id: ULID): string => {
+      const t = repo.get(id);
+      const title = (t?.title as string | undefined) ?? paths.UNTITLED_SLUG;
+      return paths.todoDir(todosDir, title, id);
+    };
+    const md = new MarkdownStore(handle.db, todosDir, resolveTaskDir);
     const drawings = new DrawingStore(handle.db, drawingsDir);
     const docs = new DocumentStore(handle.db);
     const inbox = new InboxStore(handle.db, attachmentsDir);

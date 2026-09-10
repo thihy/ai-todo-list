@@ -5,18 +5,25 @@ import { join } from 'node:path';
 import { openDb } from '../../src/main/db/schema';
 import { TodoRepo } from '../../src/main/db/todo-repo';
 import { MarkdownStore } from '../../src/main/files/markdown';
+import * as paths from '../../src/main/files/paths';
 
 describe('TodoRepo + MarkdownStore', () => {
   let dir: string;
   let handle: ReturnType<typeof openDb>;
   let repo: TodoRepo;
   let md: MarkdownStore;
+  let todosDir: string;
 
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'todo-list-'));
     handle = openDb(join(dir, 'db.sqlite'));
     repo = new TodoRepo(handle.db);
-    md = new MarkdownStore(handle.db, join(dir, 'todos'));
+    todosDir = join(dir, 'todos');
+    // Mirror production wiring: per-task dir = paths.todoDir(todosDir, repo.get(id).title, id).
+    md = new MarkdownStore(handle.db, todosDir, (id) => {
+      const t = repo.get(id);
+      return paths.todoDir(todosDir, (t?.title as string | undefined) ?? paths.UNTITLED_SLUG, id);
+    });
   });
   afterEach(() => {
     handle.close();
