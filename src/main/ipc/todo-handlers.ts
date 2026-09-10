@@ -2,9 +2,12 @@
 
 import { BrowserWindow } from 'electron';
 import { okResult, failResult, register } from './router';
+import type Database from 'better-sqlite3';
 import type { TodoRepo } from '../db/todo-repo';
 import type { MarkdownStore } from '../files/markdown';
+import { renameTaskDir, writeTodoJson } from '../files/rename-hooks';
 import { logger } from '../logger';
+import type { ULID } from '../../shared/todo-types';
 
 /** Push a coarse-grained data-changed event so the renderer's todo / list /
  *  stats hooks re-fetch after a mutation the user just made here (mirrors the
@@ -15,7 +18,15 @@ function broadcastDataChanged(scope: 'todos' | 'content' | 'drawings' | 'convers
   }
 }
 
-export function registerTodoHandlers(repo: TodoRepo, md: MarkdownStore): void {
+export type ResolveTaskDir = (todoId: ULID) => string;
+
+export function registerTodoHandlers(
+  repo: TodoRepo,
+  md: MarkdownStore,
+  db: Database.Database,
+  todosDir: string,
+  resolveTaskDir: ResolveTaskDir,
+): void {
   register('todo.list', (_e, req) => {
     try {
       return Promise.resolve(okResult(repo.list(req.filter ?? {})));
@@ -36,7 +47,21 @@ export function registerTodoHandlers(repo: TodoRepo, md: MarkdownStore): void {
     try {
       const todo = repo.create(req.input, md.filePathFor('placeholder'));
       md.writeBody(todo.id, '');
+      // Best-effort write of the per-task todo.json snapshot. Failures are
+      // logged but don't roll back the DB insert.
       const fresh = repo.get(todo.id)!;
+      writeTodoJson(resolveTaskDir(todo.id), {
+        id: fresh.id,
+        title: fresh.title,
+        status: fresh.status,
+        priority: fresh.priority,
+        tags: fresh.tags,
+        project: fresh.project,
+        dueAt: fresh.dueAt,
+        createdAt: fresh.createdAt,
+        updatedAt: fresh.updatedAt,
+        doneAt: fresh.doneAt,
+      });
       broadcastDataChanged('todos');
       return Promise.resolve(okResult({ id: todo.id, todo: fresh }));
     } catch (err) {
@@ -46,14 +71,67 @@ export function registerTodoHandlers(repo: TodoRepo, md: MarkdownStore): void {
 
   register('todo.update', (_e, req) => {
     try {
-      const res = okResult(repo.update(req.id, req.patch));
+      // Capture old title BEFORE the DB update so the rename hook can move
+      // the per-task dir to the new slug (best-effort).
+      const before = repo.get(req.id);
+      const oldTitle = before?.title ?? '';
+      const titleChanged = typeof req.patch.title === 'string' && req.patch.title !== oldTitle;
+
+      const updated = repo.update(req.id, req.patch);
+
+      if (titleChanged && before) {
+        const newTitle = updated.title ?? req.patch.title ?? '';
+        const result = renameTaskDir({
+          db,
+          todosDir,
+          todoId: req.id,
+          oldTitle,
+          newTitle,
+        });
+        logger.info(
+          `todo.update rename: dir=${result.dirRenamed ? 'moved' : 'unchanged'} inbox=${result.pathsUpdated}`,
+        );
+        // Always write the JSON snapshot to the (post-rename) taskDir, even
+        // if the on-disk rename failed — the DB has the new title so the
+        // snapshot belongs at the new path.
+        const taskDir = resolveTaskDir(req.id);
+        writeTodoJson(taskDir, {
+          id: updated.id,
+          title: updated.title,
+          status: updated.status,
+          priority: updated.priority,
+          tags: updated.tags,
+          project: updated.project,
+          dueAt: updated.dueAt,
+          createdAt: updated.createdAt,
+          updatedAt: updated.updatedAt,
+          doneAt: updated.doneAt,
+        });
+      } else if (before) {
+        // Title didn't change but other fields might have — keep the JSON
+        // snapshot fresh so the file mirror doesn't drift.
+        const taskDir = resolveTaskDir(req.id);
+        writeTodoJson(taskDir, {
+          id: updated.id,
+          title: updated.title,
+          status: updated.status,
+          priority: updated.priority,
+          tags: updated.tags,
+          project: updated.project,
+          dueAt: updated.dueAt,
+          createdAt: updated.createdAt,
+          updatedAt: updated.updatedAt,
+          doneAt: updated.doneAt,
+        });
+      }
+
       // Bidirectional refresh: an edit from the detail pane must refresh the
       // list, and an edit from the list row must refresh the detail. Both
       // useTodos and useTodo subscribe to the 'todos' data-version, so a
       // single broadcast here drives both. Without it, each side only sees
       // its own optimistic state and stays stale until re-selection.
       broadcastDataChanged('todos');
-      return Promise.resolve(res);
+      return Promise.resolve(okResult(updated));
     } catch (err) {
       return Promise.resolve(failResult('update_failed', (err as Error).message));
     }

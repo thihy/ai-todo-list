@@ -147,7 +147,7 @@ function bootstrap(): void {
 
     // Wire IPC router
     installRouter();
-    registerTodoHandlers(repo, md);
+    registerTodoHandlers(repo, md, handle.db, todosDir, resolveTaskDir);
     registerContentHandlers(md, drawings, repo);
     registerDocumentHandlers(docs, resolveTaskDir);
     registerInboxHandlers(inbox);
