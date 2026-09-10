@@ -52,11 +52,12 @@ import { AI_SUBMIT_EVENT, type ExternalAiSubmitDetail } from '../components/Comp
 // component (HITL bodies etc.) are NOT needed — we always render through
 // the shared <Markdown> wrapper which already hoists its own labels.
 
-interface ToolCard {
+interface AttachedFile {
+  path: string;
   name: string;
-  args?: unknown;
-  result?: unknown;
-  ok: boolean;
+  mime: string;
+  size: number;
+  text: string;
 }
 
 /** One ordered row inside a turn's body. Mirrors DeepSeek's `AssistantBlock`
@@ -74,28 +75,12 @@ type TurnBlock =
   | { kind: 'tool-call'; callId: string; name: string; args: unknown; result: unknown; ok: boolean }
   | { kind: 'text'; text: string };
 
-/** A file the user picked via the composer's + button. main reads the file
- *  and gives us the inlined text body so the prompt can carry the content
- *  directly. Path/name stay around for the chip label and the mention in
- *  the sent prompt so the model knows which file the body came from. */
-interface AttachedFile {
-  path: string;
-  name: string;
-  mime: string;
-  size: number;
-  text: string;
-}
-
 interface Turn {
   id: string;
   user: string;
-  reasoning: string;
-  assistant: string;
-  tools: ToolCard[];
-  /** Ordered trace of the assistant turn: reasoning ↔ tool-call ↔ text
-   *  blocks in the order events arrived. New code should read this; the
-   *  three string/array fields above are kept as derived fallbacks during
-   *  the migration and will be removed once every reader switches over. */
+  /** Ordered trace of the assistant turn — reasoning ↔ tool-call ↔ text,
+   *  in arrival order. Source of truth for the whole assistant payload;
+   *  the legacy `reasoning / assistant / tools` triple has been removed. */
   blocks: TurnBlock[];
   status: 'streaming' | 'done' | 'error';
   error?: string;
@@ -276,12 +261,14 @@ export const AIPane: React.FC = () => {
 
   // Re-derive the streaming turn from its events.
   //
-  // Walk events in arrival order and build an ordered `blocks` array — this
-  // is the canonical representation going forward (it preserves the temporal
-  // interleaving of reasoning ↔ tool-call ↔ text that the previous
-  // three-bucket filter/join destroyed). The three legacy fields below are
-  // re-derived from `blocks` so existing readers keep working during the
-  // migration and will be dropped in step 7.
+  // Walk events in arrival order and build an ordered `blocks` array — the
+  // canonical representation that preserves the temporal interleaving of
+  // reasoning ↔ tool-call ↔ text that the previous three-bucket filter/join
+  // destroyed. Adjacent events of the same kind merge into one block so the
+  // chat-flow doesn't fragment a long thinking chain into dozens of rows.
+  // callId on a tool-call block is a stable React key synthesised from the
+  // event's order in this turn (deterministic per rebuild) — the upstream
+  // callId lives in DSH's session stream and is not exposed to the renderer.
   useEffect(() => {
     if (!streamingTurnId || !streamingConvId) return;
     const mine = events.filter((e) => e.invocationId === streamingTurnId);
@@ -314,15 +301,6 @@ export const AIPane: React.FC = () => {
         });
       }
     }
-    // Derive legacy fields for any reader that still uses them.
-    let reasoning = '';
-    let assistant = '';
-    const tools: ToolCard[] = [];
-    for (const b of blocks) {
-      if (b.kind === 'reasoning') reasoning += b.text;
-      else if (b.kind === 'text') assistant += b.text;
-      else tools.push({ name: b.name, args: b.args, result: b.result, ok: b.ok });
-    }
     const done = mine.some((e) => e.type === 'done');
     const errEvt = mine.find((e): e is Extract<AIStreamEvent, { type: 'error' }> => e.type === 'error');
     setTurnsByConv((prev) => {
@@ -334,9 +312,6 @@ export const AIPane: React.FC = () => {
             ? t
             : {
                 ...t,
-                reasoning,
-                assistant,
-                tools,
                 blocks,
                 status: errEvt ? 'error' : done ? 'done' : 'streaming',
                 error: errEvt?.message,
@@ -688,10 +663,19 @@ export const AIPane: React.FC = () => {
     }
 
     const priorTurns = (turnsByConv[convId] ?? [])
-      .filter((t) => t.status === 'done' && t.assistant)
+      .filter((t) => t.status === 'done' && t.blocks.some((b) => b.kind === 'text'))
       .flatMap((t) => [
         { role: 'user' as const, content: t.user },
-        { role: 'assistant' as const, content: t.assistant },
+        // Concatenate the text blocks of a turn into the assistant message
+        // we hand back to the model — reasoning and tool-call traces are
+        // intentionally stripped; only the final answer goes on the wire.
+        {
+          role: 'assistant' as const,
+          content: t.blocks
+            .filter((b): b is Extract<TurnBlock, { kind: 'text' }> => b.kind === 'text')
+            .map((b) => b.text)
+            .join(''),
+        },
       ]);
 
     const id = crypto.randomUUID();
@@ -702,7 +686,7 @@ export const AIPane: React.FC = () => {
         // Display the user's literal prompt in the bubble, NOT the wrapped
         // system-instruction version — the user should see exactly what
         // they typed.
-        { id, user: prompt, reasoning: '', assistant: '', tools: [], blocks: [], status: 'streaming', attached: attached.length > 0 ? attached : undefined },
+        { id, user: prompt, blocks: [], status: 'streaming', attached: attached.length > 0 ? attached : undefined },
       ],
     }));
     if (!override) {
@@ -1102,9 +1086,6 @@ function historyToTurn(h: HistoryTurnLike): Turn {
     return {
       id: crypto.randomUUID(),
       user: h.text ?? '',
-      reasoning: '',
-      assistant: '',
-      tools: [],
       blocks: [],
       status: 'done',
     };
@@ -1121,9 +1102,6 @@ function historyToTurn(h: HistoryTurnLike): Turn {
     return {
       id: crypto.randomUUID(),
       user: '',
-      reasoning,
-      assistant: text,
-      tools: [],
       blocks,
       status: 'done',
     };
@@ -1138,9 +1116,6 @@ function historyToTurn(h: HistoryTurnLike): Turn {
   return {
     id: crypto.randomUUID(),
     user: '',
-    reasoning: '',
-    assistant: '',
-    tools: [{ name: h.name ?? '', args: h.args, result: h.ok ? h.data : h.error, ok: h.ok ?? false }],
     blocks: [{
       kind: 'tool-call',
       callId: `hist-${h.name ?? 'tool'}-${argsKey}`,
