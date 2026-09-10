@@ -100,6 +100,15 @@ export const IconCheck: React.FC<IconProps> = (p) => (
   </Svg>
 );
 
+/** Floppy-disk save glyph — used by the editor toolbar's save button. */
+export const IconSave: React.FC<IconProps> = (p) => (
+  <Svg {...p}>
+    <path d="M3.2 2.5h7.6l2.7 2.7v8.3a.5.5 0 0 1-.5.5H3.2a.5.5 0 0 1-.5-.5V3a.5.5 0 0 1 .5-.5Z" />
+    <path d="M5.2 2.5v3h4v-3" />
+    <path d="M4.7 9.5h6.6v4.5H4.7z" />
+  </Svg>
+);
+
 /** Flag — priority indicator. */
 export const IconFlag: React.FC<IconProps> = (p) => (
   <Svg {...p}>
