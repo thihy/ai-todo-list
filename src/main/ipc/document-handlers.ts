@@ -35,6 +35,7 @@ export function registerDocumentHandlers(docs: DocumentStore, resolveTaskDir: Re
       const doc = docs.create(req.todoId, req.kind, req.title ?? null, {
         refId: req.refId,
         url: req.url,
+        description: req.description,
       });
       broadcastDataChanged('content');
       return Promise.resolve(okResult(doc));

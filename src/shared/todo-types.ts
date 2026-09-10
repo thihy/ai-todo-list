@@ -172,6 +172,11 @@ export interface TaskDocument {
   refId: string | null;
   /** URL for kind === 'link'. null otherwise. */
   url: string | null;
+  /** Short page description for kind === 'link' — the fetched <meta
+   *  description> / og:description, shown as a subtitle under the link
+   *  title. null when the page had none or the fetch failed (best-effort).
+   *  Unused (null) for other kinds. */
+  description: string | null;
   /** Display order within the task (0 = first; progress is always 0). */
   ord: number;
   createdAt: number;

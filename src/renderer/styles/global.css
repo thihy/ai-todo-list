@@ -3122,6 +3122,18 @@ a:hover {
   background: var(--accent-primary);
   color: var(--fg-on-accent);
 }
+/* Variant of the prompt dialog used by the add-link flow: adds a textarea
+   for the page description. Inherits the .prompt-dialog chrome. */
+.link-dialog {
+  gap: var(--space-xs);
+}
+.link-dialog__desc {
+  resize: vertical;
+  min-height: 3em;
+  max-height: 8em;
+  font-family: var(--font-md);
+  line-height: 1.4;
+}
 
 /* --- 链接 section --- */
 
@@ -3140,14 +3152,20 @@ a:hover {
 }
 .links-view__item {
   display: flex;
-  align-items: center;
-  gap: 6px;
+  flex-direction: column;
+  gap: 2px;
   padding: 4px 6px;
   border-radius: var(--radius-sm);
   color: var(--fg-secondary);
 }
 .links-view__item:hover {
   background: var(--bg-hover);
+}
+.links-view__main {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
 }
 .links-view__url {
   flex: 1 1 auto;
@@ -3157,6 +3175,17 @@ a:hover {
   white-space: nowrap;
   color: var(--accent-primary);
   text-decoration: none;
+}
+.links-view__desc {
+  margin: 0;
+  padding-left: 20px; /* align under the title, past the icon */
+  color: var(--fg-muted);
+  font-size: var(--font-sm);
+  line-height: 1.4;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
 }
 .links-view__remove {
   flex: 0 0 auto;

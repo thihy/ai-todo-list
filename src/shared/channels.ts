@@ -23,6 +23,7 @@ const DECLARED_CHANNELS: ReadonlySet<string> = new Set([
   'document.remove',
   'document.history',
   'document.restoreVersion',
+  'link.fetchMeta',
   'content.readBody',
   'content.writeBody',
   'content.history',

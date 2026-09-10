@@ -156,6 +156,7 @@ export interface TodoListApi {
       title?: string | null;
       refId?: string | null;
       url?: string | null;
+      description?: string | null;
     }): Promise<IpcResponse<'document.create'>>;
     /** Read the latest versioned content of a progress / note_md doc. */
     read(id: string): Promise<IpcResponse<'document.read'>>;
@@ -177,6 +178,13 @@ export interface TodoListApi {
     delete(id: string): Promise<IpcResponse<'drawing.delete'>>;
     rename(id: string, title: string): Promise<IpcResponse<'drawing.rename'>>;
     setThumb(id: string, dataUrl: string): Promise<IpcResponse<'drawing.setThumb'>>;
+  };
+  link: {
+    /** Fetch a URL's page metadata (<title> + meta/og:description) from the
+     *  main process (the renderer can't due to CORS). Best-effort: on failure
+     *  returns empty strings, never rejects — the caller falls back to blank
+     *  editable fields. */
+    fetchMeta(url: string): Promise<IpcResponse<'link.fetchMeta'>>;
   };
   inbox: {
     attach(args: InboxAttachArgs): Promise<IpcResponse<'inbox.attach'>>;

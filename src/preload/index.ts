@@ -115,6 +115,9 @@ const api: TodoListApi = {
     rename: (id, title) => invoke('drawing.rename', { id, title }),
     setThumb: (id, dataUrl) => invoke('drawing.setThumb', { id, dataUrl }),
   },
+  link: {
+    fetchMeta: (url) => invoke('link.fetchMeta', { url }),
+  },
   inbox: {
     attach: (args: InboxAttachArgs) => invoke('inbox.attach', args),
     attachBlob: (args: InboxAttachBlobArgs) => invoke('inbox.attachBlob', args),

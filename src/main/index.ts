@@ -10,6 +10,7 @@ import { installRouter, okResult, failResult, register } from './ipc/router';
 import { registerTodoHandlers } from './ipc/todo-handlers';
 import { registerContentHandlers } from './ipc/content-handlers';
 import { registerDocumentHandlers } from './ipc/document-handlers';
+import { registerLinkHandlers } from './ipc/link-handlers';
 import { registerCapturePreviewHandler } from './ipc/capture-preview-handler';
 import { logger } from './logger';
 import { openDb, type DbHandle } from './db/schema';
@@ -171,6 +172,7 @@ function bootstrap(): void {
     registerTodoHandlers(repo, md, handle.db, todosDir, resolveTaskDir);
     registerContentHandlers(md, drawings, repo);
     registerDocumentHandlers(docs, resolveTaskDir);
+    registerLinkHandlers();
     registerInboxHandlers(inbox);
 
     // attachment://<id> → serve the inbox_attachments file bytes. Registered

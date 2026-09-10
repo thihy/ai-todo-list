@@ -32,6 +32,7 @@ interface DocRow {
   title: string | null;
   ref_id: string | null;
   url: string | null;
+  description: string | null;
   ord: number;
   created_at: number;
   updated_at: number;
@@ -45,6 +46,7 @@ function rowToDoc(row: DocRow): TaskDocument {
     title: row.title,
     refId: row.ref_id,
     url: row.url,
+    description: row.description,
     ord: row.ord,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -137,7 +139,7 @@ export class DocumentStore {
     todoId: ULID,
     kind: DocumentKind,
     title?: string | null,
-    opts?: { refId?: string | null; url?: string | null; ord?: number },
+    opts?: { refId?: string | null; url?: string | null; description?: string | null; ord?: number },
   ): TaskDocument {
     const id = newId();
     const now = Date.now();
@@ -150,8 +152,8 @@ export class DocumentStore {
         .get(todoId)?.m ?? -1) + 1;
     this.db
       .prepare(
-        `INSERT INTO task_documents (id, todo_id, kind, title, ref_id, url, ord, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO task_documents (id, todo_id, kind, title, ref_id, url, description, ord, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
@@ -160,6 +162,7 @@ export class DocumentStore {
         title ?? DEFAULT_TITLE[kind] ?? null,
         opts?.refId ?? null,
         opts?.url ?? null,
+        opts?.description ?? null,
         ord,
         now,
         now,

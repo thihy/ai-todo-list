@@ -83,6 +83,9 @@ export interface DocumentCreateReq {
   title?: string | null;
   refId?: string | null;
   url?: string | null;
+  /** Short page description for kind === 'link' (fetched <meta description> /
+   *  og:description). Ignored for other kinds. */
+  description?: string | null;
 }
 export interface DocumentReadReq { id: ULID }
 export interface DocumentReadRes { content: string; version: number }
@@ -92,6 +95,23 @@ export interface DocumentRenameReq { id: ULID; title: string }
 export interface DocumentRemoveReq { id: ULID }
 export interface DocumentHistoryReq { id: ULID }
 export interface DocumentRestoreVersionReq { id: ULID; versionId: number }
+
+// ----- link.* -----
+//
+// Link preview fetch (schema v12). The renderer can't fetch arbitrary URLs
+// (CORS), so link.fetchMeta runs in the main process: it GETs the URL, parses
+// the first chunk of HTML for <title> + <meta description> / og:description,
+// and returns them so the add-link dialog can prefill the title + description.
+// Best-effort: failures return empty strings, never an error, so the user can
+// still type the fields manually.
+
+export interface LinkFetchMetaReq { url: string }
+export interface LinkFetchMetaRes {
+  title: string;
+  description: string;
+  /** Final URL after redirects (useful when the input was a shortlink). */
+  resolvedUrl: string;
+}
 
 // ----- content.* -----
 
@@ -293,6 +313,8 @@ export interface IpcRegistry {
   'document.remove': IpcChannel<DocumentRemoveReq, IpcResult<void>>;
   'document.history': IpcChannel<DocumentHistoryReq, IpcResult<DocumentVersionEntry[]>>;
   'document.restoreVersion': IpcChannel<DocumentRestoreVersionReq, IpcResult<void>>;
+
+  'link.fetchMeta': IpcChannel<LinkFetchMetaReq, IpcResult<LinkFetchMetaRes>>;
 
   'content.readBody': IpcChannel<ContentReadBodyReq, IpcResult<ContentReadBodyRes>>;
   'content.writeBody': IpcChannel<ContentWriteBodyReq, IpcResult<ContentWriteBodyRes>>;

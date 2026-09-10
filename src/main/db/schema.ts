@@ -7,7 +7,7 @@ const { ulid } = ulidPkg;
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 
-export const SCHEMA_VERSION = 11;
+export const SCHEMA_VERSION = 12;
 
 const MIGRATIONS: ReadonlyArray<{ version: number; sql: string }> = [
   {
@@ -478,6 +478,20 @@ const MIGRATIONS: ReadonlyArray<{ version: number; sql: string }> = [
       SELECT cv.todo_id || ':note_md', cv.body, cv.saved_at
       FROM content_versions cv
       WHERE EXISTS (SELECT 1 FROM task_documents d WHERE d.id = cv.todo_id || ':note_md');
+    `,
+  },
+  {
+    version: 12,
+    // Link preview text. Link-kind task_documents can now carry a short
+    // `description` (the page's <meta description> / og:description), shown as
+    // a subtitle under the link title in the detail's 链接 section. Fetched
+    // best-effort by the link.fetchMeta handler when the user adds a link;
+    // nullable because not every page has one and the fetch can fail.
+    //
+    // A nullable ADD COLUMN is safe — no FTS / trigger references task_documents,
+    // so there's no external-content shadow-table churn.
+    sql: `
+      ALTER TABLE task_documents ADD COLUMN description TEXT;
     `,
   },
 ];
