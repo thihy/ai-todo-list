@@ -1,24 +1,15 @@
-// DSH runtime — boots the in-process agent tree, registers our TodoListLlmAdapter
-// for the 'todo-list' provider route, registers our typed todo/content/drawing
-// tool handlers, and exposes runTurn() to drive an agent turn and stream
-// tokens + tool activity back to the renderer.
+// DSH runtime —— 启动进程内 agent 树，注册 TodoListLlmAdapter 到 'todo-list'
+// 路由，注册 todo/content/drawing 工具，暴露 runTurn() 驱动一轮对话并流式
+// 把 token 和工具事件回传给渲染端。
 //
-// Multi-conversation model (L2): each user-controlled conversation maps 1:1
-// to a DSH session (persisted by dsh-session-persistence-jsonl) and to a
-// cached agent handle. Different conversations run in parallel — the agent
-// handle is cached for the conversation's lifetime, not created per turn.
-// This gives the renderer three affordances the prior single-agent design
-// couldn't:
-//   1. User can switch conversations without losing prior turns (history
-//      loads from the JSONL backend).
-//   2. User can submit a new turn to conversation A while conversation B's
-//      turn is still in flight — each agent has its own state and event
-//      stream.
-//   3. Deleting a conversation tears down its agent (no zombie handles).
+// 多会话模型 (L2)：每条会话 1:1 对应一个 DSH session（由
+// dsh-session-persistence-jsonl 持久化）和一个缓存的 agent handle。会话间
+// 互不干扰，agent handle 跨多轮复用（不每轮重建）。因此渲染端具备三个
+// 原单 agent 设计做不到的能力：切会话不丢历史；同一时刻在不同会话上
+// 并发提交；删除会话能干净销毁 agent，无僵尸 handle。
 //
-// Event routing: ctx.on('session/event', ...) fires globally for ALL
-// sessions, so each cached agent's listener filters by session.id and
-// only forwards events for its own conversation. See ensureAgent().
+// 事件路由：ctx.on('session/event', ...) 全局触发，每个缓存的 agent 监听器
+// 按 session.id 过滤后只转发本会话的事件，见 ensureAgent()。
 
 import { app, BrowserWindow } from 'electron';
 import { resolve, dirname, join } from 'node:path';
@@ -42,19 +33,16 @@ import type { UserQuestionAnswer, UserQuestionRequest } from '../../shared/ai-ty
 import type Database from 'better-sqlite3';
 import { mimeExt, sanitizeName } from '../util/mime';
 
-// DSH is imported dynamically so the main bundle stays buildable even before
-// the packages are installed, and so a boot failure surfaces as an explicit
-// "DSH unavailable" error to the renderer instead of crashing the app on import.
+// DSH 走动态 import：这样即使依赖没装，主 bundle 也能编译；同时启动失败时
+// 渲染端能看到显式的 "DSH unavailable" 而不是 import 阶段崩掉。
 type DshContext = {
   get(key: string): unknown;
   on(event: string, handler: (...args: any[]) => void): () => void;
   fiber?: { dispose?(): Promise<void> };
-  /** L4-G: cordis waterfall dispatch. Used by the ask_user_question /
-   *  ask_user_approval tools to invoke the same listener chain we
-   *  installed in bootDsh() for cross-pane consistency. The listener's
-   *  promise IS the awaited value (we pass a no-op `next` that resolves
-   *  to noAnswerer so the listener knows it's a direct call, not a
-   *  nested one). */
+  /** L4-G: cordis waterfall 调用。ask_user_question / ask_user_approval 工具
+   *  通过它复用 bootDsh() 里装好的同一条监听链，跨面板行为一致。监听器的
+   *  promise 直接作为返回值（传一个返回 noAnswerer 的 next 标记这是直调
+   *  而非嵌套）。 */
   waterfall(event: string, ...args: unknown[]): Promise<unknown>;
 };
 
@@ -63,78 +51,59 @@ export interface DshRuntimeDeps {
   repo: TodoRepo;
   md: MarkdownStore;
   drawings: DrawingStore;
-  /** DocumentStore — used by the `app.currentContext` tool to enrich a
-   *  document-kind focus pointer with the full task_documents row. */
+  /** DocumentStore —— 给 `app.currentContext` 工具补齐 document 类焦点
+   *  对应的 task_documents 完整行 */
   docs: DocumentStore;
-  /** Required so the DSH session-title service can sync AI-generated titles
-   *  back into the renderer's conversation list. Without this, titles stay
-   *  in the session log and never appear in the sidebar. */
+  /** 让 DSH session-title 服务能把 AI 生成的反向标题写回渲染端的会话列表 */
   conversations: ConversationRepo;
-  /** Raw better-sqlite3 handle used ONLY for the inbox_attachments INSERT
-   *  path. We keep this isolated from the typed repos because the inbox
-   *  schema is intentionally narrow (no rich row class), and going through
-   *  a new repo would just be a 5-line passthrough. */
+  /** inbox_attachments 写库用的原始 better-sqlite3 handle。inbox schema 很窄，
+   *  不值得为此单独再开一个 repo 类型 */
   db: Database.Database;
-  /** Absolute path to the directory where attached files / pasted images
-   *  are copied. Created on first use (mkdir -p). */
+  /** 附件 / 粘贴图片落盘的目录，首次使用自动 mkdir -p */
   attachmentsDir: string;
-  /** Settings store — the AI tool surface needs to know the active
-   *  provider/model/connected state for the `ai.health` / `ai.models`
-   *  tool implementations, and may need to read API keys for some
-   *  self-debugging operations. */
+  /** Settings store —— ai.health / ai.models 工具要看 provider/model/连接态 */
   settings: SettingsStore;
 }
 
-// One rendered conversation item. Loaded from the JSONL backend via
-// loadHistory() and also produced live by runTurn's onEvent callback.
-// Designed to be the same shape the AIPane already renders (turn text +
-// tool call/result chips + optional reasoning block), so the UI can treat
-// "live turn" and "loaded history turn" identically.
+// 一条渲染用的历史条目。从 JSONL 后端 loadHistory() 加载，也由 runTurn 的
+// onEvent 实时产生。形状与 AIPane 已有的渲染一致：turn 文本 + 工具 call/result
+// chip + 可选 reasoning 块，让 "实时轮次" 和 "历史轮次" 走同一渲染路径。
 export type HistoryTurn =
   | { type: 'user'; text: string }
   | { type: 'assistant'; text: string; reasoning?: string }
   | { type: 'tool'; name: string; args?: unknown; ok: boolean; data?: unknown; error?: string };
 
-export type TurnEvent =
-  | { type: 'token'; text: string }
-  | { type: 'reasoning'; text: string }
-  | { type: 'toolCall'; name: string; args: unknown }
-  | { type: 'toolResult'; name: string; args?: unknown; ok: boolean; data?: unknown; error?: string }
-  | { type: 'done'; content: string; tokensIn?: number; tokensOut?: number }
-  | { type: 'error'; message: string };
+/** DSH 原始 session/event 形状（cordis 推过来的事件载荷）。
+ *  监听器不再二次合成本地表状 TurnEvent——把这条流原样给上层，
+ *  让 ai.ask 这种关心流语义的层去做 token/tool 翻译。 */
+export type DshRawEvent = { type: string; data?: unknown };
 
 export interface DshRuntime {
   runTurn(opts: {
     prompt: string;
     conversationId: string;
     invocationId: string;
-    onEvent: (e: TurnEvent) => void;
+    onEvent: (e: DshRawEvent) => void;
     signal?: AbortSignal;
-  }): Promise<{ content: string }>;
-  /** Abort the in-flight turn on a conversation (no-op if idle/missing).
-   *  L3-A: this is a SOFT cancel — the cached agent handle survives, so the
-   *  next runTurn() reuses the same agent + persisted session JSONL without
-   *  re-resuming from disk. Use disposeConversation() for hard removal. */
+  }): Promise<{ content: string; tokensIn: number; tokensOut: number }>;
+  /** 中断当前会话正在跑的轮次（闲置/不存在则 no-op）。L3-A 的软取消：
+   *  agent handle 不销毁，下一次 runTurn() 复用同一个 agent + 持久化的
+   *  session JSONL，不必重新 resume。硬删除请用 disposeConversation()。 */
   cancel(conversationId: string): Promise<void>;
-  /** Load this conversation's persisted history as a flat list of turns. */
   loadHistory(opts: { conversationId: string; signal?: AbortSignal }): Promise<HistoryTurn[]>;
-  /** Drop the cached agent for one conversation (no-op if absent). */
+  /** 丢掉某条会话缓存的 agent（不在缓存里则 no-op） */
   disposeConversation(conversationId: string): Promise<void>;
-  /** L3-G: delete the on-disk JSONL log for a conversation (no-op if absent).
-   *  Walks <DSH_SESSIONS_ROOT>/<project>/<id>/ recursively and removes it.
-   *  The DB row is the renderer's concern (ConversationRepo.delete); we only
-   *  own the durable log. Safe to call on an unknown id — returns silently. */
+  /** L3-G：删除某条会话在磁盘上的 JSONL 日志（不存在则 no-op）。
+   *  递归删除 <DSH_SESSIONS_ROOT>/<project>/<id>/。DB 行由 ConversationRepo
+   *  负责，本函数只管日志。对未知 id 安全，返回静默。 */
   removeSession(conversationId: string): Promise<{ removed: boolean }>;
   dispose(): Promise<void>;
 }
 
 let runtimePromise: Promise<DshRuntime | null> | null = null;
 
-/**
- * Minimal agent handle shape used by `ensureAgent`. Both `agents.create`
- * and `agents.resume` return this shape; we only call a small number of
- * methods on it so the tests don't need the full `Agent` interface.
- */
+/** `ensureAgent` 用的最小 agent handle 形状。agents.create / agents.resume
+ *  都返回这个形状；测试不需要完整 Agent 接口。 */
 export interface AgentHandle {
   agent: {
     followup(m: unknown): void;
@@ -148,26 +117,25 @@ export interface AgentHandle {
   dispose(): Promise<void>;
 }
 
-/** Minimal persistence facade needed by `resumeOrCreate`. */
+/** resumeOrCreate 需要的最小持久化外观 */
 export interface PersistenceFacade {
   load?: (id: string, signal?: AbortSignal) => Promise<unknown>;
   list?: (signal?: AbortSignal) => Promise<ReadonlyArray<{ id: string; createdAt?: number }>>;
 }
 
-/** Minimal agent-registry facade needed by `resumeOrCreate`. */
+/** resumeOrCreate 需要的最小 agents 外观 */
 export interface AgentsFacade {
   create(o: { sessionId: string; agentOptions?: { provider?: string; model?: string } }): Promise<AgentHandle>;
   resume(o: { resumeSessionId: string; agentOptions?: { provider?: string; model?: string } }): Promise<AgentHandle>;
 }
 
-/** Minimal logger facade — anything with `.warn`/`.info` will do. */
+/** 最小日志外观，有 .warn/.info 即可 */
 export interface ResumeLogger {
   warn: (msg: string) => void;
   info: (msg: string) => void;
 }
 
-/** Dependencies for {@link resumeOrCreate}. Bundled so the helper is pure
- *  and unit-testable without booting the full DSH runtime. */
+/** resumeOrCreate 的依赖。打包好让 helper 保持纯净，可单独单测。 */
 export interface ResumeOrCreateDeps {
   agents: AgentsFacade;
   persistence?: PersistenceFacade;
@@ -175,31 +143,25 @@ export interface ResumeOrCreateDeps {
 }
 
 /**
- * Always prefer `agents.resume({ resumeSessionId })` over `agents.create({ sessionId })`
- * when the conversation already has a persisted session log.
+ * 会话已经有持久化日志时，优先 `agents.resume({ resumeSessionId })` 而不是
+ * `agents.create({ sessionId })`。
  *
- * Why: `create()` on an existing id routes through `ctx.sessions.prepare(id, { meta })`
- * with an EMPTY seed. The persistence coordinator's `session/created` listener then
- * runs `onCreated` (at `coordinator.ts:1256`) which checks
- * `seedMatchesPersisted(id, seed=[], cursor=N)` and throws
- * `"session ... is already persisted with N event(s) that do not match this live
- * session (id collision)"`. The throw is silently swallowed inside
- * `void this.initFor(session)`, but the next `loadHistory()` call from the renderer
- * (which iterates every conversation on app open — `ai-handlers.ts:270-294`)
- * surfaces the rejection as `loadHistory(id) failed: ... (id collision)`.
+ * 原因：create() 在已有 id 上会走 `ctx.sessions.prepare(id, { meta })` 并带
+ * 空 seed。持久化协调器的 `session/created` 监听器随后跑 `onCreated`，在
+ * `coordinator.ts:1256` 触发 `seedMatchesPersisted` 抛 "session ... is already
+ * persisted with N event(s) that do not match this live session (id collision)"。
+ * 这个 throw 会被 `void this.initFor(session)` 静默吞掉，但渲染端下一轮
+ * `loadHistory()` 调用（每次打开 app 都会跑）会把拒绝以
+ * `loadHistory(id) failed: ... (id collision)` 的形式重新抛出。
  *
- * `resume()` routes through `persistence.prepare(id)` which loads the stored
- * events into the Session seed first, so `seedMatchesPersisted` passes and the
- * collision never fires.
+ * resume() 走 `persistence.prepare(id)`，先把持久化的事件灌进 Session seed，
+ * 这样 `seedMatchesPersisted` 通过，碰撞永远不会触发。
  *
- * Fallback to `create()` mirrors DSH's own `restoreOrCreateConfigured`
- * (`packages/core/agent-loop/src/index.ts:407`): on a resume failure, only fall
- * back to create when the artifact is GENUINELY absent; a corrupt log must stay
- * loud so the user notices instead of starting an empty session that would
- * clobber a broken one.
+ * 回落到 create() 模仿 DSH 自家的 `restoreOrCreateConfigured`
+ * (packages/core/agent-loop/src/index.ts:407)：resume 失败时只在"日志真的不
+ * 存在"时回落；损坏的日志必须保持响亮，提示用户而不是被新空会话覆盖。
  *
- * Exported so unit tests can verify the resume-vs-create branch without
- * booting the full DSH runtime.
+ * 导出供单测验证 resume-vs-create 分支，不必启动完整 DSH 运行时。
  */
 export async function resumeOrCreate(
   deps: ResumeOrCreateDeps,
@@ -215,17 +177,15 @@ export async function resumeOrCreate(
   } catch (err) {
     resumeError = err;
   }
-  // Distinguish "no persisted log" from "corruption / backend failure" by
-  // asking the backend directly. Only a confirmed-absent id falls back to
-  // create(). Anything else rethrows so the user sees a loud failure rather
-  // than an empty session that would clobber a broken one.
+  // 直接问后端区分"无持久化日志"和"损坏/后端故障"：确认缺失才回落 create()，
+  // 其他情况保持响亮，避免空会话覆盖坏日志。
   let isAbsent = false;
   if (deps.persistence?.list) {
     try {
       const headers = await deps.persistence.list();
       isAbsent = !headers.some((h) => h.id === conversationId);
     } catch (err) {
-      // list() failing means we can't decide — keep the resume error loud.
+      // list() 失败 → 无法判断，保留 resume 错误响亮抛出
       deps.logger.warn(`resumeOrCreate(${conversationId}): persistence.list() failed during fallback probe: ${(err as Error).message}`);
       throw resumeError;
     }
@@ -241,28 +201,24 @@ export async function resumeOrCreate(
   });
 }
 
-// ===== L4-G: Human-in-the-loop bridges =====
+// ===== L4-G: Human-in-the-loop 桥接 =====
 //
-// DSH ships the user-questions + user-approval seams (@deepseek-ai/dsh-user-questions
-// + @deepseek-ai/dsh-user-approval) but publishes no companion answerer package.
-// We register waterfall listeners in bootDsh() that bridge every ask to the
-// Electron renderer: each listener mints a reqId, sends the question/approval
-// payload to every BrowserWindow, and awaits the structured answer via the
-// `ai.userQuestion.answer` / `ai.userApproval.answer` IPC channels.
+// DSH 提供 user-questions + user-approval 的插件入口
+// （@deepseek-ai/dsh-user-questions + @deepseek-ai/dsh-user-approval）但没
+// 配套的 answerer 包。我们在 bootDsh() 里注册 waterfall 监听器，每次提问
+// 都广播给所有 BrowserWindow，通过 `ai.userQuestion.answer` /
+// `ai.userApproval.answer` IPC 通道等待结构化答复。
 //
-// 90s auto-cancel: the user might walk away mid-question. We don't want
-// the agent loop to block forever, so each pending request installs a
-// setTimeout that rejects with ASK_ABORTED (DSH's vocabulary). The
-// renderer's inline card flips to a "已超时" state on the same timer
-// firing — pushed via `ai:user-question-timeout` / `ai:user-approval-timeout`.
+// 90s 自动取消：用户走开会超时——不希望 agent loop 永远阻塞。挂个 setTimeout
+// 在超时时 reject ASK_ABORTED；同一定时器触发时通知渲染端把卡片翻成
+// "已超时"，通过 `ai:user-question-timeout` / `ai:user-approval-timeout`。
 //
-// All state lives at module scope (not on the runtime instance) because
-// the IPC handlers in main/index.ts register BEFORE DSH boots — the
-// router validates channels but the handlers need a way to resolve a
-// pending waterfall promise whose runtime isn't available yet. The
-// functions below are the answer-side of the bridge.
+// 所有状态在模块作用域（不在 runtime 实例上），因为 main/index.ts 的 IPC
+// handler 注册早于 DSH boot——router 已经校过通道，但 handler 还得解析那些
+// 等着瀑布 promise 的 pending 状态，那时 runtime 还没准备好。下面的函数
+// 是这个桥的应答侧。
 
-/** Maximum time we wait for the user's answer before auto-cancelling. */
+/** 等待用户答复的最长时间，超时自动取消 */
 const INTERACTION_TIMEOUT_MS = 90_000;
 
 interface PendingQuestion {
@@ -279,11 +235,9 @@ interface PendingApproval {
 const pendingQuestions = new Map<string, PendingQuestion>();
 const pendingApprovals = new Map<string, PendingApproval>();
 
-/** Called by main/index.ts's IPC handler when the renderer posts the
- *  structured answer to `ai.userQuestion.answer`. Returns false if the
- *  reqId has no pending entry (timed out, duplicate reply, etc).
- *  The renderer hands us the full { reqId, answers } so we resolve the
- *  waterfall promise with the same shape the DSH tool expects. */
+/** 渲染端应答 ai.userQuestion.answer 时调用。reqId 找不到 pending 条目
+ *  （超时/重复）返回 false。渲染端把完整 { reqId, answers } 给我们，我们
+ *  用同样的形状 resolve waterfall promise。 */
 export function answerUserQuestion(reqId: string, answers: UserQuestionAnswer['answers']): boolean {
   const entry = pendingQuestions.get(reqId);
   if (!entry) return false;
@@ -293,11 +247,10 @@ export function answerUserQuestion(reqId: string, answers: UserQuestionAnswer['a
   return true;
 }
 
-/** Called by main/index.ts's IPC handler when the renderer posts the
- *  binary decision to `ai.userApproval.answer`. We map the renderer's
- *  simplified vocabulary ('allow-once' | 'reject') onto DSH's
- *  ApprovalOutcome ('allowed-once' | 'rejected'). 'cancelled' and
- *  'unavailable' are reserved for the timeout / no-answerer paths. */
+/** 渲染端应答 ai.userApproval.answer 时调用。把渲染端的简化词表
+ *  ('allow-once' | 'reject') 映射到 DSH 的 ApprovalOutcome
+ *  ('allowed-once' | 'rejected')。'cancelled' 和 'unavailable' 留给超时/
+ *  无 answerer 路径。 */
 export function answerUserApproval(reqId: string, decision: 'allow-once' | 'reject'): boolean {
   const entry = pendingApprovals.get(reqId);
   if (!entry) return false;
@@ -307,8 +260,7 @@ export function answerUserApproval(reqId: string, decision: 'allow-once' | 'reje
   return true;
 }
 
-/** Cancel everything still pending — called from dispose() so a runtime
- *  tear-down doesn't leave zombie timers firing into nothing. */
+/** dispose() 时清空所有 pending —— runtime 拆掉时不留僵尸定时器 */
 function cancelAllPending(): void {
   for (const entry of pendingQuestions.values()) {
     clearTimeout(entry.timer);
@@ -322,15 +274,13 @@ function cancelAllPending(): void {
   pendingApprovals.clear();
 }
 
-/** Build the UserQuestionRequest payload we'd push to the renderer.
- *  Pulled out so the waterfall listener below is one straight line. */
+/** 给渲染端构造 UserQuestionRequest payload。抽出来让 waterfall 监听器
+ *  一行写完 */
 function questionRequestPayload(reqId: string, request: { questions: ReadonlyArray<{ id: string; question: string; detail?: string; header?: string; options?: ReadonlyArray<{ label: string; description?: string }>; multiSelect?: boolean }> }): UserQuestionRequest {
   return {
     reqId,
-    // invocationId isn't on the DSH request shape; the renderer matches
-    // via reqId alone. (Adding it would require plumbing the LLM adapter
-    // through ctx.userQuestions.ask — not worth the complexity for an
-    // already-correlated reqId.)
+    // invocationId 不在 DSH request 形状里；渲染端只按 reqId 关联（要加就得
+    // 在 ctx.userQuestions.ask 上额外走 LLM adapter，不值当）
     invocationId: '',
     questions: request.questions.map((q) => ({
       id: q.id,
@@ -344,35 +294,26 @@ function questionRequestPayload(reqId: string, request: { questions: ReadonlyArr
 }
 
 /**
- * L3-C: Backfill DB rows for sessions that exist on disk under
- * <DSH_SESSIONS_ROOT> but have no entry in the `conversations` table.
+ * L3-C：给磁盘上有 JSONL 但 DB 没对应行的 session 补行。
  *
- * Why: pre-L2 the renderer didn't have a multi-conversation model, so
- * sessions were created on disk by the early DSH runtime / test-adapter
- * smoke runs without ever writing a row in `conversations`. After L2
- * those orphans would be invisible to the new AIPane sidebar — the JSONL
- * log survives, but no row means no UI affordance to load it.
+ * 原因：L2 之前渲染端没有多会话模型，早期 DSH runtime / 测试 adapter 跑出来的
+ * session 直接落到磁盘，没写过 `conversations` 表。L2 之后这些孤儿对新
+ * AIPane 不可见——JSONL 日志还在，但没有 DB 行就没法在侧边栏加载。
  *
- * What this does: walks the persistence backend's session list, compares
- * against the DB row set, and for every orphan:
- *   1. Loads the session's events via persistence.load(id)
- *   2. Extracts the FIRST user/message text (DSH shape: data.content[] with
- *      {type:'text', text}) and uses it as the row title, truncated to
- *      TITLE_MAX with an ellipsis when longer.
- *   3. INSERTs a row with created_at = session.createdAt (the file mtime
- *      the persistence plugin captured when the session was first opened)
- *      and updated_at = Date.now() so the sidebar surfaces the new row at
- *      the top until the user actually uses it.
+ * 做法：遍历持久化后端的 session 列表，与 DB 行比对，每个孤儿：
+ *   1. persistence.load(id) 读事件流
+ *   2. 取第一条 user/message 文本（DSH 形状 data.content[] 内 {type:'text'}）
+ *      截到 TITLE_MAX，超长加 …
+ *   3. INSERT 一行，created_at 用 session.createdAt（持久化插件在打开 session
+ *      时记录的 mtime），updated_at 用 Date.now()，让新行浮到侧边栏顶部直到
+ *      用户真的使用它
  *
- * Safe to call repeatedly: idempotent (skips ids that already have a row).
- * Runs after `bindAiDeps` so the migrated rows are visible on the first
- * AIPane mount — no need for a separate refresh.
+ * 可重复调用（idempotent，跳过已有行）。在 bindAiDeps 之后跑，确保首挂 AIPane
+ * 就能看到迁移的行。
  *
- * Title heuristic: the FIRST user prompt is the most stable signal of
- * intent. We don't try to update later — that's L3-D (auto-rename after
- * first turn). Orphans whose first user message is empty (rare — happens
- * when the session was opened but no message was sent) fall back to the
- * default `未命名对话` title so the user still sees something.
+ * 标题启发式：取第一条 user prompt 反映意图最稳定。后续不更新（L3-D 自动重命名
+ * 留给后续）。第一条 user message 为空的孤儿（罕见——开了 session 没发消息）
+ * 退回默认 `未命名对话`。
  */
 export async function migrateOrphanSessions(conversations: ConversationRepo): Promise<void> {
   const TITLE_MAX = 24;
@@ -395,7 +336,6 @@ export async function migrateOrphanSessions(conversations: ConversationRepo): Pr
       skipped++;
       continue;
     }
-    // Load events to extract the first user message for the title.
     let title = '未命名对话';
     try {
       const loaded = await persistence.load(entry.id);
@@ -407,12 +347,9 @@ export async function migrateOrphanSessions(conversations: ConversationRepo): Pr
     }
     try {
       const row = conversations.create({ title });
-      // created_at should reflect the original session creation time, not
-      // the migration time — otherwise the sidebar mis-orders pre-L2 chats
-      // at the top instead of by their actual age. updated_at stays "now"
-      // so the row floats to the top until the user interacts.
-      // Patch created_at directly via the underlying handle: the public API
-      // intentionally doesn't expose this (a backfill is the only case).
+      // created_at 反映原 session 创建时间而非迁移时间——否则侧边栏把 L2 之前
+      // 的会话错误地顶到最前。updated_at 留"现在"，让行浮顶直到用户真用它。
+      // 直接走底层 handle 改 created_at，公开 API 故意不暴露（仅作回填）。
       (conversations as unknown as { db: { prepare: (sql: string) => { run: (...args: unknown[]) => void } } }).db
         .prepare('UPDATE conversations SET created_at = ? WHERE id = ?')
         .run(entry.createdAt, row.id);
@@ -426,14 +363,14 @@ export async function migrateOrphanSessions(conversations: ConversationRepo): Pr
   logger.info(`migrateOrphanSessions: ${migrated} migrated, ${skipped} already present, ${failed} failed (total ${list.length})`);
 }
 
-/** Truncate a title to maxChars; append "…" when truncated. */
+/** 标题截到 maxChars，超长加 … */
 function truncateTitle(s: string, maxChars: number): string {
   const trimmed = s.replace(/\s+/g, ' ').trim();
   if (trimmed.length <= maxChars) return trimmed;
   return trimmed.slice(0, maxChars - 1) + '…';
 }
 
-/** Pull the first user/message text out of a DSH event log. */
+/** 从 DSH 事件流里取第一条 user/message 文本 */
 function extractFirstUserText(events: ReadonlyArray<{ type: string; data?: unknown }>): string {
   for (const ev of events) {
     if (ev.type !== 'user/message') continue;
@@ -447,22 +384,14 @@ function extractFirstUserText(events: ReadonlyArray<{ type: string; data?: unkno
   return '';
 }
 
-// --- Migration helpers ---
+// --- 迁移辅助 ---
 //
-// The migration needs access to the persistence layer's list/load, which
-// lives inside the runtime boot. Rather than expose that as a public
-// runtime method (it would couple the migration to runtime internals), we
-// run a *second* boot of just the persistence layer — cheap, isolated,
-// and gives the migration a clean handle.
-//
-// Why a second boot: the real runtime's `boot()` registers our LLM
-// adapter and domain tools, which are not needed for a migration. A
-// dedicated boot is ~50ms and zero side effects. The migration runs at
-// app startup (after the user opens the app for the first time post-L2)
-// and not on the hot path.
+// 迁移需要持久化层的 list/load，而 list/load 在 runtime boot 里。如果把
+// 持久化层当 runtime 公开方法（会和 runtime 内部耦合），不如再启一次只跑
+// 持久化——便宜、隔离、无副作用。~50ms 且只跑一次（首次开 app 时）。
 
-/** Boot a minimal cordis tree with just the session persistence plugin
- *  and return its list()/load() methods. Returns null on failure. */
+/** 启一个最小 cordis 树，只挂 session persistence 插件，返回 list()/load()。
+ *  失败返回 null。 */
 async function bootPersistenceOnly(): Promise<{
   list: () => Promise<Array<{ id: string; createdAt: number }>>;
   load: (id: string) => Promise<{
@@ -499,8 +428,7 @@ async function bootPersistenceOnly(): Promise<{
   }
 }
 
-/** Lazily boot DSH once; returns null if boot fails (the renderer surfaces
- *  this as an explicit "DSH unavailable" error — there is no fallback path). */
+/** DSH 懒启动一次；失败返回 null（渲染端会显示"DSH unavailable"，无回退路径） */
 export function getDshRuntime(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
   if (!runtimePromise) {
     runtimePromise = bootDsh(deps).catch((err) => {
@@ -513,15 +441,13 @@ export function getDshRuntime(deps: DshRuntimeDeps): Promise<DshRuntime | null> 
 }
 
 async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
-  // Locate the cordis.yml + the installed package tree base.
   const cfg = resolveAppPath('resources/dsh/cordis.yml');
   if (!cfg || !existsSync(cfg)) {
     logger.warn('DSH cordis.yml not found; skipping boot');
     return null;
   }
-  // bareModuleBaseUrl anchors bare @deepseek-ai/dsh-* specifiers to the
-  // installed package tree. In dev that's the project root; in a packaged app
-  // it's the app directory holding node_modules.
+  // bareModuleBaseUrl 把裸 @deepseek-ai/dsh-* 锚到已装包树。dev 模式用项目根，
+  // 打包后用持有 node_modules 的 app 目录。
   const appRoot = app.getAppPath();
   const bareBase = new URL('.', pathToFileURL(appRoot).href).href;
 
@@ -529,12 +455,8 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
   const { boot } = bootMod;
   const ctx = (await boot('todo-list', cfg, undefined, undefined, bareBase)) as DshContext;
 
-  // Surface the durable session layer: list what's already persisted under
-  // <DSH_SESSIONS_ROOT> (see src/main/index.ts for the env var setup) so the
-  // user can see in the log how many prior conversations survive. The plugin
-  // returns a header per stored session; we only count + log the ids.
-  // Safe to call on every boot — list() walks the on-disk directory and
-  // returns immutable metadata without loading full event logs.
+  // 暴露持久化层：列出 <DSH_SESSIONS_ROOT> 下已有的会话，让用户从日志里看到
+  // 历史会话保存情况。每次启动都跑一遍没事——list() 只走目录不读事件。
   try {
     const persistence = ctx.get('sessionPersistence') as {
       list?: (signal?: AbortSignal) => Promise<Array<{ id: string; createdAt: number }>>;
@@ -551,15 +473,13 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
       }
     }
   } catch (err) {
-    // Don't fail boot on a list error — the persistence layer is best-effort
-    // observability here, not a load-bearing dependency.
+    // list 失败不阻塞 boot——这里只是可观测性，不是关键依赖
     logger.warn(`DSH persistence list failed (non-fatal): ${(err as Error).message}`);
   }
 
-  // 1. Register our LLM adapter for all five real provider routes. The
-  //    PiAiAdapter owns one pi-ai-backed provider per route; `profiles()`
-  //    resolves the live settings on each operation so a key/endpoint/model
-  //    change reaches the next request without restart.
+  // 1. 注册 LLM adapter 到所有真 provider 路由。PiAiAdapter 每条路由一个
+  //    pi-ai 后端 provider；profiles() 每次操作重读设置，key/endpoint/model
+  //    改了无需重启即下次请求生效。
   const llm = ctx.get('llm') as { registerAdapter(providers: string[], adapter: unknown): () => void } | undefined;
   if (!llm) throw new Error('DSH booted but ctx.llm is absent');
   const { createLlmAdapters, REAL_PROVIDER_ROUTES } = await import('./llm-adapter');
@@ -569,32 +489,23 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
     getCustomProviderId: () => deps.settings.get().customProviderId,
   });
   const disposeAdapter = llm.registerAdapter([...REAL_PROVIDER_ROUTES], llmAdapter);
-  void REAL_PROVIDER_ROUTES; // exported for type-checking consumers
+  void REAL_PROVIDER_ROUTES;
 
-  // 2. Register our typed domain tools.
+  // 2. 注册我们的领域工具
   const tools = ctx.get('tools') as { register(def: unknown): () => void } | undefined;
   if (!tools) throw new Error('DSH booted but ctx.tools is absent');
   const { defineTool } = await import('@deepseek-ai/dsh-tools');
   const disposeTools = registerDomainTools(tools, defineTool, deps, ctx);
 
-  // 3. Conversation registry. One agent handle per conversation, cached for
-  //    the conversation's lifetime. ensureAgent() idempotent: a second call
-  //    for the same id returns the existing entry without recreating.
+  // 3. 会话注册表：每个会话一个 agent handle，缓存到会话生命周期结束。
+  //    ensureAgent() 幂等——同 id 再调直接返回已有 entry。
   const agentsApi = ctx.get('agents') as {
     create(o: unknown): Promise<{
       agent: {
         followup(m: unknown): void;
         whenIdle(): Promise<void>;
-        /**
-         * Soft cancel — abort the active turn without disposing the agent.
-         * Per `@deepseek-ai/dsh-agent` runtime-types.d.ts (line 77-83):
-         * "Clear queued and steering work — unless `keepInbox` — and abort the
-         * active turn or between-turn task. The first cause wins for that
-         * activity. With no active activity, cancellation is a no-op and does
-         * not arm later work." This is exactly the L3-A contract: the agent
-         * handle survives so the next followup() runs on the same agent and
-         * the same persisted session JSONL.
-         */
+        /** L3-A 软取消：abort 当前轮次但保留 agent 句柄。
+         *  keepInbox=false 时清空排队的 steering；没有活动就什么都不做。 */
         cancel(cause: { kind: 'user' } | { kind: 'parent' } | { kind: 'hook'; reason: string } | { kind: 'disposed' }, options?: { keepInbox?: boolean }): void;
         id: unknown;
       };
@@ -612,17 +523,12 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
   } | undefined;
   if (!agentsApi) throw new Error('ctx.agents absent');
 
-  // Permanent listener: every `session/title` event flowing through the DSH
-  // runtime gets reflected into the local conversations DB so the renderer's
-  // sidebar and switcher stay in sync. The DSH session-title service emits
-  // these events in two cases:
-  //   1. The deterministic fallback is created after the first eligible user
-  //      message (truncated first-prompt snippet).
-  //   2. The optional LLM provider (dsh-session-title-first-prompt-llm)
-  //      completes its async summary — last event wins.
-  // Both flow through here; we just rename whatever's in the DB to whatever
-  // arrived, and broadcast app:data-changed { scope: 'conversations' } so the
-  // AIPane / sidebar refresh without a manual re-list.
+  // 永久监听器：把 DSH session-title 服务产生的 `session/title` 事件同步到
+  // 本地 conversations DB。两种来源：
+  //   1. 第一条可用 user message 之后回退式生成的截断摘要
+  //   2. 可选 LLM provider（dsh-session-title-first-prompt-llm）异步汇总的结果
+  // 两种都流经这里。我们只负责把 DB 行的标题改成到来的标题，再广播
+  // app:data-changed { scope: 'conversations' } 让 AIPane / 侧边栏无需重拉。
   ctx.on('session/event', (session: unknown, event: { type: string; data?: unknown }) => {
     if (event?.type !== 'session/title') return;
     const sid = (session as { id?: unknown } | undefined)?.id;
@@ -633,9 +539,8 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
     if (!title) return;
     const existing = deps.conversations.get(conversationId);
     if (!existing) {
-      // Session exists but no DB row yet — the renderer hasn't created it
-      // (or migrateOrphanSessions is still in flight). Skip; the next
-      // create() / migration will pick up the title from the session log.
+      // session 存在但 DB 行还没——渲染端还没建（或者 migrateOrphanSessions
+      // 还在跑）。跳过，下一次 create() / 迁移会从 session log 取到标题。
       return;
     }
     if (existing.title === title) return;
@@ -650,14 +555,10 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
     }
   });
 
-  // L4-G: human-in-the-loop bridges for DSH user-questions + user-approval.
-  // DSH publishes no companion answerer for these seams; we install our own
-  // waterfall listener so every ask() call from a tool (model-driven
-  // ask_user_question) or ctx.approval.request() lands in the renderer as
-  // an inline card. The listener mints a reqId, broadcasts to all windows,
-  // and awaits the answer via the answerUserQuestion / answerUserApproval
-  // IPC handlers. 90s auto-cancel so a user who walks away doesn't block
-  // the agent loop forever.
+  // L4-G: DSH 不提供 user-questions / user-approval 的 answerer，我们装
+  // waterfall 监听器把每次提问广播给渲染端（内联卡片），再通过
+  // answerUserQuestion / answerUserApproval IPC 等答复。90s 自动取消，
+  // 避免用户走开时 agent loop 永久阻塞。
   ctx.on('user-questions/request', (request: {
     questions: ReadonlyArray<{ id: string; question: string; detail?: string; header?: string; options?: ReadonlyArray<{ label: string; description?: string }>; multiSelect?: boolean }>;
   }, _next: () => Promise<unknown>): Promise<UserQuestionAnswer> => {
@@ -665,11 +566,10 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
     return new Promise<UserQuestionAnswer>((resolve, reject) => {
       const timer = setTimeout(() => {
         const entry = pendingQuestions.get(reqId);
-        if (!entry) return; // already resolved
+        if (!entry) return; // 已 settle
         pendingQuestions.delete(reqId);
-        // Notify the renderer the card has timed out so it can flip to a
-        // "已超时自动取消" state — keeps the UI honest about the agent's
-        // effective state (the loop will receive ASK_ABORTED and proceed).
+        // 通知渲染端卡片翻成"已超时自动取消"，让 UI 与 agent 实际状态一致
+        // （loop 会收到 ASK_ABORTED 继续往下走）
         for (const w of BrowserWindow.getAllWindows()) {
           if (!w.isDestroyed()) w.webContents.send('ai:user-question-timeout', { reqId });
         }
@@ -684,10 +584,9 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
     });
   });
 
-  // Mirror for binary approvals. DSH user-approval normalizes the answerer
-  // return value to one of four outcomes; we only ever resolve with
-  // 'allowed-once' or 'rejected' from the renderer path (timeout yields
-  // 'unavailable' via the timeout path, signal abort yields 'cancelled').
+  // 二元审批的对称实现。DSH 把 answerer 返回值归一为四种结局；渲染端路径
+  // 只 resolve 'allowed-once' / 'rejected'（超时 resolve 'unavailable'，
+  // signal abort resolve 'cancelled'）。
   ctx.on('approval/request', (req: {
     agent: { id?: unknown };
     toolName: string;
@@ -754,18 +653,10 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
       id: unknown;
     };
     disposeHandle: () => Promise<void>;
-    /** Unsubscribe from the per-conversation session/event listener. */
+    /** 退订每会话的 session/event 监听器 */
     offSession: () => void;
-    /** Latest fullText accumulated for the in-flight turn (for the 'done' event). */
-    fullText: string;
-    /** callId→{name, args} for this conversation, used to label tool/result events. */
-    callMeta: Map<string, { name: string; args: string }>;
-    /** When true, no live consumer is reading events (e.g. between turns). */
+    /** true 表示当前无消费者在读事件（轮次间） */
     dormant: boolean;
-    /** L4-E: token totals for the in-flight turn, summed across steps from
-     *  the assistant/message events. Reset at attachLiveListener() time. */
-    turnTokensIn: number;
-    turnTokensOut: number;
   }
 
   const conversations = new Map<string, ConversationEntry>();
@@ -774,40 +665,18 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
     const existing = conversations.get(conversationId);
     if (existing) return existing;
 
-    // Pick the registered PiAiAdapter route from current settings. Each
-    // conversation caches its own agent handle — if the user changes
-    // settings.provider between turns on this conversation, the new value
-    // takes effect on the NEXT conversation the user creates; in-flight
-    // conversations stay on their original route until they're disposed
-    // (deleteConversation / disposeConversation below).
+    // 从当前设置选已注册的 PiAiAdapter 路由。每条会话缓存自己的 agent
+    // handle——用户在两轮之间改 settings.provider，新值下次新建会话生效，
+    // 在跑的会话仍走原路由直到 dispose（disposeConversation）。
     const { providerRouteFor } = await import('./llm-adapter');
     const provider = providerRouteFor(deps.settings.get().provider) ?? 'deepseek';
 
-    // Always prefer resume() over create() when the conversation already has a
-    // persisted session log. create() on an existing id routes through
-    // `ctx.sessions.prepare(id, { meta })` with an EMPTY seed, then the
-    // persistence coordinator's `session/created` listener runs `onCreated`
-    // with `seed=[]` against the persisted 133-event prefix — that hits
-    // `coordinator.ts:1256` ("already persisted with N event(s) that do not
-    // match this live session (id collision)"). The throw is silently
-    // swallowed inside `void this.initFor(session)`, but the next loadHistory
-    // call from the renderer (which iterates every conversation on app open)
-    // surfaces it as `loadHistory(id) failed: ... (id collision)`. resume()
-    // routes through `persistence.prepare(id)` which loads the stored events
-    // into the Session seed first, so `seedMatchesPersisted` passes and the
-    // collision never fires.
-    //
-    // Fallback to create() mirrors DSH's own `restoreOrCreateConfigured`
-    // (packages/core/agent-loop/src/index.ts:407): on a resume failure, only
-    // fall back to create when the artifact is GENUINELY absent; a corrupt
-    // log must stay loud so the user notices instead of starting an empty
-    // session that would overwrite the broken one.
+    // 总是 resume() 优先（会话有持久化日志时）。create() 在已有 id 上会撞
+    // `seedMatchesPersisted` 抛 id collision；详见 resumeOrCreate 的注释。
     const handle = await resumeOrCreate(
       {
-        // The runtime's agentsApi uses `o: unknown` for both create() and
-        // resume() — wrap it in a typed facade so resumeOrCreate stays pure
-        // and unit-testable. The runtime objects satisfy the `AgentHandle`
-        // shape structurally.
+        // runtime 的 agentsApi 把 create/resume 都声明成 o: unknown——包一层
+        // 类型化的 facade 让 resumeOrCreate 保持纯净可单测。
         agents: agentsApi as unknown as AgentsFacade,
         persistence: persistenceApi,
         logger,
@@ -821,126 +690,84 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
       agent: handle.agent,
       disposeHandle: () => handle.dispose(),
       offSession: () => {},
-      fullText: '',
-      callMeta: new Map(),
       dormant: true,
-      turnTokensIn: 0,
-      turnTokensOut: 0,
     };
     conversations.set(conversationId, entry);
     return entry;
   }
 
-  // Returns a fresh unsubscribe function — sets entry.fullText/callMeta and
-  // wires the onEvent delivery for THIS call's invocationId. We do not
-  // attach a permanent listener: between turns we have no live consumer, so
-  // persisting the listener would just leak onEvent callables.
+  // 不挂永久监听器——轮次间没有消费者，挂上只会泄漏 onEvent callable。
   //
-  // Filtering: ctx.on('session/event', ...) fires for every active session,
-  // so we filter by session.id === conversationId. This is what keeps
-  // parallel conversations' event streams independent.
+  // 透传策略：attachLiveListener 只做"按 conversationId 过滤 + 原样投递"两件事。
+  // 以前这里会把 raw DSH event 翻译成本地 TurnEvent（token / reasoning /
+  // toolCall / toolResult / done），但合成语义和真实 cordis 事件流开始脱节
+  // （done 是 runtime 自创，token / reasoning 都从 assistant/chunk 一种 chunk
+  // 形态挑出来的），不如把整条原始流上抛给关心语义的层（ai.ask）去翻译。
+  // 累积本轮 fullText / tokens 的小工作留在 runTurn 的闭包里，避免给监听器
+  // 加额外职责。
+  //
+  // 过滤：ctx.on('session/event', ...) 对所有 active session 触发，所以按
+  // session.id === conversationId 过滤，让并行会话的事件流互不干扰。
   function attachLiveListener(
     entry: ConversationEntry,
-    invocationId: string,
-    onEvent: (e: TurnEvent) => void,
+    onEvent: (e: DshRawEvent) => void,
   ): () => void {
-    entry.fullText = '';
-    entry.callMeta.clear();
-    entry.turnTokensIn = 0;
-    entry.turnTokensOut = 0;
-    const off = ctx.on('session/event', (session: unknown, event: { type: string; data?: unknown }) => {
-      // session.id is a branded string; conversationId is a plain string.
-      // String compare is the safe check.
+    const off = ctx.on('session/event', (session: unknown, event: DshRawEvent) => {
       const sid = (session as { id?: unknown } | undefined)?.id;
       if (String(sid) !== entry.id) return;
-      const t = event?.type;
-      if (t === 'assistant/chunk') {
-        const d = event.data as { chunk?: { type?: string; text?: string } } | undefined;
-        const chunk = d?.chunk;
-        if (chunk?.type === 'text-delta' && chunk.text) {
-          // Pass text straight through. Earlier versions tried to strip
-          // <think>...</think> out of text-delta (chain-of-thought arriving
-          // inlined because the provider didn't emit a separate
-          // reasoning-delta channel), but that masking was fighting the
-          // adapter — when a provider misroutes reasoning into the content
-          // stream, the fix belongs in the adapter, not here. We treat
-          // text-delta as visible text.
-          entry.fullText += chunk.text;
-          onEvent({ type: 'token', text: chunk.text });
-        } else if (chunk?.type === 'reasoning-delta' && chunk.text) {
-          // Real provider-side reasoning channel. Routed to its own UI
-          // event so the renderer can show "thinking…" in a separate row.
-          onEvent({ type: 'reasoning', text: chunk.text });
-        }
-      } else if (t === 'assistant/message') {
-        // The assembled message for one step carries `usage` when the
-        // adapter reported token accounting. We sum across steps so the
-        // final `done` event reflects the whole turn.
-        const d = event.data as { usage?: { inputTokens?: number; outputTokens?: number } } | undefined;
-        if (d?.usage) {
-          entry.turnTokensIn  += d.usage.inputTokens  ?? 0;
-          entry.turnTokensOut += d.usage.outputTokens ?? 0;
-        }
-      } else if (t === 'tool/call') {
-        const d = event.data as { callId?: unknown; name?: string; arguments?: string } | undefined;
-        if (d?.callId != null && d.name) entry.callMeta.set(String(d.callId), { name: d.name, args: d.arguments ?? '' });
-        onEvent({ type: 'toolCall', name: d?.name ?? '', args: d?.arguments });
-      } else if (t === 'tool/result') {
-        const d = event.data as {
-          message?: {
-            source?: { callId?: unknown };
-            content?: Array<{ isError?: boolean; content?: unknown[] }>;
-          };
-        } | undefined;
-        const callId = d?.message?.source?.callId;
-        const meta = callId != null ? entry.callMeta.get(String(callId)) : undefined;
-        const block = d?.message?.content?.[0];
-        onEvent({
-          type: 'toolResult',
-          name: meta?.name ?? '',
-          args: meta?.args,
-          ok: !block?.isError,
-          data: block?.content,
-        });
-      }
+      onEvent(event);
     });
     entry.offSession = off;
-    // Track which invocationId owns the live listener. Not strictly needed
-    // today (each runTurn installs + clears its own listener) but useful
-    // for diagnostics and any future "two turns on the same conversation
-    // at once" feature.
     entry.dormant = false;
-    void invocationId;
     return off;
   }
 
-  // 4. Expose the runtime API.
+  // 4. 暴露 runtime API
   const runtime: DshRuntime = {
     async runTurn({ prompt, conversationId, invocationId, onEvent, signal }) {
+      void invocationId; // 留作对外 API 兼容；事件流里的 invocationId 由 ai.ask 自行追踪
       const { createUserMessage } = await import('@deepseek-ai/dsh-llm');
       const endpoint = deps.getEndpoint();
       const model = endpoint?.model ?? 'deepseek-chat';
       const entry = await ensureAgent(conversationId, model);
-      const off = attachLiveListener(entry, invocationId, onEvent);
+      // L4-E：监听器只做透传，本轮 fullText / tokens 在闭包里累加并最终
+      // 写进 runTurn 的返回值。ai.ask 用返回的 tokens 算价格、用 fullText
+      // 当 AIStreamEvent.done.content，不再依赖一条合成的 'done' 事件。
+      let fullText = '';
+      let turnTokensIn = 0;
+      let turnTokensOut = 0;
+      const off = attachLiveListener(entry, (event) => {
+        if (event?.type === 'assistant/chunk') {
+          const d = event.data as { chunk?: { type?: string; text?: string } } | undefined;
+          const chunk = d?.chunk;
+          // text-delta 累加成当轮可见文本；reasoning-delta 不入 fullText，
+          // 它有独立 UI 通道（ai.ask 会把 reasoning-delta 翻译成 reasoning 流事件）
+          if (chunk?.type === 'text-delta' && chunk.text) fullText += chunk.text;
+        } else if (event?.type === 'assistant/message') {
+          const d = event.data as { usage?: { inputTokens?: number; outputTokens?: number } } | undefined;
+          if (d?.usage) {
+            turnTokensIn  += d.usage.inputTokens  ?? 0;
+            turnTokensOut += d.usage.outputTokens ?? 0;
+          }
+        }
+        onEvent(event);
+      });
       try {
         const userMsg = createUserMessage({
           content: [{ type: 'text', text: prompt }],
           source: { kind: 'user' },
         });
         entry.agent.followup(userMsg);
-        // Cooperative cancellation: if the renderer cancels, soft-abort the
-        // agent. L3-A: prefer `agent.cancel({kind:'user'})` over disposing the
-        // handle — the agent survives so the next followup() reuses the same
-        // session without a re-resume cost. whenIdle() will then resolve as
-        // the aborted turn converges to idle. Without an active turn the call
-        // is a no-op (per DSH docs), which is safe for spurious abort signals.
+        // 协作式取消：渲染端取消时软中止 agent。L3-A 偏好 agent.cancel
+        // ({kind:'user'}) 而非销毁 handle——agent 留下，next followup() 复用
+        // 同 session 不必重 resume。whenIdle() 在被中止的轮次收敛到 idle 时
+        // 自行 resolve。无活跃轮次时调用是 no-op（DSH 文档），对伪 abort
+        // 信号也安全。
         signal?.addEventListener('abort', () => {
           try { entry.agent.cancel({ kind: 'user' }); } catch { /* noop */ }
         });
         await entry.agent.whenIdle();
-        // L4-E: read accumulated token counts from the entry, attach to done.
-        onEvent({ type: 'done', content: entry.fullText, tokensIn: entry.turnTokensIn, tokensOut: entry.turnTokensOut });
-        return { content: entry.fullText, tokensIn: entry.turnTokensIn, tokensOut: entry.turnTokensOut };
+        return { content: fullText, tokensIn: turnTokensIn, tokensOut: turnTokensOut };
       } finally {
         try { off(); } catch { /* noop */ }
         entry.dormant = true;
@@ -950,21 +777,16 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
     async cancel(conversationId) {
       const entry = conversations.get(conversationId);
       if (!entry) return;
-      // L3-A: SOFT cancel. The agent handle stays alive in the cache, so the
-      // next followup() (a new turn on this conversation) resumes on the
-      // same agent + persisted session. Hard dispose is reserved for explicit
-      // `disposeConversation()` (called from ai.conversation.delete).
+      // L3-A 软取消：handle 留在缓存里，下次 followup() 走同 agent + 持久化
+      // session。硬销毁留给 disposeConversation（ai.conversation.delete 路径）。
       //
-      // - If a turn is in flight: agent.cancel({kind:'user'}) aborts it and
-      //   whenIdle() resolves quickly. Pending text/tool events may have
-      //   already streamed — those are part of the durable session log so
-      //   loadHistory() still returns them honestly.
-      // - If idle: cancel is a no-op (per DSH docs), so calling it on a
-      //   quiet agent is safe.
+      // - 轮次在跑：agent.cancel({kind:'user'}) 中断它，whenIdle() 快速
+      //   resolve。在它前面的 text/tool 事件已经流过，会成为持久化日志的一部分，
+      //   loadHistory() 仍如实返回。
+      // - 闲置：cancel 是 no-op（DSH 文档），安全调用。
       try { entry.agent.cancel({ kind: 'user' }); } catch { /* noop */ }
-      // We do NOT conversations.delete() — that would force a re-resume on
-      // the next ask() and lose the agent's internal caches (pre-step
-      // decisions, resolved system prompts) we just paid to build.
+      // 不 conversations.delete()——下次 ask() 会触发 re-resume，丢掉刚刚
+      // 积攒的 agent 内部缓存（已解析的 system prompt、pre-step 决策）。
     },
 
     async loadHistory({ conversationId }) {
@@ -989,9 +811,8 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
     },
 
     async removeSession(conversationId) {
-      // The JSONL plugin doesn't expose a delete method (it's append-only
-      // by design) — we walk the persistence root and rm the per-session
-      // directory. Layout is <root>/<sanitized-project>/<sessionId>/.
+      // JSONL 插件没暴露 delete 方法（设计上 append-only）——我们手动遍历
+      // 持久化根目录，删掉每个 <root>/<sanitized-project>/<sessionId>/。
       const root = process.env['DSH_SESSIONS_ROOT'];
       if (!root || !existsSync(root)) return { removed: false };
       let removed = false;
@@ -1004,8 +825,7 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
           rmSync(target, { recursive: true, force: true });
           logger.info(`removeSession(${conversationId}): removed ${target}`);
           removed = true;
-          // Multiple project dirs in principle (different cwd contexts);
-          // remove them all so the conversation is fully purged.
+          // 可能有多个 project 目录（不同 cwd 上下文），全删干净才算彻底清除。
         }
       } catch (err) {
         logger.warn(`removeSession(${conversationId}) failed: ${(err as Error).message}`);
@@ -1014,15 +834,13 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
     },
 
     async dispose() {
-      // L4-G: drain any open human-in-the-loop waterfalls before tearing
-      // down the cordis fiber — otherwise the 90s timers fire into a
-      // half-closed runtime and `BrowserWindow.getAllWindows()` finds
-      // no listener. Settling with reject('aborted') / resolve('cancelled')
-      // makes DSH's tool loop unblock and surface a graceful "已取消" to
-      // the model instead of hanging.
+      // L4-G: 先把挂着的 HITL waterfall 都 drain 掉再拆 cordis fiber——
+      // 不然 90s 定时器会往半关闭的 runtime 上 fire，BrowserWindow.getAllWindows()
+      // 已经找不到 listener。用 reject('aborted') / resolve('cancelled') settle，
+      // DSH 的工具循环解除阻塞，模型侧显示一个干净的"已取消"。
       cancelAllPending();
-      // Tear down all conversation handles first (each dispose awaits its
-      // own whenIdle + cleanup), then drop the cordis fiber.
+      // 先拆所有会话 handle（每个 dispose 都等自己的 whenIdle + cleanup），
+      // 再拆 cordis fiber。
       const all = Array.from(conversations.values());
       conversations.clear();
       await Promise.allSettled(all.map(async (e) => {
@@ -1038,33 +856,27 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
 }
 
 /**
- * Fold a session event log into a flat list of HistoryTurn entries.
+ * 把会话事件日志折叠成 HistoryTurn 平铺列表。
  *
- * - user/message → one user turn (concatenated text blocks). Shape:
- *   `data.content: [{type, text}]` (NOT `data.message.content` — different
- *   from assistant/message).
- * - assistant/text → reconstructed from `assistant/chunk` text-deltas between
- *   step boundaries. The final `assistant/message` event sometimes has
- *   `data.message.content` with empty text blocks (the streamed answer
- *   "苹果" is in the chunks, not in the final event — a DSH serialization
- *   quirk), so chunks are the source of truth. Reasoning content (if any)
- *   is aggregated from reasoning-delta chunks and surfaced as the
- *   `reasoning` field of the assistant turn.
- * - tool/call + tool/result → one tool turn (paired by callId; missing
- *   result is still emitted as a tool turn with ok=false, error="no result").
- * - Structural events (turn/start, step/end) are skipped; we use them as
- *   boundaries for flushing accumulated assistant text.
+ * - user/message → 一个 user turn（拼接所有 text block）。注意 user 的
+ *   data 形如 `content: [{type, text}]`（不是 assistant 那种 `message.content`）。
+ * - assistant/text → 由 step 边界之间的 `assistant/chunk` text-delta 拼起来。
+ *   最终 `assistant/message` 事件的 `data.message.content` 里 text block 经常
+ *   为空（流式答案在 chunks 里，不在 final 事件里——DSH 的序列化怪癖），
+ *   所以以 chunks 为准。reasoning 内容从 reasoning-delta 聚合后挂到
+ *   assistant turn 的 `reasoning` 字段。
+ * - tool/call + tool/result → 一个 tool turn（按 callId 配对；缺失 result
+ *   也照样输出 tool turn，ok=false，error="no result"）。
+ * - 结构事件（turn/start、step/end）跳过，只用作 assistant 文本 flush 边界。
  *
- * L3-I: exported so vitest can unit-test it directly. The shape tests
- * live in tests/dsh-runtime-foldHistory.test.ts and pin the exact event
- * shapes this function depends on — guard against silent regressions
- * if a future DSH upgrade changes how the persistence plugin serializes
- * chunks / final messages.
+ * L3-I: 导出给 vitest 直接单测。形状测试在 tests/dsh-runtime-foldHistory.test.ts，
+ * 锁住本函数依赖的事件形——DSH 升级改了 chunks / final messages 的序列化时
+ * 防止悄悄回归。
  */
 export function foldHistory(events: ReadonlyArray<{ type: string; data?: unknown }>): HistoryTurn[] {
   const turns: HistoryTurn[] = [];
 
-  // First pass: index tool/result by callId so we can pair with tool/call.
+  // 第一遍：按 callId 索引 tool/result，方便后面跟 tool/call 配对。
   const pendingResults = new Map<string, { ok: boolean; data?: unknown; error?: string }>();
   for (const ev of events) {
     if (ev.type === 'tool/result') {
@@ -1086,8 +898,8 @@ export function foldHistory(events: ReadonlyArray<{ type: string; data?: unknown
     }
   }
 
-  // Second pass: walk in order, accumulating assistant text/reasoning from
-  // chunks and flushing on boundaries (user turn, tool call, step end).
+  // 第二遍：按序走，累加 assistant text / reasoning，在边界（user turn、
+  // tool call、step end）flush。
   let bufText = '';
   let bufReasoning = '';
 
@@ -1105,7 +917,7 @@ export function foldHistory(events: ReadonlyArray<{ type: string; data?: unknown
   for (const ev of events) {
     if (ev.type === 'user/message') {
       flushAssistant();
-      // user/message shape: { content: [{type, text}], source, role, id }
+      // user/message 形如：{ content: [{type, text}], source, role, id }
       const d = ev.data as {
         content?: Array<{ type?: string; text?: string }>;
       } | undefined;
@@ -1115,8 +927,9 @@ export function foldHistory(events: ReadonlyArray<{ type: string; data?: unknown
         .join('');
       if (text) turns.push({ type: 'user', text });
     } else if (ev.type === 'assistant/chunk') {
-      // Aggregate streaming deltas. chunks are scoped to the current step;
-      // step boundaries (step/end, user turn, tool call) flush below.
+      // 聚合 streaming delta。chunks 只在当前 step 内有效，step 边界
+      // （step/end、user turn、tool call）触发下面的 flush。
+      // 其他 chunk 类型（block-start、block-end）是记账用的——忽略。
       const d = ev.data as {
         chunk?: { type?: string; text?: string };
       } | undefined;
@@ -1126,13 +939,11 @@ export function foldHistory(events: ReadonlyArray<{ type: string; data?: unknown
       } else if (chunk?.type === 'reasoning-delta' && typeof chunk.text === 'string') {
         bufReasoning += chunk.text;
       }
-      // Other chunk types (block-start, block-end) are bookkeeping — ignored.
+      // 其他 chunk 类型（block-start、block-end）是记账用的——忽略。
     } else if (ev.type === 'assistant/message') {
-      // If chunks didn't populate the buffer (very short responses that snap
-      // straight to the final event without streaming), fall back to the
-      // message's own content blocks. Chunks always win when both are
-      // present — the final event has empty text even when chunks carried
-      // the answer.
+      // chunks 没填进 buffer 时（极短回复直接落 final 事件，没流过）回退到
+      // message 自身的 content block。两者都在时 chunks 优先——final 事件的
+      // text 是空的，即使 chunks 带了答案。
       if (!bufText && !bufReasoning) {
         const d = ev.data as {
           message?: {
@@ -1152,8 +963,8 @@ export function foldHistory(events: ReadonlyArray<{ type: string; data?: unknown
     } else if (ev.type === 'step/end' || ev.type === 'turn/end') {
       flushAssistant();
     } else if (ev.type === 'tool/call') {
-      // A tool call interrupts the assistant's text — flush whatever was
-      // accumulated, then emit the tool turn.
+      // tool call 会打断 assistant 的文本——把已累积的部分 flush 后再
+      // 输出 tool turn。
       flushAssistant();
       const d = ev.data as { callId?: unknown; name?: string; arguments?: string } | undefined;
       const callId = d?.callId != null ? String(d.callId) : '';
@@ -1167,11 +978,11 @@ export function foldHistory(events: ReadonlyArray<{ type: string; data?: unknown
         error: result?.error ?? (result ? undefined : 'no result'),
       });
     }
-    // Everything else (chunks we already handled, structural start events,
-    // session/end-seed, request/*) is intentionally skipped.
+    // 其他事件（已处理的 chunks、结构性 start 事件、session/end-seed、
+    // request/*）刻意跳过。
   }
 
-  // Trailing flush — if the log ends mid-step without an explicit boundary.
+  // 末尾 flush——日志中途结束、没显式边界时也要把累积的内容吐出来。
   flushAssistant();
   return turns;
 }
@@ -1187,25 +998,20 @@ function registerDomainTools(
   const { repo, md, drawings, conversations, db, attachmentsDir, settings, docs } = deps;
   const reg = (def: unknown) => disposers.push(tools.register(def));
 
-  // DSH's `output.render(args, value)` produces the MODEL-FACING content for a
-  // tool result. Returning a placeholder token (e.g. '[todo.list]') hides the
-  // real data from the model — it would then fabricate answers (claim the list
-  // is empty, invent a created todo's id). Serialize the actual JSON value so
-  // the model grounds its answer in real data.
+  // DSH 的 output.render(args, value) 决定工具结果中"模型看得到"的内容。
+  // 返回占位 token（如 '[todo.list]'）会把真实数据藏起来，模型就可能瞎编
+  // （说列表为空、捏造新建 todo 的 id）。这里直接 JSON.stringify 真实结果，
+  // 让模型基于真实数据作答。
   const renderJson = (_args: unknown, value: unknown): { type: 'text'; text: string }[] => [
     { type: 'text', text: value === undefined ? '(no result)' : JSON.stringify(value, null, 2) },
   ];
   const jsonOutput = { schema: { type: 'json' }, render: renderJson };
 
   // ---------------------------------------------------------------------------
-  // todo.* — CRUD over the TODO table.
-  //
-  // The tool surface mirrors the renderer's full TodoCreate / TodoPatch
-  // shape so the AI can file tasks by tag, due date, or project, not just
-  // title + status. todo.list's filter set also expands to match the
-  // shared TodoFilter type — the AI should be able to answer "what's due
-  // this week" without having to fetch everything and filter in
-  // conversation.
+  // todo.* — 对 TODO 表的 CRUD。工具参数尽量覆盖 TodoCreate / TodoPatch 全字段，
+  // 让 AI 能按 tag / due date / project 归档，而不仅是 title + status。todo.list
+  // 的过滤集也跟前端 TodoFilter 类型对齐，能直接回答"本周到期"之类的问题，
+  // 不用把全表拉回来再二次过滤。
   // ---------------------------------------------------------------------------
 
   reg(defineTool({
@@ -1406,7 +1212,7 @@ function registerDomainTools(
   }));
 
   // ---------------------------------------------------------------------------
-  // content.* — markdown body of a TODO.
+  // content.* — TODO 的 Markdown 正文。
   // ---------------------------------------------------------------------------
 
   reg(defineTool({
@@ -1448,7 +1254,7 @@ function registerDomainTools(
   }));
 
   // ---------------------------------------------------------------------------
-  // drawing.* — Excalidraw scenes attached to a TODO.
+  // drawing.* — TODO 上挂的 Excalidraw 场景。
   // ---------------------------------------------------------------------------
 
   reg(defineTool({
@@ -1502,12 +1308,10 @@ function registerDomainTools(
   }));
 
   // ---------------------------------------------------------------------------
-  // inbox.* — attach a file (path) or pasted image (data: URL) to a TODO.
-  //
-  // Mirrors the IPC `inbox.attach` / `inbox.attachBlob` handlers in main/index.ts.
-  // The AI uses these when a user says "attach this file to that todo" or
-  // "add this screenshot to the bug" — typically the file is already on disk
-  // (clipboard image save path, screenshot) or arrives as a data: URL.
+  // inbox.* — 把磁盘文件（filePath）或粘贴图片（data: URL）挂到 TODO。
+  // 对应 main/index.ts 的 inbox.attach / inbox.attachBlob IPC。常用于
+  // "把这个文件挂到这个 todo"、"把这张截图加到 bug"。文件通常已经在磁盘上
+  // （截图 / 剪贴板图片保存路径），或者以 data: URL 的形式传来。
   // ---------------------------------------------------------------------------
 
   reg(defineTool({
@@ -1566,14 +1370,11 @@ function registerDomainTools(
   }));
 
   // ---------------------------------------------------------------------------
-  // conversation.* — manage the AI's own threads.
+  // conversation.* — 管理 AI 自己的会话。
   //
-  // These are how the AI lists / creates / archives past conversations. Most
-  // of the time the AI's `ai.ask` runs on the conversation the user is
-  // already on (so the runtime carries it implicitly), but occasionally the
-  // AI needs to spawn a side thread ("let me think through this in a scratch
-  // thread"), find a previous session ("what did we call the design review?"),
-  // or archive a completed thread.
+  // 大多数情况下 AI 的 ai.ask 都跑在用户当前所在的会话上（runtime 会隐式
+  // 带上），但偶尔 AI 需要开副线程（"让我在草稿线程里捋一下"）、找历史会话
+  // （"上次的设计评审我们叫什么"）、或者归档已完成的会话。
   // ---------------------------------------------------------------------------
 
   reg(defineTool({
@@ -1637,15 +1438,11 @@ function registerDomainTools(
     parameters: { id: { type: 'string', required: true, description: 'Conversation id' } },
     output: jsonOutput,
     async execute(args: { id: string }) {
-      // L4-H: history loading lives on the runtime (it owns the
-      // dsh-session-persistence-jsonl backend). At tool-call time we
-      // don't have a direct handle — but a future improvement is to
-      // expose `runtime.loadHistory()` on deps. For now, return an
-      // empty array and let the model know it can ask the user to
-      // surface a specific thread via the AIPane UI.
-      // Use `args.id` so a future implementation that needs to compute
-      // a stable per-conversation key has a guaranteed-not-undefined
-      // value to anchor on.
+      // L4-H: 历史加载由 runtime 持有（dsh-session-persistence-jsonl 后端）。
+      // 工具调用点拿不到直接句柄——未来可以暴露 runtime.loadHistory()。
+      // 这里返回空数组 + 提示：让模型知道要"回忆"哪个会话时，请用户去
+      // AIPane 切到那条线。提前引用 args.id，保证未来按它计算键的实装
+      // 有非 undefined 的锚点。
       void args.id;
       return {
         turns: [],
@@ -1655,8 +1452,7 @@ function registerDomainTools(
   }));
 
   // ---------------------------------------------------------------------------
-  // ai.* — self-introspection. The AI can check its own connectivity,
-  // discover available models, and read its own cost so far.
+  // ai.* — 自我探查：检查连通性、发现可用模型、读累计花费。
   // ---------------------------------------------------------------------------
 
   reg(defineTool({
@@ -1703,19 +1499,16 @@ function registerDomainTools(
   }));
 
   // ---------------------------------------------------------------------------
-  // app.currentContext — "what is the user looking at right now".
+  // app.currentContext — "用户现在看的是什么"。
   //
-  // The renderer pushes its currently focused entity (task / document /
-  // drawing) to main via `app.focus.set` whenever the selection changes.
-  // This tool reads that pointer and enriches it with the full row so the
-  // model can ground its answer in real data — e.g. "rewrite the progress
-  // doc on the task I'm looking at" needs the task id + doc id, which this
-  // returns together.
+  // renderer 通过 app.focus.set 把当前聚焦的实体（task / document / drawing）
+  // 推到 main，这个工具读取那个指针并补全数据，让模型能基于真实信息作答——
+  // 比如"重写我正在看的这个任务的进展文档"需要 task id + doc id，本工具一
+  // 次性返回。
   //
-  // Returns null when nothing is focused (user is on the list / stats view).
-  // Don't fall back to "guess the most recent task" — that would fabricate
-  // context and silently mis-attribute edits. If null, ask the user what
-  // they want to work on, or call todo.list to find a candidate.
+  // 当没有聚焦时返回 null——别回退到"猜最近的任务"，那样会编造上下文、
+  // 把编辑偷偷张冠李戴。如果返回 null，让用户说想做什么，或调 todo.list
+  // 找候选。
   // ---------------------------------------------------------------------------
 
   reg(defineTool({
@@ -1745,23 +1538,18 @@ function registerDomainTools(
   }));
 
   // ---------------------------------------------------------------------------
-  // ask_user_approval — model-facing HITL primitive.
+  // ask_user_approval — 模型侧的 HITL 原语。
   //
-  // NOTE: ask_user_question is NOT registered here. It is owned by
-  // @deepseek-ai/dsh-tool-ask-user (mounted in cordis.yml), which
-  // dispatches via ctx.userQuestions.ask() through the user-questions
-  // waterfall. If we register it here as well, DSH boot fails with
-  // "tool 'ask_user_question' is already registered" — see commit
-  // 27de656… and the bug fixed when switching conversations used to
-  // trip this on every switch.
+  // 注意：ask_user_question 不在这里注册——它属于 @deepseek-ai/dsh-tool-ask-user
+  // （cordis.yml 装载），走 ctx.userQuestions.ask()。如果这里也注册一份，DSH
+  // 启动会报 "tool 'ask_user_question' is already registered"，切换会话会
+  // 每次都撞一次。
   //
-  // ask_user_approval is ours: DSH does not ship a built-in approval
-  // tool, so we register it here and bridge via the 'approval/request'
-  // waterfall (the listener installed in bootDsh() forwards to the
-  // renderer via IPC, where UserApprovalCard renders the gate).
+  // ask_user_approval 是我们自己的：DSH 没内建审批工具，这里注册并通过
+  // 'approval/request' waterfall 桥接（bootDsh 里装的监听器把请求转发到
+  // renderer，UserApprovalCard 渲染审批卡）。
   //
-  // 90s timeout — if the user doesn't answer in 90s, the call rejects
-  // and the agent loop proceeds.
+  // 90 秒超时：用户没答则 reject，agent 循环继续。
   // ---------------------------------------------------------------------------
 
   reg(defineTool({

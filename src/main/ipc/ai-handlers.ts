@@ -169,71 +169,98 @@ export function registerAiHandlers(dsh: DshHandle): void {
       return failResult('dsh_unavailable', message);
     }
 
-    // L4-E: running cost for this turn. Updated in the `done` branch when
-    // tokens arrive from the runtime. Falls back to 0 if the adapter never
-    // reported usage (the legacy behavior).
+    // L4-E: running cost for this turn. Updated after runTurn resolves,
+    // using the tokens the runtime accumulated from the raw DSH event stream.
     let costUsd = 0;
+    // tool/call → tool/result 是 DSH 里两个独立事件，AIStreamEvent 的
+    // toolCall 需要把名字 + 结果打包发渲染端——本表记住 callId→{name, args}
+    // 以便 tool/result 拿到。ai.ask 的生命周期才存在，跑完一轮就丢。
+    const liveCallMeta = new Map<string, { name: string; args: string }>();
 
     try {
-      await runtime.runTurn({
+      const turnResult = await runtime.runTurn({
         prompt: req.prompt,
         conversationId: req.conversationId,
         invocationId,
         onEvent: (e) => {
-          switch (e.type) {
-            case 'token':
-              send({ type: 'token', invocationId, token: e.text });
-              break;
-            case 'reasoning':
-              send({ type: 'reasoning', invocationId, text: e.text });
-              break;
-            case 'toolResult':
-              // The renderer's AIToolCallEvent carries the completed call +
-              // its result together; DSH splits call/result, so emit on result.
-              send({ type: 'toolCall', invocationId, toolName: e.name, args: e.args, result: e.ok ? e.data : e.error, ok: e.ok });
-              // If the tool mutated data, tell the renderer to refresh its stores.
-              {
-                const scope = mutatingScope(e.name);
-                if (scope) {
-                  broadcastDataChanged(scope);
-                } else if (e.ok) {
-                  // Unknown successful tool call — broadcast a broad 'todos'
-                  // signal as a safety net so future tools added without a
-                  // mutatingScope() entry still cause the most-critical
-                  // surfaces (task list / detail header) to refresh. Tools
-                  // that should ONLY touch content/drawings should declare so
-                  // explicitly above; this fallback only kicks in for tools
-                  // the map has never heard of.
-                  broadcastDataChanged('todos');
-                }
+          const t = e?.type;
+          if (t === 'assistant/chunk') {
+            const d = e.data as { chunk?: { type?: string; text?: string } } | undefined;
+            const chunk = d?.chunk;
+            // text-delta 当可见 token；reasoning-delta 走独立流事件。
+            // 历史曾经在这里剥 <think>...</think>（见 dsh-runtime.ts 旧注释），
+            // 现在 dsh-runtime 只透传，这层也不再做那种剥取。
+            if (chunk?.type === 'text-delta' && chunk.text) {
+              send({ type: 'token', invocationId, token: chunk.text });
+            } else if (chunk?.type === 'reasoning-delta' && chunk.text) {
+              send({ type: 'reasoning', invocationId, text: chunk.text });
+            }
+          } else if (t === 'tool/call') {
+            const d = e.data as { callId?: unknown; name?: string; arguments?: string } | undefined;
+            if (d?.callId != null && d.name) {
+              liveCallMeta.set(String(d.callId), { name: d.name, args: d.arguments ?? '' });
+            }
+          } else if (t === 'tool/result') {
+            // DSH 把同一次调用的 call 和 result 分开发；AIPane 的 AIToolCallEvent
+            // 期望二者合一，所以这里用 callId 反查名字后合成一条 toolCall 流事件。
+            const d = e.data as {
+              message?: {
+                source?: { callId?: unknown };
+                content?: Array<{ isError?: boolean; content?: unknown[] }>;
+              };
+            } | undefined;
+            const callId = d?.message?.source?.callId;
+            const meta = callId != null ? liveCallMeta.get(String(callId)) : undefined;
+            const block = d?.message?.content?.[0];
+            const ok = !block?.isError;
+            send({
+              type: 'toolCall',
+              invocationId,
+              toolName: meta?.name ?? '',
+              args: meta?.args,
+              result: block?.content,
+              ok,
+            });
+            // If the tool mutated data, tell the renderer to refresh its stores.
+            {
+              const scope = meta ? mutatingScope(meta.name) : undefined;
+              if (scope) {
+                broadcastDataChanged(scope);
+              } else if (ok) {
+                // Unknown successful tool call — broadcast a broad 'todos'
+                // signal as a safety net so future tools added without a
+                // mutatingScope() entry still cause the most-critical
+                // surfaces (task list / detail header) to refresh. Tools
+                // that should ONLY touch content/drawings should declare so
+                // explicitly above; this fallback only kicks in for tools
+                // the map has never heard of.
+                broadcastDataChanged('todos');
               }
-              break;
-            case 'done':
-              // L4-E: compute real cost from accumulated token counts.
-              costUsd = costForUsage(pricingModel, {
-                inputTokens: e.tokensIn ?? 0,
-                outputTokens: e.tokensOut ?? 0,
-              });
-              if (costUsd > 0) {
-                d.settings.addCost(costUsd);
-                logger.info(`turn cost: $${costUsd.toFixed(6)} (${e.tokensIn ?? 0}↑ / ${e.tokensOut ?? 0}↓ ${pricingModel})`);
-                // Notify any open SettingsPane / Statusbar to re-fetch
-                // monthlyCostUsd. Without this the UI shows stale cost
-                // until the user reopens settings.
-                for (const w of BrowserWindow.getAllWindows()) {
-                  if (!w.isDestroyed()) w.webContents.send('app:settings-changed', {});
-                }
-              }
-              send({ type: 'done', invocationId, content: e.content, costUsd });
-              break;
-            case 'error':
-              send({ type: 'error', invocationId, message: e.message });
-              break;
-            // 'toolCall' (pre-execution) is intentionally not forwarded —
-            // the UI shows completed calls via the toolResult mapping above.
+            }
           }
+          // assistant/message / tool/call 这类非可视事件不直接转发渲染端；
+          // token 计数和 callId→name 在 dsh-runtime / 本闭包里各管各的。
         },
       });
+
+      // L4-E：算价格并广播 settings-changed。当 dsh-runtime 不再合成 'done'
+      // 事件，价格计算从流事件挪到 runTurn resolve 之后，依赖其返回的
+      // tokensIn / tokensOut / content 三个值。
+      costUsd = costForUsage(pricingModel, {
+        inputTokens: turnResult.tokensIn,
+        outputTokens: turnResult.tokensOut,
+      });
+      if (costUsd > 0) {
+        d.settings.addCost(costUsd);
+        logger.info(`turn cost: $${costUsd.toFixed(6)} (${turnResult.tokensIn}↑ / ${turnResult.tokensOut}↓ ${pricingModel})`);
+        // Notify any open SettingsPane / Statusbar to re-fetch
+        // monthlyCostUsd. Without this the UI shows stale cost
+        // until the user reopens settings.
+        for (const w of BrowserWindow.getAllWindows()) {
+          if (!w.isDestroyed()) w.webContents.send('app:settings-changed', {});
+        }
+      }
+      send({ type: 'done', invocationId, content: turnResult.content, costUsd });
       // Bump updated_at so the sidebar sorts this conversation to the top.
       // Cheap: a single UPDATE; no event broadcasting needed (the renderer
       // can re-list when it next focuses the conversation list).
