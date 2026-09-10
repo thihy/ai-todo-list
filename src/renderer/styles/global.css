@@ -4354,6 +4354,8 @@ a:hover {
 .wysiwyg {
   display: flex;
   flex-direction: column;
+  height: 100%;
+  min-height: 360px;
   background: var(--bg-surface);
   /* Match the docs-workspace card: stronger border + subtle shadow so the
      editor's actual area reads as a clear boundary against the surrounding
@@ -4379,6 +4381,9 @@ a:hover {
      editors share a consistent visual rhythm — see .md-editor__topbar. */
   background: var(--bg-surface-elev, #ECEEF1);
   flex-wrap: wrap;
+  /* Match .md-editor__topbar height so both editors' chrome rows sit at the
+     same vertical line. */
+  min-height: 36px;
 }
 
 .wysiwyg__btn {
@@ -4394,6 +4399,12 @@ a:hover {
   transition: background 0.12s, color 0.12s;
 }
 .wysiwyg__btn:hover { background: var(--bg-hover); color: var(--fg-primary); }
+.wysiwyg__btn:focus-visible {
+  /* Match .md-editor__tb-btn focus-visible so the focus ring reads the same
+     across both editors when navigating via keyboard. */
+  outline: 2px solid var(--accent-primary);
+  outline-offset: -1px;
+}
 .wysiwyg__btn.is-active {
   background: color-mix(in srgb, var(--accent-primary) 14%, transparent);
   color: var(--accent-primary);
@@ -4406,11 +4417,13 @@ a:hover {
 .wysiwyg__status--error { color: var(--accent-danger); }
 
 .wysiwyg__save {
-  padding: var(--space-xxs, 2px) var(--space-md);
+  /* Mirrors .md-editor__save — same height, padding, border, radius, and
+     dirty-state treatment so the two editors share one save affordance. */
   height: 28px;
+  padding: 0 var(--space-md);
   background: var(--accent-primary);
   color: var(--fg-on-accent, #fff);
-  border: none;
+  border: 1px solid var(--accent-primary);
   border-radius: var(--radius-sm);
   font-size: var(--font-sm);
   font-weight: 600;
@@ -4419,6 +4432,7 @@ a:hover {
 .wysiwyg__save:disabled {
   background: var(--bg-surface-elev, var(--bg-hover));
   color: var(--fg-muted);
+  border-color: var(--border-default);
   cursor: default;
 }
 /* Icon-only variant for the "save icon at the start of the toolbar" form.
@@ -4433,18 +4447,25 @@ a:hover {
 }
 .wysiwyg__save--icon.is-dirty {
   /* Distinct color when there's unsaved work — visually different from the
-     muted "已保存" state so the user knows action is needed. */
+     muted "已保存" state so the user knows action is needed. Border matches
+     the warning fill so the disabled ghost border doesn't peek through. */
   background: var(--accent-warning, #d97706);
+  border-color: var(--accent-warning, #d97706);
   color: var(--fg-on-accent, #fff);
 }
 
 .wysiwyg__content {
+  flex: 1 1 auto;
   min-height: 320px;
   padding: var(--space-md);
   outline: none;
   font-size: var(--font-md);
-  line-height: 1.65;
+  line-height: 1.7;
   color: var(--fg-primary);
+  /* Match the MD editor body so the user reads one "page" surface across
+     both editors (no discontinuity when switching tabs). */
+  background: var(--bg-canvas);
+  overflow: auto;
 }
 .wysiwyg__content:focus { outline: none; }
 .wysiwyg__content:empty::before {
@@ -4514,10 +4535,12 @@ a:hover {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: var(--space-sm);
+  gap: var(--space-xs);
   padding: 0 0 var(--space-xs) 0;
   border-bottom: 1px solid var(--border-default);
   background: var(--bg-surface-elev, #ECEEF1);
+  /* Match .wysiwyg__toolbar height so both editors' chrome rows align. */
+  min-height: 36px;
 }
 .md-editor__topbar .md-editor__toolbar {
   /* Inside the topbar the toolbar doesn't need its own padding/background —
@@ -4561,11 +4584,14 @@ a:hover {
 .md-editor__status { font-size: var(--font-xs); color: var(--fg-muted); }
 .md-editor__status--error { color: var(--accent-danger); }
 .md-editor__save {
-  padding: 3px var(--space-md);
+  /* Mirrors .wysiwyg__save — identical height, padding, border, and radius
+     so the two editors share one save affordance. */
+  height: 28px;
+  padding: 0 var(--space-md);
   border: 1px solid var(--accent-primary);
   background: var(--accent-primary);
   color: var(--fg-on-accent);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   font-weight: 600;
   font-size: var(--font-sm);
   cursor: pointer;
