@@ -248,6 +248,30 @@ function stripFrontMatter(raw: string): string {
   return raw.slice(m[0].length);
 }
 
+/** Rename (or add) a single path inside the todos/.git/ repo. Used by the
+ *  v1→v2 migration sweep to keep `git log --follow` working across the
+ *  layout change. Returns true when the move staged something — false when
+ *  git isn't available, the source doesn't exist, or git refused (e.g.
+ *  because the source wasn't tracked). All errors are swallowed. */
+export async function mv(
+  todosDir: string,
+  fromRelPath: string,
+  toRelPath: string,
+): Promise<boolean> {
+  if (!(await gitAvailable())) return false;
+  if (!existsSync(join(todosDir, '.git'))) return false;
+  try {
+    await execFileAsync(
+      'git',
+      ['mv', '--', fromRelPath, toRelPath],
+      { cwd: todosDir, timeout: 10_000 },
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** Internal helper for the renderer hint about file-relative paths. Not
  *  exported. Kept for future per-task sub-repo work if we ever decide
  *  each task should have its own .git/ to keep history scoped tighter. */

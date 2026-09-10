@@ -132,6 +132,27 @@ function bootstrap(): void {
     const handle = openDb(dbPath);
     const repo = new TodoRepo(handle.db);
     const conversations = new ConversationRepo(handle.db);
+
+    // v1 → v2 layout migration sweep. Runs once per process (marker file
+    // makes it idempotent). Old flat files get relocated into per-task dirs
+    // before any new code touches them. Fire-and-forget so a slow sweep on
+    // a large data dir doesn't block the IPC router boot — subsequent file
+    // ops simply see the post-migration layout.
+    try {
+      const { migrateV1Layout } = await import('./files/migrate-v1-layout');
+      void migrateV1Layout({
+        dataDir: rootDir,
+        todosDir,
+        drawingsDir,
+        attachmentsDir,
+        db: handle.db,
+      }).catch((err) => {
+        logger.warn(`migrateV1Layout: ${(err as Error).message}`);
+      });
+    } catch (err) {
+      logger.warn(`migrateV1Layout import failed: ${(err as Error).message}`);
+    }
+
     // Per-task dir lookup. Used by MarkdownStore (progress.html) and other
     // file writers to resolve {todosDir}/{slug}/. Title is read from the
     // current DB row so renames flow through on next access.
