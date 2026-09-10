@@ -254,6 +254,7 @@ const TaskDetail: React.FC<{
         onFullscreen={() => onFullscreen(todoId)}
         selectedDocId={selectedDocId}
         onSelectDoc={onSelectDoc}
+        navigate={navigate}
       />
     </div>
   );

@@ -3191,6 +3191,84 @@ a:hover {
   font-size: var(--font-sm);
 }
 
+/* --- 子任务 section: mirrors .links-view's row pattern, with an inline
+   create input instead of a prompt dialog (title-first, like Todoist). --- */
+.subtasks-view {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+.subtasks-view__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.subtasks-view__item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border-radius: var(--radius-sm);
+}
+.subtasks-view__item:hover {
+  background: var(--bg-hover);
+}
+.subtasks-view__item svg {
+  flex: 0 0 auto;
+}
+.subtasks-view__title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  text-align: left;
+  color: var(--fg-secondary);
+  cursor: pointer;
+  font-size: var(--font-sm);
+}
+.subtasks-view__title:hover {
+  color: var(--fg-primary);
+}
+.subtasks-view__create {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.subtasks-view__input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 4px 8px;
+  border: 1px dashed var(--border-default);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--fg-primary);
+  font-size: var(--font-sm);
+}
+.subtasks-view__input:focus {
+  outline: none;
+  border-color: var(--border-strong);
+  border-style: solid;
+}
+.subtasks-view__input::placeholder {
+  color: var(--fg-muted);
+}
+.subtasks-view__input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.subtasks-view__empty {
+  margin: 0;
+  color: var(--fg-muted);
+  font-size: var(--font-sm);
+}
+
 /* --- summary band: dense chrome that recedes --- */
 
 .editor-pane__summary {

@@ -74,6 +74,20 @@ export const TodoListPane: React.FC<{
     setExpandMap(next);
   }, [branchIds]);
 
+  // A subtask created from the detail pane's 子任务 section dispatches
+  // SUBTASK_CREATED_EVENT so the tree expands the parent row — otherwise a
+  // parent the user had collapsed would silently swallow the freshly-created
+  // child. Detail: { id: parentId }.
+  useEffect(() => {
+    const onExpandParent = (e: Event): void => {
+      const detail = (e as CustomEvent).detail as { id?: string } | null;
+      if (!detail?.id) return;
+      setExpandMap((prev) => ({ ...prev, [detail.id as string]: true }));
+    };
+    window.addEventListener('todo-list:expand-parent', onExpandParent as EventListener);
+    return () => window.removeEventListener('todo-list:expand-parent', onExpandParent as EventListener);
+  }, []);
+
   // In the 归档 view the per-row hover button restores (un-archives) instead
   // of deleting. Restore = clear archived_at; the task drops back into the
   // active list.
