@@ -140,13 +140,20 @@ export const ProgressInline: React.FC<{
   }, []);
 
   const commitNote = useCallback(async (): Promise<void> => {
-    if (!pendingEntryId) return;
+    // Handle BOTH popover modes:
+    //   - pending: just dragged the progress bar and got a fresh entry.
+    //   - editing: clicked an existing note to edit it in place.
+    // The previous version early-returned when pendingEntryId was null, so
+    // editing-mode Enter silently did nothing — the popover stayed open and
+    // outside-click only closed (not saved). User saw "I can't save my edit".
+    const entryId = pendingEntryId ?? editingEntryId;
+    if (!entryId) return;
     const trimmed = noteDraft.trim();
     // Only write if there's something to say (empty = clear the note too, so
     // the user can blank a note they typed by mistake).
-    await updateNote(pendingEntryId, trimmed || null);
+    await updateNote(entryId, trimmed || null);
     closePopover();
-  }, [pendingEntryId, noteDraft, updateNote, closePopover]);
+  }, [pendingEntryId, editingEntryId, noteDraft, updateNote, closePopover]);
 
   // Focus + select the note input when the popover opens, and run the idle
   // auto-dismiss timer. The timer resets on each keystroke.
@@ -174,17 +181,20 @@ export const ProgressInline: React.FC<{
     }
   }, [popoverOpen, closePopover]);
 
-  // Outside-click closes the note popover (but not while dragging the bar).
+  // Outside-click SAVES + closes (not just discards). If the user typed
+  // something and clicked away, they almost certainly meant to keep the
+  // change — discarding it is the surprising behavior, not saving it.
+  // Escape still discards via the input's keydown handler.
   useEffect(() => {
     if (!popoverOpen) return;
     const onDown = (e: MouseEvent): void => {
       if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) {
-        closePopover();
+        void commitNote();
       }
     };
     document.addEventListener('mousedown', onDown);
     return () => document.removeEventListener('mousedown', onDown);
-  }, [popoverOpen, closePopover]);
+  }, [popoverOpen, commitNote]);
 
   const onEditLatest = (): void => {
     if (!latest) return;
