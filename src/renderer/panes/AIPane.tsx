@@ -42,9 +42,6 @@ import {
   IconWarn,
 } from '../components/icons';
 import type {
-  AITokenEvent,
-  AIToolCallEvent,
-  AIReasoningEvent,
   AIStreamEvent,
   UserQuestionRequest,
   UserQuestionAnswerItem,
@@ -68,10 +65,13 @@ interface ToolCard {
  *  result into a single `toolCall` event, so we don't need the
  *  running/settled distinction the upstream `RunningToolCall | ToolResultNode`
  *  carries. The chat-flow renders the three kinds as sibling rows so the
- *  temporal order of reasoning ↔ tool-call ↔ text is preserved end-to-end. */
+ *  temporal order of reasoning ↔ tool-call ↔ text is preserved end-to-end.
+ *  `callId` is a React-stable id; on the renderer-side AIToolCallEvent we
+ *  synthesise one from event order because the upstream callId lives in the
+ *  DSH session stream (not in our event surface). */
 type TurnBlock =
   | { kind: 'reasoning'; text: string }
-  | { kind: 'tool-call'; callId: string; name: string; argsRaw: string; result: unknown; ok: boolean }
+  | { kind: 'tool-call'; callId: string; name: string; args: unknown; result: unknown; ok: boolean }
   | { kind: 'text'; text: string };
 
 /** A file the user picked via the composer's + button. main reads the file
@@ -275,13 +275,54 @@ export const AIPane: React.FC = () => {
   }, [currentId, historyLoaded]);
 
   // Re-derive the streaming turn from its events.
+  //
+  // Walk events in arrival order and build an ordered `blocks` array — this
+  // is the canonical representation going forward (it preserves the temporal
+  // interleaving of reasoning ↔ tool-call ↔ text that the previous
+  // three-bucket filter/join destroyed). The three legacy fields below are
+  // re-derived from `blocks` so existing readers keep working during the
+  // migration and will be dropped in step 7.
   useEffect(() => {
     if (!streamingTurnId || !streamingConvId) return;
     const mine = events.filter((e) => e.invocationId === streamingTurnId);
     if (mine.length === 0) return;
-    const tokens = mine.filter((e): e is AITokenEvent => e.type === 'token');
-    const reasoning = mine.filter((e): e is AIReasoningEvent => e.type === 'reasoning');
-    const calls = mine.filter((e): e is AIToolCallEvent => e.type === 'toolCall');
+    const blocks: TurnBlock[] = [];
+    let toolSeq = 0;
+    for (const ev of mine) {
+      if (ev.type === 'reasoning') {
+        if (!ev.text) continue;
+        const last = blocks[blocks.length - 1];
+        if (last && last.kind === 'reasoning') last.text += ev.text;
+        else blocks.push({ kind: 'reasoning', text: ev.text });
+      } else if (ev.type === 'token') {
+        if (!ev.token) continue;
+        const last = blocks[blocks.length - 1];
+        if (last && last.kind === 'text') last.text += ev.token;
+        else blocks.push({ kind: 'text', text: ev.token });
+      } else if (ev.type === 'toolCall') {
+        // DSH aggregates a call's args + result into one event, so each event
+        // is a single block. callId is a stable React key; we don't get a
+        // real callId from the renderer-side event, so synthesize one from
+        // the event's order in this turn (deterministic per rebuild).
+        blocks.push({
+          kind: 'tool-call',
+          callId: `tool-${toolSeq++}`,
+          name: ev.toolName,
+          args: ev.args,
+          result: ev.result,
+          ok: ev.ok,
+        });
+      }
+    }
+    // Derive legacy fields for any reader that still uses them.
+    let reasoning = '';
+    let assistant = '';
+    const tools: ToolCard[] = [];
+    for (const b of blocks) {
+      if (b.kind === 'reasoning') reasoning += b.text;
+      else if (b.kind === 'text') assistant += b.text;
+      else tools.push({ name: b.name, args: b.args, result: b.result, ok: b.ok });
+    }
     const done = mine.some((e) => e.type === 'done');
     const errEvt = mine.find((e): e is Extract<AIStreamEvent, { type: 'error' }> => e.type === 'error');
     setTurnsByConv((prev) => {
@@ -293,9 +334,10 @@ export const AIPane: React.FC = () => {
             ? t
             : {
                 ...t,
-                reasoning: reasoning.map((r) => r.text).join(''),
-                assistant: tokens.map((tk) => tk.token).join(''),
-                tools: calls.map((c) => ({ name: c.toolName, args: c.args, result: c.result, ok: c.ok })),
+                reasoning,
+                assistant,
+                tools,
+                blocks,
                 status: errEvt ? 'error' : done ? 'done' : 'streaming',
                 error: errEvt?.message,
               },
