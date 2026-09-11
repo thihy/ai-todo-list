@@ -679,6 +679,7 @@ const PlannedBranch: React.FC<{
             void onUnplan(todo.id);
           }
         }}
+        hideExpandToggle
       />
       {/* 子任务创建输入行 —— 与下半区一致：creating=true 时挂在该行下方，
           深度 +1。 */}
@@ -796,7 +797,13 @@ const TaskRow: React.FC<{
   /** Toggle plan/unplan for THIS row. Provided in both upper and lower
       sections so the unified button below can flip state either way. */
   onTogglePlan?: () => void;
-}> = ({ todo, depth, active, onSelect, onCycle, hasSubtasks, subtaskCount, subtaskDoneCount, subtasksExpanded, onToggleSubtasks, archivedView, onDelete, onRestore, creating, onAddSubtask, todayKey, onTogglePlan }) => {
+  /** Hide the SubTask expand/collapse chevron button (and disable the
+   *  double-click-to-toggle affordance on the row). The 上半区 "今日待办"
+   *  uses this — its descendants are always shown, the chevron would only
+   *  be visual noise. The 下半区 keeps the toggle so the user can collapse
+   *  a busy branch on demand. */
+  hideExpandToggle?: boolean;
+}> = ({ todo, depth, active, onSelect, onCycle, hasSubtasks, subtaskCount, subtaskDoneCount, subtasksExpanded, onToggleSubtasks, archivedView, onDelete, onRestore, creating, onAddSubtask, todayKey, onTogglePlan, hideExpandToggle }) => {
   const st = todo.status;
   // Terminal/voided states recede (icon mutes, title strikes); blocked is still
   // active but flagged. Each off-default status gets its own row class so the
@@ -828,8 +835,9 @@ const TaskRow: React.FC<{
       onDoubleClick={(e) => {
         // Double-click toggles expand/collapse WITHOUT deselecting/navigating
         // away — the first click already selected the row. Only meaningful
-        // for branching tasks; leaf tasks have nothing to toggle.
-        if (hasSubtasks) {
+        // for branching tasks; leaf tasks have nothing to toggle. The 上半区
+        // hides the chevron, so this gesture is suppressed there too.
+        if (hasSubtasks && !hideExpandToggle) {
           e.stopPropagation();
           onToggleSubtasks();
         }
@@ -857,8 +865,10 @@ const TaskRow: React.FC<{
               这样上下半区不需要靠一个重复的小绿点区分。 */}
           {/* SubTask collapse/expand chevron — sits right BEFORE the status
               select so it reads "name ▸ status". Only rendered when this
-              task actually has subtasks. */}
-          {hasSubtasks && (
+              task actually has subtasks AND the section hasn't asked to
+              hide it (上半区 "今日待办" hides it — its descendants are
+              always shown, the chevron would be visual noise). */}
+          {hasSubtasks && !hideExpandToggle && (
             <button
               type="button"
               className="task-row__toggle"
