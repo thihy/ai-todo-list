@@ -2139,6 +2139,7 @@ a:hover {
 /* ---- task rows ---- */
 
 .task-row {
+  --row-progress: 0%;
   display: flex;
   align-items: flex-start;
   gap: var(--space-sm);
@@ -2149,15 +2150,25 @@ a:hover {
      tree so a parent and its subtask at the next depth line up. */
   padding-left: calc(var(--space-sm) + var(--row-depth, 0) * 14px);
   cursor: pointer;
-  border-left: 3px solid transparent;
   transition: background var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
 }
 .task-row:hover {
   background: var(--bg-hover);
 }
+/* Active selection — the background tint is the selection indicator;
+   the 3px left border is reserved for the progress rail so both
+   signals can coexist (border-image overrides border-color, so we
+   can't use border-left-color for active anymore). Add an inset
+   box-shadow on the right side so the row reads "selected" without
+   stealing the rail's job. */
 .task-row.is-active {
   background: var(--bg-active);
-  border-left-color: var(--accent-primary);
+  /* Active indicator moved to the right edge so the 3px left border can
+     keep doing progress-rail duty without conflict (border-image
+     overrides border-color, so the original left-border trick no
+     longer works). The right edge + the background tint together make
+     the selected row read as "this one" without crowding the rail. */
+  box-shadow: inset -2px 0 0 0 var(--accent-primary);
 }
 .task-row.is-done .task-row__title {
   text-decoration: line-through;
@@ -2192,22 +2203,29 @@ a:hover {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  /* Single-row layout: title-line holds glyph + title + metadata + controls
-     and is the only row. Subtitle was folded into InlineMetadata so there's
-     no second/third line under the title. */
+  gap: 2px;
 }
+/* Two-row layout:
+     row 1: title-line  — glyph + title + today-icon + chevron + status
+     row 2: meta-line   — subtitle pills (left) + action buttons (right)
+   The meta-line collapses the old subtitle row + the old standalone
+   actions row into a single line. When the row gets narrow, the pills
+   hide right-to-left; the actions stay anchored to the right edge. */
 .task-row__title-line {
   display: flex;
   align-items: center;
   gap: var(--space-sm);
-  /* Container queries drive the "hide less-important items when narrow"
-     cascade below. The title-line's effective width is the row's content
-     area (after depth indentation). */
+}
+.task-row__meta-line {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  min-width: 0;
   container-type: inline-size;
-  container-name: row;
+  container-name: meta;
 }
 .task-row__title {
-  flex: 0 1 auto;
+  flex: 1;
   min-width: 0;
   font-size: var(--font-md);
   font-weight: 500;
@@ -2216,35 +2234,43 @@ a:hover {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* Inline metadata strip — sits between the title and the right-edge
-   controls. Pills flex in row order and get hidden right-to-left by
-   container queries as the row gets narrower. */
-.task-row__meta-strip {
+/* StatusSelect 在第一行尾：margin-left:auto 让标题 + chevron + today-icon
+   占据左侧空间，状态选择器钉到行尾。 */
+.task-row__title-line > .status-select {
+  margin-left: auto;
+}
+/* 第二行的 metadata 子项：直接子节点（Subtitle wrapper + actions）保持
+  自己该有的 flex 行为。Subtitle wrapper 的内容是 inline-flex 排好的
+  pill，wrapper 本身被允许 shrink，但里面的 pill 不要被进一步压缩。
+  deleted-bin variant uses task-row__deleted-time as a direct child of
+  meta-line (no .task-row__sub wrapper), so it gets the same flex rule. */
+.task-row__meta-line > .task-row__sub {
+  flex: 1 1 auto;
+  min-width: 0;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-sm);
+  overflow: hidden;
+}
+.task-row__meta-line > .task-row__sub > * {
+  flex: 0 0 auto;
+}
+.task-row__meta-line > .task-row__deleted-time {
   flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
-}
-.task-row__meta {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  flex: 0 0 auto;
-  font-size: var(--font-xs);
-  color: var(--fg-muted);
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* Priority chip — pill background + dot. Lives inside the meta strip
-   but still needs its pill bg (the generic .task-row__meta rule sets
-   only color/gap/font). */
-.task-row__prio {
-  gap: 4px;
-  padding: 1px 6px;
-  border-radius: var(--radius-pill);
-  font-weight: 600;
-  background: var(--bg-soft);
+/* Actions group 永远钉在第二行最右侧（margin-left:auto），即使用户
+   在该行没有任何 metadata pill 也保持位置稳定。 */
+.task-row__meta-line > .task-row__actions {
+  flex: 0 0 auto;
+  margin-left: auto;
+  display: inline-flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 2px;
 }
 /* Calendar + drawing icons inside due/drawings chips — fixed-size leading
    glyph. */
@@ -2252,32 +2278,6 @@ a:hover {
 .task-row__drawings-icon {
   flex: 0 0 auto;
   opacity: 0.85;
-}
-/* Right-edge control group: today-icon + chevron + status + actions.
-   margin-left:auto pins this whole group to the right so the title +
-   metadata always claim the left side, regardless of row width. */
-.task-row__controls {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-xs);
-  margin-left: auto;
-  flex: 0 0 auto;
-}
-/* StatusSelect still sits inside the controls group; no margin-left:auto
-   here (the parent group already owns the right-anchor). */
-.task-row__title-line > .status-select {
-  margin-left: 0;
-}
-/* Action buttons live inside .task-row__actions (now inside the controls
-   group on the same row as the title). They stay flex-none so the
-   controls group never collapses them; the container query hides them
-   left-to-right when the row gets very narrow. */
-.task-row__actions {
-  display: inline-flex;
-  justify-content: flex-end;
-  align-items: center;
-  gap: 2px;
-  flex: 0 0 auto;
 }
 .task-row__status {
   flex: none;
@@ -2297,29 +2297,21 @@ a:hover {
   color: var(--accent-success);
   font-weight: 600;
 }
-/* Container queries — when the title-line gets narrower than ~360px start
-   hiding the rightmost metadata pills (subtask progress → drawings → due),
-   then at ~280px hide the priority + progress pills too. The title
-   ellipsizes last because the destructive delete button is the most
-   important control and must remain reachable. */
-@container row (max-width: 360px) {
-  .task-row__meta-strip > .task-row__sub--done,
-  .task-row__meta-strip > [class*="task-row__sub"]:not(.task-row__sub--done),
-  .task-row__meta-strip > .task-row__drawings {
+/* Container queries on the meta-line — when the second row gets narrower
+   than ~360px start hiding the rightmost metadata pills inside the
+   subtitle wrapper (subtask progress → drawings → tags), then at ~280px
+   hide priority + progress + due too. The actions group is the rightmost
+   sibling of the subtitle div and always stays visible. */
+@container meta (max-width: 360px) {
+  .task-row__meta-line .task-row__sub--done,
+  .task-row__meta-line .task-row__drawings,
+  .task-row__meta-line .task-row__tag {
     display: none;
   }
 }
-@container row (max-width: 280px) {
-  .task-row__meta-strip > .task-row__prio,
-  .task-row__meta-strip > .task-row__progress {
-    display: none;
-  }
-  /* Hide the secondary action buttons when the row is really narrow; the
-     primary destructive action (delete / restore) always stays visible.
-     Order in DOM: plan → add-subtask → delete/restore; hide plan/add
-     first. */
-  .task-row__actions .task-row__plan-btn,
-  .task-row__actions .task-row__add-subtask {
+@container meta (max-width: 280px) {
+  .task-row__meta-line .task-row__prio,
+  .task-row__meta-line .task-row__due {
     display: none;
   }
 }
@@ -2333,33 +2325,67 @@ a:hover {
 .task-row__prio--high { color: var(--accent-danger); background: color-mix(in srgb, var(--accent-danger) 12%, var(--bg-soft)); }
 .task-row__prio--medium { color: var(--accent-warning); background: color-mix(in srgb, var(--accent-warning) 14%, var(--bg-soft)); }
 .task-row__prio--low { color: var(--accent-info); background: color-mix(in srgb, var(--accent-info) 14%, var(--bg-soft)); }
-/* Mini progress bar — same visual language as the detail header's
-   ProgressBar but at row scale: 60×4px track + a percent label.
-   Lives inside .task-row__meta; inherits color + font-size + display. */
-.task-row__progress {
-  gap: 4px;
-  font-variant-numeric: tabular-nums;
-}
-.task-row__progress-track {
-  position: relative;
-  display: inline-block;
-  width: 60px;
-  height: 4px;
-  border-radius: var(--radius-pill);
-  background: color-mix(in srgb, var(--fg-primary) 22%, transparent);
-  overflow: hidden;
-  flex: 0 0 auto;
-}
-.task-row__progress-fill {
-  position: absolute;
-  inset: 0 auto 0 0;
-  width: 0%;
-  background: var(--accent-primary);
-  border-radius: var(--radius-pill);
-}
-.task-row__progress-label {
+/* Metadata pills inside .task-row__sub wrapper — base layout (display,
+   gap, font-size, color). The priority / due / drawings / progress /
+   tags chips each get one of these; flex:0 0 auto prevents them from
+   being squished by the meta-line's overflow handling. */
+.task-row__sub {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
   font-size: var(--font-xs);
-  min-width: 26px;
+  color: var(--fg-muted);
+}
+.task-row__prio {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 6px;
+  border-radius: var(--radius-pill);
+  font-weight: 600;
+  background: var(--bg-soft);
+}
+.task-row__due,
+.task-row__drawings {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--fg-muted);
+}
+.task-row__tag {
+  color: var(--accent-info);
+}
+/* Progress rail — the row's 3px left border is painted with a vertical
+   linear-gradient that fills from bottom up to `--row-progress`; the
+   rest stays transparent. Done rows (height:100%) and active rows
+   (solid primary colour) override via their own border-image. The
+   `--row-progress` value is set per-row via the inline `style` prop
+   (defaults to 0% → invisible for not-started tasks). */
+.task-row {
+  border-image: linear-gradient(
+    to top,
+    var(--accent-primary) 0 var(--row-progress, 0%),
+    transparent var(--row-progress, 0%) 100%
+  );
+  border-image-width: 0 0 0 3px;
+  border-image-slice: 1;
+}
+.task-row.is-done {
+  border-image: linear-gradient(var(--accent-success), var(--accent-success));
+  border-image-width: 0 0 0 3px;
+  border-image-slice: 1;
+}
+.task-row.is-cancelled {
+  border-image: linear-gradient(var(--fg-muted), var(--fg-muted));
+  border-image-width: 0 0 0 3px;
+  border-image-slice: 1;
+}
+/* Active selection overrides the progress colour with the accent
+   primary so a selected half-done task shows "active" not "progress". */
+.task-row.is-active {
+  border-image: linear-gradient(var(--accent-primary), var(--accent-primary));
+  border-image-width: 0 0 0 3px;
+  border-image-slice: 1;
 }
 /* Subtask progress chip when the whole branch is done — accent-success so
    a glance tells you the branch is clear. */
