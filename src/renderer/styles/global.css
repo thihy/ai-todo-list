@@ -2164,6 +2164,29 @@ a:hover {
   overflow: hidden;
   transition: background var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
 }
+/* Bottom progress line — a 2px horizontal fill at the row's bottom edge.
+   Drawn via ::after so it doesn't fight the row's own padding/borders.
+   Colour differs per status (in-progress=primary, done=success,
+   cancelled=muted); for a default row it's the primary accent, with the
+   filled portion = --row-progress and the rest fully transparent. */
+.task-row::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  background-image: linear-gradient(
+    to right,
+    var(--progress-fill, var(--accent-primary)) 0 var(--row-progress, 0%),
+    transparent var(--row-progress, 0%) 100%
+  );
+  pointer-events: none;
+  transition: background-image var(--dur-fast) var(--ease-out);
+}
+.task-row {
+  position: relative;
+}
 .task-row:hover {
   background: var(--bg-hover);
 }
@@ -2178,12 +2201,13 @@ a:hover {
   text-decoration: line-through;
   color: var(--fg-muted);
 }
-/* ---- Status-based row treatments ---- */
-/* Distinct visual state per off-default lifecycle phase so the list reads at
-   a glance: done = cleared (strike + mute), cancelled = voided (strike +
-   whole-row dim), blocked = flagged for attention (danger rail + wash, NOT
-   dimmed — it's still active work). */
+.task-row.is-done {
+  --row-progress: 100%;
+  --progress-fill: var(--accent-success);
+}
 .task-row.is-cancelled {
+  --row-progress: 100%;
+  --progress-fill: var(--fg-muted);
   opacity: 0.6;
 }
 .task-row.is-cancelled .task-row__title {
@@ -2335,14 +2359,18 @@ a:hover {
 .task-row__prio--medium { color: var(--accent-warning); background: color-mix(in srgb, var(--accent-warning) 14%, var(--bg-soft)); }
 .task-row__prio--low { color: var(--accent-info); background: color-mix(in srgb, var(--accent-info) 14%, var(--bg-soft)); }
 /* Metadata pills — base layout for each chip class. They are direct
-   children of .task-row__meta-line (no wrapper). The flex rules in
-   .task-row__meta-line > ... above handle sizing / shrinking. */
+   children of .task-row__meta-pills (no wrapper). The flex rules in
+   .task-row__meta-pills > ... above handle sizing / shrinking.
+   All pills are intentionally small (--font-xs = 11px) so a row of
+   priority + due + 2 tags + drawings + subtask still fits comfortably
+   next to the action buttons. */
 .task-row__prio {
   display: inline-flex;
   align-items: center;
   gap: 4px;
   padding: 1px 6px;
   border-radius: var(--radius-pill);
+  font-size: var(--font-xs);
   font-weight: 600;
   background: var(--bg-soft);
 }
@@ -2351,6 +2379,7 @@ a:hover {
   display: inline-flex;
   align-items: center;
   gap: 3px;
+  font-size: var(--font-xs);
   color: var(--fg-muted);
 }
 .task-row__progress {
@@ -2358,17 +2387,20 @@ a:hover {
   align-items: center;
   padding: 0 6px;
   border-radius: var(--radius-pill);
+  font-size: var(--font-xs);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   color: var(--fg-secondary);
   background: var(--bg-soft);
 }
 .task-row__tag {
+  font-size: var(--font-xs);
   color: var(--accent-info);
 }
 /* Subtask progress chip when the whole branch is done — accent-success so
    a glance tells you the branch is clear. */
 .task-row__sub--done {
+  font-size: var(--font-xs);
   color: var(--accent-success);
   font-weight: 600;
 }

@@ -763,7 +763,15 @@ const TaskRow: React.FC<{
       role="button"
       tabIndex={0}
       className={`task-row${active ? ' is-active' : ''}${statusCls}${creatingCls}${plannedCls}`}
-      style={{ '--row-depth': depth } as React.CSSProperties}
+      style={
+        {
+          '--row-depth': depth,
+          // 0–100; falls back to 0 so the bottom line is invisible for
+          // not-started tasks. Drawn as a horizontal fill on the row's
+          // bottom edge (see .task-row::after in global.css).
+          '--row-progress': `${Math.max(0, Math.min(100, todo.progress ?? 0))}%`,
+        } as React.CSSProperties
+      }
       onClick={() => onSelect(todo.id)}
       onDoubleClick={(e) => {
         // Double-click toggles expand/collapse WITHOUT deselecting/navigating
