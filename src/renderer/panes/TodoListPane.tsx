@@ -763,14 +763,7 @@ const TaskRow: React.FC<{
       role="button"
       tabIndex={0}
       className={`task-row${active ? ' is-active' : ''}${statusCls}${creatingCls}${plannedCls}`}
-      style={
-        {
-          '--row-depth': depth,
-          // progress 0–100; falls back to 0 so the rail is invisible for
-          // not-started tasks. Rendered as a left-edge fill on the row.
-          '--row-progress': `${Math.max(0, Math.min(100, todo.progress ?? 0))}%`,
-        } as React.CSSProperties
-      }
+      style={{ '--row-depth': depth } as React.CSSProperties}
       onClick={() => onSelect(todo.id)}
       onDoubleClick={(e) => {
         // Double-click toggles expand/collapse WITHOUT deselecting/navigating
@@ -992,6 +985,16 @@ const Subtitle: React.FC<{ todo: Todo; subtaskCount: number; subtaskDoneCount: n
       <span key="p" className={`task-row__prio task-row__prio--${todo.priority}`} title={`优先级：${PRIORITY_LABEL[todo.priority]}`}>
         <span className="task-row__prio-dot" aria-hidden="true" />
         {PRIORITY_LABEL[todo.priority]}
+      </span>,
+    );
+  }
+  if (todo.progress != null && todo.progress > 0) {
+    // Progress is rendered as a tiny percentage pill (e.g. "45%") in the
+    // same metadata row as priority / due / tags. Kept compact (no track
+    // bar) so it doesn't compete with the title.
+    bits.push(
+      <span key="prog" className="task-row__progress" title={`进度 ${todo.progress}%`}>
+        {todo.progress}%
       </span>,
     );
   }

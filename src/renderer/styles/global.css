@@ -2140,7 +2140,6 @@ a:hover {
 /* ---- task rows ---- */
 
 .task-row {
-  --row-progress: 0%;
   display: flex;
   align-items: flex-start;
   gap: var(--space-sm);
@@ -2150,26 +2149,22 @@ a:hover {
      (var(--space-sm) + depth*14px) keeps icon+text aligned down the
      tree so a parent and its subtask at the next depth line up. */
   padding-left: calc(var(--space-sm) + var(--row-depth, 0) * 14px);
+  /* 2px left border serves double duty: the selection indicator (when
+     primary) and the danger rail (when blocked). Otherwise it's just
+     a transparent placeholder so border-color transitions look clean. */
+  border-left: 2px solid transparent;
   cursor: pointer;
   transition: background var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
 }
 .task-row:hover {
   background: var(--bg-hover);
 }
-/* Active selection — the background tint is the selection indicator;
-   the 3px left border is reserved for the progress rail so both
-   signals can coexist (border-image overrides border-color, so we
-   can't use border-left-color for active anymore). Add an inset
-   box-shadow on the right side so the row reads "selected" without
-   stealing the rail's job. */
+/* Active selection — the background tint + 2px left border are the
+   selection indicator; the border is plain colour (not border-image)
+   so this works without conflicting with anything else. */
 .task-row.is-active {
   background: var(--bg-active);
-  /* Active indicator moved to the right edge so the 3px left border can
-     keep doing progress-rail duty without conflict (border-image
-     overrides border-color, so the original left-border trick no
-     longer works). The right edge + the background tint together make
-     the selected row read as "this one" without crowding the rail. */
-  box-shadow: inset -2px 0 0 0 var(--accent-primary);
+  border-left-color: var(--accent-primary);
 }
 .task-row.is-done .task-row__title {
   text-decoration: line-through;
@@ -2296,19 +2291,21 @@ a:hover {
   color: var(--accent-success);
   font-weight: 600;
 }
-/* Container queries on the meta-line — when the second row gets narrower
-   than ~360px start hiding the rightmost metadata pills (subtask progress
-   → drawings → tags), then at ~280px hide priority + due too. The
-   actions group is the rightmost sibling and always stays visible.
-   Pills are direct children of .task-row__meta-line (no wrapper). */
+/* Container queries on the meta-line — when the second row gets too
+   narrow to fit everything, hide pills right-to-left so the priority +
+   due date stay readable until the very end. Order of sacrifice:
+   tag chip → subtask progress → drawings → progress% → priority → due.
+   The actions group is always anchored to the right edge via
+   margin-left:auto so it never disappears. */
 @container meta (max-width: 360px) {
+  .task-row__meta-line > .task-row__tag,
   .task-row__meta-line > .task-row__sub--done,
-  .task-row__meta-line > .task-row__drawings,
-  .task-row__meta-line > .task-row__tag {
+  .task-row__meta-line > .task-row__drawings {
     display: none;
   }
 }
 @container meta (max-width: 280px) {
+  .task-row__meta-line > .task-row__progress,
   .task-row__meta-line > .task-row__prio,
   .task-row__meta-line > .task-row__due {
     display: none;
@@ -2343,38 +2340,19 @@ a:hover {
   gap: 3px;
   color: var(--fg-muted);
 }
+.task-row__progress {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 6px;
+  border-radius: var(--radius-pill);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-secondary);
+  background: var(--bg-soft);
+}
 .task-row__tag {
   color: var(--accent-info);
 }
-/* Progress rail — the row's 3px left border is painted with a vertical
-   linear-gradient that fills from bottom up to `--row-progress`; the
-   rest stays transparent. Done rows (height:100%) and active rows
-   (solid primary colour) override via their own border-image. The
-   `--row-progress` value is set per-row via the inline `style` prop
-   (defaults to 0% → invisible for not-started tasks). */
-.task-row {
-  border-image: linear-gradient(
-    to top,
-    var(--accent-primary) 0 var(--row-progress, 0%),
-    transparent var(--row-progress, 0%) 100%
-  );
-  border-image-width: 0 0 0 3px;
-  border-image-slice: 1;
-}
-.task-row.is-done {
-  border-image: linear-gradient(var(--accent-success), var(--accent-success));
-  border-image-width: 0 0 0 3px;
-  border-image-slice: 1;
-}
-.task-row.is-cancelled {
-  border-image: linear-gradient(var(--fg-muted), var(--fg-muted));
-  border-image-width: 0 0 0 3px;
-  border-image-slice: 1;
-}
-/* Active selection does NOT override border-image — the selection
-   signal is the box-shadow inset on the right edge + background tint
-   (see .task-row.is-active above). Letting border-image win would
-   repaint the left rail full green and hide the progress info. */
 /* Subtask progress chip when the whole branch is done — accent-success so
    a glance tells you the branch is clear. */
 .task-row__sub--done {
