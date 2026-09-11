@@ -82,6 +82,10 @@ const DECLARED_CHANNELS: ReadonlySet<string> = new Set([
   'app.focus.get',
   // Open the task's documents directory in the OS file manager.
   'app.openTaskDir',
+  // Dim/restore the frameless titleBarOverlay so native chrome matches the
+  // renderer's modal dim state. Channel is type-checked in ipc-schema.ts
+  // IpcRegistry; this Set is the runtime allowlist consulted by router.ts.
+  'app.setTitleBarOverlay',
 ]);
 
 export function isKnownChannel(name: string): name is IpcChannelName {
