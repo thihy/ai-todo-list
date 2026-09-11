@@ -2192,15 +2192,22 @@ a:hover {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  /* Single-row layout: title-line holds glyph + title + metadata + controls
+     and is the only row. Subtitle was folded into InlineMetadata so there's
+     no second/third line under the title. */
 }
 .task-row__title-line {
   display: flex;
   align-items: center;
   gap: var(--space-sm);
+  /* Container queries drive the "hide less-important items when narrow"
+     cascade below. The title-line's effective width is the row's content
+     area (after depth indentation). */
+  container-type: inline-size;
+  container-name: row;
 }
 .task-row__title {
-  flex: 1;
+  flex: 0 1 auto;
   min-width: 0;
   font-size: var(--font-md);
   font-weight: 500;
@@ -2209,23 +2216,68 @@ a:hover {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* StatusSelect 在第一行尾：margin-left:auto 让标题 + chevron + today-icon
-   占据左侧空间，状态选择器钉到行尾。 */
-.task-row__title-line > .status-select {
-  margin-left: auto;
+/* Inline metadata strip — sits between the title and the right-edge
+   controls. Pills flex in row order and get hidden right-to-left by
+   container queries as the row gets narrower. */
+.task-row__meta-strip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
 }
-/* 把标题左侧和右侧（状态选择器）撑开 —— StatusSelect 加 margin-left:auto
-   让 Title 自然占据剩余空间、StatusSelect 永远钉在行尾。 */
+.task-row__meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex: 0 0 auto;
+  font-size: var(--font-xs);
+  color: var(--fg-muted);
+  white-space: nowrap;
+}
+/* Priority chip — pill background + dot. Lives inside the meta strip
+   but still needs its pill bg (the generic .task-row__meta rule sets
+   only color/gap/font). */
+.task-row__prio {
+  gap: 4px;
+  padding: 1px 6px;
+  border-radius: var(--radius-pill);
+  font-weight: 600;
+  background: var(--bg-soft);
+}
+/* Calendar + drawing icons inside due/drawings chips — fixed-size leading
+   glyph. */
+.task-row__due-icon,
+.task-row__drawings-icon {
+  flex: 0 0 auto;
+  opacity: 0.85;
+}
+/* Right-edge control group: today-icon + chevron + status + actions.
+   margin-left:auto pins this whole group to the right so the title +
+   metadata always claim the left side, regardless of row width. */
+.task-row__controls {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  margin-left: auto;
+  flex: 0 0 auto;
+}
+/* StatusSelect still sits inside the controls group; no margin-left:auto
+   here (the parent group already owns the right-anchor). */
+.task-row__title-line > .status-select {
+  margin-left: 0;
+}
+/* Action buttons live inside .task-row__actions (now inside the controls
+   group on the same row as the title). They stay flex-none so the
+   controls group never collapses them; the container query hides them
+   left-to-right when the row gets very narrow. */
 .task-row__actions {
-  display: flex;
+  display: inline-flex;
   justify-content: flex-end;
   align-items: center;
   gap: 2px;
-  /* 平时整行淡灰常驻可见；hover / focus-within 让按钮亮起来，避免"看不到
-     就不知道这里能操作"。比 hover-reveal 更可靠（触屏 / 键盘焦点）。 */
-}
-.task-row__actions--bin {
-  margin-top: 4px;
+  flex: 0 0 auto;
 }
 .task-row__status {
   flex: none;
@@ -2241,48 +2293,35 @@ a:hover {
 .task-row__status:hover {
   background: var(--bg-surface-elev);
 }
-.task-row__sub {
-  margin-top: 2px;
-  font-size: var(--font-xs);
-  color: var(--fg-muted);
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-sm);
-}
-.task-row__sub--empty {
-  font-style: normal;
-  opacity: 0.7;
-}
-.task-row__tag {
-  color: var(--accent-info);
-}
-/* Metadata chip pair — small leading SVG icon (calendar for due, drawing
-   pencil for drawing count) followed by the value. Icons sit inline-aligned
-   with the text and use the muted color so they don't compete with priority. */
-.task-row__due,
-.task-row__drawings {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  color: var(--fg-muted);
-}
-.task-row__due-icon,
-.task-row__drawings-icon {
-  flex: 0 0 auto;
-  opacity: 0.85;
-}
-/* Priority chip — small colored dot + label so the eye picks up high/medium
-   urgency at a glance even when the row is collapsed. "none" is suppressed
-   in markup (no default-state noise). */
-.task-row__prio {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 1px 6px;
-  border-radius: var(--radius-pill);
-  font-size: var(--font-xs);
+.task-row__sub--done {
+  color: var(--accent-success);
   font-weight: 600;
-  background: var(--bg-soft);
+}
+/* Container queries — when the title-line gets narrower than ~360px start
+   hiding the rightmost metadata pills (subtask progress → drawings → due),
+   then at ~280px hide the priority + progress pills too. The title
+   ellipsizes last because the destructive delete button is the most
+   important control and must remain reachable. */
+@container row (max-width: 360px) {
+  .task-row__meta-strip > .task-row__sub--done,
+  .task-row__meta-strip > [class*="task-row__sub"]:not(.task-row__sub--done),
+  .task-row__meta-strip > .task-row__drawings {
+    display: none;
+  }
+}
+@container row (max-width: 280px) {
+  .task-row__meta-strip > .task-row__prio,
+  .task-row__meta-strip > .task-row__progress {
+    display: none;
+  }
+  /* Hide the secondary action buttons when the row is really narrow; the
+     primary destructive action (delete / restore) always stays visible.
+     Order in DOM: plan → add-subtask → delete/restore; hide plan/add
+     first. */
+  .task-row__actions .task-row__plan-btn,
+  .task-row__actions .task-row__add-subtask {
+    display: none;
+  }
 }
 .task-row__prio-dot {
   width: 6px;
@@ -2295,12 +2334,10 @@ a:hover {
 .task-row__prio--medium { color: var(--accent-warning); background: color-mix(in srgb, var(--accent-warning) 14%, var(--bg-soft)); }
 .task-row__prio--low { color: var(--accent-info); background: color-mix(in srgb, var(--accent-info) 14%, var(--bg-soft)); }
 /* Mini progress bar — same visual language as the detail header's
-   ProgressBar but at row scale: 60×4px track + a percent label. */
+   ProgressBar but at row scale: 60×4px track + a percent label.
+   Lives inside .task-row__meta; inherits color + font-size + display. */
 .task-row__progress {
-  display: inline-flex;
-  align-items: center;
   gap: 4px;
-  color: var(--fg-muted);
   font-variant-numeric: tabular-nums;
 }
 .task-row__progress-track {
@@ -2340,9 +2377,10 @@ a:hover {
   flex: none;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  justify-content: center;
+  width: 24px;
   height: 22px;
-  padding: 0 8px;
+  padding: 0;
   border: 1px solid transparent;
   background: transparent;
   color: var(--fg-muted);
@@ -2352,19 +2390,10 @@ a:hover {
   cursor: pointer;
   transition: color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
 }
+/* 图标常驻 —— 不再展示标签文字。hover 行时图标自身高亮；标签 DOM 仍保留
+   以保留 aria-label/title 的可访问性，只是视觉上不出现。 */
 .task-row__action-label {
-  /* 平时图标已经够识别；标签在 hover 行时再出现，避免静止时一排文字很挤。
-     触屏设备没有 hover —— label 始终可见，给一个稳定可读的标识。 */
-  display: none;
-}
-@media (hover: none) {
-  .task-row__action-label {
-    display: inline;
-  }
-}
-.task-row:hover .task-row__action-label,
-.task-row:focus-within .task-row__action-label {
-  display: inline;
+  display: none !important;
 }
 .task-row__delete:hover {
   color: var(--accent-danger);

@@ -792,107 +792,111 @@ const TaskRow: React.FC<{
             {hasSubtasks ? <TaskBranchGlyph open={subtasksExpanded} done={recede} /> : <TaskGlyph done={recede} />}
           </span>
           <span className="task-row__title">{todo.title || '(无标题)'}</span>
-          {/* 今日图标 —— 行内强提示"该任务今天要做"。
-              本行自身已安排 → 蓝色圆点；上半区祖先（showPlannedIcon）→ 半透明提示。 */}
-          {isPlanned && (
-            <span
-              className={`task-row__planned-icon${todo.plannedFor === todayKey ? ' is-self' : ' is-ancestor'}`}
-              title={todo.plannedFor === todayKey ? '今日待办' : '包含今日子任务'}
-              aria-label={todo.plannedFor === todayKey ? '今日待办' : '包含今日子任务'}
-            >
-              <TodayGlyph />
-            </span>
-          )}
-          {/* SubTask collapse/expand chevron — sits right AFTER the title
-              (before the status dot) so it reads "name ▸ status". Only
-              rendered when this task actually has subtasks. */}
-          {hasSubtasks && (
-            <button
-              type="button"
-              className="task-row__toggle"
-              aria-label={subtasksExpanded ? '折叠子任务' : '展开子任务'}
-              aria-expanded={subtasksExpanded}
-              title={subtasksExpanded ? '折叠子任务' : '展开子任务'}
-              onClick={(e) => {
-                e.stopPropagation();
-                onToggleSubtasks();
-              }}
-            >
-              <ChevronGlyph open={subtasksExpanded} />
-            </button>
-          )}
-          {/* 状态选择器推到行尾，margin-left:auto 让标题左侧不被挤。 */}
-          <StatusSelect status={todo.status} onChange={onCycle} variant="icon" />
-        </div>
-        {/* 第二行：行尾动作区（hover-reveal 取消 → 平时保持淡灰常驻，hover
-            才高亮）。让状态选择器在第一行能稳稳右对齐，不受 hover 影响。 */}
-        {(onPlanToday || onAddSubtask || true) && (
-          <div className="task-row__actions">
-            {/* 下半区行尾的 "+ 今日" 按钮 —— 仅下半区（onPlanToday 存在） */}
-            {onPlanToday && !archivedView && (
+          {/* Metadata pills (priority / progress / due / tags / subtask count)
+              live inline with the row. They sit between the title and the
+              status/actions so a glance reads "name · metadata · controls".
+              Container queries hide the rightmost pills when the row gets
+              narrow, then truncate the title last. */}
+          <InlineMetadata todo={todo} subtaskCount={subtaskCount} subtaskDoneCount={subtaskDoneCount} />
+          {/* Right-edge control group: today-icon → chevron → status →
+              actions. Push this whole group to the right with margin-left:auto
+              so the title + metadata always claim the left side and the
+              controls stay anchored regardless of row width. */}
+          <div className="task-row__controls">
+            {/* 今日图标 —— 行内强提示"该任务今天要做"。
+                本行自身已安排 → 蓝色圆点；上半区祖先（showPlannedIcon）→ 半透明提示。 */}
+            {isPlanned && (
+              <span
+                className={`task-row__planned-icon${todo.plannedFor === todayKey ? ' is-self' : ' is-ancestor'}`}
+                title={todo.plannedFor === todayKey ? '今日待办' : '包含今日子任务'}
+                aria-label={todo.plannedFor === todayKey ? '今日待办' : '包含今日子任务'}
+              >
+                <TodayGlyph />
+              </span>
+            )}
+            {/* SubTask collapse/expand chevron — sits right BEFORE the
+                status select so it reads "name ▸ status". Only rendered
+                when this task actually has subtasks. */}
+            {hasSubtasks && (
               <button
                 type="button"
-                className="task-row__action task-row__plan-btn"
-                aria-label="加入今日"
-                title="加入今日"
+                className="task-row__toggle"
+                aria-label={subtasksExpanded ? '折叠子任务' : '展开子任务'}
+                aria-expanded={subtasksExpanded}
+                title={subtasksExpanded ? '折叠子任务' : '展开子任务'}
                 onClick={(e) => {
                   e.stopPropagation();
-                  void onPlanToday();
+                  onToggleSubtasks();
                 }}
               >
-                <TodayGlyph muted />
-                <span className="task-row__action-label">加入今日</span>
+                <ChevronGlyph open={subtasksExpanded} />
               </button>
             )}
-            {/* + 子任务：创建时（creating=true）常驻可见作为视觉锚点。archivedView 不显示。 */}
-            {onAddSubtask && (
-              <button
-                type="button"
-                className="task-row__action task-row__add-subtask"
-                aria-label="添加子任务"
-                title="添加子任务"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onAddSubtask();
-                }}
-              >
-                <PlusGlyph />
-                <span className="task-row__action-label">子任务</span>
-              </button>
-            )}
-            {/* Per-row action — 在 active 列表是 quick delete；归档视图是 restore。 */}
-            {archivedView ? (
-              <button
-                type="button"
-                className="task-row__action task-row__restore"
-                aria-label="恢复任务"
-                title="恢复（移回归档前）"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onRestore();
-                }}
-              >
-                <RestoreGlyph />
-                <span className="task-row__action-label">恢复</span>
-              </button>
-            ) : (
-              <button
-                type="button"
-                className="task-row__action task-row__delete"
-                aria-label="删除任务"
-                title="删除"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onDelete();
-                }}
-              >
-                <TrashGlyph />
-                <span className="task-row__action-label">删除</span>
-              </button>
-            )}
+            <StatusSelect status={todo.status} onChange={onCycle} variant="icon" />
+            {/* 行尾动作：图标常驻（hover 高亮）。极窄时整个 group 仍可见，
+                内部按钮按"次要→主要"顺序先被隐藏。 */}
+            <div className="task-row__actions">
+              {/* 下半区行尾的 "+ 今日" 按钮 —— 仅下半区（onPlanToday 存在） */}
+              {onPlanToday && !archivedView && (
+                <button
+                  type="button"
+                  className="task-row__action task-row__plan-btn"
+                  aria-label="加入今日"
+                  title="加入今日"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void onPlanToday();
+                  }}
+                >
+                  <TodayGlyph muted />
+                </button>
+              )}
+              {/* + 子任务：创建时（creating=true）常驻可见作为视觉锚点。archivedView 不显示。 */}
+              {onAddSubtask && (
+                <button
+                  type="button"
+                  className="task-row__action task-row__add-subtask"
+                  aria-label="添加子任务"
+                  title="添加子任务"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onAddSubtask();
+                  }}
+                >
+                  <PlusGlyph />
+                </button>
+              )}
+              {/* Per-row action — 在 active 列表是 quick delete；归档视图是 restore。 */}
+              {archivedView ? (
+                <button
+                  type="button"
+                  className="task-row__action task-row__restore"
+                  aria-label="恢复任务"
+                  title="恢复（移回归档前）"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onRestore();
+                  }}
+                >
+                  <RestoreGlyph />
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="task-row__action task-row__delete"
+                  aria-label="删除任务"
+                  title="删除"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onDelete();
+                  }}
+                >
+                  <TrashGlyph />
+                </button>
+              )}
+            </div>
           </div>
-        )}
-        <Subtitle todo={todo} subtaskCount={subtaskCount} subtaskDoneCount={subtaskDoneCount} />
+        </div>
       </div>
     </li>
   );
@@ -979,13 +983,20 @@ const SubtaskCreateRow: React.FC<{
   );
 };
 
-const Subtitle: React.FC<{ todo: Todo; subtaskCount: number; subtaskDoneCount: number }> = ({ todo, subtaskCount, subtaskDoneCount }) => {
+/** Inline metadata pills rendered between the title and the right-edge
+ *  control group. Each pill is icon-or-label sized so it sits cleanly on
+ *  the same row as the title. On narrow rows the CSS hides the rightmost
+ *  pills first (priority → progress → due → subtasks), then truncates the
+ *  title last, so the destructive action button is always reachable. */
+const InlineMetadata: React.FC<{
+  todo: Todo;
+  subtaskCount: number;
+  subtaskDoneCount: number;
+}> = ({ todo, subtaskCount, subtaskDoneCount }) => {
   const bits: React.ReactNode[] = [];
-  // Priority is rendered as a small colored chip next to the other metadata.
-  // "none" priority is suppressed (it's the default — would just add noise).
   if (todo.priority && todo.priority !== 'none') {
     bits.push(
-      <span key="p" className={`task-row__prio task-row__prio--${todo.priority}`} title={`优先级：${PRIORITY_LABEL[todo.priority]}`}>
+      <span key="p" className={`task-row__meta task-row__prio task-row__prio--${todo.priority}`} title={`优先级：${PRIORITY_LABEL[todo.priority]}`}>
         <span className="task-row__prio-dot" aria-hidden="true" />
         {PRIORITY_LABEL[todo.priority]}
       </span>,
@@ -993,7 +1004,7 @@ const Subtitle: React.FC<{ todo: Todo; subtaskCount: number; subtaskDoneCount: n
   }
   if (todo.progress != null && todo.progress > 0) {
     bits.push(
-      <span key="prog" className="task-row__progress" title={`进度 ${todo.progress}%`}>
+      <span key="prog" className="task-row__meta task-row__progress" title={`进度 ${todo.progress}%`}>
         <span className="task-row__progress-track" aria-hidden="true">
           <span className="task-row__progress-fill" style={{ width: `${todo.progress}%` }} />
         </span>
@@ -1003,35 +1014,34 @@ const Subtitle: React.FC<{ todo: Todo; subtaskCount: number; subtaskDoneCount: n
   }
   if (todo.dueAt) {
     bits.push(
-      <span key="d" className="task-row__due">
+      <span key="d" className="task-row__meta task-row__due" title={`截止 ${formatDate(todo.dueAt)}`}>
         <IconCalendar size={11} className="task-row__due-icon" />
         {formatDate(todo.dueAt)}
       </span>,
     );
   }
-  if (todo.tags?.length) {
-    todo.tags.slice(0, 3).forEach((tag) => bits.push(<span key={`t-${tag}`} className="task-row__tag">#{tag}</span>));
-  }
   if (todo.drawingIds && todo.drawingIds.length > 0) {
     bits.push(
-      <span key="dr" className="task-row__drawings">
+      <span key="dr" className="task-row__meta task-row__drawings" title={`${todo.drawingIds.length} 个绘图`}>
         <IconDrawing size={11} className="task-row__drawings-icon" />
         {todo.drawingIds.length}
       </span>,
     );
   }
-  // Subtask progress: "done/total 子任务". When all subtasks are done the
-  // chip uses the success colour so a glance tells you the branch is clear.
   if (subtaskCount > 0) {
     const allDone = subtaskDoneCount === subtaskCount;
     bits.push(
-      <span key="sub" className={allDone ? 'task-row__sub--done' : undefined}>
-        {subtaskDoneCount}/{subtaskCount} 子任务
+      <span
+        key="sub"
+        className={`task-row__meta${allDone ? ' task-row__sub--done' : ''}`}
+        title={`${subtaskDoneCount}/${subtaskCount} 子任务完成`}
+      >
+        {subtaskDoneCount}/{subtaskCount}
       </span>,
     );
   }
-  if (bits.length === 0) return <div className="task-row__sub task-row__sub--empty">无附加信息</div>;
-  return <div className="task-row__sub">{bits}</div>;
+  if (bits.length === 0) return null;
+  return <div className="task-row__meta-strip">{bits}</div>;
 };
 
 const PRIORITY_LABEL: Record<NonNullable<Todo['priority']>, string> = {
@@ -1173,23 +1183,25 @@ const DeletedRow: React.FC<{
           </span>
           <span className="task-row__title">{todo.title || '(无标题)'}</span>
           {descendantCount > 0 && (
-            <span className="task-row__sub--done">{descendantCount} 子任务</span>
+            <span className={`task-row__meta task-row__sub--done`}>{descendantCount} 子任务</span>
           )}
-          <span className="task-row__deleted-time">{formatDateTime(todo.deletedAt)}</span>
-        </div>
-        <div className="task-row__actions task-row__actions--bin">
-          <button
-            type="button"
-            className="task-row__action task-row__restore task-row__restore--bin"
-            aria-label="恢复任务"
-            title="恢复（移回列表）"
-            onClick={(e) => {
-              e.stopPropagation();
-              onRestore(todo.id);
-            }}
-          >
-            <RestoreGlyph /> 恢复
-          </button>
+          <div className="task-row__controls">
+            <span className="task-row__deleted-time">{formatDateTime(todo.deletedAt)}</span>
+            <div className="task-row__actions">
+              <button
+                type="button"
+                className="task-row__action task-row__restore task-row__restore--bin"
+                aria-label="恢复任务"
+                title="恢复（移回列表）"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onRestore(todo.id);
+                }}
+              >
+                <RestoreGlyph />
+              </button>
+            </div>
+          </div>
         </div>
       </div>
     </li>
