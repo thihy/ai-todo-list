@@ -44,6 +44,7 @@ interface TodoRow {
   archived_at: number | null;
   deleted_at: number | null;
   progress: number;
+  planned_for: string | null;
 }
 
 function rowToTodo(row: TodoRow, tags: string[], drawingIds: string[], attachmentIds: string[]): Todo {
@@ -65,6 +66,7 @@ function rowToTodo(row: TodoRow, tags: string[], drawingIds: string[], attachmen
     archivedAt: row.archived_at,
     deletedAt: row.deleted_at,
     progress: row.progress,
+    plannedFor: row.planned_for,
   };
 }
 
@@ -158,6 +160,7 @@ export class TodoRepo {
     const project = input.project ?? null;
     const dueAt = input.dueAt ?? null;
     const parentId = input.parentId ?? null;
+    const plannedFor = input.plannedFor ?? null;
 
     // Validate parent exists when set. We don't enforce a "depth" limit —
     // the renderer (and the user) can nest arbitrarily deep; the data model
@@ -170,10 +173,10 @@ export class TodoRepo {
     const tx = this.db.transaction(() => {
       this.db
         .prepare(
-          `INSERT INTO todos (id, title, status, priority, project, due_at, body_path, created_at, updated_at, parent_id)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO todos (id, title, status, priority, project, due_at, body_path, created_at, updated_at, parent_id, planned_for)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
-        .run(id, input.title, status, priority, project, dueAt, bodyPath, now, now, parentId);
+        .run(id, input.title, status, priority, project, dueAt, bodyPath, now, now, parentId, plannedFor);
       if (input.tags?.length) {
         const stmt = this.db.prepare('INSERT OR IGNORE INTO tags(todo_id, tag) VALUES (?, ?)');
         for (const t of input.tags) stmt.run(id, t);
@@ -196,6 +199,7 @@ export class TodoRepo {
       parentId: 'parent_id',
       archivedAt: 'archived_at',
       progress: 'progress',
+      plannedFor: 'planned_for',
     };
     for (const [k, v] of Object.entries(patch)) {
       if (v === undefined) continue;
@@ -490,6 +494,21 @@ export class TodoRepo {
     return res.changes;
   }
 
+  /** 「今日待办」的数量 —— 专门给 plan-reminder 用。精确匹配 planned_for =
+   *  todayKey（'YYYY-MM-DD' 本地日期串），排除已归档 / 已删除。等价 SQL
+   *  count，比拉全表 + JS 过滤更快，也跟 idx_todos_planned_for 索引贴齐。 */
+  countPlannedFor(todayKey: string): number {
+    const row = this.db
+      .prepare<[string], { c: number }>(
+        `SELECT COUNT(*) AS c FROM todos
+         WHERE planned_for = ?
+           AND deleted_at IS NULL
+           AND archived_at IS NULL`,
+      )
+      .get(todayKey);
+    return row?.c ?? 0;
+  }
+
   batchUpdate(ids: ULID[], patch: TodoPatch): Todo[] {
     const tx = this.db.transaction(() => {
       for (const id of ids) this.update(id, patch);
@@ -523,6 +542,7 @@ export class TodoRepo {
       archived_at: number | null;
       deleted_at: number | null;
       progress: number;
+      planned_for: string | null;
       snippet: string;
       score: number;
     };

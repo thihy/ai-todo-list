@@ -12,6 +12,10 @@ import { AIPanel } from './layout/AIPanel';
 import { useToastBus } from './components/Toast';
 import { CommandPaletteHost } from './components/CommandPalette';
 import { SettingsModal } from './components/SettingsModal';
+import {
+  PlanGuideModal,
+  todayDateKey,
+} from './components/PlanGuideModal';
 import { Composer } from './components/Composer';
 import { TodoListPane } from './panes/TodoListPane';
 import { TodoEditorPane } from './panes/TodoEditorPane';
@@ -22,7 +26,7 @@ import { PaneDivider } from './components/PaneDivider';
 import { IconCheck } from './components/icons';
 import { usePaneWidths } from './hooks/usePaneWidths';
 import { parseHash, routeToHash, type Route, type ListFilter, type SortKey } from './router';
-import { useAppEvent, useTodo } from './hooks/useTodoListApi';
+import { useAppEvent, useTodo, useSettings } from './hooks/useTodoListApi';
 import { emitDataChanged } from './data-bus';
 import { IconFullscreenExit } from './components/icons';
 
@@ -69,6 +73,62 @@ export const App: React.FC = () => {
   // Resizable panes: list (left) + AI (right) widths persist across restarts.
   // The detail pane is flex:1, so it absorbs the remainder.
   const { listWidth, aiWidth, setListWidth, setAiWidth } = usePaneWidths();
+  // —— 每日计划引导 ——
+  // 启动时 + 通知点击都可能弹 PlanGuideModal。settings.dailyPlanReminderTime
+  // 和 snoozePlanGuideUntil 都在 useSettings() 里读，patch() 写回。
+  const settings = useSettings();
+  const [planGuideOpen, setPlanGuideOpen] = useState(false);
+  // candidates 缓存：modal 打开那一刻拉一次（避免渲染期间 dataVersion 触发
+  // 重渲染时 modal 里列表跳变）。Modal 自己 sortCandidates + slice(12)，
+  // 所以即使缓存是全集也没问题。
+  const [planCandidates, setPlanCandidates] = useState<import('../shared/todo-types').Todo[]>([]);
+  const todayKey = React.useMemo(() => todayDateKey(), []);
+
+  // 启动时根据 settings 决定是否弹引导。
+  // 规则（与 plan-reminder.ts 一致）：
+  //   - snoozePlanGuideUntil > now  → 跳过
+  //   - lastPlanGuideDate === today → 跳过
+  //   - today 已 planned 至少一个 → 不必引导，但仍允许用户主动调起
+  //   - 其他情况 → 引导一次
+  // settings 是 useSettings() 的返回；data 首次为 null 时 effect 不会跑（避免
+  // 在 settings 还没拉到时弹），data 一就绪就重跑。
+  useEffect(() => {
+    if (!settings.data) return;
+    const s = settings.data;
+    const now = Date.now();
+    const snoozed = s.snoozePlanGuideUntil != null && s.snoozePlanGuideUntil > now;
+    const resolvedToday = s.lastPlanGuideDate === todayKey;
+    if (snoozed || resolvedToday) return;
+    // 已经 planned 了不主动弹 —— 但通知点击 / 用户主动调起路径仍能开。
+    void window.todoList.todo.list({}).then((res) => {
+      if (!res.ok) return;
+      const all = res.data as import('../shared/todo-types').Todo[];
+      const alreadyPlannedToday = all.some((t) => t.plannedFor === todayKey);
+      if (alreadyPlannedToday) {
+        // 仅写 lastPlanGuideDate，避免明天重复判定同一段 loaded 状态。
+        void settings.patch({ lastPlanGuideDate: todayKey });
+        return;
+      }
+      // 全集作为候选 —— modal 自己排序 + 截前 12。
+      setPlanCandidates(all.filter((t) => !t.archivedAt && !t.deletedAt));
+      setPlanGuideOpen(true);
+    });
+    // effect 只在 settings.data 首次就绪 + 今日日期变更时跑。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settings.data, todayKey]);
+
+  // 通知点击触发：从 main 进程推 `app:plan-guide`，App 重新计算候选并打开 modal。
+  useAppEvent('app:plan-guide', () => {
+    void window.todoList.todo.list({}).then((res) => {
+      if (!res.ok) return;
+      setPlanCandidates(
+        (res.data as import('../shared/todo-types').Todo[]).filter(
+          (t) => !t.archivedAt && !t.deletedAt,
+        ),
+      );
+      setPlanGuideOpen(true);
+    });
+  });
 
   useEffect(() => {
     const onHash = () => setRoute(parseHash(location.hash));
@@ -157,6 +217,34 @@ export const App: React.FC = () => {
     if (location.hash.startsWith('#/settings')) location.hash = '#/';
   }, []);
 
+  // —— Plan guide handlers ——
+  // confirm: 逐个 update plannedFor（走 IPC patch 通道），最后写 lastPlanGuideDate。
+  // 出错只 toast 提示，不阻止后续 update —— 已经写入的 plannedFor 自然让任务
+  // 进入今日区，未写入的留在候选列表。
+  const onPlanGuideConfirm = useCallback(async (ids: string[]): Promise<void> => {
+    for (const id of ids) {
+      const res = await window.todoList.todo.update(id, { plannedFor: todayKey });
+      if (!res.ok) toast.push({ kind: 'error', message: '添加今日任务失败', ttl: 2000 });
+    }
+    await settings.patch({ lastPlanGuideDate: todayKey });
+    setPlanGuideOpen(false);
+    // 通知 TodoListPane refresh — 已有 app:data-changed { scope: 'todos' }
+    // 会驱动 refresh；这里额外 emit 一次以防 race。
+    emitDataChanged('todos');
+  }, [todayKey, settings, toast]);
+
+  const onPlanGuideSkip = useCallback(async (): Promise<void> => {
+    await settings.patch({ lastPlanGuideDate: todayKey });
+    setPlanGuideOpen(false);
+  }, [todayKey, settings]);
+
+  const onPlanGuideSnooze = useCallback(async (): Promise<void> => {
+    // 24h 后再提醒。lastPlanGuideDate 不写 —— 24h 后仍属"未解决"，boot + 通知
+    // 都会重新询问。
+    await settings.patch({ snoozePlanGuideUntil: Date.now() + 24 * 60 * 60_000 });
+    setPlanGuideOpen(false);
+  }, [settings]);
+
   return (
     <ErrorBoundary>
       <div className="app-shell">
@@ -215,6 +303,14 @@ export const App: React.FC = () => {
         <Statusbar route={route} />
         <CommandPaletteHost open={paletteOpen} onClose={() => setPaletteOpen(false)} navigate={navigate} onCompose={() => { setPaletteOpen(false); setComposing(true); }} />
         <SettingsModal open={settingsOpen} onClose={closeSettings} />
+        <PlanGuideModal
+          open={planGuideOpen}
+          candidates={planCandidates}
+          todayKey={todayKey}
+          onConfirm={onPlanGuideConfirm}
+          onSkip={onPlanGuideSkip}
+          onSnooze={onPlanGuideSnooze}
+        />
       </div>
     </ErrorBoundary>
   );
@@ -254,7 +350,6 @@ const TaskDetail: React.FC<{
         onFullscreen={() => onFullscreen(todoId)}
         selectedDocId={selectedDocId}
         onSelectDoc={onSelectDoc}
-        navigate={navigate}
       />
     </div>
   );

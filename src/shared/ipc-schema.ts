@@ -275,6 +275,14 @@ export interface SettingsSetReq {
   archiveAfterDays?: number;
   // Tag registry (name + colour). Replaces the whole list.
   tags?: TagDef[];
+  // Daily reminder time for the 「今日待办」 guide / OS notification, format HH:MM.
+  dailyPlanReminderTime?: string;
+  // Last day the startup guide was resolved (shown + confirmed/skipped).
+  // ISO `YYYY-MM-DD` in local time. Renderer writes this after a guide session.
+  lastPlanGuideDate?: string | null;
+  // Snooze deadline (epoch ms) set by 「改天再提醒」. Until this passes, no
+  // boot guide or scheduled reminder fires. Renderer clears it on next launch.
+  snoozePlanGuideUntil?: number | null;
 }
 export interface SettingsGetRes extends AISettings {
   captureHotkey: string;
@@ -282,6 +290,9 @@ export interface SettingsGetRes extends AISettings {
   dataDir: string;
   archiveAfterDays: number;
   tags: TagDef[];
+  dailyPlanReminderTime: string;
+  lastPlanGuideDate: string | null;
+  snoozePlanGuideUntil: number | null;
 }
 export interface SettingsChooseDataDirRes {
   /** Chosen path, or null if the user cancelled the dialog. */
@@ -424,6 +435,13 @@ export interface IpcRegistry {
   // task-scoped attachments. No-op (with `not_found`) if the task has no
   // directory on disk yet.
   'app.openTaskDir': IpcChannel<{ todoId: string }, IpcResult<{ path: string }>>;
+  // Renderer → main: dim / restore the frameless titleBarOverlay so the
+  // native min/max/close glyphs match a modal's dimmed client area. The
+  // overlay is rendered by Chromium OUTSIDE the renderer's webContents, so
+  // renderer-side CSS can't reach it — main must call setTitleBarOverlay()
+  // when any modal opens / closes. Idempotent; safe to call repeatedly with
+  // the same `dim` value.
+  'app.setTitleBarOverlay': IpcChannel<{ dim: boolean }, IpcResult<void>>;
 }
 
 export interface AppFocus {

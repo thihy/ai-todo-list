@@ -140,6 +140,7 @@ describe('writeTodoJson', () => {
       createdAt: 1,
       updatedAt: 2,
       doneAt: null,
+      plannedFor: null,
     });
     const path = paths.todoJsonPath(taskDir);
     expect(existsSync(path)).toBe(true);

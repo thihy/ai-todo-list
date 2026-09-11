@@ -28,8 +28,8 @@ export const Sidebar: React.FC<{
     <nav className="sidebar" aria-label="主导航">
       <SectionLabel>导航</SectionLabel>
       <NavItem label="全部 TODO" icon="house" target="#/" active={isActive('#/')} onClick={onNavigate} />
-      <NavItem label="今天" icon="today" target="#/list/today" active={isActive('#/list/today')} onClick={onNavigate} />
-      <NavItem label="未来 7 天" icon="week" target="#/list/next7" active={isActive('#/list/next7')} onClick={onNavigate} />
+      {/* 今天 / 未来 7 天 的"按截止日期"视图被新的"今日待办 / 其他任务"双区
+          视图替代（见 TodoListPane 的上半区 / 下半区）；旧的 nav 入口删除。 */}
       <NavItem label="未完成" icon="undone" target="#/list/status/next" active={isActive('#/list/status/next')} onClick={onNavigate} />
       <NavItem label="归档" icon="archive" target="#/list/archived" active={isActive('#/list/archived')} onClick={onNavigate} />
       <NavItem label="已删除" icon="trash" target="#/list/deleted" active={isActive('#/list/deleted')} onClick={onNavigate} />

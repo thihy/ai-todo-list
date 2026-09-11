@@ -5,6 +5,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { useSettings } from '../hooks/useTodoListApi';
+import { useDimTitleBar } from '../hooks/useDimTitleBar';
 import type { SettingsGetRes } from '../../shared/ipc-schema';
 import type { SettingsPatchArgs } from '../../shared/todo-list-api';
 import {
@@ -19,7 +20,7 @@ import {
 } from '../../shared/ai-types';
 import { TagColorPicker, TAG_PALETTE } from './TagInput';
 
-type Category = 'general' | 'model' | 'data' | 'tags' | 'hotkeys' | 'about';
+type Category = 'general' | 'model' | 'data' | 'tags' | 'hotkeys' | 'reminder' | 'about';
 
 const CATEGORIES: { key: Category; label: string }[] = [
   { key: 'general', label: '通用' },
@@ -27,12 +28,16 @@ const CATEGORIES: { key: Category; label: string }[] = [
   { key: 'data', label: '数据' },
   { key: 'tags', label: '标签' },
   { key: 'hotkeys', label: '快捷键' },
+  { key: 'reminder', label: '提醒' },
   { key: 'about', label: '关于' },
 ];
 
 export const SettingsModal: React.FC<{ open: boolean; onClose: () => void }> = ({ open, onClose }) => {
   const [cat, setCat] = useState<Category>('model');
   const settings = useSettings();
+  // Dim the frameless titleBarOverlay (native min/max/close glyphs) while
+  // this modal covers the app — see useDimTitleBar for why an IPC is needed.
+  useDimTitleBar(open);
 
   useEffect(() => {
     if (!open) return;
@@ -86,6 +91,8 @@ export const SettingsModal: React.FC<{ open: boolean; onClose: () => void }> = (
               <TagsPane data={data} patch={patch} />
             ) : cat === 'hotkeys' ? (
               <HotkeysPane data={data} patch={patch} />
+            ) : cat === 'reminder' ? (
+              <ReminderPane data={data} patch={patch} />
             ) : (
               <AboutPane data={data} patch={patch} />
             )}
@@ -554,6 +561,36 @@ const TagsPane: React.FC<PaneProps> = ({ data, patch }) => {
           </div>
         </div>
       </Field>
+    </div>
+  );
+};
+
+/** 每日计划提醒面板 — 控制 `dailyPlanReminderTime`（HH:MM）。到点且今天
+ *  还没安排任何任务时，主进程会弹一次系统通知（参见
+ *  src/main/notification/plan-reminder.ts）。时间的修改立即生效：调度器读
+ *  settings.get() 在每次 tick 时拿最新值。 */
+const ReminderPane: React.FC<PaneProps> = ({ data, patch }) => {
+  // HTML time input expects `HH:MM`。空字符串 → 退回默认 09:00（与 store DEFAULTS 一致）。
+  const onTimeChange = (value: string): void => {
+    const v = value && /^\d{2}:\d{2}$/.test(value) ? value : '09:00';
+    void patch({ dailyPlanReminderTime: v });
+  };
+  return (
+    <div className="settings-pane">
+      <Field
+        label="每日提醒时间"
+        hint="到点时如果今天还没有安排任何任务，主进程会发送一次系统通知；点击通知会打开计划引导窗口。默认 09:00。"
+      >
+        <input
+          className="input mono"
+          type="time"
+          value={data.dailyPlanReminderTime ?? '09:00'}
+          onChange={(e) => onTimeChange(e.target.value)}
+        />
+      </Field>
+      <div className="muted" style={{ fontSize: 'var(--font-xs)', lineHeight: 1.6 }}>
+        「今日待办」区里的「改天再提醒」会把这个引导延后 24 小时；跳过或确认后当天不再询问。
+      </div>
     </div>
   );
 };

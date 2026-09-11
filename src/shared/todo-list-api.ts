@@ -38,6 +38,7 @@ export type AppEvent =
   | 'app:toggle-ai'
   | 'app:data-changed'
   | 'app:settings-changed'
+  | 'app:plan-guide'
   | 'ai:stream'
   | 'ai:permission-request'
   // L4-G: human-in-the-loop bridges for DSH user-questions + user-approval.
@@ -61,6 +62,11 @@ export interface AppEventMap {
   'app:toggle-ai': Record<string, never>;
   'app:data-changed': { scope: DataScope };
   'app:settings-changed': Record<string, never>;
+  /** Fired by the main-process reminder scheduler (and by `app.popupMenu`
+   *  "今天安排" items if any are added later) to open the in-app plan guide.
+   *  Payload currently empty — the renderer recomputes todayStart + candidates
+   *  on receipt, so a stale payload can never pin the user to yesterday. */
+  'app:plan-guide': Record<string, never>;
   'ai:stream': AIStreamEvent;
   'ai:permission-request': PermissionRequest;
   'ai:user-question-request': UserQuestionRequest;
@@ -103,6 +109,13 @@ export interface SettingsPatchArgs {
   customProviderId?: string | null;
   archiveAfterDays?: number;
   tags?: TagDef[];
+  /** Daily reminder time for the 「今日待办」 push, format `HH:MM` (24h). */
+  dailyPlanReminderTime?: string;
+  /** Last day the startup plan-guide was resolved (ISO `YYYY-MM-DD`,
+   *  local time). Written by the guide modal after a confirm/skip. */
+  lastPlanGuideDate?: string | null;
+  /** Epoch-ms until which the guide and scheduled reminder stay muted. */
+  snoozePlanGuideUntil?: number | null;
 }
 
 // --- TodoListApi ---
@@ -223,6 +236,9 @@ export interface TodoListApi {
     getFocus(): Promise<IpcResponse<'app.focus.get'>>;
     /** Open the task's on-disk documents directory in the OS file manager. */
     openTaskDir(todoId: string): Promise<IpcResponse<'app.openTaskDir'>>;
+    /** Dim / restore the frameless titleBarOverlay so the native min/max/close
+     *  glyphs blend with a modal backdrop. See ipc-schema.ts. */
+    setTitleBarOverlay(opts: { dim: boolean }): Promise<IpcResponse<'app.setTitleBarOverlay'>>;
   };
   capture: {
     submit(args: CaptureSubmitArgs): Promise<IpcResponse<'capture.submit'>>;

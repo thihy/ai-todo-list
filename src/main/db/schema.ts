@@ -7,7 +7,7 @@ const { ulid } = ulidPkg;
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 
-export const SCHEMA_VERSION = 12;
+export const SCHEMA_VERSION = 14;
 
 const MIGRATIONS: ReadonlyArray<{ version: number; sql: string }> = [
   {
@@ -492,6 +492,112 @@ const MIGRATIONS: ReadonlyArray<{ version: number; sql: string }> = [
     // so there's no external-content shadow-table churn.
     sql: `
       ALTER TABLE task_documents ADD COLUMN description TEXT;
+    `,
+  },
+  {
+    version: 13,
+    // "今日待办" stamp. A task may carry a `planned_for` value (the local
+    // date it's planned for, as `YYYY-MM-DD`, or null). The renderer's
+    // 双区域 view splits the list into 今日待办 (rows where planned_for
+    // equals today's local date) and 其他任务 (everything else); equality
+    // (not range) so yesterday's stamp naturally drops off tomorrow morning
+    // without any sweep. Indexed because the upper-section query "WHERE
+    // planned_for = todayKey" runs on every list render.
+    //
+    // Nullable ADD COLUMN is safe here for the same reasons as v9/v10/v12:
+    // the FTS triggers only touch title/body, and there's no self-UPDATE
+    // trigger that could interact with the external-content shadow tables.
+    //
+    // Originally introduced as an INTEGER (epoch ms of local 00:00) in
+    // v13; corrected to TEXT (local-date string) in v14 — see that
+    // migration's comment for the rationale.
+    sql: `
+      ALTER TABLE todos ADD COLUMN planned_for INTEGER;
+      CREATE INDEX idx_todos_planned_for ON todos(planned_for);
+    `,
+  },
+  {
+    version: 14,
+    // planned_for: INTEGER (epoch ms of local 00:00) → TEXT (local date
+    // 'YYYY-MM-DD'). Date strings are tz-stable (the value you wrote is the
+    // value you read, regardless of where the laptop wakes up later), and
+    // make SQL reads human-grokkable (`WHERE planned_for = '2026-09-11'`).
+    //
+    // SQLite can't ALTER COLUMN, so we copy rows into a new table, swap
+    // them, and rebuild the index. The conversion: for any non-null
+    // INTEGER value, format the corresponding local-date 'YYYY-MM-DD' using
+    // the stored epoch ms (interpreted in the SYSTEM's local timezone at
+    // upgrade time, which is the only sensible choice — the ms was originally
+    // computed as Date#setHours(0,0,0,0) in the user's local tz). Nulls
+    // stay null. Done in one transaction so a partial migration can never
+    // be observed.
+    sql: `
+      CREATE TABLE todos_new (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('next','doing','blocked','done','cancelled')),
+        priority TEXT NOT NULL CHECK (priority IN ('none','low','medium','high')),
+        project TEXT,
+        due_at INTEGER,
+        body_path TEXT NOT NULL,
+        body TEXT NOT NULL DEFAULT '',
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        done_at INTEGER,
+        parent_id TEXT,
+        archived_at INTEGER,
+        deleted_at INTEGER,
+        progress INTEGER NOT NULL DEFAULT 0,
+        planned_for TEXT,
+        FOREIGN KEY (parent_id) REFERENCES todos(id) ON DELETE SET NULL
+      );
+
+      INSERT INTO todos_new (id, title, status, priority, project, due_at, body_path, body,
+                             created_at, updated_at, done_at, parent_id, archived_at, deleted_at,
+                             progress, planned_for)
+      SELECT id, title, status, priority, project, due_at, body_path, body,
+             created_at, updated_at, done_at, parent_id, archived_at, deleted_at,
+             progress,
+             CASE
+               WHEN planned_for IS NULL THEN NULL
+               WHEN typeof(planned_for) = 'text' THEN planned_for
+               ELSE strftime('%Y-%m-%d', planned_for / 1000, 'unixepoch', 'localtime')
+             END
+      FROM todos;
+
+      -- Drop the FTS triggers BEFORE the content table — otherwise they
+      -- dangle and corrupt the external-content shadow tables on the
+      -- rebuild. Same pattern as the v8 migration.
+      DROP TRIGGER IF EXISTS todos_fts_insert;
+      DROP TRIGGER IF EXISTS todos_fts_delete;
+      DROP TRIGGER IF EXISTS todos_fts_update;
+
+      DROP TABLE todos;
+      ALTER TABLE todos_new RENAME TO todos;
+
+      -- v13's index has the same name but is implicitly dropped with the old
+      -- table; recreate it against the TEXT column.
+      CREATE INDEX idx_todos_planned_for ON todos(planned_for);
+
+      -- Recreate the FTS triggers against the rebuilt content table. The
+      -- external-content FTS5 table (todos_fts) is preserved across the
+      -- rebuild — its content='todos' binding re-resolves by name. We end
+      -- with a 'rebuild' so the shadow tables catch up to the new content.
+      CREATE TRIGGER todos_fts_insert AFTER INSERT ON todos BEGIN
+        INSERT INTO todos_fts(rowid, title, body) VALUES (new.rowid, new.title, new.body);
+      END;
+      CREATE TRIGGER todos_fts_delete AFTER DELETE ON todos BEGIN
+        INSERT INTO todos_fts(todos_fts, rowid, title, body)
+          VALUES('delete', old.rowid, old.title, old.body);
+      END;
+      CREATE TRIGGER todos_fts_update AFTER UPDATE ON todos BEGIN
+        INSERT INTO todos_fts(todos_fts, rowid, title, body)
+          VALUES('delete', old.rowid, old.title, old.body);
+        INSERT INTO todos_fts(rowid, title, body)
+          VALUES (new.rowid, new.title, new.body);
+      END;
+
+      INSERT INTO todos_fts(todos_fts) VALUES('rebuild');
     `,
   },
 ];

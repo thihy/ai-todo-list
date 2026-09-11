@@ -57,6 +57,16 @@ export interface Todo {
    *  change is appended to `progress_log` (with an optional one-line note)
    *  so the timeline is a complete audit — see ProgressLogEntry. */
   progress: number;
+  /** "今天要干的" stamp: the local-date 'YYYY-MM-DD' this task is planned
+   *  for, or null when not part of today's plan. Compared by exact equality
+   *  (not a range) so a task planned for yesterday naturally drops off the
+   *  今日待办 upper section on the next morning without any sweep — the
+   *  renderer compares against today's local-date string (the same format).
+   *  Date strings (not ms) keep the stamp tz-stable: the value you wrote is
+   *  the value you read regardless of where the laptop wakes up later.
+   *  Updated via todo.update({plannedFor}); the AI exposes it as
+   *  todo.planForToday + todo.unplan tools. */
+  plannedFor: string | null;
 }
 
 export interface TodoCreate {
@@ -68,6 +78,10 @@ export interface TodoCreate {
   tags?: string[];
   /** Parent todo id for SubTask creation; null/omitted = top-level. */
   parentId?: ULID | null;
+  /** Initial "今天要干的" stamp. Typically computed at the call site as
+   *  today's local-date 'YYYY-MM-DD' — pass the same value the renderer
+   *  reads back when matching the upper section. */
+  plannedFor?: string | null;
 }
 
 export interface TodoPatch {
@@ -88,6 +102,11 @@ export interface TodoPatch {
    *  audit timeline stays complete even for AI/batch mutations. For the
    *  user-facing "record progress with a note" path, prefer progress.log. */
   progress?: number;
+  /** Add/remove the task from today's plan. The renderer sets this to
+   *  today's local-date 'YYYY-MM-DD' to add, or null to remove. The
+   *  patch-map semantics are the same as archivedAt (undefined = no
+   *  change, null = clear). */
+  plannedFor?: string | null;
 }
 
 export interface TodoFilter {

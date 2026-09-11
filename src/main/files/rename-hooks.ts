@@ -114,7 +114,7 @@ function rewriteInboxPaths(
  *  the DB is authoritative and the file is a backup for file explorer + git. */
 export function writeTodoJson(
   taskDir: string,
-  todo: { id: string; title: string; status: string; priority: string; tags: string[]; project: string | null; dueAt: number | null; createdAt: number; updatedAt: number; doneAt: number | null },
+  todo: { id: string; title: string; status: string; priority: string; tags: string[]; project: string | null; dueAt: number | null; createdAt: number; updatedAt: number; doneAt: number | null; plannedFor: string | null },
 ): void {
   try {
     mkdirSync(taskDir, { recursive: true });

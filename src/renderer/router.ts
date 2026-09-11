@@ -15,8 +15,6 @@ export type Route =
 
 export type ListFilter =
   | { kind: 'all' }
-  | { kind: 'today' }
-  | { kind: 'next7' }
   | { kind: 'archived' }
   | { kind: 'deleted' }
   | { kind: 'project'; tag: string }
@@ -61,13 +59,14 @@ export function parseHash(hash: string): Route {
 
 function parseFilter(s: string): ListFilter {
   if (!s) return { kind: 'all' };
-  if (s === 'today') return { kind: 'today' };
-  if (s === 'next7') return { kind: 'next7' };
   if (s === 'archived') return { kind: 'archived' };
   if (s === 'deleted') return { kind: 'deleted' };
   if (s.startsWith('project/')) return { kind: 'project', tag: s.slice('project/'.length) };
   if (s.startsWith('status/')) return { kind: 'status', status: s.slice('status/'.length) };
   if (s.startsWith('priority/')) return { kind: 'priority', priority: s.slice('priority/'.length) };
+  // today / next7 used to be distinct filters; the double-section view
+  // (今日待办 / 其他任务) replaces them, so any stale URL falls back to
+  // the all view rather than 404-ing.
   return { kind: 'all' };
 }
 
@@ -98,10 +97,6 @@ function filterToPath(f: ListFilter): string {
   switch (f.kind) {
     case 'all':
       return '';
-    case 'today':
-      return 'today';
-    case 'next7':
-      return 'next7';
     case 'archived':
       return 'archived';
     case 'deleted':
@@ -112,6 +107,9 @@ function filterToPath(f: ListFilter): string {
       return `status/${f.status}`;
     case 'priority':
       return `priority/${f.priority}`;
+    default:
+      // Exhaustive — future filter kinds should land here.
+      return '';
   }
 }
 

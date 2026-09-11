@@ -1070,7 +1070,7 @@ function registerDomainTools(
 
   reg(defineTool({
     name: 'todo.create',
-    description: 'Create a new TODO. Returns the created item including its generated id. Markdown body starts empty — use content.writeBody to add notes/progress later. Pass parentId to create as a subtask of an existing TODO (e.g. "把这个任务拆成三个子任务").',
+    description: 'Create a new TODO. Returns the created item including its generated id. Markdown body starts empty — use content.writeBody to add notes/progress later. Pass parentId to create as a subtask of an existing TODO (e.g. "把这个任务拆成三个子任务"). Pass plannedFor (today\'s local date, \'YYYY-MM-DD\') to stamp a task for the today view. Only call planForToday when the user EXPLICITLY says "今天做 X" / "加到今天"; do not stamp new tasks as today\'s by default.',
     parameters: {
       title: { type: 'string', required: true, description: 'TODO title (required)' },
       status: { type: 'string', description: 'next | doing | done | cancelled | blocked (default next)' },
@@ -1079,9 +1079,10 @@ function registerDomainTools(
       dueAt: { type: 'number', description: 'Due date as unix ms; null/omitted means no due date' },
       tags: { type: 'string', description: 'JSON array of tag strings (e.g. \'["urgent","design"]\')' },
       parentId: { type: 'string', description: 'Parent TODO id to create as a subtask; null/omitted means top-level. Use subtasks.list on the parent to see existing children before adding more. Cycles are rejected — you cannot nest a task under one of its own descendants.' },
+      plannedFor: { type: 'string', description: 'Stamp the task for the today view. Pass today\'s local date as \'YYYY-MM-DD\' (e.g. compute via `new Date().toLocaleDateString(\'en-CA\')`). Omit/null to leave unplanned. Only set when the user explicitly asks for it.' },
     },
     output: jsonOutput,
-    async execute(args: { title: string; status?: string; priority?: string; project?: string; dueAt?: number; tags?: string; parentId?: string }) {
+    async execute(args: { title: string; status?: string; priority?: string; project?: string; dueAt?: number; tags?: string; parentId?: string; plannedFor?: string | null }) {
       const input: TodoCreate = { title: args.title };
       if (args.status && (TODO_STATUSES as readonly string[]).includes(args.status)) input.status = args.status as TodoStatus;
       if (args.priority && (PRIORITIES as readonly string[]).includes(args.priority)) input.priority = args.priority as Priority;
@@ -1094,6 +1095,7 @@ function registerDomainTools(
         } catch { /* swallow malformed tag list */ }
       }
       if (args.parentId !== undefined) input.parentId = args.parentId || null;
+      if (args.plannedFor !== undefined) input.plannedFor = args.plannedFor;
       const todo = repo.create(input, md.filePathFor('placeholder' as never));
       md.writeBody(todo.id as never, '');
       return repo.get(todo.id as never);
@@ -1142,6 +1144,32 @@ function registerDomainTools(
     output: jsonOutput,
     async execute(args: { parentId: string }) {
       return repo.list({ parentId: args.parentId } as never);
+    },
+  }));
+
+  reg(defineTool({
+    name: 'todo.planForToday',
+    description: 'Stamp an existing TODO for the today view. Pass todayKey = today\'s local date as \'YYYY-MM-DD\' (e.g. compute via `new Date().toLocaleDateString(\'en-CA\')` — the same value the renderer reads back when matching the upper section). Yesterday\'s stamp naturally drops off tomorrow morning without any sweep. Only call when the user EXPLICITLY says "今天做 X" / "加到今天" / "把 X 加到今日"; do not bulk-stamp. Returns the updated TODO. No-op (returns the existing row) when the task is already planned for that day.',
+    parameters: {
+      id: { type: 'string', required: true, description: 'TODO id to stamp for today' },
+      todayKey: { type: 'string', required: true, description: 'Today\'s local date \'YYYY-MM-DD\'. Must match the renderer\'s equality check exactly.' },
+    },
+    output: jsonOutput,
+    async execute(args: { id: string; todayKey: string }) {
+      if (typeof args.todayKey !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(args.todayKey)) {
+        throw new Error('todo.planForToday: todayKey must be a string \'YYYY-MM-DD\'');
+      }
+      return repo.update(args.id, { plannedFor: args.todayKey });
+    },
+  }));
+
+  reg(defineTool({
+    name: 'todo.unplan',
+    description: 'Remove an existing TODO from the today view (clears plannedFor). Idempotent: no-op when the task was not planned. Returns the updated TODO.',
+    parameters: { id: { type: 'string', required: true, description: 'TODO id to remove from today\'s plan' } },
+    output: jsonOutput,
+    async execute(args: { id: string }) {
+      return repo.update(args.id, { plannedFor: null });
     },
   }));
 

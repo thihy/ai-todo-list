@@ -61,6 +61,7 @@ export function registerTodoHandlers(
         createdAt: fresh.createdAt,
         updatedAt: fresh.updatedAt,
         doneAt: fresh.doneAt,
+        plannedFor: fresh.plannedFor,
       });
       broadcastDataChanged('todos');
       return Promise.resolve(okResult({ id: todo.id, todo: fresh }));
@@ -106,6 +107,7 @@ export function registerTodoHandlers(
           createdAt: updated.createdAt,
           updatedAt: updated.updatedAt,
           doneAt: updated.doneAt,
+          plannedFor: updated.plannedFor,
         });
       } else if (before) {
         // Title didn't change but other fields might have — keep the JSON
@@ -122,6 +124,7 @@ export function registerTodoHandlers(
           createdAt: updated.createdAt,
           updatedAt: updated.updatedAt,
           doneAt: updated.doneAt,
+          plannedFor: updated.plannedFor,
         });
       }
 

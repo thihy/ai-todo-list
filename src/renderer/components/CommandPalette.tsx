@@ -24,8 +24,9 @@ export const CommandPaletteHost: React.FC<{
     () => [
       { label: '新建 TODO', run: () => onCompose() },
       { label: '未完成', run: () => navigate('#/list/status/next') },
-      { label: '今天', run: () => navigate('#/list/today') },
-      { label: '未来 7 天', run: () => navigate('#/list/next7') },
+      // 今天 / 未来 7 天 的导航被新的"今日待办 / 其他任务"双区视图替代：
+      // 进入默认列表 (kind=all) 即可看到今日 + 全部。
+      { label: '全部 TODO', run: () => navigate('#/') },
       { label: '统计', run: () => navigate('#/stats') },
       { label: '设置', run: () => navigate('#/settings') },
       { label: 'AI 助手', run: () => navigate('#/ai') },

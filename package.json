@@ -1,6 +1,6 @@
 {
   "name": "todo-list",
-  "version": "1.0.0-rc1",
+  "version": "1.0.0-rc2",
   "private": true,
   "description": "AI-native Electron TODO list with Markdown content and Excalidraw drawings, built on DeepSeek Harness (DSH)",
   "appId": "com.todolist.app",

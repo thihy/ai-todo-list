@@ -139,6 +139,7 @@ const api: TodoListApi = {
     setFocus: (focus) => invoke('app.focus.set', { focus }),
     getFocus: () => invoke('app.focus.get', undefined as never),
     openTaskDir: (todoId) => invoke('app.openTaskDir', { todoId }),
+    setTitleBarOverlay: (opts: { dim: boolean }) => invoke('app.setTitleBarOverlay', opts),
   },
   capture: {
     submit: (args: CaptureSubmitArgs) => invoke('capture.submit', args),

@@ -18,7 +18,7 @@
 //   - Hover a row to reveal a trash button for quick delete; Delete key on
 //     a focused row does the same.
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTodos } from '../hooks/useTodoListApi';
 import type { ListFilter, SortKey } from '../router';
 import { ToastHost } from '../components/Toast';
@@ -27,6 +27,7 @@ import type { Todo, TodoStatus, ULID } from '../../shared/todo-types';
 import { UserMenu } from '../components/UserMenu';
 import { StatusSelect } from '../components/StatusSelect';
 import { IconCalendar, IconDrawing, IconInboxEmpty, IconTrash } from '../components/icons';
+import { todayDateKey } from '../components/PlanGuideModal';
 
 export const TodoListPane: React.FC<{
   width: number;
@@ -74,19 +75,21 @@ export const TodoListPane: React.FC<{
     setExpandMap(next);
   }, [branchIds]);
 
-  // A subtask created from the detail pane's 子任务 section dispatches
-  // SUBTASK_CREATED_EVENT so the tree expands the parent row — otherwise a
-  // parent the user had collapsed would silently swallow the freshly-created
-  // child. Detail: { id: parentId }.
-  useEffect(() => {
-    const onExpandParent = (e: Event): void => {
-      const detail = (e as CustomEvent).detail as { id?: string } | null;
-      if (!detail?.id) return;
-      setExpandMap((prev) => ({ ...prev, [detail.id as string]: true }));
-    };
-    window.addEventListener('todo-list:expand-parent', onExpandParent as EventListener);
-    return () => window.removeEventListener('todo-list:expand-parent', onExpandParent as EventListener);
-  }, []);
+  // 创建子任务的入口已迁移到任务列表行尾（hover 行尾的 + 按钮）。这里聚合
+  // IPC 调用、强制展开父节点、刷新列表 —— 把"创建后的可见性"问题一次性
+  // 在顶层解决，避免每个 TaskBranch 自己持有 expandMap 的引用。
+  const onCreateSubtask = useCallback(
+    async (parentId: string, title: string): Promise<boolean> => {
+      const res = await window.todoList.todo.create({ parentId, title });
+      if (!res.ok) return false;
+      // 父节点可能处于折叠态；强制展开以展示新子任务，否则用户连"创建成功"
+      // 都看不到。refresh 重新拉 data，children ul 同步出现。
+      setExpandMap((prev) => ({ ...prev, [parentId]: true }));
+      await refresh();
+      return true;
+    },
+    [refresh],
+  );
 
   // In the 归档 view the per-row hover button restores (un-archives) instead
   // of deleting. Restore = clear archived_at; the task drops back into the
@@ -123,6 +126,29 @@ export const TodoListPane: React.FC<{
     }
   }, [refresh, data, toastBus]);
 
+  // —— 今日待办: plan / unplan ——
+  // 加进今日：写入 plannedFor = 今天的本地日期串 'YYYY-MM-DD'（tz 稳定，
+  // 不依赖 startOfToday 的 ms；跨午夜后旧 stamp 自然不匹配今天）。
+  // 从今日剔除：显式 null。两者都走 todo.update 通道，触发
+  // broadcastDataChanged，列表 + 详情双向刷新。
+  const todayKey = useMemo(() => todayDateKey(), []);
+  const onPlanToday = useCallback(
+    async (id: string): Promise<void> => {
+      await window.todoList.todo.update(id, { plannedFor: todayKey });
+      await refresh();
+      toastBus.push({ kind: 'success', message: '已加入今日', ttl: 1500 });
+    },
+    [todayKey, refresh, toastBus],
+  );
+  const onUnplan = useCallback(
+    async (id: string): Promise<void> => {
+      await window.todoList.todo.update(id, { plannedFor: null });
+      await refresh();
+      toastBus.push({ kind: 'success', message: '已从今日剔除', ttl: 1500 });
+    },
+    [refresh, toastBus],
+  );
+
   // Root tasks: top-level (no parentId). SubTasks nest under their parent
   // via TaskBranch, so the root list is just the parentId === null set.
   // The repo orders by updated_at DESC, but the user-facing sort (字母顺序
@@ -131,6 +157,48 @@ export const TodoListPane: React.FC<{
   const rootTasks = useMemo(
     () => sortTodos(data.filter((t) => !t.parentId), sort),
     [data, sort],
+  );
+  // —— 今日待办 上半区的派生 ——
+  // plannedFor 等于今天日期的任务 = 今日叶子；其祖先链（直系 parentId 向上）
+  // 必须全部出现在上半区，下半区里同样的祖先节点会再次出现（key 冲突仅在同一
+  // <ul> 下发生，两块 <ul> 是独立的）。兄弟任务（同一父下未被安排的子任务）
+  // 被折叠到 peer-collapse chip，点击展开。
+  const plannedSet = useMemo(() => {
+    const set = new Set<string>();
+    for (const t of data) if (t.plannedFor === todayKey) set.add(t.id);
+    return set;
+  }, [data, todayKey]);
+  const byId = useMemo(() => {
+    const m = new Map<string, Todo>();
+    for (const t of data) m.set(t.id, t);
+    return m;
+  }, [data]);
+  const shownSet = useMemo(() => {
+    if (plannedSet.size === 0) return new Set<string>();
+    const set = new Set<string>(plannedSet);
+    for (const id of plannedSet) {
+      let cur = byId.get(id);
+      while (cur?.parentId) {
+        set.add(cur.parentId);
+        cur = byId.get(cur.parentId);
+      }
+    }
+    return set;
+  }, [plannedSet, byId]);
+  // 兄弟折叠态 —— 不复用 expandMap（控制"全部子任务可见"），独立 useState。
+  // Key = parent id, value = 折叠/展开。仅当对应父下有未计划兄弟时才有意义。
+  const [peerCollapseMap, setPeerCollapseMap] = useState<Record<string, boolean>>({});
+  const getPeerExpanded = useCallback(
+    (id: string) => peerCollapseMap[id] ?? false, // 默认折叠
+    [peerCollapseMap],
+  );
+  const togglePeerExpanded = useCallback((id: string) => {
+    setPeerCollapseMap((prev) => ({ ...prev, [id]: !(prev[id] ?? false) }));
+  }, []);
+  // 上半区要展示的根任务 = shownSet 里 parentId === null 的任务，按 sort 排序。
+  const plannedRoots = useMemo(
+    () => (shownSet.size === 0 ? [] : sortTodos(data.filter((t) => !t.parentId && shownSet.has(t.id)), sort)),
+    [data, shownSet, sort],
   );
   // 已删除 view: deletion-roots = deleted tasks whose parent is NOT itself
   // deleted (or has no parent). Because delete() cascades to the subtree, a
@@ -205,30 +273,83 @@ export const TodoListPane: React.FC<{
               </ul>
             )
           ) : (
-            rootTasks.length > 0 && (
-              <ul className="task-list__root-tasks">
-                {rootTasks.map((t) => (
-                  <TaskBranch
-                    key={t.id}
-                    todo={t}
-                    depth={0}
-                    selectedId={selectedId}
-                    onSelect={onSelect}
-                    allTodos={data}
-                    sort={sort}
-                    getExpanded={getExpanded}
-                    toggleExpanded={toggleExpanded}
-                    archivedView={archivedView}
-                    onCycle={async (next) => {
-                      await window.todoList.todo.update(t.id, { status: next });
-                      await refresh();
-                    }}
-                    onDelete={onDelete}
-                    onRestore={onRestore}
-                  />
-                ))}
-              </ul>
-            )
+            <>
+              {/* === 上半区：今日待办 === */}
+              {/* 只有 active 列表才显示今日区；归档视图只显示归档行。 */}
+              {!archivedView && plannedRoots.length > 0 && (
+                <section className="planned-section" aria-label="今日待办">
+                  <header className="planned-section__header">
+                    <h2 className="planned-section__title">今日待办</h2>
+                    <span className="planned-section__count">{plannedSet.size}</span>
+                  </header>
+                  <ul className="planned-section__list">
+                    {plannedRoots.map((t) => (
+                      <PlannedBranch
+                        key={`planned-${t.id}`}
+                        todo={t}
+                        depth={0}
+                        selectedId={selectedId}
+                        onSelect={onSelect}
+                        allTodos={data}
+                        sort={sort}
+                        getExpanded={getExpanded}
+                        toggleExpanded={toggleExpanded}
+                        todayKey={todayKey}
+                        shownSet={shownSet}
+                        getPeerExpanded={getPeerExpanded}
+                        togglePeerExpanded={togglePeerExpanded}
+                        onCycle={async (next) => {
+                          await window.todoList.todo.update(t.id, { status: next });
+                          await refresh();
+                        }}
+                        onDelete={onDelete}
+                        onUnplan={onUnplan}
+                        onCreateSubtask={onCreateSubtask}
+                      />
+                    ))}
+                  </ul>
+                </section>
+              )}
+
+              {/* === 下半区：全部任务 === */}
+              {/* 下半区展示完整任务树，已被安排到今日的子任务在该任务行有今日图标
+                  标识（不影响任务本身是否还"完整"出现在下半区 —— 用户可以从下半区
+                  直接看到所有任务，再叠加判断哪些今天要做）。 */}
+              {rootTasks.length > 0 && (
+                <section className="other-section" aria-label="全部任务">
+                  <header className="other-section__header">
+                    <h2 className="other-section__title">{archivedView ? '归档' : '全部任务'}</h2>
+                    <span className="other-section__count">{rootTasks.length}</span>
+                  </header>
+                  <ul className="other-section__list task-list__root-tasks">
+                    {rootTasks.map((t) => (
+                      <TaskBranch
+                        key={`other-${t.id}`}
+                        todo={t}
+                        depth={0}
+                        selectedId={selectedId}
+                        onSelect={onSelect}
+                        allTodos={data}
+                        sort={sort}
+                        getExpanded={getExpanded}
+                        toggleExpanded={toggleExpanded}
+                        archivedView={archivedView}
+                        todayKey={todayKey}
+                        shownSet={shownSet}
+                        onCycle={async (next) => {
+                          await window.todoList.todo.update(t.id, { status: next });
+                          await refresh();
+                        }}
+                        onDelete={onDelete}
+                        onRestore={onRestore}
+                        onCreateSubtask={onCreateSubtask}
+                        onPlanToday={onPlanToday}
+                      />
+                    ))}
+                  </ul>
+                </section>
+              )}
+            </>
           )}
         </>
       </div>
@@ -324,14 +445,62 @@ const TaskBranch: React.FC<{
   getExpanded: (id: string) => boolean;
   toggleExpanded: (id: string) => void;
   archivedView: boolean;
+  /** startOfToday() — 传给 TaskRow 用于判断行内是否展示今日图标 */
+  todayKey: string;
+  /** 上半区节点集合（今日叶子 + 祖先链）；用于祖先任务行内强制展示今日图标 */
+  shownSet: Set<string>;
   onCycle: (next: TodoStatus) => Promise<void>;
   onDelete: (id: string) => void;
   onRestore: (id: string) => void;
-}> = ({ todo, depth, selectedId, onSelect, allTodos, sort, getExpanded, toggleExpanded, archivedView, onCycle, onDelete, onRestore }) => {
+  /** 创建子任务 —— 返回 true 表示 IPC 成功，调用方已展开父节点 + refresh。
+   *  返回 false 表示失败，SubtaskCreateRow 保留 draft 并展示 is-error。 */
+  onCreateSubtask: (parentId: string, title: string) => Promise<boolean>;
+  /** 下半区行尾 "+ 今日" 按钮（仅下半区 TaskBranch 传；上半区 PlannedBranch 不传） */
+  onPlanToday?: (id: string) => Promise<void>;
+}> = ({ todo, depth, selectedId, onSelect, allTodos, sort, getExpanded, toggleExpanded, archivedView, todayKey, shownSet, onCycle, onDelete, onRestore, onCreateSubtask, onPlanToday }) => {
   const children = subtasksOf(allTodos, todo.id, sort);
   const hasSubtasks = children.length > 0;
   const doneCount = hasSubtasks ? children.filter((c) => c.status === 'done').length : 0;
   const expanded = getExpanded(todo.id);
+
+  // —— Inline "add subtask" UI state ——
+  // 提升到 TaskBranch：(a) 叶子任务也要能创建子任务，没有 children ul 可挂；
+  // (b) creating 时让 TaskRow 知道当前是"展开状态"，CSS 把 + 按钮常驻。
+  // (c) 创建后需要保留 creating=true + 清空 draft 让用户连续创建。
+  const [creating, setCreating] = useState(false);
+  const [draft, setDraft] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const handleAddClick = useCallback(() => {
+    setCreating(true);
+    // 如果父节点已经有 children 但被折叠，先展开让 input 行可见。
+    if (hasSubtasks && !expanded) toggleExpanded(todo.id);
+  }, [hasSubtasks, expanded, toggleExpanded, todo.id]);
+
+  const handleSubmit = useCallback(async (): Promise<boolean> => {
+    const title = draft.trim();
+    if (!title) {
+      // 空标题：保留 draft，让 SubtaskCreateRow 闪一下 is-error。
+      return false;
+    }
+    if (busy) return false;
+    setBusy(true);
+    try {
+      const ok = await onCreateSubtask(todo.id, title);
+      if (ok) {
+        setDraft('');
+        // creating 保持 true：input 节点不卸载，焦点自然保留，连续创建无感。
+      }
+      return ok;
+    } finally {
+      setBusy(false);
+    }
+  }, [draft, busy, todo.id, onCreateSubtask]);
+
+  const handleCancel = useCallback(() => {
+    setCreating(false);
+    setDraft('');
+  }, []);
 
   return (
     <>
@@ -347,9 +516,24 @@ const TaskBranch: React.FC<{
         subtasksExpanded={expanded}
         onToggleSubtasks={() => toggleExpanded(todo.id)}
         archivedView={archivedView}
+        creating={creating}
+        onAddSubtask={archivedView ? undefined : handleAddClick}
         onDelete={() => onDelete(todo.id)}
         onRestore={() => onRestore(todo.id)}
+        todayKey={todayKey}
+        showPlannedIcon={shownSet.has(todo.id)}
+        onPlanToday={onPlanToday ? () => onPlanToday(todo.id) : undefined}
       />
+      {!archivedView && creating && (
+        <SubtaskCreateRow
+          depth={depth}
+          draft={draft}
+          busy={busy}
+          onChange={setDraft}
+          onSubmit={handleSubmit}
+          onCancel={handleCancel}
+        />
+      )}
       {hasSubtasks && expanded && (
         <ul className="task-branch__children">
           {children.map((c) => (
@@ -364,14 +548,176 @@ const TaskBranch: React.FC<{
               getExpanded={getExpanded}
               toggleExpanded={toggleExpanded}
               archivedView={archivedView}
+              todayKey={todayKey}
+              shownSet={shownSet}
               onCycle={async (next) => {
                 await window.todoList.todo.update(c.id, { status: next });
               }}
               onDelete={onDelete}
               onRestore={onRestore}
+              onCreateSubtask={onCreateSubtask}
+              onPlanToday={onPlanToday}
             />
           ))}
         </ul>
+      )}
+    </>
+  );
+};
+
+/** PlannedBranch —— 今日待办上半区的递归组件。
+ *
+ *  与 TaskBranch 不同：
+ *  - children 列表被切两半：shownChildren（已在今日）渲染成正常 TaskBranch，
+ *    peerChildren（兄弟里未计划）渲染成 chip。chip 折叠态来自 getPeerExpanded。
+ *  - 行尾剔除按钮：仅"本行自身 plannedFor === todayKey"时显示（祖先行不显示，
+ *    因为祖先没有 plannedFor —— 它只是因为子被安排了才出现在这里）。
+ *  - 不显示"添加子任务"按钮（planning 是上下文行为，不是行内微交互；
+ *    用户从下半区添加子任务会更自然）。
+ */
+const PlannedBranch: React.FC<{
+  todo: Todo;
+  depth: number;
+  selectedId: string | null;
+  onSelect: (id: string) => void;
+  allTodos: Todo[];
+  sort: SortKey;
+  getExpanded: (id: string) => boolean;
+  toggleExpanded: (id: string) => void;
+  todayKey: string;
+  shownSet: Set<string>;
+  getPeerExpanded: (id: string) => boolean;
+  togglePeerExpanded: (id: string) => void;
+  onCycle: (next: TodoStatus) => Promise<void>;
+  onDelete: (id: string) => void;
+  onUnplan: (id: string) => Promise<void>;
+  onCreateSubtask: (parentId: string, title: string) => Promise<boolean>;
+}> = ({ todo, depth, selectedId, onSelect, allTodos, sort, getExpanded, toggleExpanded, todayKey, shownSet, getPeerExpanded, togglePeerExpanded, onCycle, onDelete, onUnplan, onCreateSubtask }) => {
+  const children = subtasksOf(allTodos, todo.id, sort);
+  const shownChildren = children.filter((c) => shownSet.has(c.id));
+  const peerChildren = children.filter((c) => !shownSet.has(c.id));
+  const hasShownChildren = shownChildren.length > 0;
+  const hasPeerChildren = peerChildren.length > 0;
+  const isSelfPlanned = todo.plannedFor === todayKey;
+
+  // 展开/折叠：祖先任务强制展开（让今日叶子可见）；叶子任务 hasShownChildren 永远 false。
+  // 如果任务只有"自身被安排"且没有 shown children，整个行就是叶子，不需要 children ul。
+  const expanded = getExpanded(todo.id);
+  const shouldShowChildren = isSelfPlanned || expanded || hasShownChildren;
+
+  // 仅自身今日 = 可剔除；否则仅作为祖先展示。
+  return (
+    <>
+      <TaskRow
+        todo={todo}
+        depth={depth}
+        active={todo.id === selectedId}
+        onSelect={onSelect}
+        onCycle={onCycle}
+        hasSubtasks={hasShownChildren || hasPeerChildren}
+        subtaskCount={children.length}
+        subtaskDoneCount={children.filter((c) => c.status === 'done').length}
+        subtasksExpanded={expanded}
+        onToggleSubtasks={() => toggleExpanded(todo.id)}
+        archivedView={false}
+        creating={false}
+        onAddSubtask={undefined}
+        onDelete={() => onDelete(todo.id)}
+        onRestore={() => { /* never used in planned section */ }}
+        todayKey={todayKey}
+        showPlannedIcon={shownSet.has(todo.id)}
+        onPlanToday={undefined}
+      />
+      {/* 兄弟折叠 chip —— 显示在已展示子任务之后，避免与 children ul 抢占缩进。 */}
+      {hasPeerChildren && (
+        <li
+          className="task-row task-row__peer-chip-row"
+          style={{ '--row-depth': depth + 1 } as React.CSSProperties}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button
+            type="button"
+            className="task-row__peer-chip"
+            aria-expanded={getPeerExpanded(todo.id)}
+            onClick={() => togglePeerExpanded(todo.id)}
+            title={getPeerExpanded(todo.id) ? '折叠兄弟任务' : `展开 ${peerChildren.length} 个未计划任务`}
+          >
+            <ChevronGlyph open={getPeerExpanded(todo.id)} />
+            {peerChildren.length} 个任务
+          </button>
+        </li>
+      )}
+      {getPeerExpanded(todo.id) && peerChildren.length > 0 && (
+        <ul className="task-branch__children task-branch__children--peers">
+          {peerChildren.map((c) => (
+            <TaskBranch
+              key={`peer-${c.id}`}
+              todo={c}
+              depth={depth + 1}
+              selectedId={selectedId}
+              onSelect={onSelect}
+              allTodos={allTodos}
+              sort={sort}
+              getExpanded={getExpanded}
+              toggleExpanded={toggleExpanded}
+              archivedView={false}
+              todayKey={todayKey}
+              shownSet={shownSet}
+              onCycle={async (next) => {
+                await window.todoList.todo.update(c.id, { status: next });
+              }}
+              onDelete={onDelete}
+              onRestore={() => { /* unused */ }}
+              onCreateSubtask={onCreateSubtask}
+              onPlanToday={async () => { await window.todoList.todo.update(c.id, { plannedFor: todayKey }); }}
+            />
+          ))}
+        </ul>
+      )}
+      {shouldShowChildren && hasShownChildren && (
+        <ul className="task-branch__children task-branch__children--planned">
+          {shownChildren.map((c) => (
+            <PlannedBranch
+              key={`planned-${c.id}`}
+              todo={c}
+              depth={depth + 1}
+              selectedId={selectedId}
+              onSelect={onSelect}
+              allTodos={allTodos}
+              sort={sort}
+              getExpanded={getExpanded}
+              toggleExpanded={toggleExpanded}
+              todayKey={todayKey}
+              shownSet={shownSet}
+              getPeerExpanded={getPeerExpanded}
+              togglePeerExpanded={togglePeerExpanded}
+              onCycle={async (next) => {
+                await window.todoList.todo.update(c.id, { status: next });
+              }}
+              onDelete={onDelete}
+              onUnplan={onUnplan}
+              onCreateSubtask={onCreateSubtask}
+            />
+          ))}
+        </ul>
+      )}
+      {/* 自身被安排的叶子行 —— 行尾"剔除"按钮，仅作为视觉提示；点击同样触发 onUnplan。 */}
+      {isSelfPlanned && !hasShownChildren && !hasPeerChildren && (
+        <li
+          className="task-row task-row__unplan-row"
+          style={{ '--row-depth': depth + 1 } as React.CSSProperties}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button
+            type="button"
+            className="task-row__unplan-btn"
+            aria-label="从今日剔除"
+            title="从今日剔除"
+            onClick={() => { void onUnplan(todo.id); }}
+          >
+            <SubtaskCancelGlyph /> 从今日剔除
+          </button>
+        </li>
       )}
     </>
   );
@@ -391,18 +737,32 @@ const TaskRow: React.FC<{
   archivedView: boolean;
   onDelete: () => void;
   onRestore: () => void;
-}> = ({ todo, depth, active, onSelect, onCycle, hasSubtasks, subtaskCount, subtaskDoneCount, subtasksExpanded, onToggleSubtasks, archivedView, onDelete, onRestore }) => {
+  /** true 表示该行下方的"添加子任务"输入行已经展开，CSS 把 + 按钮常驻可见 */
+  creating?: boolean;
+  /** 非空时行尾 hover 出现 + 按钮；undefined = 当前行不支持创建（归档视图） */
+  onAddSubtask?: () => void;
+  /** startOfToday() —— 用于判断本行是否今日；上半区祖先任务行强制显示图标 */
+  todayKey: string;
+  /** 上半区节点（或下半区祖先已被展示）传 true，行内强制显示今日图标 */
+  showPlannedIcon: boolean;
+  /** 下半区行尾 hover 时显示的 "+ 今日" 按钮；undefined = 上半区 */
+  onPlanToday?: () => void;
+}> = ({ todo, depth, active, onSelect, onCycle, hasSubtasks, subtaskCount, subtaskDoneCount, subtasksExpanded, onToggleSubtasks, archivedView, onDelete, onRestore, creating, onAddSubtask, todayKey, showPlannedIcon, onPlanToday }) => {
   const st = todo.status;
   // Terminal/voided states recede (icon mutes, title strikes); blocked is still
   // active but flagged. Each off-default status gets its own row class so the
   // list reads at a glance: done = cleared, cancelled = voided, blocked = needs attention.
   const recede = st === 'done' || st === 'cancelled';
   const statusCls = st === 'done' ? ' is-done' : st === 'cancelled' ? ' is-cancelled' : st === 'blocked' ? ' is-blocked' : '';
+  const creatingCls = creating ? ' is-creating-subtask' : '';
+  // 今日图标：本行自身 plannedFor === todayKey 或 showPlannedIcon（来自上半区）
+  const isPlanned = todo.plannedFor === todayKey || showPlannedIcon;
+  const plannedCls = isPlanned ? ' is-planned' : '';
   return (
     <li
       role="button"
       tabIndex={0}
-      className={`task-row${active ? ' is-active' : ''}${statusCls}`}
+      className={`task-row${active ? ' is-active' : ''}${statusCls}${creatingCls}${plannedCls}`}
       style={{ '--row-depth': depth } as React.CSSProperties}
       onClick={() => onSelect(todo.id)}
       onDoubleClick={(e) => {
@@ -432,6 +792,17 @@ const TaskRow: React.FC<{
             {hasSubtasks ? <TaskBranchGlyph open={subtasksExpanded} done={recede} /> : <TaskGlyph done={recede} />}
           </span>
           <span className="task-row__title">{todo.title || '(无标题)'}</span>
+          {/* 今日图标 —— 行内强提示"该任务今天要做"。
+              本行自身已安排 → 蓝色圆点；上半区祖先（showPlannedIcon）→ 半透明提示。 */}
+          {isPlanned && (
+            <span
+              className={`task-row__planned-icon${todo.plannedFor === todayKey ? ' is-self' : ' is-ancestor'}`}
+              title={todo.plannedFor === todayKey ? '今日待办' : '包含今日子任务'}
+              aria-label={todo.plannedFor === todayKey ? '今日待办' : '包含今日子任务'}
+            >
+              <TodayGlyph />
+            </span>
+          )}
           {/* SubTask collapse/expand chevron — sits right AFTER the title
               (before the status dot) so it reads "name ▸ status". Only
               rendered when this task actually has subtasks. */}
@@ -450,38 +821,159 @@ const TaskRow: React.FC<{
               <ChevronGlyph open={subtasksExpanded} />
             </button>
           )}
+          {/* 状态选择器推到行尾，margin-left:auto 让标题左侧不被挤。 */}
           <StatusSelect status={todo.status} onChange={onCycle} variant="icon" />
-          {/* Per-row action — revealed on hover. In the active list it's
-              quick delete; in the 归档 view it's restore (un-archive). */}
-          {archivedView ? (
-            <button
-              type="button"
-              className="task-row__action task-row__restore"
-              aria-label="恢复任务"
-              title="恢复（移回归档前）"
-              onClick={(e) => {
-                e.stopPropagation();
-                onRestore();
-              }}
-            >
-              <RestoreGlyph />
-            </button>
-          ) : (
-            <button
-              type="button"
-              className="task-row__action task-row__delete"
-              aria-label="删除任务"
-              title="删除"
-              onClick={(e) => {
-                e.stopPropagation();
-                onDelete();
-              }}
-            >
-              <TrashGlyph />
-            </button>
-          )}
         </div>
+        {/* 第二行：行尾动作区（hover-reveal 取消 → 平时保持淡灰常驻，hover
+            才高亮）。让状态选择器在第一行能稳稳右对齐，不受 hover 影响。 */}
+        {(onPlanToday || onAddSubtask || true) && (
+          <div className="task-row__actions">
+            {/* 下半区行尾的 "+ 今日" 按钮 —— 仅下半区（onPlanToday 存在） */}
+            {onPlanToday && !archivedView && (
+              <button
+                type="button"
+                className="task-row__action task-row__plan-btn"
+                aria-label="加入今日"
+                title="加入今日"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  void onPlanToday();
+                }}
+              >
+                <TodayGlyph muted />
+                <span className="task-row__action-label">加入今日</span>
+              </button>
+            )}
+            {/* + 子任务：创建时（creating=true）常驻可见作为视觉锚点。archivedView 不显示。 */}
+            {onAddSubtask && (
+              <button
+                type="button"
+                className="task-row__action task-row__add-subtask"
+                aria-label="添加子任务"
+                title="添加子任务"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onAddSubtask();
+                }}
+              >
+                <PlusGlyph />
+                <span className="task-row__action-label">子任务</span>
+              </button>
+            )}
+            {/* Per-row action — 在 active 列表是 quick delete；归档视图是 restore。 */}
+            {archivedView ? (
+              <button
+                type="button"
+                className="task-row__action task-row__restore"
+                aria-label="恢复任务"
+                title="恢复（移回归档前）"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onRestore();
+                }}
+              >
+                <RestoreGlyph />
+                <span className="task-row__action-label">恢复</span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="task-row__action task-row__delete"
+                aria-label="删除任务"
+                title="删除"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onDelete();
+                }}
+              >
+                <TrashGlyph />
+                <span className="task-row__action-label">删除</span>
+              </button>
+            )}
+          </div>
+        )}
         <Subtitle todo={todo} subtaskCount={subtaskCount} subtaskDoneCount={subtaskDoneCount} />
+      </div>
+    </li>
+  );
+};
+
+/** 行内"添加子任务"输入行 — 渲染成 <li> 与 TaskRow 视觉对齐，深度 +1 与未来
+ *  子任务同级。draft/busy 由父级 TaskBranch 持有，本组件只渲染 UI + 转抛事件。
+ *  - 首次 mount 自动 focus（useEffect）
+ *  - Enter 提交；Escape 取消；× 按钮取消
+ *  - 提交成功时父级清空 draft，input 节点不卸载 → 焦点自然保留，连续创建无感
+ *  - 提交失败时（IPC res.ok=false 或空标题）父级保留 draft；本组件展示 is-error
+ *    红色边框 + 抖动一次，让用户感知原因并立即修改重试 */
+const SubtaskCreateRow: React.FC<{
+  depth: number;
+  draft: string;
+  busy: boolean;
+  onChange: (next: string) => void;
+  /** 返回 true = 创建成功；false = 失败（draft 保留，触发 is-error） */
+  onSubmit: () => Promise<boolean>;
+  onCancel: () => void;
+}> = ({ depth, draft, busy, onChange, onSubmit, onCancel }) => {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [showError, setShowError] = useState(false);
+
+  useEffect(() => {
+    inputRef.current?.focus();
+  }, []);
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>): void => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      void onSubmit().then((ok) => {
+        if (!ok) {
+          setShowError(true);
+          // 抖动结束后清除 class，避免下次正常提交时还残留红色
+          window.setTimeout(() => setShowError(false), 400);
+        }
+      });
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      onCancel();
+    }
+  };
+
+  return (
+    <li
+      className={`task-row task-row__subtask-create${showError ? ' is-error' : ''}`}
+      style={{ '--row-depth': depth + 1 } as React.CSSProperties}
+      onClick={(e) => e.stopPropagation()}
+    >
+      <div className="task-row__main">
+        <div className="task-row__title-line">
+          <span className="task-row__icon" aria-hidden="true">
+            <PlusGlyph />
+          </span>
+          <input
+            ref={inputRef}
+            className="task-row__subtask-input"
+            type="text"
+            placeholder="添加子任务…（回车创建，Esc 取消）"
+            value={draft}
+            disabled={busy}
+            onChange={(e) => {
+              onChange(e.target.value);
+              if (showError) setShowError(false);
+            }}
+            onKeyDown={handleKeyDown}
+          />
+          <button
+            type="button"
+            className="task-row__action task-row__subtask-cancel"
+            aria-label="取消"
+            title="取消"
+            onClick={(e) => {
+              e.stopPropagation();
+              onCancel();
+            }}
+          >
+            <SubtaskCancelGlyph />
+          </button>
+        </div>
       </div>
     </li>
   );
@@ -599,6 +1091,28 @@ const PlusGlyph: React.FC = () => (
   </svg>
 );
 
+// TodayGlyph — a small filled circle with a calendar/clock hint (the inner
+// dot). `muted` uses a softer stroke for the hover-reveal "+ 今日" button so
+// it reads as a quiet affordance; the default (no muted prop) is the strong
+// accent dot shown inline as the planned-for-today marker.
+const TodayGlyph: React.FC<{ muted?: boolean }> = ({ muted = false }) => (
+  <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+    <circle cx="6" cy="6" r="4.5"
+      fill={muted ? 'transparent' : 'var(--accent-primary)'}
+      stroke={muted ? 'var(--fg-muted)' : 'var(--accent-primary)'}
+      strokeWidth={muted ? '1.2' : '1'}
+    />
+    <path d="M6 3.5V6L7.5 7.5" stroke={muted ? 'var(--fg-muted)' : 'var(--bg-base)'} strokeWidth="1.2" strokeLinecap="round" />
+  </svg>
+);
+
+// Cancel — × glyph matching the 14×14 stroke family of PlusGlyph / TrashGlyph.
+const SubtaskCancelGlyph: React.FC = () => (
+  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+    <path d="M4.5 4.5l7 7M11.5 4.5l-7 7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+  </svg>
+);
+
 const TrashGlyph: React.FC = () => (
   <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
     <path d="M3 4.5h10M6.5 4.5V3.2a.5.5 0 01.5-.5h2a.5.5 0 01.5.5v1.3M5 4.5l.6 8.3a.5.5 0 00.5.5h3.8a.5.5 0 00.5-.5L11 4.5"
@@ -662,6 +1176,8 @@ const DeletedRow: React.FC<{
             <span className="task-row__sub--done">{descendantCount} 子任务</span>
           )}
           <span className="task-row__deleted-time">{formatDateTime(todo.deletedAt)}</span>
+        </div>
+        <div className="task-row__actions task-row__actions--bin">
           <button
             type="button"
             className="task-row__action task-row__restore task-row__restore--bin"
@@ -683,26 +1199,17 @@ const DeletedRow: React.FC<{
 function filterToRepoFilter(f: ListFilter): Parameters<typeof window.todoList.todo.list>[0] {
   switch (f.kind) {
     case 'all': return {};
-    case 'today': return { dueBefore: endOfToday(), dueAfter: startOfToday() };
-    case 'next7': return { dueBefore: Date.now() + 7 * 24 * 3600_000, dueAfter: startOfToday() };
     case 'archived': return { archivedOnly: true };
     case 'deleted': return { deletedOnly: true };
     case 'project': return { tag: [f.tag] };
     case 'status': return { status: [f.status as TodoStatus] };
     case 'priority': return { priority: [f.priority as Todo['priority']] };
+    default:
+      // Exhaustive — future filter kinds should land here.
+      return {};
   }
 }
 
-function startOfToday(): number {
-  const d = new Date();
-  d.setHours(0, 0, 0, 0);
-  return d.getTime();
-}
-function endOfToday(): number {
-  const d = new Date();
-  d.setHours(23, 59, 59, 999);
-  return d.getTime();
-}
 function formatDate(ms: number): string {
   const d = new Date(ms);
   return `${d.getMonth() + 1}/${d.getDate()}`;

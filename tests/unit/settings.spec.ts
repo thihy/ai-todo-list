@@ -45,6 +45,39 @@ describe('SettingsStore', () => {
     expect(v.lastHeartbeatAt).not.toBeNull();
     expect(Math.abs(v.monthlyCostUsd - 0.168)).toBeLessThan(1e-6);
   });
+
+  // 「今日待办」 三字段：默认 / round-trip / publicView 暴露。用来锁住
+  // PlanGuideModal / plan-reminder 的契约。
+  it('default plan-guide fields', () => {
+    const v = store.get();
+    expect(v.dailyPlanReminderTime).toBe('09:00');
+    expect(v.lastPlanGuideDate).toBeNull();
+    expect(v.snoozePlanGuideUntil).toBeNull();
+  });
+
+  it('patches and persists plan-guide fields', () => {
+    store.patch({
+      dailyPlanReminderTime: '07:30',
+      lastPlanGuideDate: '2026-09-11',
+      snoozePlanGuideUntil: 1_726_100_000_000,
+    });
+    const reloaded = new SettingsStore(dir).get();
+    expect(reloaded.dailyPlanReminderTime).toBe('07:30');
+    expect(reloaded.lastPlanGuideDate).toBe('2026-09-11');
+    expect(reloaded.snoozePlanGuideUntil).toBe(1_726_100_000_000);
+  });
+
+  it('exposes plan-guide fields in publicView', () => {
+    store.patch({
+      dailyPlanReminderTime: '08:00',
+      lastPlanGuideDate: '2026-09-10',
+      snoozePlanGuideUntil: 1_726_099_000_000,
+    });
+    const view = store.publicView();
+    expect(view.dailyPlanReminderTime).toBe('08:00');
+    expect(view.lastPlanGuideDate).toBe('2026-09-10');
+    expect(view.snoozePlanGuideUntil).toBe(1_726_099_000_000);
+  });
 });
 
 afterEach(() => {

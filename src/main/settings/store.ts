@@ -36,6 +36,21 @@ export interface PersistedSettings {
    *  tags by plain string (Todo.tags); this holds the palette + autocomplete
    *  source, managed in Settings. */
   tags: TagDef[];
+  /** 「今日待办」 reminder time (HH:MM, 24h). When the clock matches and the
+   *  user hasn't planned any tasks for today, the main process fires an OS
+   *  notification (see src/main/notification/plan-reminder.ts). Default
+   *  09:00 — a gentle morning nudge. */
+  dailyPlanReminderTime: string;
+  /** Last day the startup guide was either shown or skipped/completed,
+   *  format `YYYY-MM-DD`. Read by App.tsx to suppress re-prompting the same
+   *  day; the daily reminder still fires even after the guide has been
+   *  resolved for the day (the guide is the landing modal, the reminder is
+   *  the OS push). */
+  lastPlanGuideDate: string | null;
+  /** Epoch-ms snooze deadline set by 「改天再提醒」 in the guide modal. Until
+   *  this time passes, neither the boot-time guide nor the scheduled
+   *  reminder re-prompts. Cleared by the next launch that finds it expired. */
+  snoozePlanGuideUntil: number | null;
 }
 
 const DEFAULTS: PersistedSettings = {
@@ -52,6 +67,9 @@ const DEFAULTS: PersistedSettings = {
   customProviderId: null,
   archiveAfterDays: 1,
   tags: [],
+  dailyPlanReminderTime: '09:00',
+  lastPlanGuideDate: null,
+  snoozePlanGuideUntil: null,
 };
 
 /** Default data root when the user has not picked a directory. */
@@ -142,6 +160,9 @@ export class SettingsStore {
       customProviderId: v.customProviderId,
       archiveAfterDays: v.archiveAfterDays,
       tags: v.tags,
+      dailyPlanReminderTime: v.dailyPlanReminderTime,
+      lastPlanGuideDate: v.lastPlanGuideDate,
+      snoozePlanGuideUntil: v.snoozePlanGuideUntil,
     };
   }
 

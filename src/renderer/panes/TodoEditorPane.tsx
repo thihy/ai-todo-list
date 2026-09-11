@@ -24,7 +24,7 @@
 // activity) has its own addressable region.
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useTodo, useTodos, useDocuments, useAttachments } from '../hooks/useTodoListApi';
+import { useTodo, useDocuments, useAttachments } from '../hooks/useTodoListApi';
 import { useFocusSync } from '../hooks/useFocusSync';
 import { DocumentsView } from '../components/DocumentsView';
 import { InlineTitle } from '../components/InlineTitle';
@@ -33,7 +33,6 @@ import { TagInput } from '../components/TagInput';
 import { DatePicker } from '../components/DatePicker';
 import { StatusSelect } from '../components/StatusSelect';
 import { ProgressInline, ProgressTimeline } from '../components/ProgressView';
-import { StatusGlyph, STATUS_LABEL } from '../components/StatusGlyph';
 import { IconAttach, IconExternal, IconLink, IconPlus, IconTrash } from '../components/icons';
 import type { InboxAttachment, Priority, TodoStatus, TaskDocument } from '../../shared/todo-types';
 
@@ -357,89 +356,8 @@ const AttachmentsView: React.FC<{ todoId: string }> = ({ todoId }) => {
   );
 };
 
-/** Fired on `window` when a subtask is created from the detail's 子任务
- *  section. The task list (TodoListPane) listens so it can expand the parent
- *  row in the tree — otherwise a parent the user had collapsed would swallow
- *  the freshly-created child. Detail: { id: parentId }. */
-export const SUBTASK_CREATED_EVENT = 'todo-list:expand-parent';
-
-/** 子任务 section — lists a task's direct children with an inline create row.
- *  Creating here calls `todo.create({ parentId })` directly (NOT the AI path
- *  the top-level 新建任务 composer uses), so the subtask lands immediately
- *  with a known parent. Mirrors the LinksView / AttachmentsView section
- *  pattern: a list of clickable rows + an inline create affordance. */
-const SubtasksView: React.FC<{
-  todoId: string;
-  navigate: (to: string) => void;
-}> = ({ todoId, navigate }) => {
-  // parentId filter restricts to direct children only; archived/deleted are
-  // excluded by the repo's default scoping, matching what the list tree shows.
-  const { data: children, refresh } = useTodos({ parentId: todoId });
-  const [draft, setDraft] = useState('');
-  const [busy, setBusy] = useState(false);
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  const create = useCallback(async (): Promise<void> => {
-    const title = draft.trim();
-    if (!title || busy) return;
-    setBusy(true);
-    try {
-      const res = await window.todoList.todo.create({ parentId: todoId, title });
-      if (!res.ok) return;
-      setDraft('');
-      // Tell the list tree to expand this parent so the new child is visible
-      // there too (covers the collapsed-parent edge case).
-      window.dispatchEvent(new CustomEvent(SUBTASK_CREATED_EVENT, { detail: { id: todoId } }));
-      await refresh();
-      // Land on the fresh subtask so the user can flesh out its details
-      // (status / priority / docs) right away.
-      navigate(`#/todo/${res.data.id}`);
-      inputRef.current?.focus();
-    } finally {
-      setBusy(false);
-    }
-  }, [draft, busy, todoId, refresh, navigate]);
-
-  return (
-    <div className="subtasks-view">
-      <ul className="subtasks-view__list">
-        {children.map((c) => (
-          <li key={c.id} className="subtasks-view__item">
-            <StatusGlyph status={c.status} />
-            <button
-              type="button"
-              className="subtasks-view__title"
-              title={`${STATUS_LABEL[c.status]} · 打开子任务`}
-              onClick={() => navigate(`#/todo/${c.id}`)}
-            >
-              {c.title || '(无标题)'}
-            </button>
-          </li>
-        ))}
-      </ul>
-      <div className="subtasks-view__create">
-        <input
-          ref={inputRef}
-          className="subtasks-view__input"
-          type="text"
-          placeholder="添加子任务…（回车创建）"
-          value={draft}
-          disabled={busy}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') {
-              e.preventDefault();
-              void create();
-            }
-          }}
-        />
-      </div>
-      {children.length === 0 && !draft && (
-        <p className="subtasks-view__empty">暂无子任务，在上方输入标题后回车创建。</p>
-      )}
-    </div>
-  );
-};
+/** 子任务的创建入口已迁移到任务列表行尾（hover 行尾 + 按钮 → 就地 input）。
+ *  详情页不再单独展示子任务 section —— 列表树就是唯一的真实来源。 */
 
 export const TodoEditorPane: React.FC<{
   todoId: string;
@@ -449,11 +367,7 @@ export const TodoEditorPane: React.FC<{
    *  DocumentsView 卸载/重挂载后丢失选中（不传则 DocumentsView 回退到自有状态） */
   selectedDocId?: string | null;
   onSelectDoc?: (tabId: string) => void;
-  /** Navigate to a route hash — used by the 子任务 section to open a subtask
-   *  in the detail pane after creating it. Optional; defaults to no-op. */
-  navigate?: (to: string) => void;
-}> = ({ todoId, onFullscreen, selectedDocId, onSelectDoc, navigate }) => {
-  const navigateFn = navigate ?? (() => {});
+}> = ({ todoId, onFullscreen, selectedDocId, onSelectDoc }) => {
   const { todo, loading } = useTodo(todoId);
 
   const [tagDraft, setTagDraft] = useState<string[]>([]);
@@ -544,11 +458,6 @@ export const TodoEditorPane: React.FC<{
             Keeping the scroll root here (not on the whole pane) means the
             基本信息 popovers are never clipped by an overflow ancestor. ===== */}
       <div className="editor-pane__scroll">
-        <section className="editor-pane__section">
-          <h2 className="editor-pane__section-title">子任务</h2>
-          <SubtasksView todoId={todo.id} navigate={navigateFn} />
-        </section>
-
         <section className="editor-pane__section">
           <h2 className="editor-pane__section-title">链接</h2>
           <LinksView todoId={todo.id} />

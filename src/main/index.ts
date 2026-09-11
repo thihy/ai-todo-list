@@ -27,6 +27,7 @@ import { TrayController } from './tray/tray';
 import { ClipboardWatcher } from './clipboard/watcher';
 import { installAutoUpdater } from './updater/updater';
 import { installAppMenu, showAbout, popupCategory } from './menu';
+import { schedulePlanReminder } from './notification/plan-reminder';
 import {
   DB_FILENAME,
   TODOS_SUBDIR,
@@ -194,7 +195,7 @@ function bootstrap(): void {
       }
     });
     registerSettingsHandlers(settings, handle, rootDir);
-    registerAppHandlers();
+    registerAppHandlers(() => main);
     registerCaptureHandlers(repo, md);
     registerCapturePreviewHandler();
 
@@ -320,6 +321,16 @@ function bootstrap(): void {
     runArchiveSweep();
     const archiveTimer = setInterval(runArchiveSweep, 3_600_000);
     app.on('before-quit', () => clearInterval(archiveTimer));
+
+    // "今天安排些什么？" 定时提醒 —— 每小时 tick 一次，到 dailyPlanReminderTime
+    // 且今天还没有任何 planned_for 时弹一条系统通知；点击通知聚焦主窗口并
+    // 触发渲染端的 plan-guide modal（app:plan-guide 事件）。
+    const planReminder = schedulePlanReminder({
+      settings,
+      repo,
+      getMainWindow: () => main,
+    });
+    app.on('before-quit', () => planReminder.stop());
 
     // Close main = hide to tray (don't quit) — but in dev, quit instead so the
     // dev process dies and the single-instance lock releases; otherwise the
@@ -542,6 +553,9 @@ function registerSettingsHandlers(
       ...(req.customProviderId !== undefined ? { customProviderId: req.customProviderId } : {}),
       ...(req.archiveAfterDays !== undefined ? { archiveAfterDays: req.archiveAfterDays } : {}),
       ...(req.tags ? { tags: req.tags } : {}),
+      ...(req.dailyPlanReminderTime !== undefined ? { dailyPlanReminderTime: req.dailyPlanReminderTime } : {}),
+      ...(req.lastPlanGuideDate !== undefined ? { lastPlanGuideDate: req.lastPlanGuideDate } : {}),
+      ...(req.snoozePlanGuideUntil !== undefined ? { snoozePlanGuideUntil: req.snoozePlanGuideUntil } : {}),
     });
     if (req.customProviders) {
       store.mergeCustomProviders(req.customProviders);
@@ -661,7 +675,7 @@ function registerCaptureHandlers(repo: TodoRepo, md: MarkdownStore): void {
   });
 }
 
-function registerAppHandlers(): void {
+function registerAppHandlers(getMainWindow: () => BrowserWindow | null): void {
   // Title-bar 菜单 button: pop the native application menu at the cursor.
   register('app.popupMenu', async () => {
     try {
@@ -752,6 +766,32 @@ function registerAppHandlers(): void {
       return okResult({ username });
     } catch (err) {
       return failResult('os_user_failed', (err as Error).message);
+    }
+  });
+  // Dim / restore the frameless titleBarOverlay (native min/max/close
+  // glyphs). The overlay is rendered by Chromium above the webContents, so
+  // the renderer's dimmed-backdrop CSS can't reach it — without this,
+  // opening a modal leaves the native glyphs at their default light-grey
+  // colour, which clashes with the dimmed client area beneath.
+  //
+  // Colours chosen to land on the same gray-shifted-mid-luminance band the
+  // modal backdrop ends up at on a typical light-mode topbar (translucent
+  // black over #F6F7F9 → ~ #7B7E84 after blending, with a near-black glyph
+  // for contrast against that mid-gray background). Tweak here if you
+  // change the backdrop tint.
+  const TITLEBAR_OVERLAY_LIGHT = { color: '#F6F7F9', symbolColor: '#4A4F57' };
+  const TITLEBAR_OVERLAY_DIM = { color: '#7B7E84', symbolColor: '#1F2329' };
+  register('app.setTitleBarOverlay', (_e, req) => {
+    try {
+      // macOS uses traffic-light buttons, not a titleBarOverlay — skip
+      // silently rather than spamming dev logs with "not supported".
+      if (process.platform === 'darwin') return Promise.resolve(okResult(undefined));
+      const win = getMainWindow();
+      if (!win || win.isDestroyed()) return Promise.resolve(okResult(undefined));
+      win.setTitleBarOverlay(req.dim ? TITLEBAR_OVERLAY_DIM : TITLEBAR_OVERLAY_LIGHT);
+      return Promise.resolve(okResult(undefined));
+    } catch (err) {
+      return Promise.resolve(failResult('set_title_bar_overlay_failed', (err as Error).message));
     }
   });
   logger.info('app.* handlers registered');

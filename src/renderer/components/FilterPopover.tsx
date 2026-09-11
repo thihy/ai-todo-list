@@ -46,8 +46,9 @@ export const FilterButton: React.FC<{
         <div className="filter-popover" role="menu" aria-label="过滤条件">
           <FilterSection title="视图">
             <FilterItem active={filter.kind === 'all'} label="全部" onClick={() => choose({ kind: 'all' })} />
-            <FilterItem active={filter.kind === 'today'} label="今天" onClick={() => choose({ kind: 'today' })} />
-            <FilterItem active={filter.kind === 'next7'} label="未来 7 天" onClick={() => choose({ kind: 'next7' })} />
+            {/* 今天 / 未来 7 天 的"按截止日期"视图被新的"今日待办 / 其他任务"
+                双区视图替代（见 TodoListPane 上半区）。按状态过滤保留下来，
+                因为它语义独立（"未完成" = status=next，不依赖日期）。 */}
             <FilterItem active={filter.kind === 'status' && filter.status === 'next'} label="未完成" onClick={() => choose({ kind: 'status', status: 'next' })} />
             <FilterItem active={filter.kind === 'archived'} label="归档" onClick={() => choose({ kind: 'archived' })} />
             <FilterItem active={filter.kind === 'deleted'} label="已删除" onClick={() => choose({ kind: 'deleted' })} />
