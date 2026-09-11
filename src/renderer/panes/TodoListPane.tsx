@@ -712,24 +712,8 @@ const PlannedBranch: React.FC<{
           ))}
         </ul>
       )}
-      {/* 自身被安排的叶子行 —— 行尾"剔除"按钮，仅作为视觉提示；点击同样触发 onUnplan。 */}
-      {isSelfPlanned && !hasShownChildren && !hasPeerChildren && (
-        <li
-          className="task-row task-row__unplan-row"
-          style={{ '--row-depth': depth + 1 } as React.CSSProperties}
-          onClick={(e) => e.stopPropagation()}
-        >
-          <button
-            type="button"
-            className="task-row__unplan-btn"
-            aria-label="从今日剔除"
-            title="从今日剔除"
-            onClick={() => { void onUnplan(todo.id); }}
-          >
-            <SubtaskCancelGlyph /> 从今日剔除
-          </button>
-        </li>
-      )}
+      {/* 上半区不再单独渲染"从今日剔除"按钮 —— 已统一到 TaskRow 行尾的
+          + 今日 toggle 按钮（is-active 时实心，aria-label="今天不做了"）。 */}
     </>
   );
 };
