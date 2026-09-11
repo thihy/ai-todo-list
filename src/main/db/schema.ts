@@ -597,7 +597,18 @@ const MIGRATIONS: ReadonlyArray<{ version: number; sql: string }> = [
           VALUES (new.rowid, new.title, new.body);
       END;
 
-      INSERT INTO todos_fts(todos_fts) VALUES('rebuild');
+      -- The v14 migration never touches title/body — it only renames the
+      -- planned_for column from INTEGER to TEXT. The external-content FTS5
+      -- shadow tables (todos_fts) are still consistent with the content
+      -- table from the prior boot, and the triggers above keep them in
+      -- sync for all subsequent INSERT/UPDATE/DELETE. We deliberately do
+      -- NOT run 'INSERT INTO todos_fts(todos_fts) VALUES(''rebuild'')' here
+      -- the way v8 did — that command tokenizes every row's title+body
+      -- synchronously and made first-boot-after-upgrade hang the window
+      -- open for several seconds on databases with hundreds of todos
+      -- (Windows reported the app as 未响应 during the rebuild). The new
+      -- triggers cover ongoing writes; if shadow tables ever drift, the
+      -- user can recover with a manual 'rebuild' from a sqlite shell.
     `,
   },
 ];

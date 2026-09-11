@@ -429,4 +429,43 @@ describe('TodoRepo + MarkdownStore', () => {
       rmSync(v13Dir, { recursive: true, force: true });
     }
   });
+
+  it('migrations never issue synchronous FTS5 full-table rebuilds', () => {
+    // `INSERT INTO todos_fts(todos_fts) VALUES('rebuild')` tokenizes every
+    // row's title+body on the main thread during boot, before any window
+    // paints. On databases with hundreds of todos + bodies, that turns into
+    // a multi-second "未响应" hang right after launch. The v8 migration
+    // shipped with one because v8 rebuilt the content table; v14 and any
+    // future migrations that don't touch title/body must NOT include it.
+    //
+    // Read the migration source and assert no migration script issues the
+    // rebuild command. This is a static check — catches a regression at
+    // test time before users hit it at boot time.
+    const { readFileSync } = require('node:fs') as typeof import('node:fs');
+    const schemaSrc = readFileSync(
+      new URL('../../src/main/db/schema.ts', import.meta.url),
+      'utf8',
+    );
+    // Walk each migration's SQL block. Migrations are `{ version, sql }`
+    // literals; isolate each block by version number.
+    const migrations = [...schemaSrc.matchAll(/version:\s*(\d+),[\s\S]*?sql:\s*`([\s\S]*?)`/g)];
+    expect(migrations.length).toBeGreaterThan(0);
+    for (const m of migrations) {
+      const version = Number(m[1]);
+      const sql = m[2];
+      const hasRebuild = /INSERT\s+INTO\s+todos_fts\s*\(\s*todos_fts\s*\)\s*VALUES\s*\(\s*'rebuild'\s*\)/i.test(sql);
+      // v8 is the only exception: it had to rebuild because it rebuilt the
+      // content table. All later migrations leave title/body untouched, so
+      // they must not include the rebuild.
+      if (version === 8) {
+        expect(hasRebuild, `v8 should still include FTS rebuild`).toBe(true);
+      } else {
+        expect(
+          hasRebuild,
+          `migration v${version} must NOT include 'INSERT INTO todos_fts VALUES(''rebuild'')' — ` +
+            `it tokenizes every row synchronously on first boot and hangs the window`,
+        ).toBe(false);
+      }
+    }
+  });
 });
