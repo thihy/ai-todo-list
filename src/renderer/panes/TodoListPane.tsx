@@ -825,10 +825,14 @@ const TaskRow: React.FC<{
           <StatusSelect status={todo.status} onChange={onCycle} variant="icon" />
         </div>
         {/* 第二行：合并旧的 subtitle（优先级/进度/截止/绘图/子任务）+ 行尾
-            动作按钮。同一行 flex 布局，左侧元信息、右侧操作；超出宽度时
-            按"次要→主要"顺序隐藏左边的元素，标题行为第一行保持不变。 */}
+            动作按钮。同一行 flex 布局，左侧元信息（pill 区）、右侧操作。
+            pill 区本身可以收缩（min-width:0 + ellipsis），actions 永远
+            完整钉在最右。窄行时 pill 区按 fragment 顺序从右向左裁切 —
+            优先级、截止日始终排在 fragment 前部，最后才被裁。 */}
         <div className="task-row__meta-line">
-          <Subtitle todo={todo} subtaskCount={subtaskCount} subtaskDoneCount={subtaskDoneCount} />
+          <div className="task-row__meta-pills">
+            <Subtitle todo={todo} subtaskCount={subtaskCount} subtaskDoneCount={subtaskDoneCount} />
+          </div>
           <div className="task-row__actions">
             {/* 下半区行尾的 "+ 今日" 按钮 —— 仅下半区（onPlanToday 存在） */}
             {onPlanToday && !archivedView && (

@@ -2154,6 +2154,14 @@ a:hover {
      a transparent placeholder so border-color transitions look clean. */
   border-left: 2px solid transparent;
   cursor: pointer;
+  /* Pills on the second row are flex:0 0 auto (full intrinsic width) so
+     we clip any overflow on the row edge — the rightmost element (the
+     actions group, anchored via margin-left:auto) is the LAST thing on
+     the line and so the most likely to get clipped. The visible order
+     is pills-left, actions-right, so clipping naturally trims the
+     leftmost decorative pill (tag / subtask / drawings) when the row
+     is too narrow — matching the user's "超出则直接隐藏" intent. */
+  overflow: hidden;
   transition: background var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
 }
 .task-row:hover {
@@ -2216,7 +2224,10 @@ a:hover {
   display: flex;
   align-items: center;
   gap: var(--space-sm);
-  min-width: 0;
+  /* No min-width:0 here — we want the pills to keep their full intrinsic
+     width so priority / due / tags never disappear. The row above has
+     overflow:hidden so any pill that overflows the row gets clipped on
+     the left (since pills come first and actions anchor to the right). */
   container-type: inline-size;
   container-name: meta;
 }
@@ -2235,26 +2246,35 @@ a:hover {
 .task-row__title-line > .status-select {
   margin-left: auto;
 }
-/* 第二行的 metadata 子项：Subtitle 现在直接返回 fragment，每个 pill 都是
-   meta-line 的直接子节点（priority / due / drawings / tags / subtask）。
-   actions 仍然用 margin-left:auto 钉在最右。窄行时按子项优先级逐个隐藏。 */
-.task-row__meta-line > .task-row__prio,
-.task-row__meta-line > .task-row__due,
-.task-row__meta-line > .task-row__drawings,
-.task-row__meta-line > .task-row__tag,
-.task-row__meta-line > .task-row__sub--done {
-  flex: 0 1 auto;
+/* 第二行的 pills 区：作为 meta-line 的唯一可收缩项（min-width:0 +
+   overflow:hidden），里面所有 chip flex:0 0 auto 不收缩，超出时从
+   fragment 末端开始裁切（tag / drawings / subtask 排后）。actions
+   用 margin-left:auto 钉在最右，自身 flex:0 0 auto 不参与收缩。 */
+.task-row__meta-pills {
+  flex: 1 1 auto;
   min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
   overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
-.task-row__meta-line > .task-row__deleted-time {
+.task-row__meta-pills > .task-row__prio,
+.task-row__meta-pills > .task-row__due,
+.task-row__meta-pills > .task-row__drawings,
+.task-row__meta-pills > .task-row__tag,
+.task-row__meta-pills > .task-row__sub--done,
+.task-row__meta-pills > .task-row__progress {
+  flex: 0 0 auto;
+}
+.task-row__deleted-time {
   flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  color: var(--fg-muted);
+  font-size: var(--font-xs);
 }
 /* Actions group 永远钉在第二行最右侧（margin-left:auto），即使用户
    在该行没有任何 metadata pill 也保持位置稳定。 */
@@ -2291,23 +2311,16 @@ a:hover {
   color: var(--accent-success);
   font-weight: 600;
 }
-/* Container queries on the meta-line — when the second row gets too
-   narrow to fit everything, hide pills right-to-left so the priority +
-   due date stay readable until the very end. Order of sacrifice:
-   tag chip → subtask progress → drawings → progress% → priority → due.
-   The actions group is always anchored to the right edge via
-   margin-left:auto so it never disappears. */
-@container meta (max-width: 360px) {
-  .task-row__meta-line > .task-row__tag,
-  .task-row__meta-line > .task-row__sub--done,
-  .task-row__meta-line > .task-row__drawings {
-    display: none;
-  }
-}
-@container meta (max-width: 280px) {
-  .task-row__meta-line > .task-row__progress,
-  .task-row__meta-line > .task-row__prio,
-  .task-row__meta-line > .task-row__due {
+/* Container query on meta-line — at truly tiny widths drop decorative
+   chips (tag / subtask / drawings / progress). Priority + due-date are
+   protected and never get display:none, so the row always tells you
+   what's important. The actions group is anchored right and always
+   visible. */
+@container meta (max-width: 220px) {
+  .task-row__meta-pills > .task-row__tag,
+  .task-row__meta-pills > .task-row__sub--done,
+  .task-row__meta-pills > .task-row__drawings,
+  .task-row__meta-pills > .task-row__progress {
     display: none;
   }
 }
