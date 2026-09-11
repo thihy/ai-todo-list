@@ -2154,11 +2154,11 @@ a:hover {
      a transparent placeholder so border-color transitions look clean. */
   border-left: 2px solid transparent;
   cursor: pointer;
-  /* Inter-row divider — a 1px hairline so rows are visually separated
+  /* Inter-row divider — a 2px hairline so rows are visually separated
      and the bottom-edge progress line has a clean backdrop. The
-     progress line (::after, see below) sits 1px above this so they
-     don't collide visually. */
-  border-bottom: 1px solid var(--border-subtle, #EDEFF2);
+     progress line (::after, see below) sits 2px above this so the two
+     are clearly distinct (instead of running into each other). */
+  border-bottom: 2px solid var(--border-subtle, #EDEFF2);
   /* Pills on the second row are flex:0 0 auto (full intrinsic width) so
      we clip any overflow on the row edge — the rightmost element (the
      actions group, anchored via margin-left:auto) is the LAST thing on
@@ -2180,7 +2180,7 @@ a:hover {
   position: absolute;
   left: 0;
   right: 0;
-  bottom: 1px;
+  bottom: 2px;
   height: 2px;
   background-image: linear-gradient(
     to right,
