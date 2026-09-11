@@ -2240,22 +2240,19 @@ a:hover {
 .task-row__title-line > .status-select {
   margin-left: auto;
 }
-/* 第二行的 metadata 子项：直接子节点（Subtitle wrapper + actions）保持
-  自己该有的 flex 行为。Subtitle wrapper 的内容是 inline-flex 排好的
-  pill，wrapper 本身被允许 shrink，但里面的 pill 不要被进一步压缩。
-  deleted-bin variant uses task-row__deleted-time as a direct child of
-  meta-line (no .task-row__sub wrapper), so it gets the same flex rule. */
-.task-row__meta-line > .task-row__sub {
-  flex: 1 1 auto;
+/* 第二行的 metadata 子项：Subtitle 现在直接返回 fragment，每个 pill 都是
+   meta-line 的直接子节点（priority / due / drawings / tags / subtask）。
+   actions 仍然用 margin-left:auto 钉在最右。窄行时按子项优先级逐个隐藏。 */
+.task-row__meta-line > .task-row__prio,
+.task-row__meta-line > .task-row__due,
+.task-row__meta-line > .task-row__drawings,
+.task-row__meta-line > .task-row__tag,
+.task-row__meta-line > .task-row__sub--done {
+  flex: 0 1 auto;
   min-width: 0;
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-sm);
   overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
-}
-.task-row__meta-line > .task-row__sub > * {
-  flex: 0 0 auto;
 }
 .task-row__meta-line > .task-row__deleted-time {
   flex: 0 1 auto;
@@ -2300,20 +2297,20 @@ a:hover {
   font-weight: 600;
 }
 /* Container queries on the meta-line — when the second row gets narrower
-   than ~360px start hiding the rightmost metadata pills inside the
-   subtitle wrapper (subtask progress → drawings → tags), then at ~280px
-   hide priority + progress + due too. The actions group is the rightmost
-   sibling of the subtitle div and always stays visible. */
+   than ~360px start hiding the rightmost metadata pills (subtask progress
+   → drawings → tags), then at ~280px hide priority + due too. The
+   actions group is the rightmost sibling and always stays visible.
+   Pills are direct children of .task-row__meta-line (no wrapper). */
 @container meta (max-width: 360px) {
-  .task-row__meta-line .task-row__sub--done,
-  .task-row__meta-line .task-row__drawings,
-  .task-row__meta-line .task-row__tag {
+  .task-row__meta-line > .task-row__sub--done,
+  .task-row__meta-line > .task-row__drawings,
+  .task-row__meta-line > .task-row__tag {
     display: none;
   }
 }
 @container meta (max-width: 280px) {
-  .task-row__meta-line .task-row__prio,
-  .task-row__meta-line .task-row__due {
+  .task-row__meta-line > .task-row__prio,
+  .task-row__meta-line > .task-row__due {
     display: none;
   }
 }
@@ -2327,17 +2324,9 @@ a:hover {
 .task-row__prio--high { color: var(--accent-danger); background: color-mix(in srgb, var(--accent-danger) 12%, var(--bg-soft)); }
 .task-row__prio--medium { color: var(--accent-warning); background: color-mix(in srgb, var(--accent-warning) 14%, var(--bg-soft)); }
 .task-row__prio--low { color: var(--accent-info); background: color-mix(in srgb, var(--accent-info) 14%, var(--bg-soft)); }
-/* Metadata pills inside .task-row__sub wrapper — base layout (display,
-   gap, font-size, color). The priority / due / drawings / progress /
-   tags chips each get one of these; flex:0 0 auto prevents them from
-   being squished by the meta-line's overflow handling. */
-.task-row__sub {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-sm);
-  font-size: var(--font-xs);
-  color: var(--fg-muted);
-}
+/* Metadata pills — base layout for each chip class. They are direct
+   children of .task-row__meta-line (no wrapper). The flex rules in
+   .task-row__meta-line > ... above handle sizing / shrinking. */
 .task-row__prio {
   display: inline-flex;
   align-items: center;

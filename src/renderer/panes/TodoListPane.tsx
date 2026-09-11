@@ -995,12 +995,6 @@ const Subtitle: React.FC<{ todo: Todo; subtaskCount: number; subtaskDoneCount: n
       </span>,
     );
   }
-  if (todo.progress != null && todo.progress > 0) {
-    // Progress is rendered as a horizontal fill on the row's left edge
-    // (see .task-row__progress-rail in global.css) instead of an inline
-    // pill — keeps the metadata line readable and lets the user gauge
-    // completion at a glance without scanning chips.
-  }
   if (todo.dueAt) {
     bits.push(
       <span key="d" className="task-row__due">
@@ -1030,10 +1024,13 @@ const Subtitle: React.FC<{ todo: Todo; subtaskCount: number; subtaskDoneCount: n
       </span>,
     );
   }
-  // 空 metadata 不再渲染 "无附加信息" 占位 — 让两行的视觉密度一致；
-  // 真正没有信息时第二行只显示右边的动作按钮。
+  // 没 metadata 时不渲染任何节点 — 让 meta-line 只显示右边的动作按钮。
   if (bits.length === 0) return null;
-  return <div className="task-row__sub">{bits}</div>;
+  // Subtitle 直接返回 fragment，每个 pill 是 meta-line 的直接子节点：
+  //   - flex container 可以正确处理
+  //   - container query 选择器直接命中（不需要穿透 wrapper）
+  //   - 没有"wrapper 收缩到 0"这个中间层 bug
+  return <>{bits}</>;
 };
 
 const PRIORITY_LABEL: Record<NonNullable<Todo['priority']>, string> = {
