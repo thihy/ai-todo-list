@@ -60,6 +60,18 @@ export const TodoListPane: React.FC<{
     setExpandMap((prev) => ({ ...prev, [id]: !(prev[id] ?? true) }));
   }, []);
 
+  // 上半区独立展开态 —— 默认展开（与 expandMap 相同语义），但 key 在自己的
+  // 命名空间里。折叠/展开上半区任务树不会影响下半区，反之亦然。否则上
+  // 半区收起一个任务，下半区同一个任务也跟着收起 —— 视觉割裂。
+  const [plannedExpandMap, setPlannedExpandMap] = useState<Record<string, boolean>>({});
+  const getPlannedExpanded = useCallback(
+    (id: string) => plannedExpandMap[id] ?? true,
+    [plannedExpandMap],
+  );
+  const togglePlannedExpanded = useCallback((id: string) => {
+    setPlannedExpandMap((prev) => ({ ...prev, [id]: !(prev[id] ?? true) }));
+  }, []);
+
   // ids of every task that HAS subtasks — needed for collapse-all (seed
   // them all false) and to decide whether the header controls are useful.
   const branchIds = useMemo(() => {
@@ -292,8 +304,8 @@ export const TodoListPane: React.FC<{
                         onSelect={onSelect}
                         allTodos={data}
                         sort={sort}
-                        getExpanded={getExpanded}
-                        toggleExpanded={toggleExpanded}
+                        getExpanded={getPlannedExpanded}
+                        toggleExpanded={togglePlannedExpanded}
                         todayKey={todayKey}
                         shownSet={shownSet}
                         getPeerExpanded={getPeerExpanded}
