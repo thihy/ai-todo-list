@@ -3901,18 +3901,19 @@ a:hover {
 }
 .date-picker__quick {
   display: flex;
-  gap: 4px;
-  flex-wrap: wrap;
+  gap: 3px;
 }
 .date-picker__quick button {
-  flex: 1 1 auto;
-  padding: 3px var(--space-xs);
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 3px 4px;
   border: 1px solid var(--border-default);
   background: var(--bg-surface);
   color: var(--fg-secondary);
   border-radius: var(--radius-sm);
   font-size: var(--font-xs);
   cursor: pointer;
+  white-space: nowrap;
 }
 .date-picker__quick button:hover {
   background: var(--bg-hover);

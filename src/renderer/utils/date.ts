@@ -15,12 +15,35 @@ export function addDays(d: Date, n: number): Date {
   return x;
 }
 
-/** Next Monday from today (inclusive: if today IS Monday, returns today). */
+/** Next Monday strictly after today: if today IS Monday, returns today+7.
+ *  Semantically "下周一" = the Monday of next week, never today (otherwise
+ *  the quick chip collapses onto 今天's chip on Mondays). */
 export function nextMonday(from = new Date()): Date {
   const x = startOfDay(from);
   const day = x.getDay(); // 0=Sun..6=Sat
-  const delta = (8 - day) % 7; // days until Monday
-  return addDays(x, delta === 0 ? 0 : delta);
+  const delta = day === 0 ? 1 : (8 - day) % 7; // never 0 — always strictly future
+  return addDays(x, delta);
+}
+
+/** Same weekday one week out: "下周一" if today is Monday → today+7; if today
+ *  is Wednesday → next Wednesday (today+7, not the nearer one). Stable across
+ *  the week so "下周一" always means the same anchor weekday — not "the soonest
+ *  upcoming Monday" which already has `nextMonday`. */
+export function nextWeek(from = new Date()): Date {
+  return addDays(startOfDay(from), 7);
+}
+
+/** Same day-of-month one calendar month out (clamped to month end if the
+ *  target month is shorter, e.g. May 31 → Jun 30, Jan 31 → Feb 28). Day 0 of
+ *  a Date = the last day of the previous month, so we let JS pick the last
+ *  day for us when the natural day overflows. */
+export function nextMonth(from = new Date()): Date {
+  const x = startOfDay(from);
+  const y = x.getFullYear();
+  const m = x.getMonth();
+  const d = x.getDate();
+  const lastDayNextMonth = new Date(y, m + 2, 0).getDate();
+  return new Date(y, m + 1, Math.min(d, lastDayNextMonth));
 }
 
 export function toIsoDate(ms: number): string {

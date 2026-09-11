@@ -12,7 +12,7 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import { IconCalendar, IconClose } from './icons';
-import { addDays, fromIsoDate, isOverdue, nextMonday, toIsoDate, formatDue } from '../utils/date';
+import { addDays, fromIsoDate, isOverdue, nextMonday, nextMonth, nextWeek, toIsoDate, formatDue } from '../utils/date';
 
 export const DatePicker: React.FC<{
   value: number | null;
@@ -129,7 +129,10 @@ export const DatePicker: React.FC<{
           <div className="date-picker__quick">
             <button type="button" onClick={() => pick(addDays(new Date(), 0).getTime())}>今天</button>
             <button type="button" onClick={() => pick(addDays(new Date(), 1).getTime())}>明天</button>
-            <button type="button" onClick={() => pick(nextMonday().getTime())}>下周一</button>
+            <button type="button" onClick={() => pick(addDays(new Date(), 2).getTime())}>后天</button>
+            <button type="button" onClick={() => pick(nextWeek(new Date()).getTime())}>下周</button>
+            <button type="button" onClick={() => pick(nextMonday(new Date()).getTime())}>下周一</button>
+            <button type="button" onClick={() => pick(nextMonth(new Date()).getTime())}>下月</button>
           </div>
         </div>
       )}
