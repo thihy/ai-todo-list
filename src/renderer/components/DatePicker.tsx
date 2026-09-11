@@ -78,6 +78,15 @@ export const DatePicker: React.FC<{
     setEditing(false);
   };
 
+  // Quick-button mouseDown: preventDefault so the input never blurs when the
+  // user clicks a quick-chip. Without this, input.onBlur fires first and
+  // commit() runs synchronously *before* the click handler, racing the
+  // pick() call below. The blur path is only meant for "user typed into the
+  // input then left it"; quick-chip clicks bypass the input entirely.
+  const onQuickMouseDown = (e: React.MouseEvent<HTMLButtonElement>): void => {
+    e.preventDefault();
+  };
+
   const overdue = isOverdue(value);
   const label = formatDue(value);
 
@@ -127,12 +136,12 @@ export const DatePicker: React.FC<{
             )}
           </div>
           <div className="date-picker__quick">
-            <button type="button" onClick={() => pick(addDays(new Date(), 0).getTime())}>今天</button>
-            <button type="button" onClick={() => pick(addDays(new Date(), 1).getTime())}>明天</button>
-            <button type="button" onClick={() => pick(addDays(new Date(), 2).getTime())}>后天</button>
-            <button type="button" onClick={() => pick(nextWeek(new Date()).getTime())}>下周</button>
-            <button type="button" onClick={() => pick(nextMonday(new Date()).getTime())}>下周一</button>
-            <button type="button" onClick={() => pick(nextMonth(new Date()).getTime())}>下月</button>
+            <button type="button" onMouseDown={onQuickMouseDown} onClick={() => pick(addDays(new Date(), 0).getTime())}>今天</button>
+            <button type="button" onMouseDown={onQuickMouseDown} onClick={() => pick(addDays(new Date(), 1).getTime())}>明天</button>
+            <button type="button" onMouseDown={onQuickMouseDown} onClick={() => pick(addDays(new Date(), 2).getTime())}>后天</button>
+            <button type="button" onMouseDown={onQuickMouseDown} onClick={() => pick(nextWeek(new Date()).getTime())}>下周</button>
+            <button type="button" onMouseDown={onQuickMouseDown} onClick={() => pick(nextMonday(new Date()).getTime())}>下周一</button>
+            <button type="button" onMouseDown={onQuickMouseDown} onClick={() => pick(nextMonth(new Date()).getTime())}>下月</button>
           </div>
         </div>
       )}
