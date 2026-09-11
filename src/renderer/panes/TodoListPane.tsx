@@ -613,6 +613,37 @@ const PlannedBranch: React.FC<{
   const expanded = getExpanded(todo.id);
   const shouldShowChildren = isSelfPlanned || expanded || hasShownChildren;
 
+  // —— Inline "add subtask" UI state ——
+  // 上半区与下半区保持一致：叶子任务也能创建子任务；creating=true 时 + 按钮常驻，
+  // SubtaskCreateRow 挂在 TaskRow 下方的子任务列表里（深度 +1）。
+  const [creating, setCreating] = useState(false);
+  const [draft, setDraft] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const handleAddClick = useCallback(() => {
+    setCreating(true);
+    if ((hasShownChildren || hasPeerChildren) && !expanded) toggleExpanded(todo.id);
+  }, [hasShownChildren, hasPeerChildren, expanded, toggleExpanded, todo.id]);
+
+  const handleSubmit = useCallback(async (): Promise<boolean> => {
+    const title = draft.trim();
+    if (!title) return false;
+    if (busy) return false;
+    setBusy(true);
+    try {
+      const ok = await onCreateSubtask(todo.id, title);
+      if (ok) setDraft('');
+      return ok;
+    } finally {
+      setBusy(false);
+    }
+  }, [draft, busy, todo.id, onCreateSubtask]);
+
+  const handleCancel = useCallback(() => {
+    setCreating(false);
+    setDraft('');
+  }, []);
+
   // 仅自身今日 = 可剔除；否则仅作为祖先展示。
   return (
     <>
@@ -628,8 +659,8 @@ const PlannedBranch: React.FC<{
         subtasksExpanded={expanded}
         onToggleSubtasks={() => toggleExpanded(todo.id)}
         archivedView={false}
-        creating={false}
-        onAddSubtask={undefined}
+        creating={creating}
+        onAddSubtask={handleAddClick}
         onDelete={() => onDelete(todo.id)}
         onRestore={() => { /* never used in planned section */ }}
         todayKey={todayKey}
@@ -639,6 +670,45 @@ const PlannedBranch: React.FC<{
           }
         }}
       />
+      {/* 子任务创建输入行 —— 与下半区一致：creating=true 时挂在该行下方，
+          深度 +1。 */}
+      {creating && (
+        <SubtaskCreateRow
+          depth={depth}
+          draft={draft}
+          busy={busy}
+          onChange={setDraft}
+          onSubmit={handleSubmit}
+          onCancel={handleCancel}
+        />
+      )}
+      {hasShownChildren && (
+        <ul className="task-branch__children">
+          {shownChildren.map((c) => (
+            <PlannedBranch
+              key={`shown-${c.id}`}
+              todo={c}
+              depth={depth + 1}
+              selectedId={selectedId}
+              onSelect={onSelect}
+              allTodos={allTodos}
+              sort={sort}
+              getExpanded={getExpanded}
+              toggleExpanded={toggleExpanded}
+              todayKey={todayKey}
+              shownSet={shownSet}
+              getPeerExpanded={getPeerExpanded}
+              togglePeerExpanded={togglePeerExpanded}
+              onCycle={async (next) => {
+                await window.todoList.todo.update(c.id, { status: next });
+              }}
+              onDelete={onDelete}
+              onUnplan={onUnplan}
+              onCreateSubtask={onCreateSubtask}
+            />
+          ))}
+        </ul>
+      )}
       {/* 兄弟折叠 chip —— 显示在已展示子任务之后，避免与 children ul 抢占缩进。 */}
       {hasPeerChildren && (
         <li
@@ -651,10 +721,10 @@ const PlannedBranch: React.FC<{
             className="task-row__peer-chip"
             aria-expanded={getPeerExpanded(todo.id)}
             onClick={() => togglePeerExpanded(todo.id)}
-            title={getPeerExpanded(todo.id) ? '折叠兄弟任务' : `展开 ${peerChildren.length} 个未计划任务`}
+            title={getPeerExpanded(todo.id) ? '收起子任务' : `展开 ${peerChildren.length} 个未计划子任务`}
           >
             <ChevronGlyph open={getPeerExpanded(todo.id)} />
-            {peerChildren.length} 个任务
+            {getPeerExpanded(todo.id) ? '收起' : `${peerChildren.length} 个子任务`}
           </button>
         </li>
       )}
