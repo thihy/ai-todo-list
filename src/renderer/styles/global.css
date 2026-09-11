@@ -2154,18 +2154,6 @@ a:hover {
      a transparent placeholder so border-color transitions look clean. */
   border-left: 2px solid transparent;
   cursor: pointer;
-  /* Inter-row divider + progress line, fused into the bottom 2px
-     border. The border is drawn as a horizontal gradient: the leftmost
-     --row-progress is the accent colour (or success / muted for done /
-     cancelled), the rest is the subtle divider colour. So the divider
-     AND the progress line share the exact same 2px row at the bottom —
-     no gap between them, ever. */
-  border-bottom: 2px solid;
-  border-image: linear-gradient(
-    to right,
-    var(--progress-fill, var(--accent-primary)) 0 var(--row-progress, 0%),
-    var(--border-subtle, #EDEFF2) var(--row-progress, 0%) 100%
-  ) 0 0 1 0 / 0 0 2px 0 stretch stretch;
   /* Pills on the second row are flex:0 0 auto (full intrinsic width) so
      we clip any overflow on the row edge — the rightmost element (the
      actions group, anchored via margin-left:auto) is the LAST thing on
@@ -2197,20 +2185,8 @@ a:hover {
   text-decoration: line-through;
   color: var(--fg-muted);
 }
-.task-row.is-done {
-  --row-progress: 100%;
-  --progress-fill: var(--accent-success);
-}
 .task-row.is-cancelled {
-  --row-progress: 100%;
-  --progress-fill: var(--fg-muted);
   opacity: 0.6;
-}
-/* Drop the bottom divider on the very last row so the row list meets the
-   container edge cleanly (avoids a double line with the list's own
-   border / scroll area). */
-.task-row:last-child {
-  border-bottom: 0;
 }
 .task-row.is-cancelled .task-row__title {
   text-decoration: line-through;
@@ -2289,8 +2265,7 @@ a:hover {
 .task-row__meta-pills > .task-row__due,
 .task-row__meta-pills > .task-row__drawings,
 .task-row__meta-pills > .task-row__tag,
-.task-row__meta-pills > .task-row__sub--done,
-.task-row__meta-pills > .task-row__progress {
+.task-row__meta-pills > .task-row__sub--done {
   flex: 0 0 auto;
 }
 .task-row__deleted-time {
@@ -2344,9 +2319,9 @@ a:hover {
    visible. */
 @container meta (max-width: 220px) {
   .task-row__meta-pills > .task-row__tag,
+  .task-row__meta-pills > .task-row__progress,
   .task-row__meta-pills > .task-row__sub--done,
-  .task-row__meta-pills > .task-row__drawings,
-  .task-row__meta-pills > .task-row__progress {
+  .task-row__meta-pills > .task-row__drawings {
     display: none;
   }
 }

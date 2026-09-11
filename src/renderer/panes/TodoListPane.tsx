@@ -344,6 +344,7 @@ export const TodoListPane: React.FC<{
                         onRestore={onRestore}
                         onCreateSubtask={onCreateSubtask}
                         onPlanToday={onPlanToday}
+                        onUnplan={onUnplan}
                       />
                     ))}
                   </ul>
@@ -457,7 +458,9 @@ const TaskBranch: React.FC<{
   onCreateSubtask: (parentId: string, title: string) => Promise<boolean>;
   /** 下半区行尾 "+ 今日" 按钮（仅下半区 TaskBranch 传；上半区 PlannedBranch 不传） */
   onPlanToday?: (id: string) => Promise<void>;
-}> = ({ todo, depth, selectedId, onSelect, allTodos, sort, getExpanded, toggleExpanded, archivedView, todayKey, shownSet, onCycle, onDelete, onRestore, onCreateSubtask, onPlanToday }) => {
+  /** 下半区把已计划任务的 "+ 今日" 切成"今天不做了"用 */
+  onUnplan?: (id: string) => Promise<void>;
+}> = ({ todo, depth, selectedId, onSelect, allTodos, sort, getExpanded, toggleExpanded, archivedView, todayKey, shownSet, onCycle, onDelete, onRestore, onCreateSubtask, onPlanToday, onUnplan }) => {
   const children = subtasksOf(allTodos, todo.id, sort);
   const hasSubtasks = children.length > 0;
   const doneCount = hasSubtasks ? children.filter((c) => c.status === 'done').length : 0;
@@ -521,8 +524,13 @@ const TaskBranch: React.FC<{
         onDelete={() => onDelete(todo.id)}
         onRestore={() => onRestore(todo.id)}
         todayKey={todayKey}
-        showPlannedIcon={shownSet.has(todo.id)}
-        onPlanToday={onPlanToday ? () => onPlanToday(todo.id) : undefined}
+        onTogglePlan={() => {
+          if (todo.plannedFor === todayKey) {
+            if (onUnplan) void onUnplan(todo.id);
+          } else if (onPlanToday) {
+            void onPlanToday(todo.id);
+          }
+        }}
       />
       {!archivedView && creating && (
         <SubtaskCreateRow
@@ -625,8 +633,11 @@ const PlannedBranch: React.FC<{
         onDelete={() => onDelete(todo.id)}
         onRestore={() => { /* never used in planned section */ }}
         todayKey={todayKey}
-        showPlannedIcon={shownSet.has(todo.id)}
-        onPlanToday={undefined}
+        onTogglePlan={() => {
+          if (todo.plannedFor === todayKey) {
+            void onUnplan(todo.id);
+          }
+        }}
       />
       {/* 兄弟折叠 chip —— 显示在已展示子任务之后，避免与 children ul 抢占缩进。 */}
       {hasPeerChildren && (
@@ -744,10 +755,11 @@ const TaskRow: React.FC<{
   /** startOfToday() —— 用于判断本行是否今日；上半区祖先任务行强制显示图标 */
   todayKey: string;
   /** 上半区节点（或下半区祖先已被展示）传 true，行内强制显示今日图标 */
-  showPlannedIcon: boolean;
-  /** 下半区行尾 hover 时显示的 "+ 今日" 按钮；undefined = 上半区 */
-  onPlanToday?: () => void;
-}> = ({ todo, depth, active, onSelect, onCycle, hasSubtasks, subtaskCount, subtaskDoneCount, subtasksExpanded, onToggleSubtasks, archivedView, onDelete, onRestore, creating, onAddSubtask, todayKey, showPlannedIcon, onPlanToday }) => {
+  showPlannedIcon?: boolean;
+  /** Toggle plan/unplan for THIS row. Provided in both upper and lower
+      sections so the unified button below can flip state either way. */
+  onTogglePlan?: () => void;
+}> = ({ todo, depth, active, onSelect, onCycle, hasSubtasks, subtaskCount, subtaskDoneCount, subtasksExpanded, onToggleSubtasks, archivedView, onDelete, onRestore, creating, onAddSubtask, todayKey, onTogglePlan }) => {
   const st = todo.status;
   // Terminal/voided states recede (icon mutes, title strikes); blocked is still
   // active but flagged. Each off-default status gets its own row class so the
@@ -755,9 +767,12 @@ const TaskRow: React.FC<{
   const recede = st === 'done' || st === 'cancelled';
   const statusCls = st === 'done' ? ' is-done' : st === 'cancelled' ? ' is-cancelled' : st === 'blocked' ? ' is-blocked' : '';
   const creatingCls = creating ? ' is-creating-subtask' : '';
-  // 今日图标：本行自身 plannedFor === todayKey 或 showPlannedIcon（来自上半区）
-  const isPlanned = todo.plannedFor === todayKey || showPlannedIcon;
-  const plannedCls = isPlanned ? ' is-planned' : '';
+  const isSelfPlanned = todo.plannedFor === todayKey;
+  // is-planned class is kept off the row (no longer drives a row tint,
+  // see CSS — visual grouping is done by the planned-section / other-
+  // section headings). The class still lives here in case future styling
+  // wants to hook it.
+  const plannedCls = '';
   return (
     <li
       role="button"
@@ -800,17 +815,9 @@ const TaskRow: React.FC<{
             {hasSubtasks ? <TaskBranchGlyph open={subtasksExpanded} done={recede} /> : <TaskGlyph done={recede} />}
           </span>
           <span className="task-row__title">{todo.title || '(无标题)'}</span>
-          {/* 今日图标 —— 行内强提示"该任务今天要做"。
-              本行自身已安排 → 蓝色圆点；上半区祖先（showPlannedIcon）→ 半透明提示。 */}
-          {isPlanned && (
-            <span
-              className={`task-row__planned-icon${todo.plannedFor === todayKey ? ' is-self' : ' is-ancestor'}`}
-              title={todo.plannedFor === todayKey ? '今日待办' : '包含今日子任务'}
-              aria-label={todo.plannedFor === todayKey ? '今日待办' : '包含今日子任务'}
-            >
-              <TodayGlyph />
-            </span>
-          )}
+          {/* 今日状态指示不再在行内以图标方式展示 —— 改为让下方的
+              "+ 今日" 按钮同时承担 toggle：实心 = 已加入今日，空心 = 未加入。
+              这样上下半区不需要靠一个重复的小绿点区分。 */}
           {/* SubTask collapse/expand chevron — sits right BEFORE the status
               select so it reads "name ▸ status". Only rendered when this
               task actually has subtasks. */}
@@ -842,19 +849,24 @@ const TaskRow: React.FC<{
             <Subtitle todo={todo} subtaskCount={subtaskCount} subtaskDoneCount={subtaskDoneCount} />
           </div>
           <div className="task-row__actions">
-            {/* 下半区行尾的 "+ 今日" 按钮 —— 仅下半区（onPlanToday 存在） */}
-            {onPlanToday && !archivedView && (
+            {/* 今日 toggle 按钮 —— 上下半区都显示（onTogglePlan 存在时）。
+                实心 = 当前已加入今日；空心 = 未加入。
+                点击根据当前状态切换：
+                  - 未加入 → 加入今日（tooltip 预告下一步 = 切到"今天不做了"）
+                  - 已加入 → 从今日剔除（tooltip 预告下一步 = 切到"今天要做的"） */}
+            {onTogglePlan && !archivedView && (
               <button
                 type="button"
-                className="task-row__action task-row__plan-btn"
-                aria-label="加入今日"
-                title="加入今日"
+                className={`task-row__action task-row__plan-btn${isSelfPlanned ? ' is-active' : ''}`}
+                aria-label={isSelfPlanned ? '今天不做了' : '今天要做的'}
+                title={isSelfPlanned ? '今天不做了' : '今天要做的'}
+                aria-pressed={isSelfPlanned}
                 onClick={(e) => {
                   e.stopPropagation();
-                  void onPlanToday();
+                  void onTogglePlan();
                 }}
               >
-                <TodayGlyph muted />
+                <TodayGlyph planned={isSelfPlanned} />
               </button>
             )}
             {/* + 子任务：创建时（creating=true）常驻可见作为视觉锚点。archivedView 不显示。 */}
@@ -1000,10 +1012,9 @@ const Subtitle: React.FC<{ todo: Todo; subtaskCount: number; subtaskDoneCount: n
       </span>,
     );
   }
+  // 进度以 "X%" pill 紧跟优先级后，按优先级 pill 的色调淡化。Not-started
+  // (0%) 不渲染，避免无意义的 "0%" 噪音。
   if (todo.progress != null && todo.progress > 0) {
-    // Progress is rendered as a tiny percentage pill (e.g. "45%") in the
-    // same metadata row as priority / due / tags. Kept compact (no track
-    // bar) so it doesn't compete with the title.
     bits.push(
       <span key="prog" className="task-row__progress" title={`进度 ${todo.progress}%`}>
         {todo.progress}%
@@ -1105,18 +1116,20 @@ const PlusGlyph: React.FC = () => (
   </svg>
 );
 
-// TodayGlyph — a small filled circle with a calendar/clock hint (the inner
-// dot). `muted` uses a softer stroke for the hover-reveal "+ 今日" button so
-// it reads as a quiet affordance; the default (no muted prop) is the strong
-// accent dot shown inline as the planned-for-today marker.
-const TodayGlyph: React.FC<{ muted?: boolean }> = ({ muted = false }) => (
+// TodayGlyph — a small circle representing the "planned for today"
+// state. When `planned` is true the circle is filled with the accent
+// colour (showing this task is on today's list); otherwise it is an
+// empty outline (showing the button is the affordance to add it). The
+// same glyph is used in the toggle button so visual feedback tracks the
+// state on click.
+const TodayGlyph: React.FC<{ planned?: boolean }> = ({ planned = false }) => (
   <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
     <circle cx="6" cy="6" r="4.5"
-      fill={muted ? 'transparent' : 'var(--accent-primary)'}
-      stroke={muted ? 'var(--fg-muted)' : 'var(--accent-primary)'}
-      strokeWidth={muted ? '1.2' : '1'}
+      fill={planned ? 'currentColor' : 'transparent'}
+      stroke="currentColor"
+      strokeWidth="1.4"
     />
-    <path d="M6 3.5V6L7.5 7.5" stroke={muted ? 'var(--fg-muted)' : 'var(--bg-base)'} strokeWidth="1.2" strokeLinecap="round" />
+    <path d="M6 3.5V6L7.5 7.5" stroke={planned ? 'var(--bg-base)' : 'currentColor'} strokeWidth="1.2" strokeLinecap="round" />
   </svg>
 );
 
