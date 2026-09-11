@@ -12,6 +12,7 @@
   --bg-surface: #F6F7F9;
   --bg-surface-elev: #ECEEF1;
   --bg-input: #FFFFFF;
+  --bg-soft: #F1F3F5;
   --bg-hover: rgba(4, 120, 87, 0.07);
   --bg-active: rgba(4, 120, 87, 0.12);
   --bg-tooltip: #1F2227;
@@ -2251,6 +2252,7 @@ a:hover {
   align-items: center;
   gap: var(--space-sm);
   overflow: hidden;
+  white-space: nowrap;
 }
 .task-row__meta-line > .task-row__sub > * {
   flex: 0 0 auto;
@@ -2380,13 +2382,10 @@ a:hover {
   border-image-width: 0 0 0 3px;
   border-image-slice: 1;
 }
-/* Active selection overrides the progress colour with the accent
-   primary so a selected half-done task shows "active" not "progress". */
-.task-row.is-active {
-  border-image: linear-gradient(var(--accent-primary), var(--accent-primary));
-  border-image-width: 0 0 0 3px;
-  border-image-slice: 1;
-}
+/* Active selection does NOT override border-image — the selection
+   signal is the box-shadow inset on the right edge + background tint
+   (see .task-row.is-active above). Letting border-image win would
+   repaint the left rail full green and hide the progress info. */
 /* Subtask progress chip when the whole branch is done — accent-success so
    a glance tells you the branch is clear. */
 .task-row__sub--done {
