@@ -2154,11 +2154,18 @@ a:hover {
      a transparent placeholder so border-color transitions look clean. */
   border-left: 2px solid transparent;
   cursor: pointer;
-  /* Inter-row divider — a 2px hairline so rows are visually separated
-     and the bottom-edge progress line has a clean backdrop. The
-     progress line (::after, see below) sits 2px above this so the two
-     are clearly distinct (instead of running into each other). */
-  border-bottom: 2px solid var(--border-subtle, #EDEFF2);
+  /* Inter-row divider + progress line, fused into the bottom 2px
+     border. The border is drawn as a horizontal gradient: the leftmost
+     --row-progress is the accent colour (or success / muted for done /
+     cancelled), the rest is the subtle divider colour. So the divider
+     AND the progress line share the exact same 2px row at the bottom —
+     no gap between them, ever. */
+  border-bottom: 2px solid;
+  border-image: linear-gradient(
+    to right,
+    var(--progress-fill, var(--accent-primary)) 0 var(--row-progress, 0%),
+    var(--border-subtle, #EDEFF2) var(--row-progress, 0%) 100%
+  ) 0 0 1 0 / 0 0 2px 0 stretch stretch;
   /* Pills on the second row are flex:0 0 auto (full intrinsic width) so
      we clip any overflow on the row edge — the rightmost element (the
      actions group, anchored via margin-left:auto) is the LAST thing on
@@ -2169,27 +2176,10 @@ a:hover {
   overflow: hidden;
   transition: background var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
 }
-/* Bottom progress line — a 2px horizontal fill at the row's bottom edge.
-   Drawn via ::after so it doesn't fight the row's own padding/borders.
-   Sits 1px above the border-bottom divider so the two don't overlap.
-   Colour differs per status (in-progress=primary, done=success,
-   cancelled=muted); for a default row it's the primary accent, with the
-   filled portion = --row-progress and the rest fully transparent. */
-.task-row::after {
-  content: '';
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 2px;
-  height: 2px;
-  background-image: linear-gradient(
-    to right,
-    var(--progress-fill, var(--accent-primary)) 0 var(--row-progress, 0%),
-    transparent var(--row-progress, 0%) 100%
-  );
-  pointer-events: none;
-  transition: background-image var(--dur-fast) var(--ease-out);
-}
+/* (Progress line was historically drawn as a separate ::after at the
+   row's bottom, but that left a 1–2px gap from the divider border.
+   The progress + divider are now fused into the bottom border via
+   border-image above, so the line is contiguous with the row below.) */
 .task-row {
   position: relative;
 }
@@ -3093,13 +3083,8 @@ a:hover {
   padding: 0;
 }
 
-/* 今日行 —— 微微加亮背景，把上半区与下半区视觉上分开。 */
-.task-row.is-planned {
-  background: var(--accent-primary-soft);
-}
-.task-row.is-planned:hover {
-  background: color-mix(in srgb, var(--accent-primary-soft) 80%, var(--bg-hover) 20%);
-}
+/* 今日行 —— 不再加亮背景。视觉分组已通过上半区 / 下半区两个 section
+   标题完成，整行保持与其他任务一致的默认样式。 */
 .task-row__planned-icon {
   display: inline-flex;
   align-items: center;
