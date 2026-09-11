@@ -6,6 +6,23 @@
 
 @import url('https://rsms.me/inter/inter.css');
 
+/* DSH design platform — vendored verbatim from
+ * deepseek-harness/packages/client/ui-theme/src/styles/. These sheets declare
+ * the `--dsw-static-*` palette and the `--dsw-alias-*` semantic tokens every
+ * DSH primitive (ToolRow, DisclosureRow, DiffBlock, MarkdownText, …) is drawn
+ * with. Without them the vendored components resolve every var() to the
+ * guaranteed-invalid value and render unstyled.
+ *
+ * Order matters: base.css supplies the upstream font/motion primitives the
+ * token sheets reference; design-platform.css declares the tokens on `body`
+ * (dark overrides on `body[data-ds-dark-theme]`); the last two skin the
+ * scrollbars and the shiki syntax palette. */
+@import './dsh/base.css';
+@import './dsh/design-platform.css';
+@import './dsh/gradient-shadow-text.css';
+@import './dsh/scrollbar.css';
+@import './dsh/shiki.css';
+
 :root {
   /* Surface — light neutral graphite */
   --bg-canvas: #FFFFFF;
@@ -88,54 +105,9 @@
   color-scheme: light;
 }
 
-/* Syntax-highlight token palette: backing values for the `--shiki-*` custom
-   properties that DSH's CodeBlock emits via `createCssVariablesTheme` (see
-   deepseek-harness/packages/client/ui-primitives/src/markdown/
-   CodeBlock.module.css + the highlighter in packages/client/ui-primitives/
-   src/markdown/highlight.js). Without these, every highlighted span falls
-   back to the inherited text color and code blocks render as plain mono.
-   Mirrors `packages/client/ui-theme/src/styles/shiki.css` — kept in sync
-   here so we don't have to take on the whole ui-theme package just for a
-   14-line palette. */
-:root {
-  --shiki-foreground: var(--fg-primary);
-  --shiki-background: var(--bg-canvas);
-  --shiki-token-constant: #1c7ed6;
-  --shiki-token-string: #2f9e44;
-  --shiki-token-comment: #868e96;
-  --shiki-token-keyword: #d6336c;
-  --shiki-token-parameter: #e8590c;
-  --shiki-token-function: #6741d9;
-  --shiki-token-string-expression: #2b8a3e;
-  --shiki-token-punctuation: #495057;
-  --shiki-token-link: #1971c2;
-}
-@media (prefers-color-scheme: dark) {
-  :root {
-    --shiki-token-constant: #4dabf7;
-    --shiki-token-string: #69db7c;
-    --shiki-token-comment: #adb5bd;
-    --shiki-token-keyword: #faa2c1;
-    --shiki-token-parameter: #ffa94d;
-    --shiki-token-function: #b197fc;
-    --shiki-token-string-expression: #8ce99a;
-    --shiki-token-punctuation: #ced4da;
-    --shiki-token-link: #74c0fc;
-  }
-}
-/* Hook for the future explicit theme toggle — once renderer-side theme
-   switching lands, the active body attribute drives the dark palette. */
-body[data-ds-dark-theme] {
-  --shiki-token-constant: #4dabf7;
-  --shiki-token-string: #69db7c;
-  --shiki-token-comment: #adb5bd;
-  --shiki-token-keyword: #faa2c1;
-  --shiki-token-parameter: #ffa94d;
-  --shiki-token-function: #b197fc;
-  --shiki-token-string-expression: #8ce99a;
-  --shiki-token-punctuation: #ced4da;
-  --shiki-token-link: #74c0fc;
-}
+/* The `--shiki-*` syntax palette that DSH's CodeBlock emits through
+   `createCssVariablesTheme` now comes from the vendored theme sheet
+   (styles/dsh/shiki.css) — see the @import block at the top of this file. */
 
 * {
   box-sizing: border-box;
@@ -789,6 +761,31 @@ a:hover {
 }
 .ai-panel__grip svg {
   opacity: 0.7;
+}
+
+/* Loading placeholder for the lazy-loaded AI pane. Shown for the brief
+   Suspense window while the AIPane chunk (vendored DSH render tree +
+   shiki/katex) streams in. Mirrors the pane's centered, muted-text feel so
+   the open-panel transition doesn't flash a bare/empty surface. */
+.ai-panel__loading {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--fg-muted);
+  font-size: var(--text-sm);
+}
+
+/* T4: turn-metrics tail line (time · duration · time-to-first-token · tok/s).
+   Small muted secondary text below the assistant turn; only rendered once the
+   turn settles. */
+.aipane__metrics {
+  margin-top: var(--space-xs);
+  padding-left: 2px;
+  color: var(--fg-muted);
+  font-size: var(--text-xs);
+  line-height: 1.4;
+  user-select: text;
 }
 
 /* Collapsed rail */
@@ -1447,145 +1444,6 @@ a:hover {
   color: var(--accent-danger);
   border: 1px solid color-mix(in srgb, var(--accent-danger) 35%, transparent);
   border-radius: var(--radius-md);
-}
-
-/* Inline tool-call card: collapsible, shows name + args + result. The
-   header chrome is rendered by DisclosureRow (DSH primitive) — we only own
-   the outer container, the expanded body, and the running-sweep animation
-   that runs while the latest block is still streaming. */
-.tool-call-row {
-  align-self: stretch;
-  width: 100%;
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-md);
-  background: var(--bg-surface);
-  overflow: hidden;
-  font-size: var(--font-xs);
-}
-.tool-call-row--error {
-  border-color: color-mix(in srgb, var(--accent-danger) 40%, transparent);
-  background: color-mix(in srgb, var(--accent-danger) 6%, var(--bg-surface));
-}
-.tool-call-row__sep {
-  display: inline-block;
-  width: 2px;
-  height: 2px;
-  margin: 0 8px;
-  border-radius: 50%;
-  background: var(--fg-muted);
-  vertical-align: middle;
-}
-.tool-call-row__summary {
-  font-size: var(--font-xs);
-  line-height: 24px;
-  color: var(--fg-secondary);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  overflow: hidden;
-}
-.tool-call-row__body {
-  border-top: 1px solid var(--border-default);
-  padding: var(--space-xs) var(--space-sm);
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-xs);
-}
-.tool-call-row__label {
-  font-size: var(--font-xs);
-  color: var(--fg-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  margin-bottom: 2px;
-}
-.tool-call-row__pre {
-  margin: 0;
-  padding: var(--space-xs);
-  background: var(--bg-canvas);
-  border-radius: var(--radius-sm);
-  font-family: var(--font-mono);
-  font-size: var(--font-xs);
-  color: var(--fg-primary);
-  overflow: auto;
-  max-height: 220px;
-  white-space: pre;
-}
-
-/* Collapsible reasoning / "思考过程" panel — sibling row inside the turn,
-   rendered as a DisclosureRow (DSH primitive) so the chrome matches the
-   rest of the DSH-aligned flow. While the latest block is still streaming
-   the header shows "思考中…" and runs the sweep animation; once the answer
-   lands it collapses back to default. */
-.reasoning-row {
-  align-self: stretch;
-  width: 100%;
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--fg-muted) 4%, var(--bg-surface));
-  overflow: hidden;
-}
-.reasoning-row__sep {
-  display: inline-block;
-  width: 2px;
-  height: 2px;
-  margin: 0 8px;
-  border-radius: 50%;
-  background: var(--fg-muted);
-  vertical-align: middle;
-}
-.reasoning-row__summary {
-  font-size: var(--font-xs);
-  line-height: 24px;
-  color: var(--fg-secondary);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  overflow: hidden;
-}
-.reasoning-row__body {
-  border-top: 1px solid var(--border-default);
-  padding: 4px 0 4px 22px;
-  color: var(--fg-secondary);
-  font-size: var(--font-xs);
-  line-height: 24px;
-  max-height: 280px;
-  overflow: auto;
-}
-.reasoning-row__body .markdown { color: var(--fg-secondary); }
-
-/* Running-sweep animation: a 300px gradient that travels left-to-right
-   across the disclosure row header. Target the DisclosureRow inner row via
-   the data-disclosure-row attribute (CSS-module class names are hashed at
-   build time, but React data-* props survive), which is already
-   position:relative + overflow:hidden — so the pseudo-element is clipped
-   exactly to the row width. The animation is the visual cue that the
-   model is still thinking / calling tools; once the next event lands the
-   `data-state` flips off and the sweep disappears. */
-@keyframes dsh-row-sweep {
-  from { transform: translateX(-100%); }
-  to   { transform: translateX(calc(100% + 300px)); }
-}
-.reasoning-row[data-state='running'] [data-disclosure-row]::after,
-.tool-call-row[data-state='running'] [data-disclosure-row]::after {
-  content: '';
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 0;
-  width: 300px;
-  background: linear-gradient(
-    90deg,
-    transparent 0%,
-    color-mix(in srgb, var(--accent-bright) 25%, transparent) 55%,
-    transparent 100%
-  );
-  animation: dsh-row-sweep 2.6s linear infinite;
-  pointer-events: none;
-  z-index: 0;
-}
-@media (prefers-reduced-motion: reduce) {
-  .reasoning-row[data-state='running'] [data-disclosure-row]::after,
-  .tool-call-row[data-state='running'] [data-disclosure-row]::after {
-    animation: none;
-  }
 }
 
 /* Markdown content inside assistant bubbles. */

@@ -27,30 +27,31 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useAiStream, useAppEvent } from '../hooks/useTodoListApi';
 import { useDataVersion } from '../data-bus';
-import { Markdown } from '../components/Markdown';
-import { Button, DisclosureRow, Pill } from '@deepseek-ai/dsh-client-ui-primitives';
 import {
-  IconHistory,
-  IconPlus,
-  IconClose,
-  IconSend,
-  IconStop,
-  IconAttach,
-  IconSparkle,
-  IconThink,
-  IconTool,
-  IconWarn,
-} from '../components/icons';
+  DisclosureRow,
+  MarkdownText,
+  Pill,
+  RiskConfirmation,
+  Button,
+  IconEnhanceOutline16,
+  IconPlusOutline16,
+  IconCloseOutline16,
+  IconSendOutline16,
+  IconStopFill16,
+  IconPaperclipOutline16,
+  IconWarningOutline16,
+} from '@deepseek-ai/dsh-client-ui-primitives';
+import { IconHistory } from '../components/icons';
 import type {
   AIStreamEvent,
   UserQuestionRequest,
   UserQuestionAnswerItem,
 } from '../../shared/ai-types';
 import { AI_SUBMIT_EVENT, type ExternalAiSubmitDetail } from '../components/Composer';
-
-// Reference-stable labels for any MarkdownText used directly inside this
-// component (HITL bodies etc.) are NOT needed — we always render through
-// the shared <Markdown> wrapper which already hoists its own labels.
+import { recoverToolResultValue, parseToolArgs } from '../tool-presentation';
+import { DomainToolRow } from '../dsh/DomainToolRow';
+import { DomainReasoningRow } from '../dsh/DomainReasoningRow';
+import { CONVERSATION_MARKDOWN_LABELS } from '../dsh/conversation-locale';
 
 interface AttachedFile {
   path: string;
@@ -75,6 +76,18 @@ type TurnBlock =
   | { kind: 'tool-call'; callId: string; name: string; args: unknown; result: unknown; ok: boolean }
   | { kind: 'text'; text: string };
 
+interface TurnMetrics {
+  /** Turn start (ms, Date.now()) — stamped when runSubmit creates the turn,
+   *  before the first ai:stream event. */
+  startMs: number;
+  /** Arrival ts of the first token event (time-to-first-token numerator). */
+  firstTokenMs?: number;
+  /** Arrival ts of the done event (turn-end; duration = endMs − startMs). */
+  endMs?: number;
+  /** Output tokens from runTurn (tok/s numerator). */
+  tokensOut?: number;
+}
+
 interface Turn {
   id: string;
   user: string;
@@ -87,6 +100,9 @@ interface Turn {
   /** Files the user attached to this turn. Rendered as chips above the
    *  bubble; their text body was inlined into the prompt sent to the model. */
   attached?: AttachedFile[];
+  /** Turn-level timing + token count, rendered as a metrics tail line once
+   *  the turn settles. */
+  metrics?: TurnMetrics;
 }
 
 interface ConversationRow {
@@ -177,6 +193,17 @@ export const AIPane: React.FC = () => {
   const scrollRef = useRef<HTMLDivElement>(null);
   const stickyHeadRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  // Live mirror of currentId for stale-closure-safe guards. The initial-load
+  // effect (below) captures `currentId` only at creation time (it deliberately
+  // omits currentId from its deps to avoid re-fetching the list on every
+  // switch). When the list resolves after runSubmit already created a fresh
+  // conversation and set currentId, the captured `!currentId` would read true
+  // and OVERRIDE currentId to list[0] (an old, unrelated conversation) —
+  // orphaning the in-flight turn (its blocks live under the new convId, which
+  // is no longer "current", so the body renders empty). Reading the ref instead
+  // sees the live value and skips the override.
+  const currentIdRef = useRef<string | null>(currentId);
+  currentIdRef.current = currentId;
   // Scroll-tracked "current question": the id of the most recent user turn whose
   // bubble has scrolled fully under the sticky header (no longer visible).
   // The pinned banner shows THIS turn's question so the user always knows
@@ -211,7 +238,10 @@ export const AIPane: React.FC = () => {
       }
       const list = res.data.conversations;
       setConversations(list);
-      if (!currentId && list.length > 0) setCurrentId(list[0]!.id);
+      // Stale-closure-safe: read the LIVE currentId via the ref, not the
+      // captured value. If runSubmit already allocated a conversation (or the
+      // user already picked one), do not clobber it with list[0].
+      if (!currentIdRef.current && list.length > 0) setCurrentId(list[0]!.id);
     })();
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -329,7 +359,26 @@ export const AIPane: React.FC = () => {
       });
     }
     const done = mine.some((e) => e.type === 'done');
+    // L6-B: a turn may finish without streaming any token deltas (a
+    // tool-only turn whose final answer arrives as a single `done.content`,
+    // or a provider that doesn't chunk). In that case blocks has no text and
+    // the answer would never render — the "思考中…" chip would clear (status
+    // flips via L6-A) but leave an empty turn. Seed a text block from the
+    // done event's assembled content; skipped when tokens already produced a
+    // text block (content == concatenated tokens there, seeding would dup).
+    const doneEvt = mine.find((e): e is Extract<AIStreamEvent, { type: 'done' }> => e.type === 'done');
+    if (doneEvt && doneEvt.content && !blocks.some((b) => b.kind === 'text')) {
+      blocks.push({ kind: 'text', text: doneEvt.content });
+    }
     const errEvt = mine.find((e): e is Extract<AIStreamEvent, { type: 'error' }> => e.type === 'error');
+    // T4: first token arrival ts — the first synthesized `token` event in
+    // this turn. useAiStream stamps `ts` on every event it keeps; the first
+    // token event's ts is the time-to-first-token numerator.
+    let firstTokenTs: number | undefined;
+    for (const ev of mine) {
+      if (ev.type === 'token' && ev.ts) { firstTokenTs = ev.ts; break; }
+    }
+    const endTs = doneEvt?.ts;
     setTurnsByConv((prev) => {
       const list = prev[streamingConvId] ?? [];
       return {
@@ -342,6 +391,12 @@ export const AIPane: React.FC = () => {
                 blocks,
                 status: errEvt ? 'error' : done ? 'done' : 'streaming',
                 error: errEvt?.message,
+                metrics: {
+                  startMs: t.metrics?.startMs ?? Date.now(),
+                  firstTokenMs: t.metrics?.firstTokenMs ?? firstTokenTs,
+                  ...(endTs != null ? { endMs: endTs } : {}),
+                  ...(doneEvt?.tokensOut != null ? { tokensOut: doneEvt.tokensOut } : {}),
+                },
               },
         ),
       };
@@ -706,7 +761,7 @@ export const AIPane: React.FC = () => {
         // Display the user's literal prompt in the bubble, NOT the wrapped
         // system-instruction version — the user should see exactly what
         // they typed.
-        { id, user: prompt, blocks: [], status: 'streaming', attached: attached.length > 0 ? attached : undefined },
+        { id, user: prompt, blocks: [], status: 'streaming', attached: attached.length > 0 ? attached : undefined, metrics: { startMs: Date.now() } },
       ],
     }));
     if (!override) {
@@ -716,17 +771,62 @@ export const AIPane: React.FC = () => {
     setStreamingConvId(convId);
     setStreamingTurnId(id);
     const res = await window.todoList.ai.ask({ prompt: finalWire, conversationId: convId, invocationId: id, history: priorTurns, tools: undefined });
-    if (!res.ok) {
-      setTurnsByConv((prev) => {
-        const list = prev[convId!] ?? [];
-        return {
-          ...prev,
-          [convId!]: list.map((t) =>
-            t.id === id ? { ...t, status: 'error', error: res.message ?? 'AI 调用失败' } : t,
-          ),
-        };
-      });
-    }
+    // L6-A: the turn's status flip is authoritative HERE, not in the
+    // streaming useEffect. The ai:stream `done` event and this IPC reply
+    // race: if the IPC resolves first, runSubmit clears streamingTurnId
+    // (below) and the useEffect bails at `if (!streamingTurnId) return`
+    // before the done event can flip status — the turn stays 'streaming'
+    // and the "思考中…" chip / sweep never settle even though the backend
+    // finished ("一直显示思考中…但其实已经结束了"). Flipping here
+    // (success → done, failure → error) makes the IPC resolve the source
+    // of truth; the useEffect's own done-flip becomes a harmless early
+    // set this overwrites idempotently. Only !res.ok used to set status
+    // here — the success path relied entirely on the racy done event.
+    setTurnsByConv((prev) => {
+      const list = prev[convId!] ?? [];
+      // L6-A: status flip is authoritative HERE (see comment above). The
+      // streaming useEffect that normally computes TurnMetrics bails at
+      // `if (!streamingTurnId) return` once we clear it below — and the IPC
+      // resolve can win that race, leaving metrics unset (no `.aipane__metrics`
+      // line, flaky depending on timing). So we ALSO seed metrics here as a
+      // fallback: endMs = now, tokensOut from the IPC reply. If the useEffect
+      // already computed richer metrics (e.g. firstTokenMs from real
+      // streaming chunks), preserve them — only fill the gaps.
+      return {
+        ...prev,
+        [convId!]: list.map((t) => {
+          if (t.id !== id) return t;
+          if (!res.ok) {
+            return { ...t, status: 'error' as const, error: res.message ?? 'AI 调用失败' };
+          }
+          // L6-B: seed a text block from the IPC reply's content when the
+          // streaming useEffect didn't (it bails once streamingTurnId
+          // clears, which races this resolve — same reason metrics are
+          // seeded here). For a non-streaming adapter the answer only
+          // lives in the final `assistant/message`, which runTurn now
+          // surfaces as turnResult.content; seeding it here guarantees the
+          // assistant bubble renders ("思考中… 然后没有任何内容" bug).
+          const blocks = t.blocks.slice();
+          const hasText = blocks.some((b) => b.kind === 'text');
+          const content = res.data?.content;
+          if (!hasText && content) {
+            blocks.push({ kind: 'text', text: content });
+          }
+          const prevMetrics = t.metrics;
+          const metrics: TurnMetrics = {
+            startMs: prevMetrics?.startMs ?? Date.now(),
+            ...(prevMetrics?.firstTokenMs != null ? { firstTokenMs: prevMetrics.firstTokenMs } : {}),
+            endMs: prevMetrics?.endMs ?? Date.now(),
+            ...(prevMetrics?.tokensOut != null
+              ? { tokensOut: prevMetrics.tokensOut }
+              : res.data?.tokensOut != null
+                ? { tokensOut: res.data.tokensOut }
+                : {}),
+          };
+          return { ...t, status: 'done' as const, error: undefined, blocks, metrics };
+        }),
+      };
+    });
     setStreamingConvId((cur) => (cur === convId ? null : cur));
     setStreamingTurnId((cur) => (cur === id ? null : cur));
     void refreshList();
@@ -756,7 +856,7 @@ export const AIPane: React.FC = () => {
       <header className="aipane__header">
         <div className="aipane__brand">
           <span className="aipane__brand-glyph" aria-hidden="true">
-            <IconSparkle size={14} />
+            <IconEnhanceOutline16 size={14} />
           </span>
           <span className="aipane__brand-text">AI 助手</span>
         </div>
@@ -768,7 +868,7 @@ export const AIPane: React.FC = () => {
             title="新建对话"
             aria-label="新建对话"
           >
-            <IconPlus />
+            <IconPlusOutline16 />
           </button>
           <div className="aipane__history" ref={historyRef}>
             <button
@@ -894,7 +994,7 @@ export const AIPane: React.FC = () => {
       <div className="aipane__body" role="log" aria-live="polite" ref={scrollRef}>
         {bootError && (
           <div className="aipane__empty aipane__empty--error">
-            <IconWarn size={14} /> 会话列表加载失败：{bootError}
+            <IconWarningOutline16 size={14} /> 会话列表加载失败：{bootError}
           </div>
         )}
         {/* The conversation title + current-question banner are wrapped in a
@@ -948,7 +1048,7 @@ export const AIPane: React.FC = () => {
                   {activeQuestionTurn.user}
                   {activeQuestionTurn.attached && activeQuestionTurn.attached.length > 0 && (
                     <span className="aipane__currentq-attach">
-                      {' '}<IconAttach size={11} /> {activeQuestionTurn.attached.length} 个附件
+                      {' '}<IconPaperclipOutline16 size={11} /> {activeQuestionTurn.attached.length} 个附件
                     </span>
                   )}
                 </span>
@@ -982,7 +1082,7 @@ export const AIPane: React.FC = () => {
           <div className="aipane__attach-row" role="list" aria-label="已附加的文件">
             {attachments.map((a) => (
               <span key={a.path} className="aipane__attach-chip" role="listitem" title={`${a.path}\n${a.mime} · ${a.size} 字节`}>
-                <span className="aipane__attach-chip-icon" aria-hidden="true"><IconAttach size={11} /></span>
+                <span className="aipane__attach-chip-icon" aria-hidden="true"><IconPaperclipOutline16 size={11} /></span>
                 <span className="aipane__attach-chip-name">{a.name}</span>
                 <button
                   type="button"
@@ -991,7 +1091,7 @@ export const AIPane: React.FC = () => {
                   aria-label={`移除 ${a.name}`}
                   title="移除"
                 >
-                  <IconClose size={10} />
+                  <IconCloseOutline16 size={10} />
                 </button>
               </span>
             ))}
@@ -1005,7 +1105,7 @@ export const AIPane: React.FC = () => {
             title="附加本地文件"
             aria-label="附加本地文件"
           >
-            <IconPlus size={14} />
+            <IconPlusOutline16 size={14} />
           </button>
           <textarea
             ref={textareaRef}
@@ -1035,7 +1135,7 @@ export const AIPane: React.FC = () => {
               title="停止生成（Esc）"
               aria-label="停止生成"
             >
-              <IconStop size={14} />
+              <IconStopFill16 size={14} />
             </button>
           ) : (
             <button
@@ -1046,7 +1146,7 @@ export const AIPane: React.FC = () => {
               title={current ? '发送（Enter）' : '发送并创建对话'}
               aria-label="发送"
             >
-              <IconSend size={14} />
+              <IconSendOutline16 size={14} />
             </button>
           )}
         </div>
@@ -1140,12 +1240,46 @@ function historyToTurn(h: HistoryTurnLike): Turn {
       kind: 'tool-call',
       callId: `hist-${h.name ?? 'tool'}-${argsKey}`,
       name: h.name ?? '',
-      args: h.args,
-      result: h.ok ? h.data : h.error,
+      // L5-A: history carries the same wrapped ContentBlock[] the live wire
+      // does (foldHistory stores block.content verbatim). Recover the raw
+      // value + parse the args JSON string so presentToolResult renders the
+      // right card instead of a <pre>[{"type":"text"...}]</pre> dump.
+      args: parseToolArgs(h.args),
+      result: h.ok ? recoverToolResultValue(h.data) : h.error,
       ok: h.ok ?? false,
     }],
     status: 'done',
   };
+}
+
+/** Format a millisecond duration for the turn-metrics line: sub-minute
+ *  durations show one decimal (< 10s) or none; minute+ shows m分s秒. */
+function fmtDuration(ms: number): string {
+  const s = ms / 1000;
+  if (s < 60) return `${s < 10 ? s.toFixed(1) : String(Math.round(s))}秒`;
+  const m = Math.floor(s / 60);
+  const rs = Math.round(s % 60);
+  return `${m}分${rs}秒`;
+}
+
+/** T4: render the turn-metrics tail line — `21:21 · 用时 28秒 · 首 token 0.9秒 · 124 tok/s`.
+ *  Returns null until the turn has settled (endMs present). */
+function formatTurnMetrics(m: TurnMetrics): string | null {
+  if (m.endMs == null) return null;
+  const parts: string[] = [];
+  const d = new Date(m.endMs);
+  parts.push(`${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`);
+  const durMs = m.endMs - m.startMs;
+  if (durMs >= 0) parts.push(`用时 ${fmtDuration(durMs)}`);
+  if (m.firstTokenMs != null) {
+    const ttft = m.firstTokenMs - m.startMs;
+    if (ttft >= 0) parts.push(`首 token ${(ttft / 1000).toFixed(1)}秒`);
+  }
+  if (m.tokensOut != null && m.tokensOut > 0 && durMs > 0) {
+    const tps = Math.round(m.tokensOut / (durMs / 1000));
+    if (tps > 0) parts.push(`${tps} tok/s`);
+  }
+  return parts.join(' · ');
 }
 
 const TurnView: React.FC<{ turn: Turn }> = ({ turn }) => {
@@ -1169,7 +1303,7 @@ const TurnView: React.FC<{ turn: Turn }> = ({ turn }) => {
         <div className="turn__attachments" aria-label="已附加的文件">
           {turn.attached.map((a) => (
             <span key={a.path} className="turn__attach-chip" title={`${a.path}\n${a.mime} · ${a.size} 字节`}>
-              <span aria-hidden="true"><IconAttach size={11} /></span> {a.name}
+              <span aria-hidden="true"><IconPaperclipOutline16 size={11} /></span> {a.name}
             </span>
           ))}
         </div>
@@ -1185,14 +1319,17 @@ const TurnView: React.FC<{ turn: Turn }> = ({ turn }) => {
       {blocks.map((block, i) => {
         if (block.kind === 'reasoning') {
           const running = streaming && i === lastReasoningIdx && !hasAnswer;
-          return <ReasoningRow key={`r-${i}`} text={block.text} running={running} />;
+          return <DomainReasoningRow key={`r-${i}`} text={block.text} running={running} />;
         }
         if (block.kind === 'tool-call') {
           const running = streaming && i === lastIdx;
           return (
-            <ToolCallRow
+            <DomainToolRow
               key={block.callId}
-              card={{ name: block.name, args: block.args, result: block.result, ok: block.ok }}
+              toolName={block.name}
+              args={block.args}
+              result={block.result}
+              ok={block.ok}
               running={running}
             />
           );
@@ -1200,144 +1337,21 @@ const TurnView: React.FC<{ turn: Turn }> = ({ turn }) => {
         // text
         return (
           <div key={`t-${i}`} className="bubble bubble--assistant">
-            <Markdown text={block.text} streaming={streaming} />
+            <MarkdownText text={block.text} streaming={streaming} labels={CONVERSATION_MARKDOWN_LABELS} />
           </div>
         );
       })}
       {thinking && <div className="aipane__thinking"><span className="aipane__dot" />思考中…</div>}
       {status === 'error' && (
-        <div className="bubble bubble--error"><IconWarn size={14} /> {turn.error}</div>
+        <div className="bubble bubble--error"><IconWarningOutline16 size={14} /> {turn.error}</div>
       )}
+      {(() => {
+        const line = turn.metrics ? formatTurnMetrics(turn.metrics) : null;
+        return line ? <div className="aipane__metrics">{line}</div> : null;
+      })()}
     </div>
   );
 };
-
-/** One reasoning block, rendered as a DisclosureRow aligned with DeepSeek's
- *  ReasoningRow (see deepseek-harness/packages/client/ui-conversation/src/
- *  client/chat/ReasoningRow.tsx). Defaults to collapsed; the running flag
- *  forces open + running sweep and switches the title to "思考中…". Once
- *  running clears the user's manual open/closed state takes over. */
-const ReasoningRow: React.FC<{ text: string; running: boolean }> = ({ text, running }) => {
-  const [userOpen, setUserOpen] = useState(false);
-  const open = running || userOpen;
-  const title = running ? '思考中…' : '思考过程';
-  // First non-empty line, truncated — visible in the collapsed header so
-  // the user has a hint without expanding. While running this re-derives
-  // per render so the trailing summary follows the live text.
-  const summary = (() => {
-    const line = text.split('\n').map((s) => s.trim()).find((s) => s.length > 0);
-    if (!line) return '';
-    return line.length > 60 ? line.slice(0, 60) + '…' : line;
-  })();
-  return (
-    <div className="reasoning-row" data-state={running ? 'running' : 'ok'}>
-      <DisclosureRow
-        icon={<IconThink size={14} />}
-        title={title}
-        open={open}
-        expandable
-        expandOnRowClick
-        onToggle={() => setUserOpen((o) => !o)}
-        collapsedContent={
-          summary ? (
-            <>
-              <span className="reasoning-row__sep" aria-hidden />
-              <span className="reasoning-row__summary">{summary}</span>
-            </>
-          ) : undefined
-        }
-      >
-        <div className="reasoning-row__body">
-          <Markdown text={text} streaming={running} />
-        </div>
-      </DisclosureRow>
-    </div>
-  );
-};
-
-/** One tool-call block, rendered as a DisclosureRow aligned with DeepSeek's
- *  ToolRow single-line-summary pattern (see deepseek-harness/packages/
- *  client/ui-tool/src/client/tool/components/ToolRow.tsx). Defaults to
- *  collapsed; never auto-opens — the user inspects args/result on demand.
- *  Running sweep only while streaming AND the block is the latest block. */
-const ToolCallRow: React.FC<{
-  card: { name: string; args?: unknown; result?: unknown; ok: boolean };
-  running: boolean;
-}> = ({ card, running }) => {
-  const [open, setOpen] = useState(false);
-  const argsText = formatValue(card.args);
-  const resultText = formatValue(card.result);
-  const state = running ? 'running' : card.ok ? 'ok' : 'error';
-  // Collapsed summary: a one-line preview of the args. Falls back to the
-  // tool name when args are empty/absent.
-  const argsFirstLine = argsText.split('\n').map((s) => s.trim()).find((s) => s.length > 0);
-  const summary = (argsFirstLine && argsFirstLine.length > 0
-    ? argsFirstLine.length > 60 ? argsFirstLine.slice(0, 60) + '…' : argsFirstLine
-    : card.name);
-  return (
-    <div className={`tool-call-row${card.ok ? '' : ' tool-call-row--error'}`} data-state={state}>
-      <DisclosureRow
-        icon={card.ok ? <IconTool size={14} /> : <IconWarn size={14} />}
-        title={card.name || 'tool'}
-        open={open}
-        expandable
-        expandOnRowClick
-        onToggle={() => setOpen((o) => !o)}
-        collapsedContent={
-          summary ? (
-            <>
-              <span className="tool-call-row__sep" aria-hidden />
-              <span className="tool-call-row__summary">{summary}</span>
-            </>
-          ) : undefined
-        }
-      >
-        {(argsText || resultText) && (
-          <div className="tool-call-row__body">
-            {argsText && (
-              <div className="tool-call-row__section">
-                <div className="tool-call-row__label">参数</div>
-                <pre className="tool-call-row__pre">{argsText}</pre>
-              </div>
-            )}
-            {resultText && (
-              <div className="tool-call-row__section">
-                <div className="tool-call-row__label">{card.ok ? '结果' : '错误'}</div>
-                <pre className="tool-call-row__pre">{resultText}</pre>
-              </div>
-            )}
-          </div>
-        )}
-      </DisclosureRow>
-    </div>
-  );
-};
-
-/** Pretty-print a tool arg/result value for the card body. */
-function formatValue(v: unknown): string {
-  if (v === undefined || v === null) return '';
-  if (typeof v === 'string') {
-    // The model's args arrive as a raw JSON string; try to pretty-print it.
-    try {
-      return JSON.stringify(JSON.parse(v), null, 2);
-    } catch {
-      return v;
-    }
-  }
-  // DSH tool results are ContentBlock[]; extract text when possible.
-  if (Array.isArray(v)) {
-    const texts = v
-      .filter((b): b is { type: string; text?: string } => typeof b === 'object' && b !== null && (b as { type?: string }).type === 'text')
-      .map((b) => b.text ?? '');
-    if (texts.length === v.length && texts.length > 0) return texts.join('');
-    return JSON.stringify(v, null, 2);
-  }
-  try {
-    return JSON.stringify(v, null, 2);
-  } catch {
-    return String(v);
-  }
-}
 
 // ===== HITL answerer cards =====
 //
@@ -1360,49 +1374,64 @@ const UserQuestionCard: React.FC<{
     (q) => (q.options && q.options.length > 0 ? (selected[q.id]?.length ?? 0) > 0 : true),
   );
   return (
-    <div className="aipane__hitl aipane__hitl--question" role="dialog" aria-modal="false" aria-label="AI 询问">
+    <div className="aipane__hitl aipane__hitl--question" role="dialog" aria-modal="true" aria-label="AI 询问">
       <div className="aipane__hitl-head">
         <Pill className="aipane__hitl-pill">需要回答</Pill>
         <span className="aipane__hitl-title">AI 需要你的输入</span>
-        <button
-          type="button"
-          className="icon-btn aipane__hitl-close"
+        <Button
+          variant="ghost"
           onClick={onDismiss}
           aria-label="关闭"
           title="关闭（取消）"
         >
-          <IconClose size={12} />
-        </button>
+          <IconCloseOutline16 size={12} />
+        </Button>
       </div>
       <div className="aipane__hitl-body">
-        {request.questions.map((q) => (
-          <div key={q.id} className="aipane__hitl-question">
-            <div className="aipane__hitl-q-label">{q.question}</div>
-            {q.detail && <div className="aipane__hitl-q-detail">{q.detail}</div>}
-            {q.options && q.options.length > 0 && (
-              <div className="aipane__hitl-options" role={q.multiSelect ? 'group' : 'radiogroup'}>
-                {q.options.map((opt) => {
-                  const cur = selected[q.id] ?? [];
-                  const on = cur.includes(opt.label);
-                  return (
-                    <button
-                      key={opt.label}
-                      type="button"
-                      role={q.multiSelect ? 'checkbox' : 'radio'}
-                      aria-checked={on}
-                      className={`aipane__hitl-opt${on ? ' is-on' : ''}`}
-                      onClick={() => onToggle(q.id, opt.label, q.multiSelect ?? false)}
-                    >
-                      <span className="aipane__hitl-opt-glyph" aria-hidden="true">{on ? '✓' : ''}</span>
-                      <span className="aipane__hitl-opt-label">{opt.label}</span>
-                      {opt.description && <span className="aipane__hitl-opt-desc">{opt.description}</span>}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        ))}
+        {request.questions.map((q) => {
+          const cur = selected[q.id] ?? [];
+          const multi = q.multiSelect ?? false;
+          // Per-question DisclosureRow — DSH frontend's ask-question-row
+          // is single-question only, so for our multi-question batches we
+          // compose the same primitive around each question.
+          return (
+            <DisclosureRow
+              key={q.id}
+              icon={<span className="aipane__hitl-q-num" aria-hidden>?</span>}
+              title={q.question}
+              open
+              expandable={false}
+              onToggle={() => undefined}
+              collapsedContent={
+                q.detail ? <span className="aipane__hitl-q-detail">{q.detail}</span> : null
+              }
+            >
+              {q.options && q.options.length > 0 ? (
+                <div className="aipane__hitl-options" role={multi ? 'group' : 'radiogroup'}>
+                  {q.options.map((opt) => {
+                    const on = cur.includes(opt.label);
+                    return (
+                      <button
+                        key={opt.label}
+                        type="button"
+                        role={multi ? 'checkbox' : 'radio'}
+                        aria-checked={on}
+                        className={`aipane__hitl-opt${on ? ' is-on' : ''}`}
+                        onClick={() => onToggle(q.id, opt.label, multi)}
+                      >
+                        <span className="aipane__hitl-opt-glyph" aria-hidden="true">{on ? '✓' : ''}</span>
+                        <span className="aipane__hitl-opt-label">{opt.label}</span>
+                        {opt.description && (
+                          <span className="aipane__hitl-opt-desc">{opt.description}</span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : null}
+            </DisclosureRow>
+          );
+        })}
       </div>
       <div className="aipane__hitl-actions">
         <Button variant="ghost" onClick={onDismiss}>取消</Button>
@@ -1416,21 +1445,30 @@ const UserApprovalCard: React.FC<{
   request: ActiveApproval;
   onAllow: () => void;
   onReject: () => void;
-}> = ({ request, onAllow, onReject }) => (
-  <div className="aipane__hitl aipane__hitl--approval" role="dialog" aria-modal="false" aria-label="AI 请求授权">
-    <div className="aipane__hitl-head">
-      <Pill className="aipane__hitl-pill aipane__hitl-pill--warn">需要授权</Pill>
-      <span className="aipane__hitl-title">AI 想要调用 {request.toolName || '敏感操作'}</span>
+}> = ({ request, onAllow, onReject }) => {
+  // RiskConfirmation gates the primary action on an "I understand" checkbox.
+  // Our allow-once semantics map directly onto that pattern; the user must
+  // acknowledge the risk before the primary action is enabled. The reject
+  // path is always available.
+  const [acknowledged, setAcknowledged] = useState(false);
+  const description = request.preview
+    ? `${request.reason}\n\n${request.preview}`
+    : request.reason;
+  return (
+    <div className="aipane__hitl aipane__hitl--approval" aria-label="AI 请求授权">
+      <RiskConfirmation
+        open
+        title={`AI 想要调用 ${request.toolName || '敏感操作'}`}
+        description={description}
+        acknowledgeLabel="我已了解风险"
+        cancelLabel="拒绝"
+        closeLabel="关闭"
+        confirmLabel="允许一次"
+        acknowledged={acknowledged}
+        onAcknowledgedChange={setAcknowledged}
+        onCancel={onReject}
+        onConfirm={onAllow}
+      />
     </div>
-    <div className="aipane__hitl-body">
-      <div className="aipane__hitl-q-detail">{request.reason}</div>
-      {request.preview && (
-        <pre className="aipane__hitl-preview">{request.preview}</pre>
-      )}
-    </div>
-    <div className="aipane__hitl-actions">
-      <Button variant="ghost" onClick={onReject}>拒绝</Button>
-      <Button variant="primary" onClick={onAllow}>允许一次</Button>
-    </div>
-  </div>
-);
+  );
+};

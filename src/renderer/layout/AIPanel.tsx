@@ -4,9 +4,16 @@
 // aside's width is the persisted pane width (so the user can resize the
 // panel and it survives restart); when collapsed, it shrinks to the rail.
 
-import React from 'react';
-import { AIPane } from '../panes/AIPane';
+import React, { Suspense } from 'react';
 import { IconSparkle } from '../components/icons';
+
+// Lazy-load the AI pane: it drags in the whole vendored DSH render tree
+// (ToolRow / ReasoningRow / card primitives + shiki + katex), none of which
+// is needed until the user opens the panel. Keeps the cold-start entry chunk
+// to just the todo-list shell + the collapsed rail.
+const AIPane = React.lazy(() =>
+  import('../panes/AIPane').then(m => ({ default: m.AIPane })),
+);
 
 export const AIPanel: React.FC<{ open: boolean; width: number; onToggle: () => void }> = ({ open, width, onToggle }) => {
   return (
@@ -20,7 +27,9 @@ export const AIPanel: React.FC<{ open: boolean; width: number; onToggle: () => v
           <div className="ai-panel__grip" role="button" tabIndex={0} aria-label="收起 AI 助手" onClick={onToggle} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onToggle(); } }}>
             <ChevronRight />
           </div>
-          <AIPane />
+          <Suspense fallback={<div className="ai-panel__loading" role="status" aria-live="polite">加载中…</div>}>
+            <AIPane />
+          </Suspense>
         </>
       ) : (
         <button

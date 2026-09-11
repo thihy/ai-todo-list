@@ -100,17 +100,24 @@ export interface AIInvocationRequest {
 }
 
 // Stream events use `type` to match DshStreamEvent shape from main/dsh/types.ts.
+//
+// L5-A: the wire carries the **raw DSH SessionEvent** (via the `sessionEvent`
+// variant) instead of a synthesized `toolCall` blob. This keeps main thin
+// (no transformation layer) and lets the renderer reach the full DSH
+// SessionEventMap vocabulary — including future complex components like
+// ToolRow / AssistantMarkdown that consume the raw stream. Tool-call ↔
+// tool-result merge still happens in the renderer (see useAiStream).
 export interface AIStreamEventBase {
   invocationId: string;
+  /** Renderer-side arrival timestamp (ms, Date.now()), stamped by useAiStream
+   *  when it processes each ai:stream event. Used for turn-metrics (time-to-
+   *  first-token, duration). Optional because events constructed elsewhere
+   *  (e.g. tests) may not set it. */
+  ts?: number;
 }
 
 export interface AIStartEvent extends AIStreamEventBase {
   type: 'start';
-}
-
-export interface AITokenEvent extends AIStreamEventBase {
-  type: 'token';
-  token: string;
 }
 
 export interface AIReasoningEvent extends AIStreamEventBase {
@@ -118,12 +125,32 @@ export interface AIReasoningEvent extends AIStreamEventBase {
   text: string;
 }
 
+export interface AITokenEvent extends AIStreamEventBase {
+  type: 'token';
+  token: string;
+}
+
+/** Synthesized tool-call event: a call/result pair merged by the renderer
+ *  into one AIPane-friendly shape. Source data still lives on the
+ *  `sessionEvent` variant — this is the renderer-side projection. */
 export interface AIToolCallEvent extends AIStreamEventBase {
   type: 'toolCall';
   toolName: string;
   args: unknown;
   result: unknown;
   ok: boolean;
+}
+
+/** Raw DSH SessionEvent passthrough. Renderer ingests this and re-emits the
+ *  narrower synthesized events (token / reasoning / toolCall) that AIPane
+ *  consumes. The wire shape matches `SessionEvent` from
+ *  `@deepseek-ai/dsh-session` but the `data` field is typed as `unknown`
+ *  here so we don't drag the whole SessionEventMap vocabulary through the
+ *  shared boundary (the renderer imports the typed `SessionEventMap` and
+ *  narrows by `e.event.type`). */
+export interface AISessionEvent extends AIStreamEventBase {
+  type: 'sessionEvent';
+  event: { type: string; data?: unknown };
 }
 
 export interface AIPermissionRequestEvent extends AIStreamEventBase {
@@ -137,6 +164,10 @@ export interface AIDoneEvent extends AIStreamEventBase {
   type: 'done';
   content: string;
   costUsd: number;
+  /** Output token count from runTurn, for the turn-metrics tok/s display. */
+  tokensOut?: number;
+  /** Input token count from runTurn (cached/preview context). */
+  tokensIn?: number;
 }
 
 export interface AIErrorEvent extends AIStreamEventBase {
@@ -149,6 +180,7 @@ export type AIStreamEvent =
   | AITokenEvent
   | AIReasoningEvent
   | AIToolCallEvent
+  | AISessionEvent
   | AIPermissionRequestEvent
   | AIDoneEvent
   | AIErrorEvent;

@@ -4,7 +4,7 @@
 // user chip or the 菜单 button. The Sidebar is gone — view switching lives in
 // the title-bar 过滤 popover, and quick actions in the 菜单 / user menu.
 
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, Suspense } from 'react';
 import { ErrorBoundary } from './ErrorBoundary';
 import { Topbar } from './layout/Topbar';
 import { Statusbar } from './layout/Statusbar';
@@ -21,7 +21,12 @@ import { TodoListPane } from './panes/TodoListPane';
 import { TodoEditorPane } from './panes/TodoEditorPane';
 import { StatsPane } from './panes/StatsPane';
 import { DrawingPane } from './panes/DrawingPane';
-import { DocumentsView } from './components/DocumentsView';
+// Lazy-load DocumentsView: it statically pulls MarkdownEditor + the mermaid
+// dependency tree, which is heavy and only needed in the fullscreen-doc route.
+// Splitting it off the entry chunk keeps cold start on the todo-list shell.
+const DocumentsView = React.lazy(() =>
+  import('./components/DocumentsView').then(m => ({ default: m.DocumentsView })),
+);
 import { PaneDivider } from './components/PaneDivider';
 import { IconCheck } from './components/icons';
 import { usePaneWidths } from './hooks/usePaneWidths';
@@ -382,13 +387,15 @@ const FullscreenDoc: React.FC<{
           </button>
         </div>
         <div className="fullscreen-doc__body">
-          <DocumentsView
-            todoId={todoId}
-            taskTitle={taskTitle}
-            onFullscreen={onExit}
-            selectedDocId={selectedDocId}
-            onSelectDoc={onSelectDoc}
-          />
+          <Suspense fallback={<div className="ai-panel__loading" role="status" aria-live="polite">加载中…</div>}>
+            <DocumentsView
+              todoId={todoId}
+              taskTitle={taskTitle}
+              onFullscreen={onExit}
+              selectedDocId={selectedDocId}
+              onSelectDoc={onSelectDoc}
+            />
+          </Suspense>
         </div>
       </div>
     </div>

@@ -38,3 +38,9 @@ src/renderer/public/excalidraw/
 # OpenSpec generated
 .claude/skills/openspec/generated/
 /.claude
+
+# Playwright e2e artifacts
+test-results/
+playwright-report/
+# agent working dirs
+.agent-teams/

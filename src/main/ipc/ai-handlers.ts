@@ -172,10 +172,12 @@ export function registerAiHandlers(dsh: DshHandle): void {
     // L4-E: running cost for this turn. Updated after runTurn resolves,
     // using the tokens the runtime accumulated from the raw DSH event stream.
     let costUsd = 0;
-    // tool/call → tool/result 是 DSH 里两个独立事件，AIStreamEvent 的
-    // toolCall 需要把名字 + 结果打包发渲染端——本表记住 callId→{name, args}
-    // 以便 tool/result 拿到。ai.ask 的生命周期才存在，跑完一轮就丢。
-    const liveCallMeta = new Map<string, { name: string; args: string }>();
+    // L5-A: the wire is now raw DSH session events (passthrough), not a
+    // synthesized toolCall blob. Renderer owns the tool/call ↔ tool/result
+    // merge (useAiStream), so this layer no longer keeps a `liveCallMeta`
+    // map. The only main-side side effect is `app:data-changed` —
+    // broadcasts fire from `tool/call` (we know the toolName there) so
+    // we don't need to wait for the matching result.
 
     try {
       const turnResult = await runtime.runTurn({
@@ -183,50 +185,19 @@ export function registerAiHandlers(dsh: DshHandle): void {
         conversationId: req.conversationId,
         invocationId,
         onEvent: (e) => {
-          const t = e?.type;
-          if (t === 'assistant/chunk') {
-            const d = e.data as { chunk?: { type?: string; text?: string } } | undefined;
-            const chunk = d?.chunk;
-            // text-delta 当可见 token；reasoning-delta 走独立流事件。
-            // 历史曾经在这里剥 <think>...</think>（见 dsh-runtime.ts 旧注释），
-            // 现在 dsh-runtime 只透传，这层也不再做那种剥取。
-            if (chunk?.type === 'text-delta' && chunk.text) {
-              send({ type: 'token', invocationId, token: chunk.text });
-            } else if (chunk?.type === 'reasoning-delta' && chunk.text) {
-              send({ type: 'reasoning', invocationId, text: chunk.text });
-            }
-          } else if (t === 'tool/call') {
-            const d = e.data as { callId?: unknown; name?: string; arguments?: string } | undefined;
-            if (d?.callId != null && d.name) {
-              liveCallMeta.set(String(d.callId), { name: d.name, args: d.arguments ?? '' });
-            }
-          } else if (t === 'tool/result') {
-            // DSH 把同一次调用的 call 和 result 分开发；AIPane 的 AIToolCallEvent
-            // 期望二者合一，所以这里用 callId 反查名字后合成一条 toolCall 流事件。
-            const d = e.data as {
-              message?: {
-                source?: { callId?: unknown };
-                content?: Array<{ isError?: boolean; content?: unknown[] }>;
-              };
-            } | undefined;
-            const callId = d?.message?.source?.callId;
-            const meta = callId != null ? liveCallMeta.get(String(callId)) : undefined;
-            const block = d?.message?.content?.[0];
-            const ok = !block?.isError;
-            send({
-              type: 'toolCall',
-              invocationId,
-              toolName: meta?.name ?? '',
-              args: meta?.args,
-              result: block?.content,
-              ok,
-            });
-            // If the tool mutated data, tell the renderer to refresh its stores.
-            {
-              const scope = meta ? mutatingScope(meta.name) : undefined;
+          // 透传：所有 DSH 事件原样发给渲染端。渲染端 useAiStream 负责把
+          // assistant/chunk 转成 token/reasoning、把 tool/call + tool/result
+          // 合并成 toolCall 事件。mutating-scope 检测从 result 阶段挪到
+          // call 阶段（toolName 已知），少一次合并查表。
+          send({ type: 'sessionEvent', invocationId, event: e });
+          if (e?.type === 'tool/call') {
+            const d = e.data as { name?: string } | undefined;
+            const name = d?.name;
+            if (name) {
+              const scope = mutatingScope(name);
               if (scope) {
                 broadcastDataChanged(scope);
-              } else if (ok) {
+              } else {
                 // Unknown successful tool call — broadcast a broad 'todos'
                 // signal as a safety net so future tools added without a
                 // mutatingScope() entry still cause the most-critical
@@ -238,8 +209,6 @@ export function registerAiHandlers(dsh: DshHandle): void {
               }
             }
           }
-          // assistant/message / tool/call 这类非可视事件不直接转发渲染端；
-          // token 计数和 callId→name 在 dsh-runtime / 本闭包里各管各的。
         },
       });
 
@@ -260,7 +229,7 @@ export function registerAiHandlers(dsh: DshHandle): void {
           if (!w.isDestroyed()) w.webContents.send('app:settings-changed', {});
         }
       }
-      send({ type: 'done', invocationId, content: turnResult.content, costUsd });
+      send({ type: 'done', invocationId, content: turnResult.content, costUsd, tokensOut: turnResult.tokensOut, tokensIn: turnResult.tokensIn });
       // Bump updated_at so the sidebar sorts this conversation to the top.
       // Cheap: a single UPDATE; no event broadcasting needed (the renderer
       // can re-list when it next focuses the conversation list).
@@ -273,7 +242,7 @@ export function registerAiHandlers(dsh: DshHandle): void {
       // `session/title` events back into the conversations table; see the
       // permanent listener at the top of bootDsh().
 
-      return okResult({ invocationId, costUsd });
+      return okResult({ invocationId, costUsd, tokensOut: turnResult.tokensOut, content: turnResult.content });
     } catch (err) {
       const message = (err as Error).message;
       send({ type: 'error', invocationId, message });

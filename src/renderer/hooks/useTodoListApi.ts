@@ -14,6 +14,7 @@ import type { DrawingMeta, DrawingScene, InboxAttachment } from '../../shared/to
 import type { AIModel, AIStreamEvent } from '../../shared/ai-types';
 import type { SettingsGetRes } from '../../shared/ipc-schema';
 import { useDataVersion } from '../data-bus';
+import { recoverToolResultValue, parseToolArgs } from '../tool-presentation';
 
 declare global {
   interface Window {
@@ -425,13 +426,109 @@ export function useAppEvent<E extends AppEvent>(
 }
 
 export function useAiStream(): { events: AIStreamEvent[]; clear: () => void } {
+  // L5-A: wire carries raw DSH `sessionEvent`s. We re-emit the synthesized
+  // token / reasoning / toolCall / done / error events that AIPane consumes.
+  // The merge map (callId → {name, args}) lives here, on the renderer, so
+  // main doesn't need to track call/result pairing — pure passthrough there.
   const [events, setEvents] = useState<AIStreamEvent[]>([]);
-  const clear = useCallback(() => setEvents([]), []);
+  // useRef so the map survives across renders without triggering rerender.
+  // Mutable, never put in state.
+  const liveCallMeta = useRef<Map<string, { name: string; args: string }>>(new Map());
+  const clear = useCallback(() => {
+    setEvents([]);
+    liveCallMeta.current.clear();
+  }, []);
+
   useAppEvent('ai:stream', (e) => {
     setEvents((prev) => {
-      const next = [...prev, e];
+      const next = [...prev];
+      // Stamp arrival time on every event we keep, for turn-metrics
+      // (time-to-first-token, duration). One now() per batch — coalesced
+      // events keep the FIRST push's ts (the arrival we care about).
+      const now = Date.now();
       // Cap history to last 200 events to keep memory bounded.
-      return next.length > 200 ? next.slice(next.length - 200) : next;
+      const cap = (arr: AIStreamEvent[]): AIStreamEvent[] =>
+        arr.length > 200 ? arr.slice(arr.length - 200) : arr;
+
+      if (e.type === 'sessionEvent') {
+        const raw = e.event;
+        const t = raw?.type;
+        if (t === 'assistant/chunk') {
+          // L5-B: COALESCE adjacent text/reasoning deltas into the last
+          // same-kind event instead of pushing one event per delta. A long
+          // reasoning turn emits hundreds of `reasoning-delta` chunks; if
+          // each became its own event, the array would blow past the 200
+          // cap below and `slice(-200)` would drop the EARLIEST deltas —
+          // and because the streaming-turn rebuild walks this array to
+          // reconstruct reasoning text, the prefix would silently vanish
+          // ("思考文本超过一定长度后前面被删"). Coalescing keeps one
+          // growing event per run, so the full text survives the cap.
+          // We do NOT forward the raw `assistant/chunk` sessionEvent:
+          // AIPane only reads the synthesized token/reasoning variants,
+          // and keeping the raw chunk would double the event count and
+          // re-trigger the cap. Non-chunk sessionEvents below ARE forwarded.
+          const d = raw.data as { chunk?: { type?: string; text?: string } } | undefined;
+          const chunk = d?.chunk;
+          if (chunk?.type === 'text-delta' && chunk.text) {
+            const last = next[next.length - 1];
+            if (last && last.type === 'token' && last.invocationId === e.invocationId) {
+              next[next.length - 1] = { ...last, token: last.token + chunk.text };
+            } else {
+              next.push({ type: 'token', invocationId: e.invocationId, token: chunk.text, ts: now });
+            }
+          } else if (chunk?.type === 'reasoning-delta' && chunk.text) {
+            const last = next[next.length - 1];
+            if (last && last.type === 'reasoning' && last.invocationId === e.invocationId) {
+              next[next.length - 1] = { ...last, text: last.text + chunk.text };
+            } else {
+              next.push({ type: 'reasoning', invocationId: e.invocationId, text: chunk.text, ts: now });
+            }
+          }
+          return cap(next);
+        }
+        // Forward the raw event verbatim so any consumer that wants the
+        // full SessionEvent vocabulary (e.g. a future DSH ToolRow drop-in)
+        // can read it directly. AIPane itself only reads the synthesized
+        // variants below.
+        next.push({ ...e, ts: now });
+        if (t === 'tool/call') {
+          const d = raw.data as { callId?: unknown; name?: string; arguments?: string } | undefined;
+          if (d?.callId != null && d.name) {
+            liveCallMeta.current.set(String(d.callId), { name: d.name, args: d.arguments ?? '' });
+          }
+        } else if (t === 'tool/result') {
+          const d = raw.data as {
+            message?: {
+              source?: { callId?: unknown };
+              content?: Array<{ isError?: boolean; content?: unknown[] }>;
+            };
+          } | undefined;
+          const callId = d?.message?.source?.callId;
+          const meta = callId != null ? liveCallMeta.current.get(String(callId)) : undefined;
+          const block = d?.message?.content?.[0];
+          const ok = !block?.isError;
+          // L5-A: recover the RAW tool value from the rendered ContentBlock[]
+          // the wire carries (jsonOutput.render produced
+          // [{type:'text', text: JSON.stringify(value)}]). Feeding the block
+          // array directly made presentToolResult render a
+          // <pre>[{"type":"text","text":"..."}]</pre> dump. Parse the args
+          // JSON string too, so per-tool presentResult handlers see an object.
+          next.push({
+            type: 'toolCall',
+            invocationId: e.invocationId,
+            toolName: meta?.name ?? '',
+            args: parseToolArgs(meta?.args),
+            result: recoverToolResultValue(block?.content),
+            ok,
+            ts: now,
+          });
+          if (callId != null) liveCallMeta.current.delete(String(callId));
+        }
+        return cap(next);
+      }
+      // start / done / error / permissionRequest: forward verbatim.
+      next.push({ ...e, ts: now });
+      return cap(next);
     });
   });
   return { events, clear };

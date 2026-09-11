@@ -221,43 +221,60 @@ function bootstrap(): void {
     mkdirSync(sessionsRoot, { recursive: true });
     process.env['DSH_SESSIONS_ROOT'] = sessionsRoot;
 
-    // DSH container (AI runtime) — lazy imported so app launches even if DSH init fails
-    try {
-      const { initDshContainer } = await import('./dsh/container');
-      const dsh = await initDshContainer({ repo, md, drawings, settings, db: handle.db, docs });
-      const { registerAiHandlers, bindAiDeps } = await import('./ipc/ai-handlers');
-      registerAiHandlers(dsh);
-      bindAiDeps({ dsh, settings, repo, conversations, md, drawings, docs, db: handle.db, attachmentsDir });
-      logger.info('DSH AI handlers registered');
+    // Show the window as soon as the todo IPC + file stores are ready so the
+    // app feels instant. DSH container boot (cordis plugin loading +
+    // session-persistence backend init) is the dominant startup cost and is
+    // deferred to a background promise below. The AI panel is closed by
+    // default; its IPC handlers return `ai_not_ready` until DSH resolves, so
+    // a user who opens the AI pane in the first second sees the lazy
+    // "加载中…" fallback rather than a blank frozen shell.
+    const main = createMainWindow();
+    main.once('ready-to-show', () => main.show());
 
-      // L3-C: backfill DB rows for sessions that exist on disk but have no
-      // conversations row. Runs once per boot, idempotent — safe to re-run.
-      // We don't await: the migration is best-effort and the renderer's
-      // first conversation.list() call will pick up whatever rows are ready.
-      // A slow migration on a large sessions dir shouldn't block window open.
+    // DSH container (AI runtime) — lazy imported so app launches even if DSH
+    // init fails. Fire-and-forget so window show isn't blocked by cordis
+    // plugin loading + session-persistence backend init. AI IPC handlers
+    // return `ai_not_ready` until this resolves.
+    void (async () => {
       try {
-        const { migrateOrphanSessions } = await import('./dsh/dsh-runtime');
-        void migrateOrphanSessions(conversations).catch((err) => {
-          logger.warn(`migrateOrphanSessions: ${(err as Error).message}`);
-        });
-      } catch (err) {
-        logger.warn(`migrateOrphanSessions import failed: ${(err as Error).message}`);
-      }
-    } catch (err) {
-      logger.error(`DSH init skipped: ${(err as Error).message}`);
-    }
+        const { initDshContainer } = await import('./dsh/container');
+        const dsh = await initDshContainer({ repo, md, drawings, settings, db: handle.db, docs });
+        const { registerAiHandlers, bindAiDeps } = await import('./ipc/ai-handlers');
+        registerAiHandlers(dsh);
+        bindAiDeps({ dsh, settings, repo, conversations, md, drawings, docs, db: handle.db, attachmentsDir });
+        logger.info('DSH AI handlers registered');
 
-    // External SDK + JSON-RPC bridge for plugins / scripts
-    try {
-      const { createSdk } = await import('./sdk/sdk');
-      const { JsonRpcBridge } = await import('./sdk/bridge');
-      const sdk = createSdk({ repo, md, drawings });
-      const bridge = new JsonRpcBridge(sdk);
-      bridge.start();
-      app.on('before-quit', () => bridge.stop());
-    } catch (err) {
-      logger.warn(`SDK bridge skipped: ${(err as Error).message}`);
-    }
+        // L3-C: backfill DB rows for sessions that exist on disk but have no
+        // conversations row. Runs once per boot, idempotent — safe to re-run.
+        // We don't await: the migration is best-effort and the renderer's
+        // first conversation.list() call will pick up whatever rows are ready.
+        try {
+          const { migrateOrphanSessions } = await import('./dsh/dsh-runtime');
+          void migrateOrphanSessions(conversations).catch((err) => {
+            logger.warn(`migrateOrphanSessions: ${(err as Error).message}`);
+          });
+        } catch (err) {
+          logger.warn(`migrateOrphanSessions import failed: ${(err as Error).message}`);
+        }
+      } catch (err) {
+        logger.error(`DSH init skipped: ${(err as Error).message}`);
+      }
+    })();
+
+    // External SDK + JSON-RPC bridge for plugins / scripts — also deferred
+    // so it never blocks window show.
+    void (async () => {
+      try {
+        const { createSdk } = await import('./sdk/sdk');
+        const { JsonRpcBridge } = await import('./sdk/bridge');
+        const sdk = createSdk({ repo, md, drawings });
+        const bridge = new JsonRpcBridge(sdk);
+        bridge.start();
+        app.on('before-quit', () => bridge.stop());
+      } catch (err) {
+        logger.warn(`SDK bridge skipped: ${(err as Error).message}`);
+      }
+    })();
 
     // Capture + tray
     const capture = new CaptureController();
@@ -292,11 +309,9 @@ function bootstrap(): void {
     );
     tray.install();
 
-    // Main window
-    const main = createMainWindow();
-    main.once('ready-to-show', () => main.show());
-
     // Chinese application menu (menu bar auto-hidden — press Alt to reveal).
+    // `main` was created earlier (before DSH init) so the window shows fast;
+    // the menu just attaches to it here.
     installAppMenu({
       onCapture: () => capture.toggle(),
       getMainWindow: () => main,

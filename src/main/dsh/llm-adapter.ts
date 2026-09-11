@@ -135,6 +135,12 @@ function buildCatalogProfile(
     requestImageMaxBytes: 1_048_576,
     retryPolicy: resolveRetryPolicy(undefined, `llm/${provider}`),
     piProvider,
+    // 0.1.5-rc.2: ResolvedPiAiProviderProfile gained a required `modelErrors`
+    // (per-model diagnostics reported before a request is attempted). We build
+    // these profiles by hand from pi-ai's catalog rather than through the
+    // adapter's config validation, so there is never a per-model diagnostic to
+    // report — an empty map is the honest value, not a placeholder.
+    modelErrors: new Map(),
     configuredMaxTokens: new Map(),
   };
 }
@@ -172,6 +178,12 @@ function buildOllamaProfile(): ResolvedPiAiProviderProfile {
     requestImageMaxBytes: 1_048_576,
     retryPolicy: resolveRetryPolicy(undefined, 'llm/ollama'),
     piProvider,
+    // 0.1.5-rc.2: ResolvedPiAiProviderProfile gained a required `modelErrors`
+    // (per-model diagnostics reported before a request is attempted). We build
+    // these profiles by hand from pi-ai's catalog rather than through the
+    // adapter's config validation, so there is never a per-model diagnostic to
+    // report — an empty map is the honest value, not a placeholder.
+    modelErrors: new Map(),
     configuredMaxTokens: new Map(),
   };
 }
@@ -208,6 +220,9 @@ function buildCustomProfile(
       requestImageMaxBytes: 1_048_576,
       retryPolicy: resolveRetryPolicy(undefined, 'llm/custom'),
       piProvider,
+      // See buildCatalogProfile: no per-model diagnostics exist for a
+      // hand-built profile, so the map is empty rather than absent.
+      modelErrors: new Map(),
       configuredMaxTokens: new Map(),
     };
   }
@@ -254,6 +269,12 @@ function buildCustomProfile(
     requestImageMaxBytes: 1_048_576,
     retryPolicy: resolveRetryPolicy(undefined, 'llm/custom'),
     piProvider,
+    // 0.1.5-rc.2: ResolvedPiAiProviderProfile gained a required `modelErrors`
+    // (per-model diagnostics reported before a request is attempted). We build
+    // these profiles by hand from pi-ai's catalog rather than through the
+    // adapter's config validation, so there is never a per-model diagnostic to
+    // report — an empty map is the honest value, not a placeholder.
+    modelErrors: new Map(),
     configuredMaxTokens: new Map(),
   };
 }

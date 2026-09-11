@@ -180,6 +180,18 @@ export interface AIAskReq {
 export interface AIAskRes {
   invocationId: string;
   costUsd: number;
+  /** Output token count for this turn — lets the renderer compute tok/s
+   *  metrics from the IPC reply itself (the streaming useEffect that
+   *  normally computes metrics bails once streamingTurnId clears, which
+   *  races the IPC resolve). */
+  tokensOut?: number;
+  /** The assistant's final text for this turn. The streaming useEffect
+   *  normally seeds a text block from the `done` ai:stream event's content,
+   *  but that useEffect bails once streamingTurnId clears — and the IPC
+   *  resolve can win that race, leaving the turn with no text block (the
+   *  "思考中… 然后没有任何内容" bug in the UI path). Seeding from the IPC
+   *  reply is authoritative and race-free. */
+  content?: string;
 }
 /** Cancel the in-flight turn on a conversation. The renderer should pass the
  *  same conversationId it used for ai.ask. */

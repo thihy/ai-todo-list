@@ -30,6 +30,7 @@ import type { SettingsStore } from '../settings/store';
 import type { TodoFilter, TodoStatus, TodoCreate, TodoPatch, Priority } from '../../shared/todo-types';
 import { TODO_STATUSES, PRIORITIES } from '../../shared/todo-types';
 import type { UserQuestionAnswer, UserQuestionRequest } from '../../shared/ai-types';
+import { presentToolCall, presentToolResult } from '@shared/tool-presentation';
 import type Database from 'better-sqlite3';
 import { mimeExt, sanitizeName } from '../util/mime';
 
@@ -120,10 +121,86 @@ export interface AgentHandle {
 /** resumeOrCreate 需要的最小持久化外观 */
 export interface PersistenceFacade {
   load?: (id: string, signal?: AbortSignal) => Promise<unknown>;
-  list?: (signal?: AbortSignal) => Promise<ReadonlyArray<{ id: string; createdAt?: number }>>;
+  list?: (signal?: AbortSignal) => Promise<ReadonlyArray<SessionListEntry>>;
 }
 
-/** resumeOrCreate 需要的最小 agents 外观 */
+// ===== 0.1.5-rc.2 dsh-session-persistence-jsonl read API =====
+//
+// The persistence API changed between 0.1.2-rc.1 and 0.1.5-rc.2:
+//   0.1.2-rc.1: `load(id)` / `inspect(id, signal)` → `{ meta, events }`
+//   0.1.5-rc.2: `open(id, 'read')` → a SessionHandle; `handle.read(o, len)` →
+//                `{ events }`; `handle.close()` to release. There is NO `load`.
+// We locked `@deepseek-ai/dsh-session-persistence-jsonl` to 0.1.5-rc.2, so the
+// old `persistenceApi.load(id)` call sites threw "persistenceApi.load is not a
+// function" → loadHistory() / migrateOrphanSessions() silently returned [].
+// `readSessionEvents` is the single 0.1.5-rc.2-shaped read path both callers
+// use. `open` lives on the prototype (not an own key, so it's absent from
+// `Object.keys()` diagnostics) but IS present on the instance.
+
+/** Read handle returned by `SessionPersistence.open(id, 'read')` in 0.1.5-rc.2. */
+interface SessionReadHandle {
+  read(offset?: number, length?: number, options?: { signal?: AbortSignal }): Promise<{
+    events: ReadonlyArray<{ type: string; data?: unknown }>;
+  }>;
+  close(): Promise<void>;
+}
+
+/** The 0.1.5-rc.2 `JsonlSessionPersistence` surface we use. `open` replaces
+ *  the removed `load`/`inspect`; `list` is unchanged. */
+interface SessionPersistence015 {
+  open(id: string, access: 'read' | 'write', options?: { signal?: AbortSignal }): Promise<SessionReadHandle>;
+  // `list` returns one entry per stored session, but its element shape is
+  // backend-dependent: the JSONL backend's own override returns bare
+  // `SessionHeader[]` (`{id, createdAt, ...}`), while the base service contract
+  // returns `SessionPersistenceSnapshot[]` (`{header: {id, createdAt, ...},
+  // revision, ...}`). Callers must normalize via `sessionListId`/`sessionListCreatedAt`.
+  list?(signal?: AbortSignal): Promise<ReadonlyArray<SessionListEntry>>;
+  config?: { root?: string };
+}
+
+/** One element of `SessionPersistence.list()` — covers both the bare-header
+ *  and the snapshot-with-header shapes. */
+interface SessionListEntry {
+  id?: string;
+  createdAt?: number;
+  header?: { id?: string; createdAt?: number };
+}
+
+/** Extract the session id from a `list()` entry regardless of shape. */
+function sessionListId(entry: SessionListEntry): string | undefined {
+  const id = entry.id ?? entry.header?.id;
+  return typeof id === 'string' && id.length > 0 ? id : undefined;
+}
+
+/** Extract createdAt (ms) from a `list()` entry regardless of shape. */
+function sessionListCreatedAt(entry: SessionListEntry): number | undefined {
+  const ts = entry.createdAt ?? entry.header?.createdAt;
+  return typeof ts === 'number' && Number.isFinite(ts) ? ts : undefined;
+}
+
+/** Read all persisted events for a session via the 0.1.5-rc.2 open/read/close
+ *  API. Returns [] when persistence is unavailable or the session isn't
+ *  persisted yet (fresh conversation) — never throws. */
+async function readSessionEvents(
+  persistence: SessionPersistence015 | undefined,
+  id: string,
+  signal?: AbortSignal,
+): Promise<ReadonlyArray<{ type: string; data?: unknown }>> {
+  if (!persistence?.open) return [];
+  let handle: SessionReadHandle | undefined;
+  try {
+    handle = await persistence.open(id, 'read', signal ? { signal } : undefined);
+  } catch {
+    // Not persisted (fresh conversation) or backend unavailable — no history.
+    return [];
+  }
+  try {
+    const result = await handle.read(0, Number.MAX_SAFE_INTEGER, signal ? { signal } : undefined);
+    return result.events;
+  } finally {
+    try { await handle.close(); } catch { /* noop */ }
+  }
+}
 export interface AgentsFacade {
   create(o: { sessionId: string; agentOptions?: { provider?: string; model?: string } }): Promise<AgentHandle>;
   resume(o: { resumeSessionId: string; agentOptions?: { provider?: string; model?: string } }): Promise<AgentHandle>;
@@ -183,7 +260,7 @@ export async function resumeOrCreate(
   if (deps.persistence?.list) {
     try {
       const headers = await deps.persistence.list();
-      isAbsent = !headers.some((h) => h.id === conversationId);
+      isAbsent = !headers.some((h) => sessionListId(h) === conversationId);
     } catch (err) {
       // list() 失败 → 无法判断，保留 resume 错误响亮抛出
       deps.logger.warn(`resumeOrCreate(${conversationId}): persistence.list() failed during fallback probe: ${(err as Error).message}`);
@@ -332,31 +409,40 @@ export async function migrateOrphanSessions(conversations: ConversationRepo): Pr
   let skipped = 0;
   let failed = 0;
   for (const entry of list) {
-    if (conversations.get(entry.id)) {
+    const sid = sessionListId(entry);
+    if (!sid) {
+      // No usable id (e.g. a snapshot whose header is missing). Skip rather
+      // than insert a junk row we could never de-dupe or re-attach.
+      failed++;
+      continue;
+    }
+    if (conversations.get(sid)) {
       skipped++;
       continue;
     }
     let title = '未命名对话';
     try {
-      const loaded = await persistence.load(entry.id);
-      const events = loaded?.events ?? [];
+      const events = await persistence.readEvents(sid);
       const firstUser = extractFirstUserText(events);
       if (firstUser) title = truncateTitle(firstUser, TITLE_MAX);
     } catch (err) {
-      logger.warn(`migrateOrphanSessions(${entry.id}): load failed, using default title: ${(err as Error).message}`);
+      logger.warn(`migrateOrphanSessions(${sid}): readEvents failed, using default title: ${(err as Error).message}`);
     }
     try {
       const row = conversations.create({ title });
       // created_at 反映原 session 创建时间而非迁移时间——否则侧边栏把 L2 之前
       // 的会话错误地顶到最前。updated_at 留"现在"，让行浮顶直到用户真用它。
       // 直接走底层 handle 改 created_at，公开 API 故意不暴露（仅作回填）。
-      (conversations as unknown as { db: { prepare: (sql: string) => { run: (...args: unknown[]) => void } } }).db
-        .prepare('UPDATE conversations SET created_at = ? WHERE id = ?')
-        .run(entry.createdAt, row.id);
-      logger.info(`migrateOrphanSessions: backfilled ${row.id} "${title}" (created=${new Date(entry.createdAt).toISOString()})`);
+      const createdMs = sessionListCreatedAt(entry);
+      if (createdMs !== undefined) {
+        (conversations as unknown as { db: { prepare: (sql: string) => { run: (...args: unknown[]) => void } } }).db
+          .prepare('UPDATE conversations SET created_at = ? WHERE id = ?')
+          .run(createdMs, row.id);
+      }
+      logger.info(`migrateOrphanSessions: backfilled ${row.id} "${title}" (session=${sid}, created=${createdMs !== undefined ? new Date(createdMs).toISOString() : 'unknown'})`);
       migrated++;
     } catch (err) {
-      logger.warn(`migrateOrphanSessions(${entry.id}): insert failed: ${(err as Error).message}`);
+      logger.warn(`migrateOrphanSessions(${sid}): insert failed: ${(err as Error).message}`);
       failed++;
     }
   }
@@ -390,14 +476,11 @@ function extractFirstUserText(events: ReadonlyArray<{ type: string; data?: unkno
 // 持久化层当 runtime 公开方法（会和 runtime 内部耦合），不如再启一次只跑
 // 持久化——便宜、隔离、无副作用。~50ms 且只跑一次（首次开 app 时）。
 
-/** 启一个最小 cordis 树，只挂 session persistence 插件，返回 list()/load()。
+/** 启一个最小 cordis 树，只挂 session persistence 插件，返回 list()/readEvents()。
  *  失败返回 null。 */
 async function bootPersistenceOnly(): Promise<{
-  list: () => Promise<Array<{ id: string; createdAt: number }>>;
-  load: (id: string) => Promise<{
-    meta: { id: string };
-    events: ReadonlyArray<{ type: string; data?: unknown }>;
-  } | undefined>;
+  list: () => Promise<ReadonlyArray<SessionListEntry>>;
+  readEvents: (id: string) => Promise<ReadonlyArray<{ type: string; data?: unknown }>>;
 } | null> {
   try {
     const cfg = resolveAppPath('resources/dsh/cordis.yml');
@@ -407,20 +490,15 @@ async function bootPersistenceOnly(): Promise<{
     const bootMod = await import('@deepseek-ai/dsh-app-boot');
     const { boot } = bootMod;
     const ctx = (await boot('todo-list-migrate', cfg, undefined, undefined, bareBase)) as DshContext;
-    const persistence = ctx.get('sessionPersistence') as {
-      list?: (signal?: AbortSignal) => Promise<Array<{ id: string; createdAt: number }>>;
-      load?: (id: string, signal?: AbortSignal) => Promise<{
-        meta: { id: string };
-        events: ReadonlyArray<{ type: string; data?: unknown }>;
-      } | undefined>;
-    } | undefined;
-    if (!persistence?.list || !persistence?.load) {
+    // 0.1.5-rc.2: persistence exposes `open(id,'read')` + `list`, NOT `load`.
+    const persistence = ctx.get('sessionPersistence') as SessionPersistence015 | undefined;
+    if (!persistence?.list || !persistence?.open) {
       await ctx.fiber?.dispose?.();
       return null;
     }
     return {
       list: () => persistence.list!(),
-      load: (id) => persistence.load!(id),
+      readEvents: (id) => readSessionEvents(persistence, id),
     };
   } catch (err) {
     logger.warn(`bootPersistenceOnly failed: ${(err as Error).message}`);
@@ -458,17 +536,14 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
   // 暴露持久化层：列出 <DSH_SESSIONS_ROOT> 下已有的会话，让用户从日志里看到
   // 历史会话保存情况。每次启动都跑一遍没事——list() 只走目录不读事件。
   try {
-    const persistence = ctx.get('sessionPersistence') as {
-      list?: (signal?: AbortSignal) => Promise<Array<{ id: string; createdAt: number }>>;
-      config?: { root?: string };
-    } | undefined;
+    const persistence = ctx.get('sessionPersistence') as SessionPersistence015 | undefined;
     if (persistence?.list) {
       const stored = await persistence.list();
       const root = persistence.config?.root ?? process.env['DSH_SESSIONS_ROOT'] ?? '(unset)';
       if (stored.length === 0) {
         logger.info(`DSH persistence: 0 sessions stored under ${root}`);
       } else {
-        const ids = stored.map((s) => s.id).join(', ');
+        const ids = stored.map((s) => sessionListId(s) ?? '(no-id)').join(', ');
         logger.info(`DSH persistence: ${stored.length} session(s) stored under ${root}: ${ids}`);
       }
     }
@@ -629,20 +704,20 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
     });
   });
 
-  const persistenceApi = ctx.get('sessionPersistence') as {
-    load: (id: string, signal?: AbortSignal) => Promise<{
-      meta: { id: string };
-      inheritedEventCount: number;
-      events: ReadonlyArray<{
-        type: string;
-        seq?: number;
-        time?: number;
-        data?: unknown;
-      }>;
-    } | undefined>;
-    list?: (signal?: AbortSignal) => Promise<ReadonlyArray<{ id: string; createdAt: number }>>;
-    config?: { root?: string };
-  } | undefined;
+  // 0.1.5-rc.2 persistence surface: `open(id,'read')` + `list`. The old
+  // `load(id)` API was removed in 0.1.5-rc.2; loadHistory()/migrateOrphan*()
+  // go through readSessionEvents() which uses open/read/close. `open` lives
+  // on the prototype (absent from Object.keys) but is present on the instance.
+  const persistenceApi = ctx.get('sessionPersistence') as SessionPersistence015 | undefined;
+  if (persistenceApi) {
+    logger.info(
+      `sessionPersistence ready: ctor=${persistenceApi.constructor?.name ?? '(n/a)'}` +
+      ` hasOpen=${typeof persistenceApi.open === 'function'}` +
+      ` hasList=${typeof persistenceApi.list === 'function'}`,
+    );
+  } else {
+    logger.warn('sessionPersistence: ctx.get returned undefined; history will be empty');
+  }
 
   interface ConversationEntry {
     id: string;
@@ -736,19 +811,52 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
       let fullText = '';
       let turnTokensIn = 0;
       let turnTokensOut = 0;
+      // Per-step chunk accumulator. The adapter streams the answer as
+      // `assistant/chunk` text-deltas; the final `assistant/message` event
+      // that closes a step carries `usage` and, when the adapter did NOT
+      // stream (non-streaming provider / one-shot reply), the answer text
+      // itself in `data.message.content[].text`. foldHistory() already
+      // applies this fallback for persisted history; mirror it here so
+      // `done.content` carries the answer and the renderer (T2 Fix B) can
+      // seed a text block. When chunks DID flow, `stepChunkText` is non-empty
+      // and the message's text block is empty (DSH serializes a streamed
+      // answer into chunks, not the final message) — so we only read the
+      // message text when no chunks arrived this step, avoiding double-count.
+      let stepChunkText = '';
       const off = attachLiveListener(entry, (event) => {
         if (event?.type === 'assistant/chunk') {
           const d = event.data as { chunk?: { type?: string; text?: string } } | undefined;
           const chunk = d?.chunk;
           // text-delta 累加成当轮可见文本；reasoning-delta 不入 fullText，
           // 它有独立 UI 通道（ai.ask 会把 reasoning-delta 翻译成 reasoning 流事件）
-          if (chunk?.type === 'text-delta' && chunk.text) fullText += chunk.text;
+          if (chunk?.type === 'text-delta' && chunk.text) {
+            stepChunkText += chunk.text;
+            fullText += chunk.text;
+          }
         } else if (event?.type === 'assistant/message') {
-          const d = event.data as { usage?: { inputTokens?: number; outputTokens?: number } } | undefined;
+          const d = event.data as {
+            usage?: { inputTokens?: number; outputTokens?: number };
+            message?: { content?: Array<{ type?: string; text?: string }> };
+          } | undefined;
           if (d?.usage) {
             turnTokensIn  += d.usage.inputTokens  ?? 0;
             turnTokensOut += d.usage.outputTokens ?? 0;
           }
+          // Fallback: no chunks streamed this step → the answer text lives in
+          // the final message's content blocks. Append to fullText so done
+          // .content is non-empty. (Mirrors foldHistory's assistant/message
+          // fallback — see dsh-runtime.ts foldHistory().)
+          if (!stepChunkText) {
+            const blocks = d?.message?.content ?? [];
+            const msgText = blocks
+              .filter((b) => b?.type === 'text' && typeof b.text === 'string')
+              .map((b) => b.text as string)
+              .join('');
+            if (msgText) fullText += msgText;
+          }
+          stepChunkText = '';
+        } else if (event?.type === 'step/end' || event?.type === 'turn/end') {
+          stepChunkText = '';
         }
         onEvent(event);
       });
@@ -791,15 +899,12 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
 
     async loadHistory({ conversationId }) {
       if (!persistenceApi) return [];
-      let inspection;
-      try {
-        inspection = await persistenceApi.load(conversationId);
-      } catch (err) {
-        logger.warn(`loadHistory(${conversationId}) failed: ${(err as Error).message}`);
-        return [];
-      }
-      if (!inspection) return [];
-      return foldHistory(inspection.events);
+      // 0.1.5-rc.2: persistence exposes `open(id,'read')` + `handle.read()`,
+      // not `load(id)` (that API was removed in 0.1.5-rc.2 — see
+      // readSessionEvents). readSessionEvents returns [] for a fresh / missing
+      // session, so foldHistory([]) = [] is the honest "no history yet".
+      const events = await readSessionEvents(persistenceApi, conversationId);
+      return foldHistory(events);
     },
 
     async disposeConversation(conversationId) {
@@ -1002,10 +1107,30 @@ function registerDomainTools(
   // 返回占位 token（如 '[todo.list]'）会把真实数据藏起来，模型就可能瞎编
   // （说列表为空、捏造新建 todo 的 id）。这里直接 JSON.stringify 真实结果，
   // 让模型基于真实数据作答。
+  //
+  // L5-A: output.presentationMeta 由 runtime 在 tool/result 事件上自动调用，
+  // 把 raw value 投影成 JsonValue 并附在事件 meta 字段上。我们这里 pass-through
+  // (返回 value 不变)，让 DSH 原生消费者（未来的 ToolRow drop-in）能拿到
+  // 完整的原始结果数据。render 仍然 JSON.stringify 给模型看。
   const renderJson = (_args: unknown, value: unknown): { type: 'text'; text: string }[] => [
     { type: 'text', text: value === undefined ? '(no result)' : JSON.stringify(value, null, 2) },
   ];
-  const jsonOutput = { schema: { type: 'json' }, render: renderJson };
+  const jsonOutput = {
+    schema: { type: 'json' },
+    render: renderJson,
+    presentationMeta: (_args: unknown, value: unknown): unknown => value,
+  };
+
+  // L5-A: 工具级 presentCall/presentResult helper。每个 defineTool 加
+  // `...wire('tool.name')` 即可声明——DSH web frontend 的 drop-in 组件
+  // (ToolRow 等) 会按名调用这两函数。我们本地渲染路径暂由渲染端的
+  // presentToolResult (来自 shared/tool-presentation) 完成，但把这两个
+  // 方法声明在工具上让协议对齐 DSH，将来接 ToolRow 时不用改 wire 形状。
+  const wire = (name: string) => ({
+    presentCall: (args: unknown) => presentToolCall(name, args),
+    presentResult: (args: unknown, result: { isError: boolean; meta?: unknown }) =>
+      presentToolResult(name, args, result.meta, !result.isError),
+  });
 
   // ---------------------------------------------------------------------------
   // todo.* — 对 TODO 表的 CRUD。工具参数尽量覆盖 TodoCreate / TodoPatch 全字段，
@@ -1016,6 +1141,7 @@ function registerDomainTools(
 
   reg(defineTool({
     name: 'todo.list',
+    ...wire('todo.list'),
     description: 'List TODO items, optionally filtered. Every field is optional; omit all of them to return every todo. The model may pass status/priority/tag as a single string or a JSON array. "all" / unknown values for status/priority mean no filter.',
     parameters: {
       status: { type: 'string', description: 'Filter by status: next | doing | done | cancelled | blocked (or comma-separated)' },
@@ -1062,6 +1188,7 @@ function registerDomainTools(
 
   reg(defineTool({
     name: 'todo.get',
+    ...wire('todo.get'),
     description: 'Get a single TODO by id. Returns null if the id is unknown.',
     parameters: { id: { type: 'string', required: true, description: 'TODO id (ULID)' } },
     output: jsonOutput,
@@ -1070,6 +1197,7 @@ function registerDomainTools(
 
   reg(defineTool({
     name: 'todo.create',
+    ...wire('todo.create'),
     description: 'Create a new TODO. Returns the created item including its generated id. Markdown body starts empty — use content.writeBody to add notes/progress later. Pass parentId to create as a subtask of an existing TODO (e.g. "把这个任务拆成三个子任务"). Pass plannedFor (today\'s local date, \'YYYY-MM-DD\') to stamp a task for the today view. Only call planForToday when the user EXPLICITLY says "今天做 X" / "加到今天"; do not stamp new tasks as today\'s by default.',
     parameters: {
       title: { type: 'string', required: true, description: 'TODO title (required)' },
@@ -1104,6 +1232,7 @@ function registerDomainTools(
 
   reg(defineTool({
     name: 'todo.update',
+    ...wire('todo.update'),
     description: 'Update fields of an existing TODO. Pass only the fields you want to change — null clears the field (e.g. dueAt: null). Setting status="done" automatically stamps doneAt; any other status clears it. Pass parentId to reparent a task (make it a subtask of another); pass parentId=null to promote to top-level. Cycles are rejected. Pass archivedAt to archive (a unix-ms timestamp, e.g. Date.now()) or archivedAt=null to restore an archived task.',
     parameters: {
       id: { type: 'string', required: true, description: 'TODO id' },
@@ -1139,6 +1268,7 @@ function registerDomainTools(
 
   reg(defineTool({
     name: 'subtasks.list',
+    ...wire('subtasks.list'),
     description: 'List the direct subtasks of a TODO (parentId == id). Returns [] if the task has no subtasks or does not exist. Use this to inspect a parent\'s children before reparenting or to summarise "the work broken out under this task".',
     parameters: { parentId: { type: 'string', required: true, description: 'Parent TODO id' } },
     output: jsonOutput,
@@ -1149,6 +1279,7 @@ function registerDomainTools(
 
   reg(defineTool({
     name: 'todo.planForToday',
+    ...wire('todo.planForToday'),
     description: 'Stamp an existing TODO for the today view. Pass todayKey = today\'s local date as \'YYYY-MM-DD\' (e.g. compute via `new Date().toLocaleDateString(\'en-CA\')` — the same value the renderer reads back when matching the upper section). Yesterday\'s stamp naturally drops off tomorrow morning without any sweep. Only call when the user EXPLICITLY says "今天做 X" / "加到今天" / "把 X 加到今日"; do not bulk-stamp. Returns the updated TODO. No-op (returns the existing row) when the task is already planned for that day.',
     parameters: {
       id: { type: 'string', required: true, description: 'TODO id to stamp for today' },
@@ -1165,6 +1296,7 @@ function registerDomainTools(
 
   reg(defineTool({
     name: 'todo.unplan',
+    ...wire('todo.unplan'),
     description: 'Remove an existing TODO from the today view (clears plannedFor). Idempotent: no-op when the task was not planned. Returns the updated TODO.',
     parameters: { id: { type: 'string', required: true, description: 'TODO id to remove from today\'s plan' } },
     output: jsonOutput,
@@ -1175,6 +1307,7 @@ function registerDomainTools(
 
   reg(defineTool({
     name: 'todo.delete',
+    ...wire('todo.delete'),
     description: 'Soft-delete a TODO and its entire subtree. This is a LOGICAL delete — the row, markdown body, and drawings survive so the action is always undoable via todo.restore. The task disappears from every active view (list, search, stats) and is only visible via todo.list with deletedOnly=true. No confirmation needed beyond the normal permission tier.',
     parameters: { id: { type: 'string', required: true, description: 'TODO id to soft-delete (cascades to its subtasks)' } },
     output: jsonOutput,
@@ -1183,6 +1316,7 @@ function registerDomainTools(
 
   reg(defineTool({
     name: 'todo.restore',
+    ...wire('todo.restore'),
     description: 'Restore a soft-deleted TODO and its entire subtree — the inverse of todo.delete. Clears deleted_at on the task + every descendant so the whole branch returns to the active list. Safe to call on an already-live task (no-op).',
     parameters: { id: { type: 'string', required: true, description: 'TODO id to restore (clears deleted_at on its subtree)' } },
     output: jsonOutput,
@@ -1191,6 +1325,7 @@ function registerDomainTools(
 
   reg(defineTool({
     name: 'todo.batchUpdate',
+    ...wire('todo.batchUpdate'),
     description: 'Apply the same patch to multiple TODOs in one transaction. Useful for "mark all 未完成 items as done" or "reparent every task under a new parent". Returns the updated rows.',
     parameters: {
       ids: { type: 'string', required: true, description: 'JSON array of TODO ids' },
@@ -1225,6 +1360,7 @@ function registerDomainTools(
 
   reg(defineTool({
     name: 'todo.search',
+    ...wire('todo.search'),
     description: 'Full-text search across TODO titles and markdown bodies (FTS5-backed). Returns hits with a short snippet + score.',
     parameters: { query: { type: 'string', required: true, description: 'Search query' }, limit: { type: 'number', description: 'Max hits (default 20)' } },
     output: jsonOutput,
@@ -1233,6 +1369,7 @@ function registerDomainTools(
 
   reg(defineTool({
     name: 'todo.stats',
+    ...wire('todo.stats'),
     description: 'Aggregate stats: counts by status, 7-day completion rate, average done latency. Useful as a preflight before summarising the user\'s workload.',
     parameters: { windowDays: { type: 'number', description: 'Window for completion stats (default 7)' } },
     output: jsonOutput,
@@ -1245,6 +1382,7 @@ function registerDomainTools(
 
   reg(defineTool({
     name: 'content.readBody',
+    ...wire('content.readBody'),
     description: 'Read the markdown body of a TODO (current version). Returns markdown text + the version number.',
     parameters: { id: { type: 'string', required: true, description: 'TODO id' } },
     output: jsonOutput,
@@ -1253,17 +1391,32 @@ function registerDomainTools(
 
   reg(defineTool({
     name: 'content.writeBody',
+    ...wire('content.writeBody'),
     description: 'Write/replace the markdown body of a TODO. Creates a new version (old version preserved for content.history). For long drafts, write the full body each time — partial updates are not supported.',
     parameters: {
       id: { type: 'string', required: true, description: 'TODO id' },
       markdown: { type: 'string', required: true, description: 'New markdown content' },
     },
     output: jsonOutput,
-    async execute(args: { id: string; markdown: string }) { return md.writeBody(args.id as never, args.markdown); },
+    async execute(args: { id: string; markdown: string }) {
+      // L5-A: snapshot the previous body so the renderer-side presentToolResult
+      // can build a real red/green diff (DiffBlock collapses to "all +" if
+      // oldText is null). readBody is best-effort — a missing/empty file
+      // yields '' and still produces a valid diff against the new content.
+      let oldText = '';
+      try {
+        oldText = md.readBody(args.id as never).markdown ?? '';
+      } catch {
+        /* first write, or file unreadable — diff against empty */
+      }
+      const res = md.writeBody(args.id as never, args.markdown);
+      return { ...res, __oldText: oldText };
+    },
   }));
 
   reg(defineTool({
     name: 'content.history',
+    ...wire('content.history'),
     description: 'List saved markdown versions for a TODO, oldest to newest. Each entry has an id (version number), savedAt, and the body. Use content.restoreVersion to roll back.',
     parameters: { id: { type: 'string', required: true, description: 'TODO id' } },
     output: jsonOutput,
@@ -1272,6 +1425,7 @@ function registerDomainTools(
 
   reg(defineTool({
     name: 'content.restoreVersion',
+    ...wire('content.restoreVersion'),
     description: 'Restore a previous markdown version. The current version is preserved as a new version before the restore (so undo via content.history + restoreVersion is always possible). Destructive in the sense that it overwrites current body — confirm with the user first.',
     parameters: {
       id: { type: 'string', required: true, description: 'TODO id' },
@@ -1287,6 +1441,7 @@ function registerDomainTools(
 
   reg(defineTool({
     name: 'drawing.list',
+    ...wire('drawing.list'),
     description: 'List Excalidraw drawings attached to a TODO. Returns metadata (id, title, thumb path, timestamps). Use drawing.read to get the scene JSON.',
     parameters: { todoId: { type: 'string', required: true, description: 'TODO id' } },
     output: jsonOutput,
@@ -1295,6 +1450,7 @@ function registerDomainTools(
 
   reg(defineTool({
     name: 'drawing.read',
+    ...wire('drawing.read'),
     description: 'Read an Excalidraw drawing scene by id. Returns the full scene JSON (elements, appState). Throws if the id is unknown or the scene file is missing on disk.',
     parameters: { id: { type: 'string', required: true, description: 'Drawing id' } },
     output: jsonOutput,
@@ -1303,6 +1459,7 @@ function registerDomainTools(
 
   reg(defineTool({
     name: 'drawing.save',
+    ...wire('drawing.save'),
     description: 'Save (create or update) an Excalidraw drawing for a TODO. Pass `id` to update an existing drawing; omit to create a new one. The `scene` is the full Excalidraw scene JSON.',
     parameters: {
       todoId: { type: 'string', required: true, description: 'TODO id this drawing belongs to' },
@@ -1318,6 +1475,7 @@ function registerDomainTools(
 
   reg(defineTool({
     name: 'drawing.delete',
+    ...wire('drawing.delete'),
     description: 'Permanently delete a drawing. Destructive — confirm with the user first.',
     parameters: { id: { type: 'string', required: true, description: 'Drawing id' } },
     output: jsonOutput,
@@ -1326,6 +1484,7 @@ function registerDomainTools(
 
   reg(defineTool({
     name: 'drawing.setThumb',
+    ...wire('drawing.setThumb'),
     description: 'Set the thumbnail image for a drawing (a data: URL, typically captured from the canvas). The renderer uses this to show a preview chip in the drawing list. Not destructive.',
     parameters: {
       id: { type: 'string', required: true, description: 'Drawing id' },
@@ -1344,6 +1503,7 @@ function registerDomainTools(
 
   reg(defineTool({
     name: 'inbox.attach',
+    ...wire('inbox.attach'),
     description: 'Attach a file from disk to a TODO. Copies the file into the app\'s attachments directory and records it in inbox_attachments. Returns the new attachment row.',
     parameters: {
       todoId: { type: 'string', required: true, description: 'Target TODO id' },
@@ -1367,6 +1527,7 @@ function registerDomainTools(
 
   reg(defineTool({
     name: 'inbox.attachBlob',
+    ...wire('inbox.attachBlob'),
     description: 'Attach a pasted image (data: URL) to a TODO. Decodes the data URL, writes the bytes to disk, records the row. Use for screenshots / clipboard images the user said "add this picture to the todo".',
     parameters: {
       todoId: { type: 'string', required: true, description: 'Target TODO id' },
@@ -1407,6 +1568,7 @@ function registerDomainTools(
 
   reg(defineTool({
     name: 'conversation.list',
+    ...wire('conversation.list'),
     description: 'List AI conversations. By default archived threads are hidden. Each row includes the title, timestamps, and an archived flag. Use conversation.history to load the turns of a specific conversation.',
     parameters: { includeArchived: { type: 'boolean', description: 'Include archived conversations (default false)' } },
     output: jsonOutput,
@@ -1415,6 +1577,7 @@ function registerDomainTools(
 
   reg(defineTool({
     name: 'conversation.create',
+    ...wire('conversation.create'),
     description: 'Create a new (empty) AI conversation. Returns the new conversation row (id, title, timestamps). The default title is "新对话 <timestamp>" — the DSH session-title service will replace it with an AI-generated title after the first turn, or the user can rename it via the UI.',
     parameters: { title: { type: 'string', description: 'Optional explicit title; omit to use the default new-conversation title' } },
     output: jsonOutput,
@@ -1423,6 +1586,7 @@ function registerDomainTools(
 
   reg(defineTool({
     name: 'conversation.rename',
+    ...wire('conversation.rename'),
     description: 'Rename an AI conversation. Throws if the id is unknown or the title is empty.',
     parameters: {
       id: { type: 'string', required: true, description: 'Conversation id' },
@@ -1438,6 +1602,7 @@ function registerDomainTools(
 
   reg(defineTool({
     name: 'conversation.archive',
+    ...wire('conversation.archive'),
     description: 'Archive an AI conversation (soft delete). Hidden from the default list. Reversible via conversation.unarchive. The on-disk JSONL log is NOT touched.',
     parameters: { id: { type: 'string', required: true, description: 'Conversation id' } },
     output: jsonOutput,
@@ -1446,6 +1611,7 @@ function registerDomainTools(
 
   reg(defineTool({
     name: 'conversation.unarchive',
+    ...wire('conversation.unarchive'),
     description: 'Restore an archived conversation so it shows in the default list again.',
     parameters: { id: { type: 'string', required: true, description: 'Conversation id' } },
     output: jsonOutput,
@@ -1454,6 +1620,7 @@ function registerDomainTools(
 
   reg(defineTool({
     name: 'conversation.delete',
+    ...wire('conversation.delete'),
     description: 'Hard delete the DB row of an AI conversation. The on-disk JSONL event log is NOT cleaned up by this (out of scope). Prefer conversation.archive for "I\'m done with this thread" semantics.',
     parameters: { id: { type: 'string', required: true, description: 'Conversation id' } },
     output: jsonOutput,
@@ -1462,6 +1629,7 @@ function registerDomainTools(
 
   reg(defineTool({
     name: 'conversation.history',
+    ...wire('conversation.history'),
     description: 'Load the persisted turn history of a conversation. Returns the same shape the AIPane uses: { type: "user" | "assistant" | "tool", text?, reasoning?, name?, args?, ok?, data?, error? }. Use this to "remember" what a past conversation discussed.',
     parameters: { id: { type: 'string', required: true, description: 'Conversation id' } },
     output: jsonOutput,
@@ -1485,6 +1653,7 @@ function registerDomainTools(
 
   reg(defineTool({
     name: 'ai.health',
+    ...wire('ai.health'),
     description: 'Check the AI provider connection. Returns { ok, mode, latencyMs?, error? }. "shim" mode means offline / no API key — model calls will echo pre-canned answers. Use this before declaring "the API is broken" — it might just be missing credentials.',
     parameters: {},
     output: jsonOutput,
@@ -1506,6 +1675,7 @@ function registerDomainTools(
 
   reg(defineTool({
     name: 'ai.models',
+    ...wire('ai.models'),
     description: 'List the configured model(s) for the active provider. Returns the list of models the user has enabled (per-provider defaults from settings). Useful when the user asks "which model are you?".',
     parameters: {},
     output: jsonOutput,
@@ -1517,6 +1687,7 @@ function registerDomainTools(
 
   reg(defineTool({
     name: 'ai.stats',
+    ...wire('ai.stats'),
     description: 'Read the cumulative AI cost from settings (sum of every successful turn\'s costUsd). Useful when the user asks "how much have you spent this month?"',
     parameters: {},
     output: jsonOutput,
@@ -1541,6 +1712,7 @@ function registerDomainTools(
 
   reg(defineTool({
     name: 'app.currentContext',
+    ...wire('app.currentContext'),
     description: 'Read the user\'s current focus (what they have open right now — a task, document, or drawing). Returns the full row(s) so you can act on them with todo.update / content.writeBody / drawing.save etc. without a separate lookup. Returns null when nothing is focused — the user is on the list/stats view, in which case call todo.list to find a candidate.',
     parameters: {},
     output: jsonOutput,
@@ -1582,6 +1754,7 @@ function registerDomainTools(
 
   reg(defineTool({
     name: 'ask_user_approval',
+    ...wire('ask_user_approval'),
     description: 'Pause the agent loop and ask the user to approve or reject a specific tool call. Returns one of: "allowed-once" | "rejected" | "cancelled" | "unavailable". Use this BEFORE performing an irreversible side effect (deleting a file, sending a message, etc.). The user can always "reject" — the agent loop then aborts the tool call. Auto-cancels after 90s.',
     parameters: {
       toolName: { type: 'string', required: true, description: 'Name of the tool the agent is about to call (for display in the approval card)' },
