@@ -618,12 +618,10 @@ const PlannedBranch: React.FC<{
   const peerChildren = children.filter((c) => !shownSet.has(c.id));
   const hasShownChildren = shownChildren.length > 0;
   const hasPeerChildren = peerChildren.length > 0;
-  const isSelfPlanned = todo.plannedFor === todayKey;
 
   // 展开/折叠：祖先任务强制展开（让今日叶子可见）；叶子任务 hasShownChildren 永远 false。
   // 如果任务只有"自身被安排"且没有 shown children，整个行就是叶子，不需要 children ul。
   const expanded = getExpanded(todo.id);
-  const shouldShowChildren = isSelfPlanned || expanded || hasShownChildren;
 
   // —— Inline "add subtask" UI state ——
   // 上半区与下半区保持一致：叶子任务也能创建子任务；creating=true 时 + 按钮常驻，
@@ -763,33 +761,6 @@ const PlannedBranch: React.FC<{
               onRestore={() => { /* unused */ }}
               onCreateSubtask={onCreateSubtask}
               onPlanToday={async () => { await window.todoList.todo.update(c.id, { plannedFor: todayKey }); }}
-            />
-          ))}
-        </ul>
-      )}
-      {shouldShowChildren && hasShownChildren && (
-        <ul className="task-branch__children task-branch__children--planned">
-          {shownChildren.map((c) => (
-            <PlannedBranch
-              key={`planned-${c.id}`}
-              todo={c}
-              depth={depth + 1}
-              selectedId={selectedId}
-              onSelect={onSelect}
-              allTodos={allTodos}
-              sort={sort}
-              getExpanded={getExpanded}
-              toggleExpanded={toggleExpanded}
-              todayKey={todayKey}
-              shownSet={shownSet}
-              getPeerExpanded={getPeerExpanded}
-              togglePeerExpanded={togglePeerExpanded}
-              onCycle={async (next) => {
-                await window.todoList.todo.update(c.id, { status: next });
-              }}
-              onDelete={onDelete}
-              onUnplan={onUnplan}
-              onCreateSubtask={onCreateSubtask}
             />
           ))}
         </ul>
