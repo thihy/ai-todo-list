@@ -2154,6 +2154,11 @@ a:hover {
      a transparent placeholder so border-color transitions look clean. */
   border-left: 2px solid transparent;
   cursor: pointer;
+  /* Inter-row divider — a 1px hairline so rows are visually separated
+     and the bottom-edge progress line has a clean backdrop. The
+     progress line (::after, see below) sits 1px above this so they
+     don't collide visually. */
+  border-bottom: 1px solid var(--border-subtle, #EDEFF2);
   /* Pills on the second row are flex:0 0 auto (full intrinsic width) so
      we clip any overflow on the row edge — the rightmost element (the
      actions group, anchored via margin-left:auto) is the LAST thing on
@@ -2166,6 +2171,7 @@ a:hover {
 }
 /* Bottom progress line — a 2px horizontal fill at the row's bottom edge.
    Drawn via ::after so it doesn't fight the row's own padding/borders.
+   Sits 1px above the border-bottom divider so the two don't overlap.
    Colour differs per status (in-progress=primary, done=success,
    cancelled=muted); for a default row it's the primary accent, with the
    filled portion = --row-progress and the rest fully transparent. */
@@ -2174,7 +2180,7 @@ a:hover {
   position: absolute;
   left: 0;
   right: 0;
-  bottom: 0;
+  bottom: 1px;
   height: 2px;
   background-image: linear-gradient(
     to right,
@@ -2209,6 +2215,12 @@ a:hover {
   --row-progress: 100%;
   --progress-fill: var(--fg-muted);
   opacity: 0.6;
+}
+/* Drop the bottom divider on the very last row so the row list meets the
+   container edge cleanly (avoids a double line with the list's own
+   border / scroll area). */
+.task-row:last-child {
+  border-bottom: 0;
 }
 .task-row.is-cancelled .task-row__title {
   text-decoration: line-through;
