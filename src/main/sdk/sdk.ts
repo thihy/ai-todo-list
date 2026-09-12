@@ -55,7 +55,7 @@ export function createSdk(deps: {
       list: (filter = {}) => deps.repo.list(filter),
       get: (id) => deps.repo.get(id),
       create: (input) => {
-        const t = deps.repo.create(input, deps.md.filePathFor('placeholder'));
+        const t = deps.repo.create(input);
         deps.md.writeBody(t.id, '');
         return deps.repo.get(t.id)!;
       },

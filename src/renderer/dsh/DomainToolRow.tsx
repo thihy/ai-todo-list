@@ -30,6 +30,8 @@ import type { DiffCardModel } from './ui-tool/tool/models/diff-card-model'
 import type { ReadCardModel } from './ui-tool/tool/models/read-card-model'
 import type { SearchCardModel } from './ui-tool/tool/models/search-card-model'
 import type { ToolRowState, ToolRowVariant } from './ui-tool/tool/models/tool-call-model'
+import { classifyTool } from './ui-tool/tool/models/tool-call-model'
+import { webCardModelFromMeta, type WebCardModelProps } from './ui-tool/tool/models/web-card-model'
 import { conversationT as t } from './conversation-locale'
 import { presentToolCall, presentToolResult } from '../tool-presentation'
 
@@ -65,6 +67,7 @@ interface CardModels {
   diff: DiffCardModel | null
   read: ReadCardModel | null
   search: SearchCardModel | null
+  web: WebCardModelProps | null
   /** Flattened result text for the OUT section (generic / terminal). */
   output: string | null
   /** Original args JSON for the IN section (generic path only). */
@@ -108,15 +111,19 @@ function argsBodyRaw(args: unknown): string | null {
   }
 }
 
-function toCardModels(view: ToolResultView, args: unknown, ok: boolean): CardModels {
+function toCardModels(view: ToolResultView, args: unknown, ok: boolean, web: WebCardModelProps | null): CardModels {
+  if (web !== null) {
+    return { diff: null, read: null, search: null, web, output: null, bodyRaw: null, errorSummary: null }
+  }
   switch (view.card) {
     case 'diff':
-      return { diff: { card: { diffs: view.diffs } }, read: null, search: null, output: null, bodyRaw: null, errorSummary: null }
+      return { diff: { card: { diffs: view.diffs } }, read: null, search: null, web: null, output: null, bodyRaw: null, errorSummary: null }
     case 'read':
       return {
         diff: null,
         read: { label: view.path, lines: view.lines, totalLines: view.totalLines, lang: view.lang },
         search: null,
+        web: null,
         output: null,
         bodyRaw: null,
         errorSummary: null,
@@ -128,6 +135,7 @@ function toCardModels(view: ToolResultView, args: unknown, ok: boolean): CardMod
         search: view.shape === 'matches'
           ? { card: { kind: 'matches', files: view.files, total: view.total, truncated: view.truncated }, recovery: undefined }
           : { card: { kind: 'paths', paths: view.paths, total: view.total, truncated: view.truncated }, recovery: undefined },
+        web: null,
         output: null,
         bodyRaw: null,
         errorSummary: null,
@@ -139,6 +147,7 @@ function toCardModels(view: ToolResultView, args: unknown, ok: boolean): CardMod
         diff: null,
         read: null,
         search: null,
+        web: null,
         output: text === '' ? null : text,
         bodyRaw: argsBodyRaw(args),
         errorSummary: ok ? null : firstLine(text),
@@ -191,9 +200,10 @@ export const DomainToolRow: React.FC<{
   toolName: string
   args: unknown
   result: unknown
+  presentationMeta?: unknown
   ok: boolean
   running: boolean
-}> = ({ toolName, args, result, ok, running }) => {
+}> = ({ toolName, args, result, presentationMeta, ok, running }) => {
   const callView = useMemo(() => presentToolCall(toolName, args), [toolName, args])
   const resultView = useMemo(
     () => presentToolResult(toolName, args, result, ok),
@@ -208,10 +218,16 @@ export const DomainToolRow: React.FC<{
   // presentToolCall always returns a GenericCallView (card:'generic' + kind),
   // but its declared return type is the full ToolCallView union, where `kind`
   // lives only on the generic arm — narrow before indexing variantByKind.
-  const variant = callView.card === 'generic'
-    ? variantByKind[callView.kind ?? 'other']
-    : 'others'
-  const cards = useMemo(() => toCardModels(resultView, args, ok), [resultView, args, ok])
+  const variant = toolName === 'web_search' || toolName === 'web_fetch'
+    ? classifyTool(toolName)
+    : callView.card === 'generic'
+      ? variantByKind[callView.kind ?? 'other']
+      : 'others'
+  const web = useMemo(
+    () => webCardModelFromMeta(toolName, args, presentationMeta, !ok),
+    [toolName, args, presentationMeta, ok],
+  )
+  const cards = useMemo(() => toCardModels(resultView, args, ok, web), [resultView, args, ok, web])
   const summary = useMemo(() => summarizeArgs(args, toolName), [args, toolName])
   const title = resultView.title ?? callView.title ?? toolName
   return (
@@ -226,6 +242,7 @@ export const DomainToolRow: React.FC<{
       diff={cards.diff}
       read={cards.read}
       search={cards.search}
+      web={cards.web}
       bodyRaw={cards.bodyRaw}
       output={cards.output}
       errorSummary={cards.errorSummary}

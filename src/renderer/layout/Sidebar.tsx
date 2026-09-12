@@ -1,26 +1,15 @@
-// Sidebar — primary navigation: lists, projects, tags, priorities, settings.
+// Sidebar — primary navigation: lists, priorities, settings.
 // The AI assistant is a resident right panel, so it has no nav entry here.
 
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import type { Route } from '../router';
-import type { Todo } from '../../shared/todo-types';
-import { useDataVersion } from '../data-bus';
 
 export const Sidebar: React.FC<{
   route: Route;
   onNavigate: (to: string) => void;
 }> = ({ onNavigate }) => {
-  const [todos, setTodos] = useState<Todo[]>([]);
-  const dataVersion = useDataVersion(['todos']);
-  useEffect(() => {
-    window.todoList.todo.list({}).then((res) => {
-      if (res.ok) setTodos(res.data as Todo[]);
-    });
-  }, [dataVersion]);
-
   const isActive = (target: string): boolean => location.hash === target;
 
-  const projects = unique(todos.flatMap((t) => t.tags ?? [])).slice(0, 8);
   const priorities = ['high', 'medium', 'low', 'none'];
   const prioLabel: Record<string, string> = { high: '高', medium: '中', low: '低', none: '无' };
 
@@ -34,19 +23,6 @@ export const Sidebar: React.FC<{
       <NavItem label="归档" icon="archive" target="#/list/archived" active={isActive('#/list/archived')} onClick={onNavigate} />
       <NavItem label="已删除" icon="trash" target="#/list/deleted" active={isActive('#/list/deleted')} onClick={onNavigate} />
       <NavItem label="统计" icon="chart" target="#/stats" active={isActive('#/stats')} onClick={onNavigate} />
-
-      <SectionLabel>项目</SectionLabel>
-      {projects.length === 0 && <Empty>暂无项目</Empty>}
-      {projects.map((p) => (
-        <NavItem
-          key={p}
-          label={p}
-          icon="tag"
-          target={`#/list/project/${encodeURIComponent(p)}`}
-          active={isActive(`#/list/project/${encodeURIComponent(p)}`)}
-          onClick={onNavigate}
-        />
-      ))}
 
       <SectionLabel>优先级</SectionLabel>
       {priorities.map((p) => (
@@ -74,7 +50,6 @@ const ICONS: Record<string, string> = {
   archive: 'M2.5 3H13.5L14 6H2L2.5 3Z M3.5 6V13H12.5V6 M6.5 8H9.5',
   trash: 'M3 4.5H13 M6.5 4.5V3.2A.5.5 0 01 7 2.7H9A.5.5 0 019.5 3.2V4.5 M5 4.5L5.6 12.5A.5.5 0 006.1 13H9.9A.5.5 0 0010.4 12.5L11 4.5',
   chart: 'M3 13H13 M5 13V9 M8 13V6 M11 13V3',
-  tag: 'M3 3H8L13 8L8 13L3 8V3Z',
   'prio-high': 'M8 2L14 14H2L8 2Z',
   'prio-medium': 'M3 3H13V13H3V3Z',
   'prio-low': 'M8 4L12 12H4L8 4Z',
@@ -96,10 +71,6 @@ const SectionLabel: React.FC<{ children: React.ReactNode }> = ({ children }) => 
   <div className="sidebar__section">{children}</div>
 );
 
-const Empty: React.FC<{ children: React.ReactNode }> = ({ children }) => (
-  <div className="sidebar__empty">{children}</div>
-);
-
 const NavItem: React.FC<{
   label: string;
   icon: string;
@@ -117,7 +88,3 @@ const NavItem: React.FC<{
     <span className="nav-item__label">{label}</span>
   </button>
 );
-
-function unique<T>(xs: T[]): T[] {
-  return Array.from(new Set(xs));
-}

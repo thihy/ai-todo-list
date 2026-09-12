@@ -5,7 +5,8 @@
 // panel and it survives restart); when collapsed, it shrinks to the rail.
 
 import React, { Suspense } from 'react';
-import { IconSparkle } from '../components/icons';
+import { IconChevronLeft, IconSparkle } from '../components/icons';
+import type { ExternalAiSubmitDetail } from '../components/Composer';
 
 // Lazy-load the AI pane: it drags in the whole vendored DSH render tree
 // (ToolRow / ReasoningRow / card primitives + shiki + katex), none of which
@@ -15,22 +16,36 @@ const AIPane = React.lazy(() =>
   import('../panes/AIPane').then(m => ({ default: m.AIPane })),
 );
 
-export const AIPanel: React.FC<{ open: boolean; width: number; onToggle: () => void }> = ({ open, width, onToggle }) => {
+export const AIPanel: React.FC<{
+  open: boolean;
+  width: number;
+  onToggle: () => void;
+  externalSubmit?: ExternalAiSubmitDetail | null;
+  onExternalSubmitConsumed?: () => void;
+}> = ({ open, width, onToggle, externalSubmit, onExternalSubmitConsumed }) => {
   return (
     <aside
       className={`ai-panel${open ? ' is-open' : ''}`}
       aria-label="AI 助手"
-      style={open ? { width } : undefined}
+      // Open: persisted pane width. Collapsed: shrink to the rail width so
+      // the rail hugs the right edge — previously the aside kept the 384px
+      // open default and the 40px rail floated at its left with a gap.
+      style={open ? { width } : { width: 'var(--ai-rail-w)' }}
     >
       {open ? (
-        <>
-          <div className="ai-panel__grip" role="button" tabIndex={0} aria-label="收起 AI 助手" onClick={onToggle} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onToggle(); } }}>
-            <ChevronRight />
-          </div>
-          <Suspense fallback={<div className="ai-panel__loading" role="status" aria-live="polite">加载中…</div>}>
-            <AIPane />
-          </Suspense>
-        </>
+        // Collapse affordance lives INSIDE the AIPane header (right edge of
+        // its title row) — not in a separate grip divider column. The user
+        // perceives the IconCollapseBar as "part of the area" they're
+        // looking at, not as a chrome handle on a separate strip. Passed
+        // down as onCollapse so AIPane renders the button in its own
+        // chrome rather than the parent layering an overlay on top.
+        <Suspense fallback={<div className="ai-panel__loading" role="status" aria-live="polite">加载中…</div>}>
+          <AIPane
+            onCollapse={onToggle}
+            externalSubmit={externalSubmit}
+            onExternalSubmitConsumed={onExternalSubmitConsumed}
+          />
+        </Suspense>
       ) : (
         <button
           type="button"
@@ -41,24 +56,9 @@ export const AIPanel: React.FC<{ open: boolean; width: number; onToggle: () => v
         >
           <span className="ai-rail__icon"><IconSparkle size={16} /></span>
           <span className="ai-rail__label">AI 助手</span>
-          <ChevronLeft />
+          <IconChevronLeft size={14} />
         </button>
       )}
     </aside>
   );
 };
-
-// The chevron points in the direction the panel edge moves when clicked:
-// open grip ▶ (collapse toward the right edge), closed rail ◀ (expand
-// leftward). The previous paths were swapped — ChevronRight drew a left-
-// pointing ‹ and vice versa — so both affordances read backwards.
-const ChevronRight: React.FC = () => (
-  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-    <path d="M6 4L10 8L6 12" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-  </svg>
-);
-const ChevronLeft: React.FC = () => (
-  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-    <path d="M10 4L6 8L10 12" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-  </svg>
-);

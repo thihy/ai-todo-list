@@ -57,6 +57,8 @@ const APP_EVENTS: AppEvent[] = [
   // inline card and posts the answer back via aiUserQuestion.answer /
   // aiUserApproval.answer (defined below on the TodoListApi object).
   'ai:user-question-request',
+  'ai:user-question-timeout',
+  'ai:user-approval-timeout',
   'ai:user-approval-request',
 ];
 

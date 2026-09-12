@@ -1,18 +1,36 @@
 // AI pane — chat-style conversation with rich rendering.
 //
-// Layout (L5 redesign):
-//   ┌─ header (minimal): [✦ AI 助手]              [＋ new] [🗂 history]  ┐
-//   ├─ content ───────────────────────────────────────────────────────────┤
-//   │  # 当前对话标题  (big sticky heading)                                │
-//   │  ┌─ 当前问题 ───────────────────────────────────────────────────┐   │  ← sticky banner
-//   │  │ "用户问的问题"                                                │   │
-//   │  └──────────────────────────────────────────────────────────────┘   │
-//   │  [message turn 1]                                                   │
-//   │  [message turn 2]                                                   │
-//   │  ...                                                                │
-//   ├─ composer (unified input box) ───────────────────────────────────────┤
-//   │  + │  [textarea, multi-line, autosize]                [Send/Stop]   │
-//   └──────────────────────────────────────────────────────────────────────┘
+// Layout (flex column, .aipane is the flex container):
+//
+//   ┌────────────────────────────────────────────────────────────────────┐
+//   │ flex: 0 0 auto — Region 1: TITLE (pinned at top)                   │
+//   │   [✦ AI 助手]   current conv title   [＋ new] [🗂 history] [▮▮▮]    │
+//   ├────────────────────────────────────────────────────────────────────┤
+//   │ flex: 0 0 auto — Region 1b: SCROLL-TRACKED CURRENT QUESTION        │
+//   │   (sibling of .aipane__title, NOT nested in it; flex-isolated so   │
+//   │    the banner never overlaps with the body content below)           │
+//   ├────────────────────────────────────────────────────────────────────┤
+//   │ flex: 1 1 0 — Region 2: BODY (scrollable, takes leftover space)    │
+//   │   [message turn 1]                                                 │
+//   │   [message turn 2]                                                 │
+//   │   ...                                                              │
+//   ├────────────────────────────────────────────────────────────────────┤
+//   │ flex: 0 0 auto — Region 3a: HITL (conditional; sits above composer) │
+//   │   [PendingQuestionCard | PendingApprovalCard when active]           │
+//   ├────────────────────────────────────────────────────────────────────┤
+//   │ flex: 0 0 auto — Region 3: COMPOSER (pinned at bottom)             │
+//   │   [textarea, autosize]                          [Send/Stop]        │
+//   └────────────────────────────────────────────────────────────────────┘
+//
+// Five-region contract:
+//   - .aipane is `display: flex; flex-direction: column; height: 100%`
+//   - .aipane__title, .aipane__currentq-overlay, .aipane__composer are
+//     `flex: 0 0 auto` — each pinned in its own box, no overlap with
+//     neighbours because every box consumes its own vertical space.
+//   - .aipane__body is `flex: 1 1 0; min-height: 0; overflow: auto` —
+//     absorbs leftover vertical space and scrolls.
+//   - HITL cards slot between body and composer with their own
+//     `flex: 0 0 auto` so they push the body up when shown.
 //
 // Streaming + HITL:
 //   - ai:stream (via useAiStream): token / reasoning / toolCall / done / error
@@ -20,46 +38,37 @@
 //     post back to ai.userQuestion.answer / ai.userApproval.answer with the
 //     server-minted reqId correlation.
 //
-// Component-level reuse: assistant bubbles render via DSH MarkdownText
-// (GFM + KaTeX + Shiki); the HITL cards use DSH Button + Pill for affordances
-// that share the rest of the app's design tokens.
+// Component-level reuse: assistant prose renders through DSH AssistantMarkdown
+// (GFM + KaTeX + Shiki); HITL and composer adapters use DSH primitives.
 
-import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { useAiStream, useAppEvent } from '../hooks/useTodoListApi';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useAiStream, useAppEvent, useSettings } from '../hooks/useTodoListApi';
 import { useDataVersion } from '../data-bus';
 import {
-  DisclosureRow,
-  MarkdownText,
-  Pill,
-  RiskConfirmation,
-  Button,
   IconEnhanceOutline16,
   IconPlusOutline16,
-  IconCloseOutline16,
-  IconSendOutline16,
-  IconStopFill16,
   IconPaperclipOutline16,
   IconWarningOutline16,
+  Button,
 } from '@deepseek-ai/dsh-client-ui-primitives';
-import { IconHistory } from '../components/icons';
+import { IconHistory, IconCollapseBar } from '../components/icons';
 import type {
-  AIStreamEvent,
   UserQuestionRequest,
   UserQuestionAnswerItem,
 } from '../../shared/ai-types';
+import { PROVIDER_LABELS } from '../../shared/ai-types';
 import { AI_SUBMIT_EVENT, type ExternalAiSubmitDetail } from '../components/Composer';
+import { buildAiTaskCreationPrompt } from '../../shared/task-creation';
 import { recoverToolResultValue, parseToolArgs } from '../tool-presentation';
-import { DomainToolRow } from '../dsh/DomainToolRow';
-import { DomainReasoningRow } from '../dsh/DomainReasoningRow';
-import { CONVERSATION_MARKDOWN_LABELS } from '../dsh/conversation-locale';
+import type { ComposerBlock } from '@deepseek-ai/dsh-client-ui-conversation/client';
+import { AIComposer, type AIComposerAttachment } from '../dsh/AIComposer';
+import { PendingQuestionCard } from '../dsh/PendingQuestionCard';
+import { PendingApprovalCard } from '../dsh/PendingApprovalCard';
+import { AssistantTurnContent } from '../dsh/AssistantTurnContent';
+import { projectStreamTurn, type AssistantTurnBlock } from '../dsh/stream-turn';
+import { isAiProviderConfigured } from '../dsh/provider-status';
 
-interface AttachedFile {
-  path: string;
-  name: string;
-  mime: string;
-  size: number;
-  text: string;
-}
+type AttachedFile = AIComposerAttachment;
 
 /** One ordered row inside a turn's body. Mirrors DeepSeek's `AssistantBlock`
  *  union (see packages/client/ui-conversation in deepseek-harness) with our
@@ -71,10 +80,7 @@ interface AttachedFile {
  *  `callId` is a React-stable id; on the renderer-side AIToolCallEvent we
  *  synthesise one from event order because the upstream callId lives in the
  *  DSH session stream (not in our event surface). */
-type TurnBlock =
-  | { kind: 'reasoning'; text: string }
-  | { kind: 'tool-call'; callId: string; name: string; args: unknown; result: unknown; ok: boolean }
-  | { kind: 'text'; text: string };
+type TurnBlock = AssistantTurnBlock;
 
 interface TurnMetrics {
   /** Turn start (ms, Date.now()) — stamped when runSubmit creates the turn,
@@ -126,6 +132,7 @@ interface HistoryTurnLike {
   args?: unknown;
   ok?: boolean;
   data?: unknown;
+  presentationMeta?: unknown;
   error?: string;
 }
 
@@ -134,6 +141,12 @@ interface ActiveQuestion {
   reqId: string;
   invocationId: string;
   questions: UserQuestionRequest['questions'];
+  // Conversation this pending question belongs to. HITL requests are
+  // conversation-bound: switching to a different conversation must hide the
+  // card (it is not the other conversation's question), and switching back
+  // must show it again — so we capture the conv id at request time and only
+  // render while the current conversation matches.
+  convId: string;
 }
 interface ActiveApproval {
   reqId: string;
@@ -141,10 +154,16 @@ interface ActiveApproval {
   toolName: string;
   reason: string;
   preview?: string;
+  convId: string;
 }
 
-export const AIPane: React.FC = () => {
+export const AIPane: React.FC<{
+  onCollapse?: () => void;
+  externalSubmit?: ExternalAiSubmitDetail | null;
+  onExternalSubmitConsumed?: () => void;
+}> = ({ onCollapse, externalSubmit, onExternalSubmitConsumed }) => {
   const { events, clear } = useAiStream();
+  const { data: aiSettings } = useSettings();
 
   const [conversations, setConversations] = useState<ConversationRow[]>([]);
   const [showArchived, setShowArchived] = useState(false);
@@ -186,6 +205,10 @@ export const AIPane: React.FC = () => {
   const [activeApproval, setActiveApproval] = useState<ActiveApproval | null>(null);
   // Per-question selection state for multi-select chips (id -> selected labels)
   const [questionSelected, setQuestionSelected] = useState<Record<string, string[]>>({});
+  const [questionSubmitting, setQuestionSubmitting] = useState(false);
+  const [questionError, setQuestionError] = useState<string | null>(null);
+  const questionSubmitLock = useRef(false);
+  const openedCreatedTodoIdRef = useRef<string | null>(null);
 
   const historyRef = useRef<HTMLDivElement>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
@@ -244,7 +267,6 @@ export const AIPane: React.FC = () => {
       if (!currentIdRef.current && list.length > 0) setCurrentId(list[0]!.id);
     })();
     return () => { alive = false; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showArchived, convVersion]);
 
   // Close popovers on outside click.
@@ -289,96 +311,27 @@ export const AIPane: React.FC = () => {
     return () => { alive = false; };
   }, [currentId, historyLoaded]);
 
-  // Re-derive the streaming turn from its events.
-  //
-  // Walk events in arrival order and build an ordered `blocks` array — the
-  // canonical representation that preserves the temporal interleaving of
-  // reasoning ↔ tool-call ↔ text that the previous three-bucket filter/join
-  // destroyed. Adjacent events of the same kind merge into one block so the
-  // chat-flow doesn't fragment a long thinking chain into dozens of rows.
-  // callId on a tool-call block is a stable React key synthesised from the
-  // event's order in this turn (deterministic per rebuild) — the upstream
-  // callId lives in DSH's session stream and is not exposed to the renderer.
+  // Re-derive the streaming turn through one pure adapter. Keeping the DSH
+  // event projection outside this component makes live/history parity and
+  // long-stream behavior independently testable.
   useEffect(() => {
     if (!streamingTurnId || !streamingConvId) return;
-    const mine = events.filter((e) => e.invocationId === streamingTurnId);
-    if (mine.length === 0) return;
-    const blocks: TurnBlock[] = [];
-    let toolSeq = 0;
-    let createdTodoId: string | null = null;
-    for (const ev of mine) {
-      if (ev.type === 'reasoning') {
-        if (!ev.text) continue;
-        const last = blocks[blocks.length - 1];
-        if (last && last.kind === 'reasoning') last.text += ev.text;
-        else blocks.push({ kind: 'reasoning', text: ev.text });
-      } else if (ev.type === 'token') {
-        if (!ev.token) continue;
-        const last = blocks[blocks.length - 1];
-        if (last && last.kind === 'text') last.text += ev.token;
-        else blocks.push({ kind: 'text', text: ev.token });
-      } else if (ev.type === 'toolCall') {
-        // DSH aggregates a call's args + result into one event, so each event
-        // is a single block. callId is a stable React key; we don't get a
-        // real callId from the renderer-side event, so synthesize one from
-        // the event's order in this turn (deterministic per rebuild).
-        blocks.push({
-          kind: 'tool-call',
-          callId: `tool-${toolSeq++}`,
-          name: ev.toolName,
-          args: ev.args,
-          result: ev.result,
-          ok: ev.ok,
-        });
-        // When the AI creates a task, jump to its detail pane so the user
-        // immediately sees what was filed. We only fire on the FIRST
-        // successful todo.create per turn — re-runs from the event-stream
-        // dedupe are guarded by `createdTodoId` being already set. The
-        // result shape from src/main/dsh/dsh-runtime.ts todo.create is the
-        // full Todo row (`repo.get(todo.id)`), so the id lives at result.id.
-        if (
-          !createdTodoId &&
-          ev.ok &&
-          ev.toolName === 'todo.create' &&
-          ev.result &&
-          typeof ev.result === 'object'
-        ) {
-          const id = (ev.result as { id?: unknown }).id;
-          if (typeof id === 'string' && id.length > 0) createdTodoId = id;
-        }
-      }
-    }
-    if (createdTodoId) {
+    const projection = projectStreamTurn(events, streamingTurnId);
+    if (projection === null) return;
+    if (
+      projection.createdTodoId &&
+      openedCreatedTodoIdRef.current !== projection.createdTodoId
+    ) {
+      openedCreatedTodoIdRef.current = projection.createdTodoId;
       // Same hash-mutation the App-level navigate() uses. The App's
       // hashchange listener picks it up and routes to the task detail pane.
       // Wrapped in requestAnimationFrame so the navigate lands after the
       // current event-batch flushes (avoids racing the data-changed
       // broadcast that lands microseconds later).
       requestAnimationFrame(() => {
-        location.hash = `#/todo/${createdTodoId}`;
+        location.hash = `#/todo/${projection.createdTodoId}`;
       });
     }
-    const done = mine.some((e) => e.type === 'done');
-    // L6-B: a turn may finish without streaming any token deltas (a
-    // tool-only turn whose final answer arrives as a single `done.content`,
-    // or a provider that doesn't chunk). In that case blocks has no text and
-    // the answer would never render — the "思考中…" chip would clear (status
-    // flips via L6-A) but leave an empty turn. Seed a text block from the
-    // done event's assembled content; skipped when tokens already produced a
-    // text block (content == concatenated tokens there, seeding would dup).
-    const doneEvt = mine.find((e): e is Extract<AIStreamEvent, { type: 'done' }> => e.type === 'done');
-    if (doneEvt && doneEvt.content && !blocks.some((b) => b.kind === 'text')) {
-      blocks.push({ kind: 'text', text: doneEvt.content });
-    }
-    const errEvt = mine.find((e): e is Extract<AIStreamEvent, { type: 'error' }> => e.type === 'error');
-    // T4: first token arrival ts — the first synthesized `token` event in
-    // this turn. useAiStream stamps `ts` on every event it keeps; the first
-    // token event's ts is the time-to-first-token numerator.
-    let firstTokenTs: number | undefined;
-    for (const ev of mine) {
-      if (ev.type === 'token' && ev.ts) { firstTokenTs = ev.ts; break; }
-    }
-    const endTs = doneEvt?.ts;
     setTurnsByConv((prev) => {
       const list = prev[streamingConvId] ?? [];
       return {
@@ -388,14 +341,14 @@ export const AIPane: React.FC = () => {
             ? t
             : {
                 ...t,
-                blocks,
-                status: errEvt ? 'error' : done ? 'done' : 'streaming',
-                error: errEvt?.message,
+                blocks: projection.blocks,
+                status: projection.status,
+                error: projection.error,
                 metrics: {
                   startMs: t.metrics?.startMs ?? Date.now(),
-                  firstTokenMs: t.metrics?.firstTokenMs ?? firstTokenTs,
-                  ...(endTs != null ? { endMs: endTs } : {}),
-                  ...(doneEvt?.tokensOut != null ? { tokensOut: doneEvt.tokensOut } : {}),
+                  firstTokenMs: t.metrics?.firstTokenMs ?? projection.firstTokenTs,
+                  ...(projection.endTs != null ? { endMs: projection.endTs } : {}),
+                  ...(projection.tokensOut != null ? { tokensOut: projection.tokensOut } : {}),
                 },
               },
         ),
@@ -405,12 +358,18 @@ export const AIPane: React.FC = () => {
 
   // HITL listeners: open the question/approval card the moment main pushes the
   // request event. Correlating reply uses the reqId from the payload (not the
-  // invocationId) because the answerer is keyed on reqId server-side.
+  // invocationId) because the answerer is keyed on reqId server-side. The
+  // request is bound to the conversation that was running the turn when it
+  // arrived (streamingConvId, falling back to currentId); the card only renders
+  // while that conversation is active, so it never bleeds into another one.
   useAppEvent('ai:user-question-request', (req) => {
+    setQuestionError(null);
+    const convId = streamingConvId ?? currentId ?? '';
     setActiveQuestion({
       reqId: req.reqId,
       invocationId: req.invocationId,
       questions: req.questions,
+      convId,
     });
     // Reset selection state — single-select questions default to [] (no
     // selection), multi-select questions default to [] until the user
@@ -419,16 +378,25 @@ export const AIPane: React.FC = () => {
     setQuestionSelected({});
   });
   useAppEvent('ai:user-approval-request', (req) => {
+    const convId = streamingConvId ?? currentId ?? '';
     setActiveApproval({
       reqId: req.reqId,
       invocationId: req.invocationId,
       toolName: req.toolName,
       reason: req.reason,
       preview: req.preview,
+      convId,
     });
   });
 
   // Keep the latest message in view while streaming or switching.
+  useAppEvent('ai:user-question-timeout', ({ reqId }) => {
+    setActiveQuestion((request) => request?.reqId === reqId ? null : request);
+  });
+  useAppEvent('ai:user-approval-timeout', ({ reqId }) => {
+    setActiveApproval((request) => request?.reqId === reqId ? null : request);
+  });
+
   useEffect(() => {
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
@@ -510,8 +478,26 @@ export const AIPane: React.FC = () => {
   }, [input]);
 
   const current = conversations.find((c) => c.id === currentId) ?? null;
-  const currentTurns: Turn[] = currentId ? turnsByConv[currentId] ?? [] : [];
+  const currentTurns = useMemo<Turn[]>(
+    () => currentId ? turnsByConv[currentId] ?? [] : [],
+    [currentId, turnsByConv],
+  );
   const busy = streamingTurnId !== null;
+  const awaitingAnswer = activeQuestion?.convId === currentId;
+  const awaitingApproval = activeApproval?.convId === currentId;
+  // Do not trust only `connected`: older still-running main processes computed
+  // it from the shared API key and misreported configured custom providers.
+  const needsAiSetup = !isAiProviderConfigured(aiSettings);
+  // Use the official composer blocking vocabulary at the host boundary.
+  const composerBlock: ComposerBlock | undefined = awaitingAnswer
+    ? { reason: questionSubmitting ? '正在提交答案…' : '请先回答上方的问题…' }
+    : awaitingApproval
+      ? { reason: '请先处理上方的操作授权…' }
+      : busy
+        ? { reason: 'AI 正在回答，请等待或停止生成…' }
+        : needsAiSetup
+          ? { reason: '请先在设置中完成 AI 模型配置…' }
+          : undefined;
   // The question currently pinned at the top of the message stream. This is
   // NOT "the latest user message" — it's the question whose bubble has
   // scrolled out of view under the sticky header (so its answer is what the
@@ -652,25 +638,34 @@ export const AIPane: React.FC = () => {
   // returns ok:false once the pending entry is gone (timeout or already
   // answered), which the renderer treats as success.
   const submitQuestion = async (): Promise<void> => {
-    if (!activeQuestion) return;
+    if (!activeQuestion || questionSubmitLock.current) return;
     const answers: UserQuestionAnswerItem[] = activeQuestion.questions.map((q) => {
       const selected = questionSelected[q.id] ?? [];
       return { id: q.id, selected };
     });
     const reqId = activeQuestion.reqId;
-    setActiveQuestion(null);
-    setQuestionSelected({});
-    await window.todoList.aiUserQuestion.answer(reqId, answers);
+    await resolveQuestion(reqId, answers);
+  };
+  const resolveQuestion = async (reqId: string, answers: UserQuestionAnswerItem[]): Promise<void> => {
+    questionSubmitLock.current = true;
+    setQuestionSubmitting(true);
+    setQuestionError(null);
+    try {
+      const result = await window.todoList.aiUserQuestion.answer(reqId, answers);
+      if (!result.ok) throw new Error(result.message);
+      setActiveQuestion((current) => current?.reqId === reqId ? null : current);
+    } catch (error) {
+      setQuestionError(error instanceof Error ? error.message : '提交失败，请重试');
+    } finally {
+      questionSubmitLock.current = false;
+      setQuestionSubmitting(false);
+    }
   };
   const dismissQuestion = async (): Promise<void> => {
-    if (!activeQuestion) return;
+    if (!activeQuestion || questionSubmitLock.current) return;
     const reqId = activeQuestion.reqId;
-    setActiveQuestion(null);
-    setQuestionSelected({});
-    // Empty answers[] is rejected by the schema — the close button
-    // explicitly cancels the request by sending an empty answer array,
-    // which main treats as "user backed out".
-    await window.todoList.aiUserQuestion.answer(reqId, []);
+    // Each question is explicitly skipped; the IPC requires a nonempty list.
+    await resolveQuestion(reqId, activeQuestion.questions.map((q) => ({ id: q.id, selected: [] })));
   };
   const submitApproval = async (decision: 'allow-once' | 'reject'): Promise<void> => {
     if (!activeApproval) return;
@@ -683,7 +678,16 @@ export const AIPane: React.FC = () => {
   // modal (which dispatches a window event). Takes an optional override so
   // the Composer path can supply its own prompt + image attachments without
   // having to populate the textarea first.
-  const runSubmit = async (override?: { prompt: string; images: { name: string; mime: string; dataUrl: string }[] }): Promise<void> => {
+  const runSubmit = async (override?: ExternalAiSubmitDetail): Promise<void> => {
+    // The visual composer is disabled while a turn or HITL request is active,
+    // but submissions can also arrive from the centre Composer custom event.
+    // Enforce the same single-flight rule at the shared action boundary so no
+    // alternate entry point can start a second invocation concurrently.
+    if (
+      streamingTurnId !== null ||
+      activeQuestion?.convId === currentId ||
+      activeApproval?.convId === currentId
+    ) return;
     let prompt: string;
     let attached: AttachedFile[];
     if (override) {
@@ -713,7 +717,9 @@ export const AIPane: React.FC = () => {
     // exactly what the user typed and decides from context which path to
     // take. The user bubble still renders `prompt` (not `wirePrompt`) so no
     // framing text ever bleeds into the visible chat.
-    const wirePrompt = prompt;
+    const wirePrompt = override?.intent === 'create-task'
+      ? buildAiTaskCreationPrompt(prompt)
+      : prompt;
 
     let convId = currentId;
     if (!convId) {
@@ -768,6 +774,7 @@ export const AIPane: React.FC = () => {
       setInput('');
       clear();
     }
+    openedCreatedTodoIdRef.current = null;
     setStreamingConvId(convId);
     setStreamingTurnId(id);
     const res = await window.todoList.ai.ask({ prompt: finalWire, conversationId: convId, invocationId: id, history: priorTurns, tools: undefined });
@@ -839,172 +846,61 @@ export const AIPane: React.FC = () => {
     const onExternalSubmit = (e: Event): void => {
       const detail = (e as CustomEvent<ExternalAiSubmitDetail>).detail;
       if (!detail) return;
-      void runSubmit({ prompt: detail.prompt, images: detail.images });
+      if (detail.intent !== 'create-task') return;
+      void runSubmit({ intent: detail.intent, prompt: detail.prompt, images: detail.images });
     };
     window.addEventListener(AI_SUBMIT_EVENT, onExternalSubmit);
     return () => window.removeEventListener(AI_SUBMIT_EVENT, onExternalSubmit);
     // runSubmit closes over currentId / streamingTurnId / etc.; the listener
     // picks up the latest closure on each event.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentId, turnsByConv, streamingConvId, streamingTurnId]);
+  }, [currentId, turnsByConv, streamingConvId, streamingTurnId, activeQuestion, activeApproval]);
+
+  // App queues AI-create requests while opening/lazy-loading this panel, so
+  // submissions are not lost when the panel was collapsed at send time.
+  useEffect(() => {
+    if (!externalSubmit) return;
+    if (
+      streamingTurnId !== null ||
+      activeQuestion?.convId === currentId ||
+      activeApproval?.convId === currentId
+    ) return;
+    onExternalSubmitConsumed?.();
+    void runSubmit(externalSubmit);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [externalSubmit, streamingTurnId, activeQuestion, activeApproval, currentId]);
 
   return (
     <div className="aipane">
-      {/* Minimal topbar — AI brand on the left, [+ new] and [🗂 history]
-          on the right. The conversation title lives INSIDE the content area
-          as a sticky heading, so the topbar doesn't compete for space. */}
-      <header className="aipane__header">
-        <div className="aipane__brand">
-          <span className="aipane__brand-glyph" aria-hidden="true">
-            <IconEnhanceOutline16 size={14} />
-          </span>
-          <span className="aipane__brand-text">AI 助手</span>
-        </div>
-        <div className="aipane__actions">
-          <button
-            type="button"
-            className="icon-btn aipane__new-btn"
-            onClick={() => void createConversation()}
-            title="新建对话"
-            aria-label="新建对话"
-          >
-            <IconPlusOutline16 />
-          </button>
-          <div className="aipane__history" ref={historyRef}>
-            <button
-              type="button"
-              className="icon-btn aipane__history-btn"
-              onClick={() => setShowHistory((s) => !s)}
-              title="对话历史"
-              aria-label="对话历史"
-              aria-haspopup="listbox"
-              aria-expanded={showHistory}
-            >
-              <IconHistory />
-            </button>
-            {showHistory && (
-              <div className="aipane__menu aipane__menu--right" role="listbox">
-                <div className="aipane__menu-head">
-                  <span className="aipane__menu-head-title">对话历史</span>
-                </div>
-                <div className="aipane__search">
-                  <input
-                    ref={historySearchRef}
-                    type="search"
-                    className="aipane__search-input"
-                    placeholder="搜索对话标题…"
-                    value={switcherQuery}
-                    onChange={(e) => setSwitcherQuery(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Escape') {
-                        e.preventDefault();
-                        if (switcherQuery) setSwitcherQuery('');
-                        else setShowHistory(false);
-                        return;
-                      }
-                      if (e.key === 'Enter' && filteredConversations.length > 0) {
-                        e.preventDefault();
-                        switchTo(filteredConversations[0]!.id);
-                      }
-                    }}
-                    aria-label="搜索对话"
-                  />
-                </div>
-                {filteredConversations.length === 0 && conversations.length === 0 && (
-                  <div className="aipane__menu-empty">还没有对话</div>
-                )}
-                {filteredConversations.length === 0 && conversations.length > 0 && switcherQuery && (
-                  <div className="aipane__menu-empty">
-                    没有匹配“{switcherQuery}”的对话
-                  </div>
-                )}
-                {filteredConversations.length > 0 && switcherQuery && (
-                  <div className="aipane__menu-hint">
-                    {filteredConversations.length} / {conversations.length} 个匹配
-                  </div>
-                )}
-                {filteredConversations.map((c) => (
-                  <div key={c.id} className="aipane__menu-row">
-                    <button
-                      type="button"
-                      role="option"
-                      aria-selected={c.id === currentId}
-                      className={`aipane__menu-item${c.id === currentId ? ' aipane__menu-item--active' : ''}`}
-                      onClick={() => switchTo(c.id)}
-                      title={c.title}
-                    >
-                      <span className="aipane__menu-line">
-                        <span className="aipane__menu-title">{c.title}</span>
-                        {c.archived && <span className="aipane__menu-tag">已归档</span>}
-                      </span>
-                      {(c.lastMessagePreview || typeof c.messageCount === 'number') && (
-                        <span className="aipane__menu-preview">
-                          {c.lastMessagePreview && (
-                            <span className="aipane__menu-preview-text">{c.lastMessagePreview}</span>
-                          )}
-                          {typeof c.messageCount === 'number' && (
-                            <span className="aipane__menu-count" title={`${c.messageCount} 条对话`}>
-                              {c.messageCount}
-                            </span>
-                          )}
-                        </span>
-                      )}
-                    </button>
-                    <button
-                      type="button"
-                      className="icon-btn aipane__menu-row-btn"
-                      onClick={() => setRowMenuId((cur) => (cur === c.id ? null : c.id))}
-                      title="对话操作"
-                      aria-label={`对 "${c.title}" 的操作`}
-                      aria-haspopup="menu"
-                      aria-expanded={rowMenuId === c.id}
-                    >
-                      ⋯
-                    </button>
-                    {rowMenuId === c.id && (
-                      <div className="aipane__menu aipane__menu--row" role="menu">
-                        <button type="button" className="aipane__menu-item aipane__menu-item--inline" onClick={() => { setRowMenuId(null); beginRenameFor(c); }}>
-                          重命名
-                        </button>
-                        <button type="button" className="aipane__menu-item aipane__menu-item--inline" onClick={() => void toggleArchive(c.id)}>
-                          {c.archived ? '取消归档' : '归档'}
-                        </button>
-                        <div className="aipane__menu-divider" />
-                        <button type="button" className="aipane__menu-item aipane__menu-item--inline aipane__menu-item--danger" onClick={() => void deleteConversation(c.id)}>
-                          删除
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                ))}
-                <div className="aipane__menu-divider" />
-                <button
-                  type="button"
-                  className="aipane__menu-item aipane__menu-item--toggle"
-                  onClick={() => { setShowHistory(false); setRowMenuId(null); setShowArchived((s) => !s); }}
-                >
-                  {showArchived ? '隐藏已归档' : '显示已归档'}
-                </button>
-              </div>
-            )}
+      {/* ===== flex Region 1 (top, flex: 0 0 auto): TITLE =====
+          Brand on the left, the active conversation title in the middle,
+          the [+] / [🗂] / collapse action buttons on the right. The
+          scroll-tracked "current question" overlay sits BELOW this row as
+          an absolutely-positioned child so it floats over the top of the
+          body content without shifting it. The whole region is a flex
+          sibling of the body + composer — previously the title lived
+          inside the body as `position: sticky; top: 0`, which worked but
+          mixed concerns: sticky positioning inside a scroll container
+          vs. flex pinning at the layout root. Restructuring to a flex-
+          pinned title region gives a cleaner 3-region layout (title /
+          body / composer) and makes the title's pinned state explicit in
+          the layout itself. See the file header for the diagram. */}
+      <div className="aipane__title" ref={stickyHeadRef}>
+        <div className="aipane__title-row">
+          <div className="aipane__brand">
+            <span className="aipane__brand-glyph" aria-hidden="true">
+              <IconEnhanceOutline16 size={14} />
+            </span>
+            <span className="aipane__brand-text">AI 助手</span>
           </div>
-        </div>
-      </header>
-
-      <div className="aipane__body" role="log" aria-live="polite" ref={scrollRef}>
-        {bootError && (
-          <div className="aipane__empty aipane__empty--error">
-            <IconWarningOutline16 size={14} /> 会话列表加载失败：{bootError}
-          </div>
-        )}
-        {/* The conversation title + current-question banner are wrapped in a
-            single sticky header so they move as one unit. Previously both
-            were individually sticky at top:0 — the taller current-question
-            banner overlapped the title and its text bled into the title
-            band ("content penetrates the title"). One shared sticky context
-            with an opaque full-bleed background also guarantees scrolling
-            messages can't show through the header. */}
-        <div className="aipane__sticky-head" ref={stickyHeadRef}>
+          {/* The conversation title sits next to the brand; a single spacer
+              (.aipane__title-spacer) absorbs the leftover horizontal space
+              between title and actions so the actions stay glued to the
+              right edge regardless of title length. Two-spacer symmetric
+              centering was tried earlier but the right-edge margin-left:auto
+              on .aipane__actions fought the right spacer for the same
+              space — long titles pushed actions off-screen. One spacer +
+              margin-left:auto is the canonical 3-zone flex pattern. */}
           {!bootError && current && (
             <h2 className="aipane__conv-title" title={current.title}>
               {renaming ? (
@@ -1025,41 +921,218 @@ export const AIPane: React.FC = () => {
               )}
             </h2>
           )}
-
-          {/* Scroll-tracked "current question" pin. This is an OVERLAY
-              (absolute, child of the sticky header) rather than a flow
-              element so that showing/hiding it never shifts the message
-              stream the user is reading — it floats just below the title,
-              covering the top sliver of the answer currently in view, and
-              shows the question that has just scrolled out of sight.
-              Styled like a user bubble (right-aligned, accent) so it reads
-              as "the user's own question, kept in view". Rendered ONLY
-              while a user question has scrolled out of view — the instant
-              the original bubble is visible it isn't pinned, so the user
-              never sees the same question twice. */}
-          {!bootError && activeQuestionTurn && (
-            <div
-              className="aipane__currentq-overlay"
-              aria-hidden="false"
-              style={{ transform: `translateY(${pinTranslateY}px)` }}
+          <div className="aipane__title-spacer" />
+          <div className="aipane__actions">
+            <button
+              type="button"
+              className="icon-btn aipane__new-btn"
+              onClick={() => void createConversation()}
+              title="新建对话"
+              aria-label="新建对话"
             >
-              <div className="aipane__currentq-pin bubble bubble--user" role="status" aria-label="当前问题">
-                <span className="aipane__currentq-text">
-                  {activeQuestionTurn.user}
-                  {activeQuestionTurn.attached && activeQuestionTurn.attached.length > 0 && (
-                    <span className="aipane__currentq-attach">
-                      {' '}<IconPaperclipOutline16 size={11} /> {activeQuestionTurn.attached.length} 个附件
-                    </span>
+              <IconPlusOutline16 />
+            </button>
+            <div className="aipane__history" ref={historyRef}>
+              <button
+                type="button"
+                className="icon-btn aipane__history-btn"
+                onClick={() => setShowHistory((s) => !s)}
+                title="对话历史"
+                aria-label="对话历史"
+                aria-haspopup="listbox"
+                aria-expanded={showHistory}
+              >
+                <IconHistory />
+              </button>
+              {showHistory && (
+                <div className="aipane__menu aipane__menu--right" role="listbox">
+                  <div className="aipane__menu-head">
+                    <span className="aipane__menu-head-title">对话历史</span>
+                  </div>
+                  <div className="aipane__search">
+                    <input
+                      ref={historySearchRef}
+                      type="search"
+                      className="aipane__search-input"
+                      placeholder="搜索对话标题…"
+                      value={switcherQuery}
+                      onChange={(e) => setSwitcherQuery(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Escape') {
+                          e.preventDefault();
+                          if (switcherQuery) setSwitcherQuery('');
+                          else setShowHistory(false);
+                          return;
+                        }
+                        if (e.key === 'Enter' && filteredConversations.length > 0) {
+                          e.preventDefault();
+                          switchTo(filteredConversations[0]!.id);
+                        }
+                      }}
+                      aria-label="搜索对话"
+                    />
+                  </div>
+                  {filteredConversations.length === 0 && conversations.length === 0 && (
+                    <div className="aipane__menu-empty">还没有对话</div>
                   )}
-                </span>
-                {busy && activeQuestionTurn.id === streamingTurnId && (
-                  <span className="aipane__currentq-status" aria-live="polite">生成中…</span>
-                )}
-              </div>
+                  {filteredConversations.length === 0 && conversations.length > 0 && switcherQuery && (
+                    <div className="aipane__menu-empty">
+                      没有匹配“{switcherQuery}”的对话
+                    </div>
+                  )}
+                  {filteredConversations.length > 0 && switcherQuery && (
+                    <div className="aipane__menu-hint">
+                      {filteredConversations.length} / {conversations.length} 个匹配
+                    </div>
+                  )}
+                  {filteredConversations.map((c) => (
+                    <div key={c.id} className="aipane__menu-row">
+                      <button
+                        type="button"
+                        role="option"
+                        aria-selected={c.id === currentId}
+                        className={`aipane__menu-item${c.id === currentId ? ' aipane__menu-item--active' : ''}`}
+                        onClick={() => switchTo(c.id)}
+                        title={c.title}
+                      >
+                        <span className="aipane__menu-line">
+                          <span className="aipane__menu-title">{c.title}</span>
+                          {c.archived && <span className="aipane__menu-tag">已归档</span>}
+                        </span>
+                        {(c.lastMessagePreview || typeof c.messageCount === 'number') && (
+                          <span className="aipane__menu-preview">
+                            {c.lastMessagePreview && (
+                              <span className="aipane__menu-preview-text">{c.lastMessagePreview}</span>
+                            )}
+                            {typeof c.messageCount === 'number' && (
+                              <span className="aipane__menu-count" title={`${c.messageCount} 条对话`}>
+                                {c.messageCount}
+                              </span>
+                            )}
+                          </span>
+                        )}
+                      </button>
+                      <button
+                        type="button"
+                        className="icon-btn aipane__menu-row-btn"
+                        onClick={() => setRowMenuId((cur) => (cur === c.id ? null : c.id))}
+                        title="对话操作"
+                        aria-label={`对 "${c.title}" 的操作`}
+                        aria-haspopup="menu"
+                        aria-expanded={rowMenuId === c.id}
+                      >
+                        ⋯
+                      </button>
+                      {rowMenuId === c.id && (
+                        <div className="aipane__menu aipane__menu--row" role="menu">
+                          <button type="button" className="aipane__menu-item aipane__menu-item--inline" onClick={() => { setRowMenuId(null); beginRenameFor(c); }}>
+                            重命名
+                          </button>
+                          <button type="button" className="aipane__menu-item aipane__menu-item--inline" onClick={() => void toggleArchive(c.id)}>
+                            {c.archived ? '取消归档' : '归档'}
+                          </button>
+                          <div className="aipane__menu-divider" />
+                          <button type="button" className="aipane__menu-item aipane__menu-item--inline aipane__menu-item--danger" onClick={() => void deleteConversation(c.id)}>
+                            删除
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                  <div className="aipane__menu-divider" />
+                  <button
+                    type="button"
+                    className="aipane__menu-item aipane__menu-item--toggle"
+                    onClick={() => { setShowHistory(false); setRowMenuId(null); setShowArchived((s) => !s); }}
+                  >
+                    {showArchived ? '隐藏已归档' : '显示已归档'}
+                  </button>
+                </div>
+              )}
             </div>
-          )}
+            {/* Collapse affordance — the IconCollapseBar lives ON the panel
+                header itself, not in a separate grip divider column, so the
+                user perceives it as "part of the area" they're looking at.
+                Sits at the right edge of the title row, after the new/history
+                actions, so it reads as a chrome-level toggle without
+                competing for attention with the in-panel controls. */}
+            {onCollapse && (
+              <button
+                type="button"
+                className="icon-btn aipane__collapse-btn"
+                onClick={onCollapse}
+                title="收起 AI 助手"
+                aria-label="收起 AI 助手"
+              >
+                <IconCollapseBar />
+              </button>
+            )}
+          </div>
         </div>
+      </div>
 
+      {needsAiSetup && aiSettings && (
+        <div className="aipane__provider-notice" role="status">
+          <IconWarningOutline16 size={16} />
+          <span className="aipane__provider-notice-copy">
+            <strong>AI 尚未配置</strong>
+            <span>请先配置 {PROVIDER_LABELS[aiSettings.provider]}，再开始对话。</span>
+          </span>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => { location.hash = '#/settings'; }}
+          >
+            打开设置
+          </Button>
+        </div>
+      )}
+
+      {/* Scroll-tracked "current question" pin — INDEPENDENT flex sibling of
+          .aipane__title / .aipane__body / .aipane__composer. Sits as Region 1b
+          between title and body so it occupies its OWN box in the column
+          flex. The body (Region 2, flex: 1 1 0) shrinks to make room, and
+          the banner can NEVER overlap with the body's first user bubble
+          (which is what happened when this was absolute + inside the title
+          region — the banner and the live bubble stacked at the same y).
+          pointer-events:none keeps the overlay from blocking scroll or hit-
+          testing on the body. */}
+      {!bootError && activeQuestionTurn && (
+        <div
+          className="aipane__currentq-overlay"
+          aria-hidden="false"
+          // Hand-off animation lives in CSS via the --pin-y custom
+          // property. transform is composited (no layout/paint on scroll).
+          style={{ '--pin-y': `${pinTranslateY}px` } as React.CSSProperties}
+        >
+          <div className="aipane__currentq-pin bubble bubble--user" role="status" aria-label="当前问题">
+            <span className="aipane__currentq-text">
+              {activeQuestionTurn.user}
+              {activeQuestionTurn.attached && activeQuestionTurn.attached.length > 0 && (
+                <span className="aipane__currentq-attach">
+                  {' '}<IconPaperclipOutline16 size={11} /> {activeQuestionTurn.attached.length} 个附件
+                </span>
+              )}
+            </span>
+            {busy && activeQuestionTurn.id === streamingTurnId && (
+              <span className="aipane__currentq-status" aria-live="polite">生成中…</span>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ===== flex Region 2 (middle, flex: 1 1 0; min-height: 0; overflow: auto): BODY =====
+          Conversation stream. `min-height: 0` is critical: without it a flex
+          child refuses to shrink below its content's intrinsic min-content
+          height, so a long turn would push the composer off-screen instead
+          of scrolling inside the body. The body is also a flex column so
+          consecutive turns stack with the configured `gap`. */}
+      <div className="aipane__body" role="log" aria-live="polite" ref={scrollRef}>
+        {bootError && (
+          <div className="aipane__empty aipane__empty--error">
+            <IconWarningOutline16 size={14} /> 会话列表加载失败：{bootError}
+          </div>
+        )}
         {!bootError && !current && conversations.length === 0 && (
           <div className="aipane__empty">
             <p>直接在下方输入问题，回车即创建第一条对话。</p>
@@ -1073,91 +1146,17 @@ export const AIPane: React.FC = () => {
         {currentTurns.map((t) => <TurnView key={t.id} turn={t} />)}
       </div>
 
-      {/* Unified composer: ONE card holding + button (left, embedded),
-          textarea (middle, flex-grows + autosizes), and Send/Stop (right).
-          Attachment chips float ABOVE the card so they don't eat vertical
-          space when empty. */}
-      <div className="aipane__composer">
-        {attachments.length > 0 && (
-          <div className="aipane__attach-row" role="list" aria-label="已附加的文件">
-            {attachments.map((a) => (
-              <span key={a.path} className="aipane__attach-chip" role="listitem" title={`${a.path}\n${a.mime} · ${a.size} 字节`}>
-                <span className="aipane__attach-chip-icon" aria-hidden="true"><IconPaperclipOutline16 size={11} /></span>
-                <span className="aipane__attach-chip-name">{a.name}</span>
-                <button
-                  type="button"
-                  className="aipane__attach-chip-x"
-                  onClick={() => removeAttachment(a.path)}
-                  aria-label={`移除 ${a.name}`}
-                  title="移除"
-                >
-                  <IconCloseOutline16 size={10} />
-                </button>
-              </span>
-            ))}
-          </div>
-        )}
-        <div className="aipane__composer-card">
-          <button
-            type="button"
-            className="aipane__attach-btn"
-            onClick={() => void pickAttachment()}
-            title="附加本地文件"
-            aria-label="附加本地文件"
-          >
-            <IconPlusOutline16 size={14} />
-          </button>
-          <textarea
-            ref={textareaRef}
-            aria-label="向 AI 提问"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                void runSubmit();
-                return;
-              }
-              if (e.key === 'Escape' && busy) {
-                e.preventDefault();
-                void stop();
-              }
-            }}
-            placeholder={current ? '输入问题，回车发送…（Shift+Enter 换行，Esc 停止）' : '输入第一条问题，回车即创建对话…'}
-            rows={1}
-            className="aipane__input"
-          />
-          {busy ? (
-            <button
-              type="button"
-              className="aipane__stop"
-              onClick={() => void stop()}
-              title="停止生成（Esc）"
-              aria-label="停止生成"
-            >
-              <IconStopFill16 size={14} />
-            </button>
-          ) : (
-            <button
-              type="button"
-              className="btn-primary aipane__send"
-              onClick={() => void runSubmit()}
-              disabled={!input.trim()}
-              title={current ? '发送（Enter）' : '发送并创建对话'}
-              aria-label="发送"
-            >
-              <IconSendOutline16 size={14} />
-            </button>
-          )}
-        </div>
-      </div>
-
-      {/* HITL cards — overlay the chat when DSH asks the user a structured
-          question or requests binary approval. The card occupies its own
-          row above the composer so the user sees it without scrolling. */}
-      {activeQuestion && (
-        <UserQuestionCard
-          request={activeQuestion}
+      {/* HITL cards — sit just ABOVE the composer so the user sees the
+          question right next to where they answer, never buried at the
+          bottom. Each request is bound to the conversation that was running
+          the turn when it arrived; only render it while that conversation is
+          the active one so it never bleeds into a different conversation on
+          switch. */}
+      {activeQuestion && activeQuestion.convId === currentId && (
+        <PendingQuestionCard
+          questions={activeQuestion.questions}
+          submitting={questionSubmitting}
+          error={questionError}
           selected={questionSelected}
           onToggle={(qid, label, multi) => {
             setQuestionSelected((prev) => {
@@ -1170,16 +1169,38 @@ export const AIPane: React.FC = () => {
             });
           }}
           onSubmit={() => void submitQuestion()}
-          onDismiss={() => void dismissQuestion()}
+          onSkip={() => void dismissQuestion()}
         />
       )}
-      {activeApproval && (
-        <UserApprovalCard
-          request={activeApproval}
+      {activeApproval && activeApproval.convId === currentId && (
+        <PendingApprovalCard
+          toolName={activeApproval.toolName}
+          reason={activeApproval.reason}
+          preview={activeApproval.preview}
           onAllow={() => void submitApproval('allow-once')}
           onReject={() => void submitApproval('reject')}
         />
       )}
+
+      {/* ===== flex Region 3 (bottom, flex: 0 0 auto): COMPOSER =====
+          Pinned at bottom. The composer card grows naturally with its
+          textarea (autosize up to a soft cap) and the body's
+          `min-height: 0` gives way when a long turn expands the stream.
+          The AIComposer primitive owns its own internal layout (.composer-
+          card / .composer-actions); the host only needs to position it. */}
+      <AIComposer
+        ref={textareaRef}
+        value={input}
+        onChange={setInput}
+        attachments={attachments}
+        onRemoveAttachment={removeAttachment}
+        onPickAttachment={() => void pickAttachment()}
+        onSubmit={() => void runSubmit()}
+        onStop={() => void stop()}
+        busy={busy}
+        hasConversation={current !== null}
+        block={composerBlock}
+      />
     </div>
   );
 
@@ -1194,7 +1215,6 @@ export const AIPane: React.FC = () => {
     setTimeout(() => renameInputRef.current?.focus(), 0);
   }
 };
-
 /** Convert a HistoryTurn (from JSONL decode) into the renderer's Turn shape.
  *  Each history item becomes one Turn in the UI; the temporal interleaving
  *  promised by `blocks` only matters when several events share a turn — so
@@ -1246,6 +1266,7 @@ function historyToTurn(h: HistoryTurnLike): Turn {
       // right card instead of a <pre>[{"type":"text"...}]</pre> dump.
       args: parseToolArgs(h.args),
       result: h.ok ? recoverToolResultValue(h.data) : h.error,
+      presentationMeta: h.presentationMeta,
       ok: h.ok ?? false,
     }],
     status: 'done',
@@ -1284,19 +1305,6 @@ function formatTurnMetrics(m: TurnMetrics): string | null {
 
 const TurnView: React.FC<{ turn: Turn }> = ({ turn }) => {
   const { blocks, status } = turn;
-  const streaming = status === 'streaming';
-  // Last reasoning block — only this one runs the sweep while streaming
-  // and the answer has not started yet. Earlier reasoning blocks sit
-  // static so the model can't fake a "live" sweep on settled text.
-  const lastReasoningIdx = blocks.reduce(
-    (acc, b, i) => (b.kind === 'reasoning' ? i : acc), -1
-  );
-  const hasAnswer = blocks.some((b) => b.kind === 'text');
-  const lastIdx = blocks.length - 1;
-  // Pre-thinking chip: shown only while streaming and no block has landed
-  // yet. Once the first reasoning / tool-call / text event arrives, the
-  // block itself takes over with its own header label.
-  const thinking = streaming && blocks.length === 0;
   return (
     <div className="turn">
       {turn.attached && turn.attached.length > 0 && (
@@ -1313,162 +1321,11 @@ const TurnView: React.FC<{ turn: Turn }> = ({ turn }) => {
           {turn.user}
         </div>
       )}
-      {/* Sibling rows in event order — reasoning ↔ tool-call ↔ text. Each
-          row knows whether it's the active one so only the live one runs
-          the sweep; earlier rows sit static under their disclosure header. */}
-      {blocks.map((block, i) => {
-        if (block.kind === 'reasoning') {
-          const running = streaming && i === lastReasoningIdx && !hasAnswer;
-          return <DomainReasoningRow key={`r-${i}`} text={block.text} running={running} />;
-        }
-        if (block.kind === 'tool-call') {
-          const running = streaming && i === lastIdx;
-          return (
-            <DomainToolRow
-              key={block.callId}
-              toolName={block.name}
-              args={block.args}
-              result={block.result}
-              ok={block.ok}
-              running={running}
-            />
-          );
-        }
-        // text
-        return (
-          <div key={`t-${i}`} className="bubble bubble--assistant">
-            <MarkdownText text={block.text} streaming={streaming} labels={CONVERSATION_MARKDOWN_LABELS} />
-          </div>
-        );
-      })}
-      {thinking && <div className="aipane__thinking"><span className="aipane__dot" />思考中…</div>}
-      {status === 'error' && (
-        <div className="bubble bubble--error"><IconWarningOutline16 size={14} /> {turn.error}</div>
-      )}
+      <AssistantTurnContent blocks={blocks} status={status} error={turn.error} />
       {(() => {
         const line = turn.metrics ? formatTurnMetrics(turn.metrics) : null;
         return line ? <div className="aipane__metrics">{line}</div> : null;
       })()}
-    </div>
-  );
-};
-
-// ===== HITL answerer cards =====
-//
-// `aiUserQuestion.answer(reqId, answers)` rejects `answers.length === 0`;
-// that's why the close button on the QuestionCard goes through `dismissQuestion`
-// (which sends an explicit empty-answer payload to signal "user backed out").
-// The ApprovalCard's reject button posts a `'reject'` decision which is a
-// valid main-side payload (no length check).
-
-const UserQuestionCard: React.FC<{
-  request: ActiveQuestion;
-  selected: Record<string, string[]>;
-  onToggle: (qid: string, label: string, multi: boolean) => void;
-  onSubmit: () => void;
-  onDismiss: () => void;
-}> = ({ request, selected, onToggle, onSubmit, onDismiss }) => {
-  // Submit is enabled only when every question has at least one selection
-  // (or has zero options to pick — auto-confirm in that case).
-  const ready = request.questions.every(
-    (q) => (q.options && q.options.length > 0 ? (selected[q.id]?.length ?? 0) > 0 : true),
-  );
-  return (
-    <div className="aipane__hitl aipane__hitl--question" role="dialog" aria-modal="true" aria-label="AI 询问">
-      <div className="aipane__hitl-head">
-        <Pill className="aipane__hitl-pill">需要回答</Pill>
-        <span className="aipane__hitl-title">AI 需要你的输入</span>
-        <Button
-          variant="ghost"
-          onClick={onDismiss}
-          aria-label="关闭"
-          title="关闭（取消）"
-        >
-          <IconCloseOutline16 size={12} />
-        </Button>
-      </div>
-      <div className="aipane__hitl-body">
-        {request.questions.map((q) => {
-          const cur = selected[q.id] ?? [];
-          const multi = q.multiSelect ?? false;
-          // Per-question DisclosureRow — DSH frontend's ask-question-row
-          // is single-question only, so for our multi-question batches we
-          // compose the same primitive around each question.
-          return (
-            <DisclosureRow
-              key={q.id}
-              icon={<span className="aipane__hitl-q-num" aria-hidden>?</span>}
-              title={q.question}
-              open
-              expandable={false}
-              onToggle={() => undefined}
-              collapsedContent={
-                q.detail ? <span className="aipane__hitl-q-detail">{q.detail}</span> : null
-              }
-            >
-              {q.options && q.options.length > 0 ? (
-                <div className="aipane__hitl-options" role={multi ? 'group' : 'radiogroup'}>
-                  {q.options.map((opt) => {
-                    const on = cur.includes(opt.label);
-                    return (
-                      <button
-                        key={opt.label}
-                        type="button"
-                        role={multi ? 'checkbox' : 'radio'}
-                        aria-checked={on}
-                        className={`aipane__hitl-opt${on ? ' is-on' : ''}`}
-                        onClick={() => onToggle(q.id, opt.label, multi)}
-                      >
-                        <span className="aipane__hitl-opt-glyph" aria-hidden="true">{on ? '✓' : ''}</span>
-                        <span className="aipane__hitl-opt-label">{opt.label}</span>
-                        {opt.description && (
-                          <span className="aipane__hitl-opt-desc">{opt.description}</span>
-                        )}
-                      </button>
-                    );
-                  })}
-                </div>
-              ) : null}
-            </DisclosureRow>
-          );
-        })}
-      </div>
-      <div className="aipane__hitl-actions">
-        <Button variant="ghost" onClick={onDismiss}>取消</Button>
-        <Button variant="primary" onClick={onSubmit} disabled={!ready}>提交答案</Button>
-      </div>
-    </div>
-  );
-};
-
-const UserApprovalCard: React.FC<{
-  request: ActiveApproval;
-  onAllow: () => void;
-  onReject: () => void;
-}> = ({ request, onAllow, onReject }) => {
-  // RiskConfirmation gates the primary action on an "I understand" checkbox.
-  // Our allow-once semantics map directly onto that pattern; the user must
-  // acknowledge the risk before the primary action is enabled. The reject
-  // path is always available.
-  const [acknowledged, setAcknowledged] = useState(false);
-  const description = request.preview
-    ? `${request.reason}\n\n${request.preview}`
-    : request.reason;
-  return (
-    <div className="aipane__hitl aipane__hitl--approval" aria-label="AI 请求授权">
-      <RiskConfirmation
-        open
-        title={`AI 想要调用 ${request.toolName || '敏感操作'}`}
-        description={description}
-        acknowledgeLabel="我已了解风险"
-        cancelLabel="拒绝"
-        closeLabel="关闭"
-        confirmLabel="允许一次"
-        acknowledged={acknowledged}
-        onAcknowledgedChange={setAcknowledged}
-        onCancel={onReject}
-        onConfirm={onAllow}
-      />
     </div>
   );
 };

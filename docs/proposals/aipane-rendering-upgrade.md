@@ -1,5 +1,8 @@
 # AIPane 渲染升级方案 — 对齐 DSH 协议层
 
+> 此文档是历史方案，其中“DSH 没有 React UI”和“项目未使用 DSH 工具注册表”的判断已经过时。
+> 当前组件接入边界与实施顺序以 [dsh-component-adoption.md](./dsh-component-adoption.md) 为准。
+
 ## Context
 
 用户审视当前 AIPane 后指出「自实现的渲染比较低级」。经 DSH 源码调研发现,DSH

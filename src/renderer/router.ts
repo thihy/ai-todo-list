@@ -17,7 +17,6 @@ export type ListFilter =
   | { kind: 'all' }
   | { kind: 'archived' }
   | { kind: 'deleted' }
-  | { kind: 'project'; tag: string }
   | { kind: 'status'; status: string }
   | { kind: 'priority'; priority: string };
 
@@ -29,9 +28,8 @@ export function parseHash(hash: string): Route {
   const raw = hash.replace(/^#\/?/, '');
   if (!raw) return { name: 'home' };
   // Split off a '?sort=...' query before path-segment splitting so a sort
-  // query on a list route doesn't leak into the filter path (and so a
-  // project tag containing '?' — already URL-fragile — is no worse than
-  // before). Only the FIRST '?' splits; the rest stays in the query.
+  // query on a list route doesn't leak into the filter path. Only the
+  // FIRST '?' splits; the rest stays in the query.
   const qIdx = raw.indexOf('?');
   const pathPart = qIdx < 0 ? raw : raw.slice(0, qIdx);
   const queryPart = qIdx < 0 ? '' : raw.slice(qIdx + 1);
@@ -61,7 +59,6 @@ function parseFilter(s: string): ListFilter {
   if (!s) return { kind: 'all' };
   if (s === 'archived') return { kind: 'archived' };
   if (s === 'deleted') return { kind: 'deleted' };
-  if (s.startsWith('project/')) return { kind: 'project', tag: s.slice('project/'.length) };
   if (s.startsWith('status/')) return { kind: 'status', status: s.slice('status/'.length) };
   if (s.startsWith('priority/')) return { kind: 'priority', priority: s.slice('priority/'.length) };
   // today / next7 used to be distinct filters; the double-section view
@@ -101,8 +98,6 @@ function filterToPath(f: ListFilter): string {
       return 'archived';
     case 'deleted':
       return 'deleted';
-    case 'project':
-      return `project/${f.tag}`;
     case 'status':
       return `status/${f.status}`;
     case 'priority':

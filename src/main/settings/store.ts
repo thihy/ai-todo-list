@@ -9,6 +9,7 @@
 import { app } from 'electron';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { DEFAULT_CAPTURE_HOTKEY, ROOT_DIR_NAME, CONFIG_FILENAME, DEFAULT_PROVIDER } from '../../shared/constants';
 import type { AIModel, AIProvider, CustomProviderConfig, CustomProviderInput } from '../../shared/ai-types';
 import type { TagDef } from '../../shared/todo-types';
@@ -85,8 +86,6 @@ function safeUserDataDir(): string {
   try {
     return app.getPath('userData');
   } catch {
-    const { tmpdir } = require('node:os') as typeof import('node:os');
-    const { join } = require('node:path') as typeof import('node:path');
     return join(tmpdir(), 'todo-list-test-userData');
   }
 }
@@ -134,6 +133,18 @@ export class SettingsStore {
   /** Public-facing settings with API key redacted. */
   publicView() {
     const v = this.cache;
+    const activeCustom = v.customProviders.find((c) => c.id === v.customProviderId) ?? v.customProviders[0];
+    // `connected` means the selected provider is configured enough to accept
+    // a request; network reachability is reported separately by ai.health.
+    // Ollama is intentionally keyless, while a custom endpoint may also be a
+    // keyless local service, so its base URL + model are the useful signal.
+    const connected = v.provider === 'ollama'
+      ? true
+      : v.provider === 'shim'
+        ? false
+        : v.provider === 'custom'
+          ? Boolean(activeCustom?.baseUrl.trim() && activeCustom.model.trim())
+          : Boolean(v.apiKey);
     return {
       provider: v.provider,
       apiKeyRedacted: v.apiKey
@@ -141,7 +152,7 @@ export class SettingsStore {
         : '',
       model: v.model,
       streaming: v.streaming,
-      connected: !!v.apiKey,
+      connected,
       lastHeartbeatAt: v.lastHeartbeatAt,
       monthlyCostUsd: v.monthlyCostUsd,
       captureHotkey: v.captureHotkey,

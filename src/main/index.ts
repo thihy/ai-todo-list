@@ -17,7 +17,6 @@ import { openDb, type DbHandle } from './db/schema';
 import { TodoRepo } from './db/todo-repo';
 import { ConversationRepo } from './db/conversation-repo';
 import { MarkdownStore } from './files/markdown';
-import * as paths from './files/paths';
 import { DrawingStore } from './files/drawings';
 import { DocumentStore } from './files/documents';
 import { InboxStore } from './files/inbox';
@@ -33,9 +32,19 @@ import {
   TODOS_SUBDIR,
   DRAWINGS_SUBDIR,
   ATTACHMENTS_SUBDIR,
-  APP_NAME,
+  APP_PRODUCT_NAME,
+  APP_USER_MODEL_ID,
 } from '../shared/constants';
 import type { ULID } from '../shared/todo-types';
+
+// Headless/CI Windows images do not always ship the GPU runtime DLLs Chromium
+// probes at startup. Disable acceleration only for E2E so the real application
+// keeps its normal hardware-accelerated rendering path.
+if (process.env['ELECTRON_E2E'] === '1') {
+  app.disableHardwareAcceleration();
+  app.commandLine.appendSwitch('disable-gpu');
+  app.commandLine.appendSwitch('disable-software-rasterizer');
+}
 
 // Single-instance lock. A second launch (e.g. clicking the shortcut while the
 // tray app is alive) should surface the existing window, NOT start a second
@@ -69,10 +78,35 @@ if (!gotLock) {
       all[0].focus();
     }
   });
-  // Set the AppUserModelId BEFORE app.ready so the Windows taskbar shows our
-  // own icon (icon.png) and groups windows under the app — without this an
-  // unpackaged `pnpm dev` run shows the default Electron icon in the taskbar.
-  app.setAppUserModelId(APP_NAME);
+
+  // Windows taskbar identity. The running EXE in `pnpm dev` / `pnpm preview`
+  // is electron.exe — without these calls the taskbar's right-click menu
+  // shows "Electron" + the Electron icon (Windows pulls the display name +
+  // icon from the AUMID shortcut, which it builds from the EXE's metadata
+  // the first time the AUMID is registered). And a different AUMID across
+  // dev vs packaged builds would split the app into two taskbar entries on
+  // upgrade. Setting the name + a stable reverse-DNS AUMID before the first
+  // window opens registers the taskbar entry under our identity and matches
+  // the packaged build's `appId` from package.json.
+  //
+  // Order matters. Electron's `app.setName()` on Windows internally calls
+  // `SetCurrentProcessExplicitAppUserModelID(name)` IF no explicit AUMID has
+  // been set yet — so calling `setName` FIRST registers "AI待办" as the
+  // taskbar display label, then `setAppUserModelId` overrides the id with a
+  // stable reverse-DNS string (matching the packaged build's appId) without
+  // disturbing the display label.
+  //
+  // userData preservation: `app.setName()` also shifts the implicit userData
+  // directory (default = %APPDATA%/<appName>). Capture the current path
+  // BEFORE the rename so existing dev users' data at %APPDATA%/todo-list
+  // isn't orphaned on upgrade. `setPath` re-asserts the original — currently
+  // package.json's productName already yields %APPDATA%/AI待办 so this is a
+  // no-op today, but it guards against future productName drift.
+  const userDataPath = app.getPath('userData');
+  app.setName(APP_PRODUCT_NAME);
+  app.setAppUserModelId(APP_USER_MODEL_ID);
+  app.setPath('userData', userDataPath);
+
   bootstrap();
 }
 
@@ -133,6 +167,8 @@ function bootstrap(): void {
 
     const handle = openDb(dbPath);
     const repo = new TodoRepo(handle.db);
+    const { TaskDirectoryStore } = await import('./files/task-directories');
+    const taskDirectories = new TaskDirectoryStore(handle.db, todosDir);
     const conversations = new ConversationRepo(handle.db);
 
     // v1 → v2 layout migration sweep. Runs once per process (marker file
@@ -155,14 +191,10 @@ function bootstrap(): void {
       logger.warn(`migrateV1Layout import failed: ${(err as Error).message}`);
     }
 
-    // Per-task dir lookup. Used by MarkdownStore (progress.html) and other
-    // file writers to resolve {todosDir}/{slug}/. Title is read from the
-    // current DB row so renames flow through on next access.
-    const resolveTaskDir = (id: ULID): string => {
-      const t = repo.get(id);
-      const title = (t?.title as string | undefined) ?? paths.UNTITLED_SLUG;
-      return paths.todoDir(todosDir, title, id);
-    };
+    // Per-task dir lookup. The relative directory name is persisted in DB;
+    // all document stores therefore agree on one directory even after a
+    // title change or a failed filesystem rename.
+    const resolveTaskDir = (id: ULID): string => taskDirectories.resolve(id);
     const md = new MarkdownStore(handle.db, todosDir, resolveTaskDir);
     const drawings = new DrawingStore(handle.db, drawingsDir, resolveTaskDir);
     const docs = new DocumentStore(handle.db);
@@ -170,7 +202,7 @@ function bootstrap(): void {
 
     // Wire IPC router
     installRouter();
-    registerTodoHandlers(repo, md, handle.db, todosDir, resolveTaskDir);
+    registerTodoHandlers(repo, md, handle.db, todosDir, resolveTaskDir, taskDirectories);
     registerContentHandlers(md, drawings, repo);
     registerDocumentHandlers(docs, resolveTaskDir);
     registerLinkHandlers();
@@ -289,14 +321,11 @@ function bootstrap(): void {
     const clipboard = new ClipboardWatcher();
     clipboard.setHandlers(
       (text) => {
-        const todo = repo.create({ title: text.slice(0, 200) }, md.filePathFor('placeholder'));
+        const todo = repo.create({ title: text.slice(0, 200) });
         md.writeBody(todo.id, text);
       },
       (filePath) => {
-        const todo = repo.create(
-          { title: `剪贴板图片 ${new Date().toLocaleString()}` },
-          md.filePathFor('placeholder'),
-        );
+        const todo = repo.create({ title: `剪贴板图片 ${new Date().toLocaleString()}` });
         md.writeBody(todo.id, `![clipboard](${filePath})`);
       },
     );
@@ -681,7 +710,7 @@ function registerSettingsHandlers(
 function registerCaptureHandlers(repo: TodoRepo, md: MarkdownStore): void {
   register('capture.submit', (_e, req) => {
     try {
-      const todo = repo.create({ title: req.title }, md.filePathFor('placeholder'));
+      const todo = repo.create({ title: req.title });
       md.writeBody(todo.id, req.markdown ?? '');
       return Promise.resolve(okResult({ id: todo.id }));
     } catch (err) {

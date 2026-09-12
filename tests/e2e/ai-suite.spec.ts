@@ -13,7 +13,6 @@ import {
   openAiPane,
   askViaIpc,
   createConversation,
-  streamCollector,
   thinkingVisible,
   TEXT_PROMPT,
   LONG_PROMPT,
@@ -78,6 +77,12 @@ test('F2 · conversation lifecycle: create → list → rename → history → d
     expect(hist.ok, `history ok; message=${hist.message}`).toBe(true);
     expect(hist.turns.length, 'history has ≥1 turn after a Q&A').toBeGreaterThan(0);
 
+    // The DSH runtime-context plugin injects a "Current runtime context …"
+    // user/message (source.kind === 'plugin'). foldHistory must skip it so it
+    // never reappears as a stray user bubble on history reload.
+    const leakedRuntimeCtx = JSON.stringify(hist.turns).includes('Current runtime context');
+    expect(leakedRuntimeCtx, 'runtime-context injection must not leak into folded history').toBe(false);
+
     // delete
     const delRes = await win.evaluate(async (a: { id: string }) => {
       const w = window as unknown as { todoList: { conversation: { delete: (id: string) => Promise<{ ok: boolean; message?: string }> } } };
@@ -101,6 +106,26 @@ test('F3 · multi-turn: two sequential asks on the same conversation both resolv
     const bDone = b.events.find((e) => e.type === 'done');
     expect(aDone && bDone, 'both turns emit done').toBeTruthy();
     expect((aDone?.snippet.length ?? 0) > 0 && (bDone?.snippet.length ?? 0) > 0, 'both done.content non-empty').toBe(true);
+  } finally {
+    await app.close();
+  }
+});
+
+test('F6 · streaming: a long answer arrives as per-token deltas, not one blob', async () => {
+  const { app, win } = await launchApp();
+  try {
+    const convId = await createConversation(win, 'e2e-stream');
+    // LONG_PROMPT produces a ~200-char answer; if the session layer streamed
+    // assistant/chunk the renderer emits ≥1 `token` event before `done`. Before
+    // the llm/stream bridge, 0.1.5-rc.2 only emitted `assistant/message`
+    // (assembled) → 0 token events → "思考中…" then a single done blob.
+    const { events } = await askViaIpc(win, { prompt: LONG_PROMPT, conversationId: convId });
+    console.log('F6 events:', events.map((e) => `${e.type}(${e.snippet})`).join(' '));
+    const tokenEvts = events.filter((e) => e.type === 'token');
+    expect(tokenEvts.length, 'streaming emits at least one token event').toBeGreaterThan(0);
+    // Coalesced token text should be a non-trivial prefix of the answer.
+    const tokenText = tokenEvts.map((e) => e.snippet).join('');
+    expect(tokenText.length, 'token text non-empty').toBeGreaterThan(0);
   } finally {
     await app.close();
   }
@@ -176,12 +201,28 @@ test('U1 · AIPane opens: header + composer + input + send button visible', asyn
   const { app, win } = await launchApp();
   try {
     await openAiPane(win);
-    await expect(win.locator('.aipane__header')).toBeVisible();
+    await expect(win.locator('.aipane__title')).toBeVisible();
     await expect(win.locator('.aipane__composer')).toBeVisible();
     await expect(win.locator('.aipane__input')).toBeVisible();
     await expect(win.locator('.aipane__send')).toBeVisible();
     // Empty state surfaces before the first turn.
     await expect(win.locator('.aipane__empty').first()).toBeVisible();
+
+    // The textarea itself must not draw a second nested focus border; focus
+    // belongs to the outer ChatGPT-style composer card.
+    const input = win.locator('.aipane__input');
+    await input.focus();
+    const focusStyle = await input.evaluate((element) => {
+      const style = getComputedStyle(element);
+      return {
+        outlineStyle: style.outlineStyle,
+        borderTopWidth: style.borderTopWidth,
+        boxShadow: style.boxShadow,
+      };
+    });
+    expect(focusStyle.outlineStyle).toBe('none');
+    expect(focusStyle.borderTopWidth).toBe('0px');
+    expect(focusStyle.boxShadow).toBe('none');
   } finally {
     await app.close();
   }
@@ -195,6 +236,11 @@ test('U2 · send a message: user bubble + assistant bubble + metrics render, no 
     await input.waitFor({ state: 'visible' });
     await input.fill(TEXT_PROMPT);
     await input.press('Enter');
+
+    // While the answer is pending, neither typing nor file selection is
+    // allowed. The stop action remains available separately.
+    await expect(input).toBeDisabled({ timeout: 5_000 });
+    await expect(win.locator('.aipane__attach-btn')).toBeDisabled({ timeout: 5_000 });
 
     // User bubble appears with the prompt text.
     const userBubble = win.locator('.bubble--user', { hasText: TEXT_PROMPT.slice(0, 6) });

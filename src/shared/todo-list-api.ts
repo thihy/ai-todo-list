@@ -47,6 +47,8 @@ export type AppEvent =
   // inline in the assistant turn and replies via `ai.userQuestion.answer`
   // / `ai.userApproval.answer` IPC channels.
   | 'ai:user-question-request'
+  | 'ai:user-question-timeout'
+  | 'ai:user-approval-timeout'
   | 'ai:user-approval-request';
 
 /** Coarse-grained scope of a data mutation, so the renderer can re-fetch only
@@ -70,6 +72,8 @@ export interface AppEventMap {
   'ai:stream': AIStreamEvent;
   'ai:permission-request': PermissionRequest;
   'ai:user-question-request': UserQuestionRequest;
+  'ai:user-question-timeout': { reqId: string };
+  'ai:user-approval-timeout': { reqId: string };
   'ai:user-approval-request': UserApprovalRequest;
 }
 

@@ -27,11 +27,6 @@ import { drawingFile, slugify, thumbFile } from './paths';
 import { logger } from '../logger';
 
 export class DrawingStore {
-  /** Cache id → taskDir so the uniqueTodoDir collision-suffix logic in
-   *  resolveTaskDir can't bounce a single task between two dirs across
-   *  calls. Same pattern as MarkdownStore.taskDirCache. */
-  private readonly taskDirCache = new Map<ULID, string>();
-
   constructor(
     private db: Database.Database,
     /**
@@ -45,15 +40,10 @@ export class DrawingStore {
     mkdirSync(drawingsDir, { recursive: true });
   }
 
-  /** Cached resolveTaskDir: first call wins, subsequent calls return the same
-   *  path. Resolves the uniqueTodoDir collision-suffix instability that would
-   *  otherwise bounce a task between two dirs as its base dir appears. */
+  /** Resolve on each operation so a successful task-directory rename is
+   * observed immediately. The injected resolver is stable via SQLite. */
   private taskDirFor(todoId: ULID): string {
-    const cached = this.taskDirCache.get(todoId);
-    if (cached) return cached;
-    const dir = this.resolveTaskDir(todoId);
-    this.taskDirCache.set(todoId, dir);
-    return dir;
+    return this.resolveTaskDir(todoId);
   }
 
   /** Legacy accessor — kept so external callers (git-history, tests) can

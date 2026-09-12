@@ -20,7 +20,7 @@
 // `pnpm dev` with.)
 
 import { test, expect } from '@playwright/test';
-import { _electron as electron } from 'playwright';
+import { launchApp } from './helpers';
 
 const ASK_PROMPT = '用一句话回答：1+1等于几？不要调用任何工具。';
 const ASK_TIMEOUT_MS = 120_000;
@@ -30,11 +30,8 @@ const ASK_TIMEOUT_MS = 120_000;
 test.setTimeout(180_000);
 
 test('ai.ask (text-only) completes: start → done, IPC resolves, content non-empty', async () => {
-  const app = await electron.launch({ args: ['.'] });
+  const { app, win } = await launchApp();
   try {
-    const win = await app.firstWindow();
-    await win.waitForLoadState('domcontentloaded');
-
     const trace = await win.evaluate(
       async (args: { prompt: string; timeoutMs: number }) => {
         const { prompt, timeoutMs } = args;

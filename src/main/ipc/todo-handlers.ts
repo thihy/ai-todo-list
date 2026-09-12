@@ -8,6 +8,7 @@ import type { MarkdownStore } from '../files/markdown';
 import { renameTaskDir, writeTodoJson } from '../files/rename-hooks';
 import { logger } from '../logger';
 import type { ULID } from '../../shared/todo-types';
+import type { TaskDirectoryStore } from '../files/task-directories';
 
 /** Push a coarse-grained data-changed event so the renderer's todo / list /
  *  stats hooks re-fetch after a mutation the user just made here (mirrors the
@@ -26,6 +27,7 @@ export function registerTodoHandlers(
   db: Database.Database,
   todosDir: string,
   resolveTaskDir: ResolveTaskDir,
+  taskDirectories: TaskDirectoryStore,
 ): void {
   register('todo.list', (_e, req) => {
     try {
@@ -45,7 +47,9 @@ export function registerTodoHandlers(
 
   register('todo.create', (_e, req) => {
     try {
-      const todo = repo.create(req.input, md.filePathFor('placeholder'));
+      // Insert first; only then can the DB-backed directory resolver claim a
+      // stable folder for the newly minted todo id.
+      const todo = repo.create(req.input);
       md.writeBody(todo.id, '');
       // Best-effort write of the per-task todo.json snapshot. Failures are
       // logged but don't roll back the DB insert.
@@ -56,7 +60,6 @@ export function registerTodoHandlers(
         status: fresh.status,
         priority: fresh.priority,
         tags: fresh.tags,
-        project: fresh.project,
         dueAt: fresh.dueAt,
         createdAt: fresh.createdAt,
         updatedAt: fresh.updatedAt,
@@ -88,6 +91,7 @@ export function registerTodoHandlers(
           todoId: req.id,
           oldTitle,
           newTitle,
+          taskDirectories,
         });
         logger.info(
           `todo.update rename: dir=${result.dirRenamed ? 'moved' : 'unchanged'} inbox=${result.pathsUpdated}`,
@@ -102,7 +106,6 @@ export function registerTodoHandlers(
           status: updated.status,
           priority: updated.priority,
           tags: updated.tags,
-          project: updated.project,
           dueAt: updated.dueAt,
           createdAt: updated.createdAt,
           updatedAt: updated.updatedAt,
@@ -119,7 +122,6 @@ export function registerTodoHandlers(
           status: updated.status,
           priority: updated.priority,
           tags: updated.tags,
-          project: updated.project,
           dueAt: updated.dueAt,
           createdAt: updated.createdAt,
           updatedAt: updated.updatedAt,

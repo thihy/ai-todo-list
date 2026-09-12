@@ -4,6 +4,24 @@ export const APP_NAME = 'todo-list';
 export const APP_VERSION = '0.1.0';
 export const APP_USER_AGENT = `${APP_NAME}/${APP_VERSION}`;
 
+// User-facing brand shown in the Windows taskbar right-click menu and the
+// macOS app menu (Electron calls `SetCurrentProcessExplicitAppUserModelID`
+// with this on Windows when an explicit AUMID hasn't been set yet, so it
+// becomes the taskbar display label). Distinct from APP_NAME: APP_NAME is
+// the internal id (kept for the HTTP User-Agent and anything that
+// needs an ASCII slug); this is what end users see. Must match
+// `productName` in package.json so packaged builds stay consistent.
+export const APP_PRODUCT_NAME = 'AI待办';
+
+// Stable reverse-DNS Windows AppUserModelId. MUST match `appId` in
+// package.json's `build` block — electron-builder uses that when
+// packaging, and Windows treats different AUMIDs as different apps
+// (separate taskbar entries, separate pinned state, no carry-over
+// between dev and packaged installs). Sharing one id across dev +
+// packaged keeps the pin/taskbar group stable when a user upgrades
+// from `pnpm dev` to a packaged install.
+export const APP_USER_MODEL_ID = 'com.todolist.app';
+
 export const DEFAULT_CAPTURE_HOTKEY = 'CommandOrControl+Shift+T';
 export const DEFAULT_THEME = 'system' as const;
 export const DEFAULT_PROVIDER = 'deepseek' as const;

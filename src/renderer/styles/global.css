@@ -101,6 +101,7 @@
   --sidebar-w: 220px;
   --ai-panel-w: 384px;
   --ai-rail-w: 40px;
+  --task-list-rail-w: 40px;
 
   color-scheme: light;
 }
@@ -740,29 +741,6 @@ a:hover {
   border-top: 1px solid var(--border-subtle);
 }
 
-.ai-panel__grip {
-  position: absolute;
-  top: 0;
-  right: 0;
-  width: 14px;
-  height: 100%;
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
-  padding-top: 10px;
-  color: var(--fg-muted);
-  cursor: pointer;
-  z-index: 2;
-  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
-}
-.ai-panel__grip:hover {
-  background: var(--bg-hover);
-  color: var(--accent-primary);
-}
-.ai-panel__grip svg {
-  opacity: 0.7;
-}
-
 /* Loading placeholder for the lazy-loaded AI pane. Shown for the brief
    Suspense window while the AIPane chunk (vendored DSH render tree +
    shiki/katex) streams in. Mirrors the pane's centered, muted-text feel so
@@ -805,7 +783,19 @@ a:hover {
   color: var(--accent-primary);
 }
 .ai-rail__icon {
-  font-size: 18px;
+  /* explicit inline-flex with width/height = the 16px icon footprint.
+     Previously this was a plain <span> with font-size:18px and no
+     dimensions — the SVG inside rendered at its intrinsic 16×16 but
+     the span's line-height box was 18px tall, leaving a 1px vertical
+     offset and giving the icon a "shifted" appearance inside the
+     centered flex parent. Locking width/height to 16px eliminates that
+     drift. */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  font-size: 16px;
   line-height: 1;
   color: var(--accent-bright);
 }
@@ -815,8 +805,24 @@ a:hover {
   font-size: var(--font-xs);
   font-weight: 600;
 }
+/* `display: block` drops the inline-baseline shift so the SVG sits exactly
+   where the flex layout placed it; `margin-top: auto` (only meaningful on
+   the trailing chevron) pushes the LAST svg in the column to the bottom
+   so the label sits in the visual middle. The IconSparkle (first svg) has
+   no auto margin and stays at the top of the rail. Explicit width/height
+   pins each SVG to its declared footprint so the icons can't drift left/
+   right inside the centered flex column. */
 .ai-rail svg {
+  display: block;
+  width: 16px;
+  height: 16px;
+  margin: 0;
   margin-top: auto;
+}
+.ai-rail > svg:first-of-type {
+  /* The leading brand icon sits at the top of the rail, not auto-pushed
+     to the bottom. */
+  margin-top: 0;
 }
 
 /* ===== AIPane ===== */
@@ -825,7 +831,79 @@ a:hover {
   display: flex;
   flex-direction: column;
   height: 100%;
-  width: 100%;
+  /* Single flex child of .ai-panel: takes the panel's full width. The
+     collapse affordance now lives INSIDE .aipane__title-row (right edge),
+     not in a separate column. `min-width: 0` lets the panel shrink below
+     its content's intrinsic min-width so .aipane__body's scrollbar keeps
+     working at narrow panel widths. */
+  flex: 1;
+  min-width: 0;
+}
+
+/* ===== 3-region flex layout ===== */
+
+/* Region 1: title (pinned at top). Contains the brand on the left, the
+   active conversation title in the middle (truncated if long), and the
+   [+ new] / [🗂 history] action buttons on the right. The scroll-tracked
+   "current question" overlay sits BELOW this row as an absolutely-
+   positioned child so it floats over the top of the body content without
+   shifting it.
+
+   `flex: 0 0 auto` = do NOT grow, do NOT shrink, take intrinsic height.
+   This pins the title to the top of the flex column regardless of how
+   many messages the body holds — the body (Region 2) absorbs all extra
+   vertical space. The previous `flex: none` shorthand is equivalent but
+   spelled out here so the three-region contract is explicit at the rule. */
+.aipane__title {
+  flex: 0 0 auto;
+  /* Single child (title-row) — keeps the title row pinned to the top of
+     the column flex. The scroll-tracked current-question overlay is NOT
+     inside this region; it is an independent flex sibling of .aipane
+     (Region 1b), so the title region's height is just the title row's
+     intrinsic height (44px). */
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-default);
+}
+
+.aipane__title-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  min-height: var(--topbar-h);
+  padding: 0 var(--space-md);
+  /* Three-zone flex: brand (left, intrinsic) | title (sits next to brand,
+     ellipsises when squeezed) | .aipane__title-spacer (flex: 1, absorbs
+     leftover space) | actions (right edge, via the spacer pushing them
+     outward — .aipane__actions' own margin-left:auto is redundant but kept
+     as belt-and-braces for any future wrapping contexts). The previous
+     symmetric-spacer layout (spacer on BOTH sides of the title) fought
+     margin-left:auto on the actions for the same right-side space and
+     pushed actions off-screen when the title was long. */
+}
+
+.aipane__title-spacer {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* Brand label "AI 助手" on the left of the topbar — re-introduced per the
+   L5 request that the panel always identify itself, since the conversation
+   title moved into the content area. */
+.aipane__brand {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  font-size: var(--font-md);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--fg-primary);
+  white-space: nowrap;
+  flex: none;
+}
+.aipane__brand-glyph {
+  color: var(--accent-primary, #4F8AF7);
+  font-size: var(--font-lg);
+  line-height: 1;
 }
 
 /* ===== L5: minimal topbar ===== */
@@ -909,21 +987,28 @@ a:hover {
 }
 
 .aipane__conv-title {
-  /* Static child of .aipane__sticky-head. The wrapper owns the sticky
-     position and opaque full-bleed background; the title keeps its own
-     padding so the text insets to align with the message stream. Top
-     padding is tight so the title sits flush at the top of the header. */
-  margin: 0 0 var(--space-sm);
-  padding: var(--space-sm) var(--space-lg) var(--space-sm);
+  /* Inline flex child of .aipane__title-row, sitting between two
+     .aipane__title-spacer elements. The spacers absorb leftover space
+     so brand (left) and actions (right) stay glued to the edges
+     regardless of title length; the title shrinks (white-space:nowrap +
+     overflow:hidden + text-overflow:ellipsis) to fit. font-size +
+     color match the original so the title's prominence is unchanged
+     after the layout refactor. No margin/padding: the parent row owns
+     vertical alignment via align-items:center. */
+  margin: 0;
+  padding: 0;
   font-size: var(--font-lg);
   font-weight: 650;
   letter-spacing: -0.01em;
   color: var(--fg-primary);
-  /* Single-line truncation with ellipsis so a long title doesn't push the
-     sticky banner out of the viewport. */
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  /* Don't grow — title takes its content width; the spacers carry the
+     flex distribution. min-width:0 lets the ellipsis kick in when the
+     row gets narrower than the title text. */
+  flex: 0 1 auto;
+  min-width: 0;
 }
 .aipane__conv-title .aipane__rename {
   /* Inline-rename input variant — same control as the dropdown rename,
@@ -936,26 +1021,41 @@ a:hover {
 
 /* ===== L5: scroll-tracked "current question" pin ===== */
 
-/* Overlay (absolute, child of .aipane__sticky-head) that floats just below
-   the title and mirrors whichever user question has scrolled out of view —
-   so the user never reads an answer without seeing what was asked. It is an
-   overlay (out of flow) on purpose: showing/hiding it never shifts the
-   message stream the user is reading. Opaque surface background so content
-   scrolling under it can't show through; right-aligned so the pinned bubble
-   reads as "the user's own question, kept in view" (matching .bubble--user). */
+/* A REAL flex child of .aipane (sibling of title / body / composer — NOT
+   nested in .aipane__title), so it consumes its own box in the column
+   flex. .aipane__body (flex: 1 1 0) shrinks to make room, and the banner
+   can NEVER overlap with the body's first user bubble.
+
+   Padding matches .aipane__title-row (0 var(--space-md)) so the overlay's
+   right-aligned bubble lines up vertically with the title row's right
+   edge — without the padding match, the overlay would visually extend
+   wider than the title row and read as "two zones with different
+   alignment".
+
+   The previous attempt nested the overlay INSIDE .aipane__title (as a
+   column-flex sibling of title-row). That made the title region taller
+   but meant title-row and overlay sat on the same .aipane__title
+   surface with their own internal layout — fine in isolation, but the
+   user's reading was "the banner doesn't belong to the title; it's its
+   own region", which is structurally true: the banner tracks SCROLL
+   state, not title state. Lifting it out to be a sibling of the title
+   makes the intent explicit and avoids any future confusion about which
+   region owns the banner's height/visibility. */
 .aipane__currentq-overlay {
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: 100%; /* sit just below the sticky header's bottom edge */
-  z-index: 2;
+  flex: 0 0 auto;
   display: flex;
   justify-content: flex-end;
   align-items: flex-start;
   gap: var(--space-xs);
-  padding: var(--space-xs) var(--space-lg) var(--space-sm);
+  padding: var(--space-xs) var(--space-md) var(--space-sm);
   background: var(--bg-surface);
-  border-bottom: 1px solid var(--border-default);
+  border-top: 1px solid var(--border-default);
+  /* Hand-off animation: as the next user question rises toward the
+     banner, translateY slides the banner up so it recedes toward where
+     the live bubble is coming from (same direction as the source
+     question). transform is composited — no layout/paint on each
+     scroll frame. */
+  transform: translateY(var(--pin-y, 0));
   pointer-events: none; /* the overlay itself never blocks scrolling; the
                             bubble below re-enables pointer events for its
                             status pill, but there's nothing to click */
@@ -1356,7 +1456,16 @@ a:hover {
 }
 
 .aipane__body {
-  flex: 1;
+  /* Region 2: the conversation stream. flex: 1 1 0 + min-height: 0 lets the
+     body absorb all leftover vertical space (the title above + composer
+     below are pinned via flex: 0 0 auto) AND shrink below its content's
+     intrinsic min-content height — without `min-height: 0`, a flex child
+     with a long stream would refuse to shrink and push the composer off-
+     screen. `overflow: auto` then turns the residual height into the
+     scroll viewport. The contract: title pinned, body scrolls, composer
+     pinned. */
+  flex: 1 1 0;
+  min-height: 0;
   overflow: auto;
   /* Reserve the scrollbar gutter so the message stream + composer don't
      shift when a long turn pushes the body past the fold. */
@@ -1499,50 +1608,94 @@ a:hover {
 }
 .markdown hr { border: none; border-top: 1px solid var(--border-default); margin: var(--space-sm) 0; }
 
+/* Region 3: composer (pinned at bottom). Same flex contract as the title
+   (flex: 0 0 auto) — takes intrinsic height, never shrinks, stays glued
+   to the bottom of the column. The composer grows naturally with its
+   textarea (autosize up to a soft cap); the body's `min-height: 0`
+   guarantees it gives way instead of pushing the composer out of frame. */
 .aipane__composer {
-  flex: none;
-  padding: var(--space-sm) var(--space-md) var(--space-md);
-  border-top: 1px solid var(--border-default);
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-sm);
+  flex: 0 0 auto;
+  padding: 10px var(--space-md) var(--space-md);
+  background: linear-gradient(to bottom, transparent, var(--bg-canvas, #fff) 24%);
 }
 
-/* L5 unified composer: ONE card holding the + button (left), textarea
-   (middle, flex-grows + autosizes), and Send/Stop (right). The card has
-   rounded corners + a single border so the whole input reads as a single
-   affordance, not three independent controls. The + button is embedded
-   INSIDE the card so the user sees "this is where I add things to my
-   message". */
+.aipane__provider-notice {
+  flex: 0 0 auto;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  margin: 10px var(--space-md) 0;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--accent-warning, #b7791f) 30%, var(--border-default));
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--accent-warning, #b7791f) 8%, var(--bg-surface));
+  color: var(--accent-warning, #8a5a12);
+}
+.aipane__provider-notice-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  color: var(--fg-secondary);
+  font-size: var(--font-xs);
+  line-height: 1.4;
+}
+.aipane__provider-notice-copy strong {
+  color: var(--fg-primary);
+  font-size: var(--font-sm);
+}
+
+/* ChatGPT-style composer: a soft, generously rounded input surface with the
+   textarea above a full-width action bar. */
 .aipane__composer-card {
   display: flex;
-  align-items: flex-end;
-  gap: var(--space-xs);
+  flex-direction: column;
   border: 1px solid var(--border-default);
-  border-radius: 12px;
-  background: var(--bg-canvas, #FFFFFF);
-  padding: 8px 8px 8px 4px;
+  border-radius: 20px;
+  background: var(--surface-elev, var(--bg-canvas, #fff));
+  padding: 8px;
+  box-shadow: 0 2px 12px color-mix(in srgb, var(--fg-primary, #111827) 7%, transparent);
   transition: border-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out);
 }
 .aipane__composer-card:focus-within {
-  border-color: var(--accent, #4F8AF7);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent, #4F8AF7) 18%, transparent);
+  border-color: color-mix(in srgb, var(--accent, #4F8AF7) 55%, var(--border-default));
+  box-shadow: 0 4px 18px color-mix(in srgb, var(--fg-primary, #111827) 9%, transparent),
+    0 0 0 2px color-mix(in srgb, var(--accent, #4F8AF7) 10%, transparent);
 }
 .aipane__composer-card .aipane__input {
-  flex: 1;
+  width: 100%;
   min-width: 0;
+  box-sizing: border-box;
   border: none;
   background: transparent;
-  padding: 6px 4px;
-  min-height: 28px;
+  padding: 8px 8px 6px;
+  min-height: 48px;
   outline: none;
   resize: none;
   font-size: var(--font-sm);
   line-height: 1.5;
   color: var(--fg-primary);
+  box-shadow: none;
 }
-.aipane__composer-card .aipane__input:focus {
+.aipane__composer-card .aipane__input::placeholder {
+  color: var(--fg-muted);
+}
+.aipane__composer-card .aipane__input:hover,
+.aipane__composer-card .aipane__input:focus,
+.aipane__composer-card .aipane__input:focus-visible {
+  border-color: transparent;
   outline: none;
+  outline-offset: 0;
+  box-shadow: none;
+}
+
+.aipane__composer-actions {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-top: 4px;
 }
 
 /* + button lives INSIDE the composer card (left edge). Visual style is
@@ -1553,11 +1706,11 @@ a:hover {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
-  border-radius: 8px;
-  border: none;
-  background: transparent;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 1px solid var(--border-default);
+  background: var(--surface-muted, #F6F7F9);
   color: var(--fg-muted, #6B7280);
   font-size: 18px;
   font-weight: 500;
@@ -1580,18 +1733,18 @@ a:hover {
 .aipane__composer-card .aipane__send,
 .aipane__composer-card .aipane__stop {
   flex: none;
-  width: 36px;
-  height: 32px;
+  width: 34px;
+  height: 34px;
   padding: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border-radius: 8px;
+  border-radius: 50%;
   font-size: 14px;
   line-height: 1;
 }
 .aipane__composer-card .aipane__send:disabled {
-  opacity: 0.4;
+  opacity: 0.32;
   cursor: not-allowed;
 }
 .aipane__composer-card .aipane__stop {
@@ -1663,6 +1816,7 @@ a:hover {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-xs);
+  padding: 2px 4px 4px;
 }
 .aipane__attach-chip {
   display: inline-flex;
@@ -1704,6 +1858,172 @@ a:hover {
 .aipane__attach-chip-x:hover {
   background: var(--border-default, #E5E7EB);
   color: var(--fg-primary, #1F2328);
+}
+
+/* Structured question shown when the assistant pauses for user input. */
+.aipane__hitl--question {
+  display: flex;
+  flex-direction: column;
+  max-height: min(55vh, 480px);
+  flex: none;
+  margin: 8px var(--space-md) 4px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--accent-primary) 32%, var(--border-default));
+  border-radius: 16px;
+  background: var(--bg-surface);
+  box-shadow: 0 8px 28px color-mix(in srgb, var(--fg-primary) 10%, transparent);
+}
+.aipane__hitl-head {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 14px;
+  background: color-mix(in srgb, var(--accent-primary) 8%, var(--bg-surface));
+  border-bottom: 1px solid color-mix(in srgb, var(--accent-primary) 18%, var(--border-default));
+}
+.aipane__hitl-pill {
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: var(--accent-primary);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 750;
+  line-height: 1.3;
+  white-space: nowrap;
+}
+.aipane__hitl-title {
+  min-width: 0;
+  color: var(--fg-primary);
+  font-size: var(--font-sm);
+  font-weight: 700;
+}
+.aipane__hitl-body {
+  min-height: 0;
+  overflow-y: auto;
+  overflow-wrap: anywhere;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  color: var(--fg-primary);
+}
+.aipane__hitl-q-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--accent-primary) 13%, transparent);
+  color: var(--accent-primary);
+  font-size: 13px;
+  font-weight: 800;
+}
+.aipane__hitl-q-detail {
+  display: block;
+  margin-top: 6px;
+  color: var(--fg-secondary);
+  font-size: var(--font-xs);
+  line-height: 1.55;
+}
+.aipane__hitl-options {
+  display: grid;
+  gap: 8px;
+  padding-top: 10px;
+}
+.aipane__hitl-opt {
+  display: grid;
+  grid-template-columns: 20px 1fr;
+  gap: 2px 9px;
+  width: 100%;
+  padding: 10px 11px;
+  text-align: left;
+  border: 1px solid var(--border-default);
+  border-radius: 10px;
+  background: var(--bg-canvas);
+  color: var(--fg-primary);
+  transition: border-color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
+}
+.aipane__hitl-opt:hover {
+  border-color: color-mix(in srgb, var(--accent-primary) 55%, var(--border-default));
+  background: color-mix(in srgb, var(--accent-primary) 4%, var(--bg-canvas));
+}
+.aipane__hitl-opt.is-on {
+  border-color: var(--accent-primary);
+  background: color-mix(in srgb, var(--accent-primary) 9%, var(--bg-canvas));
+}
+.aipane__hitl-opt-glyph {
+  grid-row: 1 / span 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  margin-top: 1px;
+  border: 1.5px solid var(--border-strong);
+  border-radius: 50%;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 800;
+}
+.aipane__hitl-opt.is-on .aipane__hitl-opt-glyph {
+  border-color: var(--accent-primary);
+  background: var(--accent-primary);
+}
+.aipane__hitl-opt-label {
+  font-size: var(--font-sm);
+  font-weight: 650;
+  line-height: 1.4;
+}
+.aipane__hitl-opt-desc {
+  color: var(--fg-secondary);
+  font-size: var(--font-xs);
+  line-height: 1.45;
+}
+.aipane__hitl-actions {
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 14px 14px;
+}
+.aipane__hitl-question-row {
+  height: auto;
+  min-height: 24px;
+  align-items: flex-start;
+}
+.aipane__hitl-question-title {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  overflow-wrap: anywhere;
+  font-weight: 650;
+  line-height: 1.6;
+}
+.aipane__hitl-error {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--accent-danger, #b42318);
+  overflow-wrap: anywhere;
+}
+.aipane__hitl-opt[role='checkbox'] .aipane__hitl-opt-glyph {
+  border-radius: 4px;
+}
+
+.aipane__composer-card.is-disabled {
+  background: var(--surface-muted, #F6F7F9);
+  box-shadow: none;
+  opacity: 0.72;
+}
+.aipane__composer-card.is-disabled:focus-within {
+  border-color: var(--border-default);
+  box-shadow: none;
+}
+.aipane__composer-card .aipane__input:disabled,
+.aipane__composer-card .aipane__attach-btn:disabled {
+  cursor: not-allowed;
 }
 /* Per-turn attachment chips rendered above the user bubble when an
    attached file was part of the prompt. Pure label (no ×) — the turn is
@@ -1936,6 +2256,117 @@ a:hover {
   border-top: 1px solid var(--border-default);
   background: var(--bg-surface);
   padding: var(--space-xs);
+}
+
+/* ===== Task list (left column) ===== */
+
+.task-list {
+  width: 340px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  position: relative;
+  background: var(--bg-canvas);
+  border-right: 1px solid var(--border-default);
+}
+.task-list__header {
+  flex: none;
+  padding: var(--space-md) var(--space-md) var(--space-sm);
+  border-bottom: 1px solid var(--border-default);
+  background: var(--bg-surface);
+}
+.task-list__add {
+  width: 100%;
+  height: 32px;
+  background: var(--bg-input);
+}
+.task-list__body {
+  flex: 1;
+  overflow: auto;
+  /* Reserve the scrollbar gutter even when no scrollbar is shown so the
+     content width stays constant — otherwise the list reflows sideways
+     when a task tips the list past the fold. */
+  scrollbar-gutter: stable;
+  padding: var(--space-sm) 0;
+}
+.task-list__hint {
+  padding: var(--space-lg);
+  color: var(--fg-muted);
+  font-size: var(--font-sm);
+}
+.task-list__empty {
+  padding: var(--space-3xl) var(--space-lg);
+  text-align: center;
+  color: var(--fg-muted);
+}
+.task-list__empty-glyph {
+  font-size: var(--font-3xl);
+  margin-bottom: var(--space-sm);
+}
+.task-list__empty-hint {
+  margin-top: var(--space-sm);
+  font-size: var(--font-xs);
+  line-height: 1.7;
+}
+.task-list__footer {
+  flex: none;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  border-top: 1px solid var(--border-default);
+  background: var(--bg-surface);
+  padding: var(--space-xs);
+}
+
+/* Collapsed task-list rail. Same role as .ai-rail but for the LEFT master
+   column: thin vertical strip with a vertical "任务" label and a trailing
+   chevron (the expand affordance) pointing toward the list it reveals.
+   Mirrors .ai-rail's structure (label middle, chevron at bottom) — but
+   WITHOUT a top icon, because the rail is the COLLAPSED state: showing
+   a "collapse" glyph (IconCollapseBar) there would be semantically
+   redundant (the grip in the open state already serves that role).
+   The AI rail's top icon is IconSparkle (a brand mark, not a collapse
+   affordance); the task rail's "brand" is just the vertical "任务"
+   label, so nothing else belongs at the top. The trailing chevron is
+   pushed to the bottom by .task-list-rail svg's margin-top:auto. */
+.task-list-rail {
+  width: var(--task-list-rail-w);
+  flex: none;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-md);
+  padding: var(--space-md) 0;
+  background: var(--bg-surface);
+  border-right: 1px solid var(--border-default);
+  color: var(--fg-muted);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+}
+.task-list-rail:hover {
+  background: var(--bg-hover);
+  color: var(--accent-primary);
+}
+.task-list-rail__label {
+  writing-mode: vertical-rl;
+  letter-spacing: 0.12em;
+  font-size: var(--font-xs);
+  font-weight: 600;
+}
+/* `display: block` drops the inline-baseline shift; explicit width/height
+   pins the chevron SVG to its declared footprint so it can't drift
+   horizontally inside the centered flex column; `margin-top: auto` pushes
+   it to the bottom of the rail so the "任务" label sits in the visual
+   middle. */
+.task-list-rail svg {
+  display: block;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  margin-top: auto;
 }
 
 /* ===== Toasts ===== */
@@ -3021,10 +3452,74 @@ a:hover {
   display: flex;
   gap: var(--space-sm);
 }
+.composer__mode-tabs {
+  display: inline-flex;
+  align-self: flex-start;
+  padding: 3px;
+  border: 1px solid var(--border-default);
+  border-radius: 9px;
+  background: var(--bg-surface);
+}
+.composer__mode-tabs button {
+  min-width: 96px;
+  padding: 7px 14px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg-secondary);
+  font: inherit;
+  font-size: var(--font-sm);
+  cursor: pointer;
+}
+.composer__mode-tabs button.is-active {
+  background: var(--bg-active);
+  color: var(--accent-primary);
+  font-weight: 600;
+}
+.composer__form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-md);
+  padding: var(--space-lg);
+  border: 1px solid var(--border-default);
+  border-radius: 10px;
+  background: var(--bg-surface);
+}
 .composer__field {
   display: flex;
   flex-direction: column;
   gap: 4px;
+}
+.composer__field--wide { grid-column: 1 / -1; }
+.composer__field > span {
+  color: var(--fg-secondary);
+  font-size: var(--font-sm);
+  font-weight: 600;
+}
+.composer__field input,
+.composer__field select {
+  width: 100%;
+  min-height: 38px;
+  padding: 7px 10px;
+  border: 1px solid var(--border-default);
+  border-radius: 7px;
+  background: var(--bg-input);
+  color: var(--fg-primary);
+  font: inherit;
+  outline: none;
+}
+.composer__field input:focus,
+.composer__field select:focus {
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 0 2px var(--accent-primary-soft);
+}
+.composer__today {
+  grid-column: 1 / -1;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+  color: var(--fg-secondary);
+  font-size: var(--font-sm);
 }
 .composer__textarea {
   width: 100%;
@@ -3098,7 +3593,15 @@ a:hover {
 }
 .composer__foot {
   display: flex;
+  align-items: center;
+  gap: var(--space-md);
   justify-content: flex-end;
+}
+.composer__foot .composer__hint { margin-right: auto; }
+@media (max-width: 720px) {
+  .composer__form { grid-template-columns: 1fr; }
+  .composer__field--wide,
+  .composer__today { grid-column: 1; }
 }
 .composer__hint {
   color: var(--fg-muted);

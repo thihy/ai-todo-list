@@ -51,9 +51,9 @@ describe('router sort deep-link', () => {
   });
 
   it('keeps the filter path intact when a sort query is present', () => {
-    // A project tag and a status filter both survive the ?sort split.
-    const r = parseHash('#/list/project/work?sort=due') as { filter: { kind: string; tag?: string }; sort: string };
-    expect(r.filter).toMatchObject({ kind: 'project', tag: 'work' });
+    // A status filter survives the ?sort split.
+    const r = parseHash('#/list/status/next?sort=due') as { filter: { kind: string; status?: string }; sort: string };
+    expect(r.filter).toMatchObject({ kind: 'status', status: 'next' });
     expect(r.sort).toBe('due');
   });
 

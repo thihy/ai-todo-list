@@ -49,10 +49,8 @@ describe('renameTaskDir', () => {
 
     expect(result.dirRenamed).toBe(true);
     expect(result.pathsUpdated).toBe(0);
-    // After rename the files live under the new (unsuffixed) slug path —
-    // uniqueTodoDir would now return a suffixed path because the dir
-    // exists, so build the expected path directly.
-    const expectedNewDir = join(todosDir, 'New');
+    // The task id prefix keeps same-title directories collision-free.
+    const expectedNewDir = join(todosDir, `${t.id.slice(0, 6)}-New`);
     expect(existsSync(expectedNewDir)).toBe(true);
     expect(existsSync(join(expectedNewDir, 'progress.html'))).toBe(true);
     expect(existsSync(oldDir)).toBe(false);
@@ -83,7 +81,7 @@ describe('renameTaskDir', () => {
     const row = handle.db
       .prepare<[string], { file_path: string }>('SELECT file_path FROM inbox_attachments WHERE id = ?')
       .get('01abc');
-    const expectedNewDir = join(todosDir, 'B');
+    const expectedNewDir = join(todosDir, `${t.id.slice(0, 6)}-B`);
     expect(row!.file_path).toBe(join(expectedNewDir, 'attachments', '01abc-note.txt'));
   });
 
@@ -135,7 +133,6 @@ describe('writeTodoJson', () => {
       status: 'next',
       priority: 'none',
       tags: [],
-      project: null,
       dueAt: null,
       createdAt: 1,
       updatedAt: 2,

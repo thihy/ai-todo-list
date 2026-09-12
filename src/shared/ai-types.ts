@@ -77,7 +77,6 @@ export interface ParsedTodo {
   title: string;
   dueAt: number | null;
   priority: 'none' | 'low' | 'medium' | 'high';
-  project: string | null;
   tags: string[];
 }
 
@@ -138,6 +137,10 @@ export interface AIToolCallEvent extends AIStreamEventBase {
   toolName: string;
   args: unknown;
   result: unknown;
+  /** DSH tool-owned, replayable presentation payload from tool/result.meta.
+   *  Rich cards such as WebBlock consume this instead of parsing the
+   *  model-facing text result. */
+  presentationMeta?: unknown;
   ok: boolean;
 }
 

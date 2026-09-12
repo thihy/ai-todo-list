@@ -105,7 +105,9 @@ export type ToolName =
   | 'ai.health'
   | 'ai.models'
   | 'ai.stats'
-  | 'app.currentContext';
+  | 'app.currentContext'
+  | 'web_search'
+  | 'web_fetch';
 
 const kindByTool: Record<ToolName, ToolCallKind> = {
   'todo.list': 'search',
@@ -142,6 +144,8 @@ const kindByTool: Record<ToolName, ToolCallKind> = {
   'ai.models': 'other',
   'ai.stats': 'other',
   'app.currentContext': 'read',
+  'web_search': 'search',
+  'web_fetch': 'fetch',
 };
 
 /** Pending-call card. DSH default shape: generic title + rawInput +
@@ -242,6 +246,8 @@ function titleFor(toolName: string): string {
     'ai.models': 'AI 模型',
     'ai.stats': 'AI 统计',
     'app.currentContext': '当前焦点',
+    'web_search': '搜索网页',
+    'web_fetch': '读取网页',
   };
   return map[toolName] ?? toolName;
 }
@@ -344,8 +350,6 @@ function todoToRead(_args: unknown, result: unknown): ToolResultView {
   if (priority) pushLine(lines, `优先级: ${priority}`);
   const due = numberField(result, 'dueAt');
   if (due != null) pushLine(lines, `截止: ${formatDue(due)}`);
-  const project = stringField(result, 'project');
-  if (project) pushLine(lines, `项目: ${project}`);
   const body = stringField(result, 'body');
   if (body) pushLine(lines, '', body);
   return {

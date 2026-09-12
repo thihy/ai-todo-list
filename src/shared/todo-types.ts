@@ -28,7 +28,6 @@ export interface Todo {
   title: string;
   status: TodoStatus;
   priority: Priority;
-  project: string | null;
   dueAt: number | null;
   bodyPath: string;
   createdAt: number;
@@ -73,7 +72,6 @@ export interface TodoCreate {
   title: string;
   status?: TodoStatus;
   priority?: Priority;
-  project?: string | null;
   dueAt?: number | null;
   tags?: string[];
   /** Parent todo id for SubTask creation; null/omitted = top-level. */
@@ -88,7 +86,6 @@ export interface TodoPatch {
   title?: string;
   status?: TodoStatus;
   priority?: Priority;
-  project?: string | null;
   dueAt?: number | null;
   tags?: string[];
   /** Re-parent the task (make it a subtask of another task); null = promote
@@ -112,7 +109,6 @@ export interface TodoPatch {
 export interface TodoFilter {
   status?: TodoStatus[];
   priority?: Priority[];
-  project?: string[];
   tag?: string[];
   dueBefore?: number | null;
   dueAfter?: number | null;

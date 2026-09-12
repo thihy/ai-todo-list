@@ -7,6 +7,9 @@
 
 import type { ElectronApplication, Page } from 'playwright';
 import { _electron as electron } from 'playwright';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 export interface AppHandle {
   app: ElectronApplication;
@@ -27,10 +30,60 @@ export const TEXT_PROMPT = '用一句话回答：1+1等于几？不要调用任�
 export const LONG_PROMPT = '写一段 200 字左右的中文短文，介绍光的作用。不要调用工具。';
 
 export async function launchApp(): Promise<AppHandle> {
-  const app = await electron.launch({ args: ['.'] });
-  const win = await app.firstWindow();
-  await win.waitForLoadState('domcontentloaded');
-  return { app, win };
+  // Test runners in this repository use Electron itself as the Node runtime.
+  // Do not leak that switch into the child process: Playwright needs to start
+  // the binary in normal Electron mode, otherwise Chromium flags are rejected
+  // with `bad option: --remote-debugging-port=0`.
+  const env = { ...process.env };
+  delete env.ELECTRON_RUN_AS_NODE;
+  env.ELECTRON_ALLOW_MULTI_INSTANCE = '1';
+  env.ELECTRON_E2E = '1';
+  // Isolate Chromium state and the process-singleton lock from the user's
+  // running app. Seed dataDir too: the production default intentionally lives
+  // beside userData, which would otherwise make every E2E run share the same
+  // temp/.todo-list database despite having a unique Chromium profile.
+  const userDataDir = mkdtempSync(join(tmpdir(), 'ai-todo-e2e-'));
+  writeFileSync(
+    join(userDataDir, 'config.json'),
+    JSON.stringify({ dataDir: join(userDataDir, 'data') }),
+    'utf8',
+  );
+  const app = await electron.launch({
+    // CI/sandbox Windows images may not provide the GPU runtime DLLs used by
+    // Chromium. Software rendering keeps UI assertions deterministic without
+    // changing production hardware acceleration.
+    args: [`--user-data-dir=${userDataDir}`, '--disable-gpu', '--no-sandbox', '.'],
+    env,
+  });
+  const processOutput: string[] = [];
+  app.process().stdout?.on('data', (chunk) => processOutput.push(String(chunk)));
+  app.process().stderr?.on('data', (chunk) => processOutput.push(String(chunk)));
+  let windowUrl = '(window not created)';
+  try {
+    const win = await app.firstWindow();
+    windowUrl = win.url();
+    win.on('close', () => processOutput.push(`window closed while loading: ${windowUrl}`));
+    await win.waitForLoadState('domcontentloaded');
+    app.on('close', () => {
+      rmSync(userDataDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    });
+    return { app, win };
+  } catch (error) {
+    const logPath = join(userDataDir, 'todo-list.log');
+    const appLog = existsSync(logPath) ? readFileSync(logPath, 'utf8') : '';
+    await app.close().catch(() => undefined);
+    try {
+      rmSync(userDataDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    } catch {
+      // Keep the original launch error; the OS may briefly retain cache locks.
+    }
+    throw new Error(
+      [`Electron window failed to load (${windowUrl}): ${(error as Error).message}`, ...processOutput, appLog]
+        .filter(Boolean)
+        .join('\n'),
+      { cause: error },
+    );
+  }
 }
 
 /** Open the AI pane (route `#/ai` flips App.tsx's aiOpen to true). Idempotent. */

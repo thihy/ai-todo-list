@@ -16,7 +16,7 @@ import {
   PlanGuideModal,
   todayDateKey,
 } from './components/PlanGuideModal';
-import { Composer } from './components/Composer';
+import { Composer, type ExternalAiSubmitDetail } from './components/Composer';
 import { TodoListPane } from './panes/TodoListPane';
 import { TodoEditorPane } from './panes/TodoEditorPane';
 import { StatsPane } from './panes/StatsPane';
@@ -28,7 +28,7 @@ const DocumentsView = React.lazy(() =>
   import('./components/DocumentsView').then(m => ({ default: m.DocumentsView })),
 );
 import { PaneDivider } from './components/PaneDivider';
-import { IconCheck } from './components/icons';
+import { IconCheck, IconChevronRight } from './components/icons';
 import { usePaneWidths } from './hooks/usePaneWidths';
 import { parseHash, routeToHash, type Route, type ListFilter, type SortKey } from './router';
 import { useAppEvent, useTodo, useSettings } from './hooks/useTodoListApi';
@@ -36,6 +36,7 @@ import { emitDataChanged } from './data-bus';
 import { IconFullscreenExit } from './components/icons';
 
 const AI_OPEN_KEY = 'todo-list.aiOpen';
+const LIST_OPEN_KEY = 'todo-list.listOpen';
 
 type View = 'list' | 'stats' | 'drawing';
 
@@ -56,6 +57,7 @@ export const App: React.FC = () => {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [composing, setComposing] = useState(false);
+  const [pendingAiCreate, setPendingAiCreate] = useState<ExternalAiSubmitDetail | null>(null);
   const [listFilter, setListFilter] = useState<ListFilter>({ kind: 'all' });
   const [listSort, setListSort] = useState<SortKey>('alpha');
   // Fullscreen document mode: hides the task list + basic-info/links/activity
@@ -75,9 +77,24 @@ export const App: React.FC = () => {
       return true;
     }
   });
-  // Resizable panes: list (left) + AI (right) widths persist across restarts.
-  // The detail pane is flex:1, so it absorbs the remainder.
-  const { listWidth, aiWidth, setListWidth, setAiWidth } = usePaneWidths();
+  // Task list open state — mirrors AI's aiOpen. Open by default; user can
+  // collapse the master column to a thin rail (just like the AI panel does)
+  // when the detail pane is the focus. Persisted so the layout survives
+  // restart. The rail itself is a flex sibling with a single expand button,
+  // not a magic-bar — the affordance is the [|] icon.
+  const [listOpen, setListOpen] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(LIST_OPEN_KEY) !== '0';
+    } catch {
+      return true;
+    }
+  });
+  // Resizable panes: AI width persists across restarts. The detail pane is
+  // flex:1, so it absorbs the remainder. The task list width is fixed at
+  // its persisted value (no drag-resize); the previous 16px grip column on
+  // its right edge was removed when the collapse affordance moved INTO the
+  // panel header (see TodoListPane + AIPane).
+  const { listWidth, aiWidth, setAiWidth } = usePaneWidths();
   // —— 每日计划引导 ——
   // 启动时 + 通知点击都可能弹 PlanGuideModal。settings.dailyPlanReminderTime
   // 和 snoozePlanGuideUntil 都在 useSettings() 里读，patch() 写回。
@@ -182,6 +199,14 @@ export const App: React.FC = () => {
     }
   }, [aiOpen]);
 
+  useEffect(() => {
+    try {
+      localStorage.setItem(LIST_OPEN_KEY, listOpen ? '1' : '0');
+    } catch {
+      // ignore storage errors
+    }
+  }, [listOpen]);
+
   useAppEvent('app:toggle-ai', () => setAiOpen((v) => !v));
   useAppEvent('app:navigate', ({ route }) => {
     if (route) location.hash = route.startsWith('#') ? route : `#/${route}`;
@@ -204,6 +229,7 @@ export const App: React.FC = () => {
     location.hash = to;
   }, []);
   const toggleAi = useCallback(() => setAiOpen((v) => !v), []);
+  const toggleList = useCallback(() => setListOpen((v) => !v), []);
   const selectFilter = useCallback((f: ListFilter) => {
     setListFilter(f);
     location.hash = routeToHash({ name: 'list', filter: f, sort: listSort });
@@ -272,21 +298,58 @@ export const App: React.FC = () => {
             )}
             {view === 'list' && !showFullscreen && (
               <div className="master-detail">
-                <TodoListPane
-                  width={listWidth}
-                  filter={listFilter}
-                  sort={listSort}
-                  selectedId={selectedId}
-                  onSelect={(id) => navigate(routeToHash({ name: 'todo', id }))}
-                  onOpenSettings={() => setSettingsOpen(true)}
-                  onCompose={() => setComposing(true)}
-                  toastBus={toast}
-                />
-                <PaneDivider onDrag={(dx) => setListWidth(listWidth + dx)} />
+                {/* Task list host: flex row, mirrors the AI panel's pattern
+                    (open content + 16px grip on the right). When the list
+                    is collapsed, swap the whole host for a thin 40px rail
+                    with the same [|] expand affordance so the user can
+                    pop it back open without hunting through menus. */}
+                {listOpen ? (
+                  // Collapse affordance is rendered INSIDE the task list's
+                  // own header (right edge of .task-list__header, via the
+                  // .task-list__collapse-btn button) — not in a separate
+                  // 16px grip column on the panel's right edge. The user
+                  // reads the icon as "part of the area" they're looking
+                  // at, not as a chrome handle on a divider strip. Same
+                  // pattern as the AI panel (see layout/AIPanel.tsx).
+                  <TodoListPane
+                    width={listWidth}
+                    filter={listFilter}
+                    sort={listSort}
+                    selectedId={selectedId}
+                    onSelect={(id) => navigate(routeToHash({ name: 'todo', id }))}
+                    onOpenSettings={() => setSettingsOpen(true)}
+                    onCompose={() => setComposing(true)}
+                    onCollapse={toggleList}
+                    toastBus={toast}
+                  />
+                ) : (
+                  <button
+                    type="button"
+                    className="task-list-rail"
+                    onClick={toggleList}
+                    aria-label="展开任务列表"
+                    aria-expanded={false}
+                  >
+                    {/* No top icon — the rail is the COLLAPSED state, so
+                        showing a "collapse" affordance here is semantically
+                        redundant. Mirrors the AI rail, whose top icon is
+                        the AI brand (IconSparkle), not a collapse glyph;
+                        the task rail's "brand" is just the vertical "任务"
+                        label. The trailing chevron at the rail's bottom
+                        (margin-top: auto on .task-list-rail svg) is the
+                        actual expand affordance. */}
+                    <span className="task-list-rail__label">任务</span>
+                    <IconChevronRight size={14} />
+                  </button>
+                )}
                 <TaskDetail
                   todoId={selectedId}
                   composing={composing}
                   onCloseCompose={() => setComposing(false)}
+                  onAiSubmit={(detail) => {
+                    setPendingAiCreate(detail);
+                    setAiOpen(true);
+                  }}
                   navigate={navigate}
                   onFullscreen={(todoId) => setFullscreenTodoId(todoId)}
                   selectedDocId={selectedId ? selectedDocByTodo[selectedId] ?? null : null}
@@ -303,7 +366,13 @@ export const App: React.FC = () => {
             )}
           </main>
           {aiOpen && <PaneDivider onDrag={(dx) => setAiWidth(aiWidth - dx)} />}
-          <AIPanel open={aiOpen} width={aiWidth} onToggle={toggleAi} />
+          <AIPanel
+            open={aiOpen}
+            width={aiWidth}
+            onToggle={toggleAi}
+            externalSubmit={pendingAiCreate}
+            onExternalSubmitConsumed={() => setPendingAiCreate(null)}
+          />
         </div>
         <Statusbar route={route} />
         <CommandPaletteHost open={paletteOpen} onClose={() => setPaletteOpen(false)} navigate={navigate} onCompose={() => { setPaletteOpen(false); setComposing(true); }} />
@@ -325,15 +394,16 @@ const TaskDetail: React.FC<{
   todoId: string | null;
   composing: boolean;
   onCloseCompose: () => void;
+  onAiSubmit: (detail: ExternalAiSubmitDetail) => void;
   navigate: (to: string) => void;
   onFullscreen: (todoId: string) => void;
   selectedDocId: string | null;
   onSelectDoc: (tabId: string) => void;
-}> = ({ todoId, composing, onCloseCompose, navigate, onFullscreen, selectedDocId, onSelectDoc }) => {
+}> = ({ todoId, composing, onCloseCompose, onAiSubmit, navigate, onFullscreen, selectedDocId, onSelectDoc }) => {
   if (composing) {
     return (
       <div className="task-detail task-detail--compose">
-        <Composer onClose={onCloseCompose} navigate={navigate} />
+        <Composer onClose={onCloseCompose} navigate={navigate} onAiSubmit={onAiSubmit} />
       </div>
     );
   }

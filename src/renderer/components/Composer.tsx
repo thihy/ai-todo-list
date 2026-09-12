@@ -1,8 +1,6 @@
-// Composer — clean NL capture surface shown in the center when the user
-// clicks 新建任务. Captures text + pasted/dropped images, then on Enter
-// dispatches a window event so the right-side AI assistant can pick it up
-// and use its todo.create tool to file it with the right priority /
-// status / tags, nesting it under a parent task when needed.
+// Composer — dual-mode task creation surface. Form mode writes structured
+// fields directly through todo.create; AI mode sends natural language and
+// optional images through an explicitly marked task-creation request.
 //
 // Why send to the AI instead of creating the task directly:
 // - The AI knows the user's existing tasks, current workload, and recent
@@ -11,12 +9,12 @@
 // - The user keeps typing natural-language descriptions; the AI does the
 //   structured-field extraction that the old parseCapturePreview heuristic
 //   only approximated.
-// - One creation path (AI) means one well-tested set of tool calls handles
-//   the happy case, edge cases, and validation in one place. The Composer
-//   here is a thin capture shell — the heavy lifting moved to the model.
+// - Form mode stays deterministic for users who already know the fields.
+// - AI mode handles extraction, ambiguity and existing-task relationships.
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { IconClose, IconSend, IconSparkle } from './icons';
+import type { Priority, TodoStatus } from '../../shared/todo-types';
 
 interface PastedImage {
   id: string;
@@ -37,6 +35,9 @@ export interface ExternalAiSubmitDetail {
    *  in the wire prompt as `![name](dataUrl)` so a multimodal model sees
    *  them inline. */
   images: { name: string; mime: string; dataUrl: string }[];
+  /** Explicit source contract: the receiver must wrap this as a task-create
+   * request instead of treating it as ordinary assistant chat. */
+  intent: 'create-task';
 }
 
 /** Fired on `window` when the user presses Enter (or clicks 发送给 AI 助手).
@@ -47,11 +48,21 @@ export const AI_SUBMIT_EVENT = 'todo-list:ai-submit-external';
 export const Composer: React.FC<{
   onClose: () => void;
   navigate: (to: string) => void;
-}> = ({ onClose, navigate: _navigate }) => {
+  onAiSubmit?: (detail: ExternalAiSubmitDetail) => void;
+}> = ({ onClose, navigate, onAiSubmit }) => {
+  const [mode, setMode] = useState<'form' | 'ai'>('form');
   const [text, setText] = useState('');
   const [images, setImages] = useState<PastedImage[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [form, setForm] = useState({
+    title: '',
+    status: 'next' as TodoStatus,
+    priority: 'none' as Priority,
+    dueDate: '',
+    tags: '',
+    plannedToday: false,
+  });
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
@@ -76,13 +87,13 @@ export const Composer: React.FC<{
         document.activeElement === textareaRef.current
       ) {
         e.preventDefault();
-        void submit();
+        if (mode === 'ai') void submitAi();
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [text, images]);
+  }, [text, images, mode]);
 
   const addBlob = useCallback((blob: Blob, name: string): void => {
     const url = URL.createObjectURL(blob);
@@ -124,7 +135,7 @@ export const Composer: React.FC<{
     [addBlob],
   );
 
-  const submit = async (): Promise<void> => {
+  const submitAi = async (): Promise<void> => {
     const trimmed = text.trim();
     if (!trimmed && images.length === 0) return;
     if (submitting) return;
@@ -143,8 +154,9 @@ export const Composer: React.FC<{
         })),
       );
 
-      const detail: ExternalAiSubmitDetail = { prompt: trimmed, images: imagePayload };
-      window.dispatchEvent(new CustomEvent<ExternalAiSubmitDetail>(AI_SUBMIT_EVENT, { detail }));
+      const detail: ExternalAiSubmitDetail = { intent: 'create-task', prompt: trimmed, images: imagePayload };
+      if (onAiSubmit) onAiSubmit(detail);
+      else window.dispatchEvent(new CustomEvent<ExternalAiSubmitDetail>(AI_SUBMIT_EVENT, { detail }));
 
       // Free the object URLs we created for previews — they're not needed
       // after we have the data URLs, and leaking them would balloon memory
@@ -152,6 +164,37 @@ export const Composer: React.FC<{
       images.forEach((i) => URL.revokeObjectURL(i.url));
 
       onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      setSubmitting(false);
+    }
+  };
+
+  const submitForm = async (): Promise<void> => {
+    const title = form.title.trim();
+    if (!title || submitting) return;
+    setSubmitting(true);
+    setError(null);
+    const tags = form.tags.split(/[,，]/).map((tag) => tag.trim()).filter(Boolean);
+    const dueAt = form.dueDate
+      ? new Date(`${form.dueDate}T23:59:59.999`).getTime()
+      : undefined;
+    const today = new Date();
+    const plannedFor = form.plannedToday
+      ? `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+      : undefined;
+    try {
+      const res = await window.todoList.todo.create({
+        title,
+        status: form.status,
+        priority: form.priority,
+        ...(tags.length ? { tags } : {}),
+        ...(dueAt != null && Number.isFinite(dueAt) ? { dueAt } : {}),
+        ...(plannedFor ? { plannedFor } : {}),
+      });
+      if (!res.ok) throw new Error(res.message ?? '创建任务失败');
+      onClose();
+      navigate(`#/todo/${res.data.id}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       setSubmitting(false);
@@ -180,7 +223,16 @@ export const Composer: React.FC<{
         </button>
       </header>
 
-      <div className="composer__surface">
+      <div className="composer__mode-tabs" role="tablist" aria-label="创建方式">
+        <button type="button" role="tab" aria-selected={mode === 'form'} className={mode === 'form' ? 'is-active' : ''} onClick={() => setMode('form')}>
+          表单创建
+        </button>
+        <button type="button" role="tab" aria-selected={mode === 'ai'} className={mode === 'ai' ? 'is-active' : ''} onClick={() => setMode('ai')}>
+          AI 创建
+        </button>
+      </div>
+
+      {mode === 'ai' ? <div className="composer__surface">
         <textarea
           ref={textareaRef}
           className="composer__textarea"
@@ -212,21 +264,48 @@ export const Composer: React.FC<{
             ))}
           </div>
         )}
-      </div>
+      </div> : <div className="composer__form">
+        <label className="composer__field composer__field--wide">
+          <span>任务标题</span>
+          <input autoFocus value={form.title} onChange={(e) => setForm((v) => ({ ...v, title: e.target.value }))} placeholder="输入要完成的事项" />
+        </label>
+        <label className="composer__field">
+          <span>状态</span>
+          <select value={form.status} onChange={(e) => setForm((v) => ({ ...v, status: e.target.value as TodoStatus }))}>
+            <option value="next">未完成</option><option value="doing">进行中</option><option value="blocked">阻塞中</option><option value="done">已完成</option><option value="cancelled">已取消</option>
+          </select>
+        </label>
+        <label className="composer__field">
+          <span>优先级</span>
+          <select value={form.priority} onChange={(e) => setForm((v) => ({ ...v, priority: e.target.value as Priority }))}>
+            <option value="none">无</option><option value="low">低</option><option value="medium">中</option><option value="high">高</option>
+          </select>
+        </label>
+        <label className="composer__field">
+          <span>截止日期</span>
+          <input type="date" value={form.dueDate} onChange={(e) => setForm((v) => ({ ...v, dueDate: e.target.value }))} />
+        </label>
+        <label className="composer__field composer__field--wide">
+          <span>标签</span>
+          <input value={form.tags} onChange={(e) => setForm((v) => ({ ...v, tags: e.target.value }))} placeholder="多个标签用逗号分隔" />
+        </label>
+        <label className="composer__today">
+          <input type="checkbox" checked={form.plannedToday} onChange={(e) => setForm((v) => ({ ...v, plannedToday: e.target.checked }))} />
+          加入今日待办
+        </label>
+      </div>}
 
       {error && <div className="composer__error">{error}</div>}
 
       <footer className="composer__foot">
-        <span className="composer__hint">
-          回车发送给 AI 助手 · <kbd>Shift</kbd>+<kbd>Enter</kbd> 换行 · <kbd>Esc</kbd> 关闭 · 粘贴或拖入图片
-        </span>
+        <span className="composer__hint">{mode === 'ai' ? <>回车交给 AI 创建 · <kbd>Shift</kbd>+<kbd>Enter</kbd> 换行 · 可粘贴图片</> : '填写明确字段后直接创建，不经过 AI'}</span>
         <button
           type="button"
           className="btn-primary composer__send"
-          disabled={submitting || (!text.trim() && images.length === 0)}
-          onClick={() => void submit()}
+          disabled={submitting || (mode === 'ai' ? (!text.trim() && images.length === 0) : !form.title.trim())}
+          onClick={() => void (mode === 'ai' ? submitAi() : submitForm())}
         >
-          {submitting ? '发送中…' : '发送给 AI 助手'}
+          {submitting ? '创建中…' : mode === 'ai' ? '交给 AI 创建' : '创建任务'}
           <IconSend size={14} className="composer__send-glyph" />
         </button>
       </footer>

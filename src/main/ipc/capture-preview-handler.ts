@@ -17,7 +17,7 @@ export function registerCapturePreviewHandler(): void {
     );
     const { title, dueAt, priority, tags } = parsed;
     return Promise.resolve(
-      okResult({ title, dueAt, priority, project: null, tags } satisfies ParsedTodo),
+      okResult({ title, dueAt, priority, tags } satisfies ParsedTodo),
     );
   });
   logger.info('ai.parseCapturePreview handler registered');

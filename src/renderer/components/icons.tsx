@@ -124,6 +124,24 @@ export const IconChevronDown: React.FC<IconProps> = (p) => (
   </Svg>
 );
 
+/** Chevron-left — used as the "expand right" affordance on the AI rail.
+ *  Points toward the panel it's about to reveal. Mirrors IconChevronDown
+ *  so the icon family reads consistently across the chrome. */
+export const IconChevronLeft: React.FC<IconProps> = (p) => (
+  <Svg {...p}>
+    <path d="M10 4L6 8L10 12" />
+  </Svg>
+);
+
+/** Chevron-right — mirror of IconChevronLeft. Used as the trailing
+ *  affordance on the task-list rail, pointing toward the list it reveals
+ *  when clicked (the list sits to the rail's right). */
+export const IconChevronRight: React.FC<IconProps> = (p) => (
+  <Svg {...p}>
+    <path d="M6 4L10 8L6 12" />
+  </Svg>
+);
+
 /** Bold — the only filled icon in the family (intentional: reads as "weight"). */
 export const IconBold: React.FC<IconProps> = (p) => (
   <Svg {...p} fill="currentColor" stroke="none">
@@ -328,6 +346,53 @@ export const IconInboxEmpty: React.FC<IconProps> = (p) => (
     <path d="M3 9V5a1 1 0 0 1 1-1h8a1 1 0 0 1 1 1v4" />
     <path d="M3 9h3l1 2h2l1-2h3v3a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z" />
   </Svg>
+);
+
+/** CollapseBar — the pane-collapse affordance: a single rectangle split
+ *  into two asymmetric halves sharing the central divider. The left half
+ *  is smaller and rendered as a hollow outline (the handle / divider that
+ *  does the collapsing); the right half is bigger and rendered as a solid
+ *  fill (the pane / region being collapsed). Reads as "a small handle
+ *  attached to a larger panel" — collapsing pushes the larger solid side
+ *  away toward the handle.
+ *
+ *  Geometry: outer extent 13×13 centered in the 16×16 viewBox (1.5px inset
+ *  on each side). Left half: x=1.5→6 (width 4.5), rx=1 rounded corners,
+ *  outlined only (1.4 stroke). Right half: x=6→14.5 (width 8.5), rx=1
+ *  rounded corners, filled solid. The two halves butt at x=6 so the eye
+ *  reads them as one rectangle divided in two, not two floating rects.
+ *  The 8.5/4.5 ratio is what makes the right half visually "the panel"
+ *  and the left half "the handle" — equal halves would lose that
+ *  affordance.
+ *
+ *  Why mixed fill+stroke: earlier iterations went (a) pure outline ([|]
+ *  with stroke on outer + inner rect), (b) pure fill (filled square with
+ *  vertical gap via fill-rule=evenodd), then (c) this asymmetric
+ *  hollow+solid split. (a) read too light next to the IconSparkle in
+ *  the AI rail; (b) read as a generic square, not as a collapse
+ *  affordance; (c) finally communicates "a panel + its handle" — the
+ *  asymmetric sizes and fill treatments make the affordance legible
+ *  at a glance even at 16px. */
+export const IconCollapseBar: React.FC<IconProps> = ({ size = 16, children: _ignored, ...rest }) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 16 16"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth={1.4}
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    aria-hidden="true"
+    {...rest}
+  >
+    {/* Left half — the handle. Smaller, outlined only (no fill). */}
+    <rect x="1.5" y="1.5" width="4.5" height="13" rx="1" />
+    {/* Right half — the pane. Bigger, filled solid. `stroke="none"`
+       suppresses the inherited 1.4 stroke so this half reads as a clean
+       filled mass next to the outlined handle. */}
+    <rect x="6" y="1.5" width="8.5" height="13" rx="1" fill="currentColor" stroke="none" />
+  </svg>
 );
 
 export default Svg;

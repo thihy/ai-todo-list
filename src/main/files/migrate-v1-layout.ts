@@ -73,7 +73,6 @@ export async function migrateV1Layout(opts: MigrationOpts): Promise<MigrationRes
           title: string | null;
           status: string;
           priority: string;
-          project: string | null;
           due_at: number | null;
           created_at: number;
           updated_at: number;
@@ -81,7 +80,7 @@ export async function migrateV1Layout(opts: MigrationOpts): Promise<MigrationRes
           parent_id: string | null;
           progress: number;
         }>(
-          'SELECT title, status, priority, project, due_at, created_at, updated_at, done_at, parent_id, progress FROM todos WHERE id = ?',
+          'SELECT title, status, priority, due_at, created_at, updated_at, done_at, parent_id, progress FROM todos WHERE id = ?',
         )
         .get(ulid);
       const title = row?.title ?? paths.UNTITLED_SLUG;
@@ -121,7 +120,6 @@ export async function migrateV1Layout(opts: MigrationOpts): Promise<MigrationRes
             status: row?.status ?? 'next',
             priority: row?.priority ?? 'none',
             tags: [],
-            project: row?.project ?? null,
             dueAt: row?.due_at ?? null,
             createdAt: row?.created_at ?? Date.now(),
             updatedAt: row?.updated_at ?? Date.now(),

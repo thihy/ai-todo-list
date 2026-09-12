@@ -20,8 +20,8 @@ let resolveTaskDir: (id: string) => string;
 /** Insert a TODO row so MarkdownStore.writeBody's `todo_not_found` check passes. */
 function seedTodo(id: string, title = 'test'): void {
   db.prepare(
-    `INSERT INTO todos (id, title, status, priority, project, due_at, body_path, created_at, updated_at, done_at)
-     VALUES (?, ?, 'next', 'none', NULL, NULL, ?, ?, ?, NULL)`,
+    `INSERT INTO todos (id, title, status, priority, due_at, body_path, created_at, updated_at, done_at)
+     VALUES (?, ?, 'next', 'none', NULL, ?, ?, ?, NULL)`,
   ).run(id, title, `${id}.md`, Date.now(), Date.now());
 }
 

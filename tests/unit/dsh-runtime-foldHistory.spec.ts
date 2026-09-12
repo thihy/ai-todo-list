@@ -32,8 +32,14 @@ function toolCall(callId: string, name: string, args = '{}') {
   return { type: 'tool/call', data: { callId, name, arguments: args } };
 }
 /** Build a tool/result event. */
-function toolResult(callId: string, ok = true, content: unknown = { ok: true }) {
-  return { type: 'tool/result', data: { message: { source: { callId }, content: [{ isError: !ok, content: Array.isArray(content) ? content : [content] }] } } };
+function toolResult(callId: string, ok = true, content: unknown = { ok: true }, meta?: unknown) {
+  return {
+    type: 'tool/result',
+    data: {
+      message: { source: { callId }, content: [{ isError: !ok, content: Array.isArray(content) ? content : [content] }] },
+      ...(meta === undefined ? {} : { meta }),
+    },
+  };
 }
 /** Step boundary — flushes accumulated assistant text. */
 function stepEnd() { return { type: 'step/end', data: {} }; }
@@ -112,6 +118,22 @@ describe('foldHistory', () => {
     expect(tools).toHaveLength(1);
     expect(tools[0]).toMatchObject({ type: 'tool', name: 'todo.list', ok: true });
     expect((tools[0] as { args?: string }).args).toBe('{"status":"next"}');
+  });
+
+  it('preserves tool/result presentation meta for rich DSH cards', () => {
+    const meta = {
+      sources: [{ url: 'https://example.com', title: 'Example' }],
+      truncated: false,
+    };
+    const turns = foldHistory([
+      toolCall('web-1', 'web_search', '{"queries":["example"]}'),
+      toolResult('web-1', true, [{ type: 'text', text: 'formatted model output' }], meta),
+    ]);
+    expect(turns).toContainEqual(expect.objectContaining({
+      type: 'tool',
+      name: 'web_search',
+      presentationMeta: meta,
+    }));
   });
 
   it('emits a tool turn with ok=false when no result follows', () => {

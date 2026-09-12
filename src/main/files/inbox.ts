@@ -45,11 +45,6 @@ function rowToAttach(row: AttachRow): InboxAttachment {
 }
 
 export class InboxStore {
-  /** Cache id → taskDir so the uniqueTodoDir collision-suffix logic in
-   *  resolveTaskDir can't bounce a single task between two dirs across
-   *  calls. Same pattern as MarkdownStore / DrawingStore. */
-  private readonly taskDirCache = new Map<ULID, string>();
-
   constructor(
     private db: Database.Database,
     /** Legacy root used to keep any pre-refactor flat files findable for
@@ -64,11 +59,7 @@ export class InboxStore {
   }
 
   private taskDirFor(todoId: ULID): string {
-    const cached = this.taskDirCache.get(todoId);
-    if (cached) return cached;
-    const dir = this.resolveTaskDir(todoId);
-    this.taskDirCache.set(todoId, dir);
-    return dir;
+    return this.resolveTaskDir(todoId);
   }
 
   /** Legacy flat attachments root. New writes go under per-task

@@ -1,10 +1,9 @@
 // Filter popover — title-bar 过滤 button. Switches the task-list filter
-// (view / priority / project). Lives in the top bar; selecting an item updates
+// (view / priority). Lives in the top bar; selecting an item updates
 // App listFilter state and the #/list/<path> hash so it's deep-linkable.
 
 import React, { useEffect, useRef, useState } from 'react';
 import type { ListFilter } from '../router';
-import type { Todo } from '../../shared/todo-types';
 
 export const FilterButton: React.FC<{
   filter: ListFilter;
@@ -63,7 +62,6 @@ export const FilterButton: React.FC<{
               />
             ))}
           </FilterSection>
-          <ProjectList filter={filter} choose={choose} />
         </div>
       )}
     </div>
@@ -76,32 +74,6 @@ export const FilterButton: React.FC<{
 };
 
 const PRIO_LABEL: Record<string, string> = { high: '高', medium: '中', low: '低', none: '无' };
-
-const ProjectList: React.FC<{ filter: ListFilter; choose: (f: ListFilter) => void }> = ({ filter, choose }) => {
-  const [tags, setTags] = useState<string[]>([]);
-  useEffect(() => {
-    window.todoList.todo.list({}).then((res) => {
-      if (res.ok) {
-        const all = res.data as Todo[];
-        setTags(Array.from(new Set(all.flatMap((t) => t.tags ?? []))).slice(0, 12));
-      }
-    });
-  }, []);
-
-  return (
-    <FilterSection title="项目">
-      {tags.length === 0 && <div className="filter-popover__empty">暂无项目</div>}
-      {tags.map((t) => (
-        <FilterItem
-          key={t}
-          active={filter.kind === 'project' && filter.tag === t}
-          label={t}
-          onClick={() => choose({ kind: 'project', tag: t })}
-        />
-      ))}
-    </FilterSection>
-  );
-};
 
 const FilterSection: React.FC<{ title: string; children: React.ReactNode }> = ({ title, children }) => (
   <div className="filter-popover__section">

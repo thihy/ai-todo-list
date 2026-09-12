@@ -309,7 +309,6 @@ describe('TodoRepo + MarkdownStore', () => {
         status: fresh.status,
         priority: fresh.priority,
         tags: fresh.tags,
-        project: fresh.project,
         dueAt: fresh.dueAt,
         createdAt: fresh.createdAt,
         updatedAt: fresh.updatedAt,
@@ -399,7 +398,7 @@ describe('TodoRepo + MarkdownStore', () => {
       const meta = migrated.db
         .prepare<[], { version: number }>('SELECT MAX(version) as version FROM schema_meta')
         .get();
-      expect(meta?.version).toBe(14);
+      expect(meta?.version).toBe(16);
 
       const repo14 = new TodoRepo(migrated.db);
       const all = repo14.list();

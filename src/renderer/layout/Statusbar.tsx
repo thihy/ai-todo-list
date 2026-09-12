@@ -4,6 +4,8 @@ import React, { useEffect, useState } from 'react';
 import type { Route } from '../router';
 import type { Todo } from '../../shared/todo-types';
 import { useDataVersion } from '../data-bus';
+import { useSettings } from '../hooks/useTodoListApi';
+import { isAiProviderConfigured } from '../dsh/provider-status';
 
 const ROUTE_LABEL: Record<string, string> = {
   home: '全部',
@@ -17,8 +19,10 @@ const ROUTE_LABEL: Record<string, string> = {
 
 export const Statusbar: React.FC<{ route: Route }> = ({ route }) => {
   const [counts, setCounts] = useState<{ open: number; total: number }>({ open: 0, total: 0 });
-  const [connected, setConnected] = useState(false);
+  const { data: aiSettings } = useSettings();
+  const connected = aiSettings !== null && isAiProviderConfigured(aiSettings);
   const dataVersion = useDataVersion(['todos']);
+  const listFilterKind = route.name === 'list' ? route.filter.kind : '';
   useEffect(() => {
     window.todoList.todo.list({}).then((res) => {
       if (res.ok) {
@@ -29,10 +33,7 @@ export const Statusbar: React.FC<{ route: Route }> = ({ route }) => {
         });
       }
     });
-    window.todoList.settings.get().then((res) => {
-      if (res.ok) setConnected((res.data as { connected: boolean }).connected);
-    });
-  }, [route.name, route.name === 'list' ? route.filter.kind : '', dataVersion]);
+  }, [route.name, listFilterKind, dataVersion]);
 
   return (
     <footer className="statusbar">

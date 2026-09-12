@@ -72,12 +72,36 @@ export interface DshRuntimeDeps {
 export type HistoryTurn =
   | { type: 'user'; text: string }
   | { type: 'assistant'; text: string; reasoning?: string }
-  | { type: 'tool'; name: string; args?: unknown; ok: boolean; data?: unknown; error?: string };
+  | { type: 'tool'; name: string; args?: unknown; ok: boolean; data?: unknown; presentationMeta?: unknown; error?: string };
 
 /** DSH 原始 session/event 形状（cordis 推过来的事件载荷）。
  *  监听器不再二次合成本地表状 TurnEvent——把这条流原样给上层，
  *  让 ai.ask 这种关心流语义的层去做 token/tool 翻译。 */
 export type DshRawEvent = { type: string; data?: unknown };
+
+/** LLM adapter 的 `StreamChunk` 最小形状（@deepseek-ai/dsh-llm 的流块）。
+ *  只取我们桥接用到的两个 delta 形态；其余（block-start/end、usage、finish
+ *  …）原样透传，不在此类型里展开。 */
+type StreamChunkLike =
+  | { type: 'text-delta'; index: number; text: string }
+  | { type: 'reasoning-delta'; index: number; text: string }
+  | { type: string; [k: string]: unknown };
+
+/** Mirror LLM deltas onto the session-shaped event surface while preserving
+ * the original async iterable for DSH's BlockAssembler. Kept as a small pure
+ * adapter so the streaming contract can be tested without booting Electron or
+ * making a provider request. */
+export async function* bridgeLlmStream(
+  upstream: AsyncIterable<StreamChunkLike>,
+  onEvent: (event: DshRawEvent) => void,
+): AsyncIterable<StreamChunkLike> {
+  for await (const chunk of upstream) {
+    if (chunk.type === 'text-delta' || chunk.type === 'reasoning-delta') {
+      onEvent({ type: 'assistant/chunk', data: { chunk } });
+    }
+    yield chunk;
+  }
+}
 
 export interface DshRuntime {
   runTurn(opts: {
@@ -456,10 +480,19 @@ function truncateTitle(s: string, maxChars: number): string {
   return trimmed.slice(0, maxChars - 1) + '…';
 }
 
-/** 从 DSH 事件流里取第一条 user/message 文本 */
+/** DSH runtime-context / system 注入的 user/message：source.kind 是 plugin 或 system。
+ *  这些不是用户真正说的话（如 "Current runtime context…"），不应渲染成用户气泡，
+ *  也不应用作会话标题。 */
+function isInjectionUserMessage(data: unknown): boolean {
+  const d = data as { source?: { kind?: string } } | undefined;
+  return d?.source?.kind === 'plugin' || d?.source?.kind === 'system';
+}
+
+/** 从 DSH 事件流里取第一条 user/message 文本（跳过运行时上下文注入） */
 function extractFirstUserText(events: ReadonlyArray<{ type: string; data?: unknown }>): string {
   for (const ev of events) {
     if (ev.type !== 'user/message') continue;
+    if (isInjectionUserMessage(ev.data)) continue;
     const d = ev.data as { content?: Array<{ type?: string; text?: string }> } | undefined;
     const text = (d?.content ?? [])
       .filter((b) => b?.type === 'text' && typeof b.text === 'string')
@@ -680,7 +713,12 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
         pendingApprovals.delete(reqId);
         resolve(outcome);
       };
-      const timer = setTimeout(() => settle('unavailable'), INTERACTION_TIMEOUT_MS);
+      const timer = setTimeout(() => {
+        settle('unavailable');
+        for (const w of BrowserWindow.getAllWindows()) {
+          if (!w.isDestroyed()) w.webContents.send('ai:user-approval-timeout', { reqId });
+        }
+      }, INTERACTION_TIMEOUT_MS);
       const signal = req.signal;
       const onAbort = (): void => settle('cancelled');
       if (signal) {
@@ -792,9 +830,41 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
       if (String(sid) !== entry.id) return;
       onEvent(event);
     });
-    entry.offSession = off;
+    // 0.1.5-rc.2 的 session 层不把 per-token chunk 作为 session 事件广播——
+    // BlockAssembler 在 llm 层消费 adapter 的 stream() AsyncIterable，只把组装
+    // 好的 assistant/message 作为 session 事件抛出，故 runTurn / 渲染端监听
+    // session 事件总线时永远收不到 assistant/chunk，渲染表现为"思考中…"然后
+    // 整段答案一次蹦出。
+    //
+    // 统一架构的解法：在 LlmRuntime 的 'llm/stream' waterfall（DSH 官方扩展点，
+    // dsh-session-title 也用）上挂一个**本轮**监听器，包住 next()，把 text-delta
+    // / reasoning-delta chunk 作为合成的 assistant/chunk 事件送进**同一条**
+    // onEvent——runTurn 的 fullText 累积、渲染端的 token/reasoning 通道原样复用。
+    // 不短接：每个 chunk 原样 yield，assembler 照常组装 assistant/message；只桥
+    // 主回复（options.purpose 为空，且 sessionId === 本会话），session-title /
+    // compaction 的流不进用户聊天。本轮结束即卸载，无全局状态。
+    const llmStreamCtx = ctx as unknown as {
+      on(
+        event: 'llm/stream',
+        handler: (
+          options: { sessionId?: unknown; purpose?: string },
+          next: () => AsyncIterable<StreamChunkLike>,
+        ) => AsyncIterable<StreamChunkLike>,
+        opts?: { global?: boolean },
+      ): () => void;
+    };
+    const offStream = llmStreamCtx.on('llm/stream', (options, next) => {
+      if (options.purpose) return next();
+      const streamSid = options.sessionId != null ? String(options.sessionId) : undefined;
+      if (streamSid !== entry.id) return next();
+      return bridgeLlmStream(next(), onEvent);
+    });
+    entry.offSession = () => {
+      try { off(); } catch { /* noop */ }
+      try { offStream(); } catch { /* noop */ }
+    };
     entry.dormant = false;
-    return off;
+    return entry.offSession;
   }
 
   // 4. 暴露 runtime API
@@ -982,7 +1052,7 @@ export function foldHistory(events: ReadonlyArray<{ type: string; data?: unknown
   const turns: HistoryTurn[] = [];
 
   // 第一遍：按 callId 索引 tool/result，方便后面跟 tool/call 配对。
-  const pendingResults = new Map<string, { ok: boolean; data?: unknown; error?: string }>();
+  const pendingResults = new Map<string, { ok: boolean; data?: unknown; presentationMeta?: unknown; error?: string }>();
   for (const ev of events) {
     if (ev.type === 'tool/result') {
       const d = ev.data as {
@@ -990,6 +1060,7 @@ export function foldHistory(events: ReadonlyArray<{ type: string; data?: unknown
           source?: { callId?: unknown };
           content?: Array<{ isError?: boolean; content?: unknown[] }>;
         };
+        meta?: unknown;
       } | undefined;
       const callId = d?.message?.source?.callId;
       const block = d?.message?.content?.[0];
@@ -997,6 +1068,7 @@ export function foldHistory(events: ReadonlyArray<{ type: string; data?: unknown
         pendingResults.set(String(callId), {
           ok: !block?.isError,
           data: block?.content,
+          presentationMeta: d?.meta,
           error: block?.isError ? JSON.stringify(block?.content) : undefined,
         });
       }
@@ -1022,7 +1094,13 @@ export function foldHistory(events: ReadonlyArray<{ type: string; data?: unknown
   for (const ev of events) {
     if (ev.type === 'user/message') {
       flushAssistant();
-      // user/message 形如：{ content: [{type, text}], source, role, id }
+      // DSH injects the "Current runtime context …" preamble as a
+      // user/message owned by the runtime-context plugin
+      // (`data.source.kind === 'plugin'`). It is context, not real user
+      // content — rendering it produced a stray "Current runtime context …"
+      // bubble under the user's message. Skip plugin/system-owned injections;
+      // only keep genuine user-authored text.
+      if (isInjectionUserMessage(ev.data)) continue;
       const d = ev.data as {
         content?: Array<{ type?: string; text?: string }>;
       } | undefined;
@@ -1080,6 +1158,7 @@ export function foldHistory(events: ReadonlyArray<{ type: string; data?: unknown
         args: d?.arguments,
         ok: result?.ok ?? false,
         data: result?.data,
+        presentationMeta: result?.presentationMeta,
         error: result?.error ?? (result ? undefined : 'no result'),
       });
     }
@@ -1134,7 +1213,7 @@ function registerDomainTools(
 
   // ---------------------------------------------------------------------------
   // todo.* — 对 TODO 表的 CRUD。工具参数尽量覆盖 TodoCreate / TodoPatch 全字段，
-  // 让 AI 能按 tag / due date / project 归档，而不仅是 title + status。todo.list
+  // 让 AI 能按 tag / due date 归档，而不仅是 title + status。todo.list
   // 的过滤集也跟前端 TodoFilter 类型对齐，能直接回答"本周到期"之类的问题，
   // 不用把全表拉回来再二次过滤。
   // ---------------------------------------------------------------------------
@@ -1147,7 +1226,6 @@ function registerDomainTools(
       status: { type: 'string', description: 'Filter by status: next | doing | done | cancelled | blocked (or comma-separated)' },
       priority: { type: 'string', description: 'Filter by priority: none | low | medium | high (or comma-separated)' },
       tag: { type: 'string', description: 'Filter by a single tag (matches tasks tagged with this string)' },
-      project: { type: 'string', description: 'Filter by project path id' },
       dueBefore: { type: 'number', description: 'Only tasks with dueAt <= this unix ms' },
       dueAfter: { type: 'number', description: 'Only tasks with dueAt >= this unix ms' },
       search: { type: 'string', description: 'Substring match against title (server-side WHERE LIKE)' },
@@ -1158,7 +1236,7 @@ function registerDomainTools(
       limit: { type: 'number', description: 'Max items to return (default: all)' },
     },
     output: jsonOutput,
-    async execute(args: { status?: string; priority?: string; tag?: string; project?: string; dueBefore?: number; dueAfter?: number; search?: string; parentId?: string; archivedOnly?: boolean; includeArchived?: boolean; deletedOnly?: boolean; limit?: number }) {
+    async execute(args: { status?: string; priority?: string; tag?: string; dueBefore?: number; dueAfter?: number; search?: string; parentId?: string; archivedOnly?: boolean; includeArchived?: boolean; deletedOnly?: boolean; limit?: number }) {
       const filter: TodoFilter = {};
       const st = args.status;
       if (st) {
@@ -1173,7 +1251,6 @@ function registerDomainTools(
         if (valid.length) filter.priority = valid;
       }
       if (args.tag) filter.tag = [args.tag];
-      if (args.project) filter.project = [args.project];
       if (args.dueBefore != null) filter.dueBefore = args.dueBefore;
       if (args.dueAfter != null) filter.dueAfter = args.dueAfter;
       if (args.search) filter.search = args.search;
@@ -1198,23 +1275,21 @@ function registerDomainTools(
   reg(defineTool({
     name: 'todo.create',
     ...wire('todo.create'),
-    description: 'Create a new TODO. Returns the created item including its generated id. Markdown body starts empty — use content.writeBody to add notes/progress later. Pass parentId to create as a subtask of an existing TODO (e.g. "把这个任务拆成三个子任务"). Pass plannedFor (today\'s local date, \'YYYY-MM-DD\') to stamp a task for the today view. Only call planForToday when the user EXPLICITLY says "今天做 X" / "加到今天"; do not stamp new tasks as today\'s by default.',
+    description: 'Create a real TODO and return it with its generated id. Use a concise actionable title. Defaults are status=next and priority=none; do not invent urgency, due dates, tags, or parent ids. parentId must come from an actual todo.list/todo.search result. Set plannedFor only when the user explicitly asks to do/add it today; a due date of today alone is not enough. Markdown body starts empty — use content.writeBody only when the user supplied meaningful notes.',
     parameters: {
       title: { type: 'string', required: true, description: 'TODO title (required)' },
       status: { type: 'string', description: 'next | doing | done | cancelled | blocked (default next)' },
       priority: { type: 'string', description: 'none | low | medium | high (default none)' },
-      project: { type: 'string', description: 'Project id/path; null/omitted means no project' },
       dueAt: { type: 'number', description: 'Due date as unix ms; null/omitted means no due date' },
       tags: { type: 'string', description: 'JSON array of tag strings (e.g. \'["urgent","design"]\')' },
       parentId: { type: 'string', description: 'Parent TODO id to create as a subtask; null/omitted means top-level. Use subtasks.list on the parent to see existing children before adding more. Cycles are rejected — you cannot nest a task under one of its own descendants.' },
       plannedFor: { type: 'string', description: 'Stamp the task for the today view. Pass today\'s local date as \'YYYY-MM-DD\' (e.g. compute via `new Date().toLocaleDateString(\'en-CA\')`). Omit/null to leave unplanned. Only set when the user explicitly asks for it.' },
     },
     output: jsonOutput,
-    async execute(args: { title: string; status?: string; priority?: string; project?: string; dueAt?: number; tags?: string; parentId?: string; plannedFor?: string | null }) {
+    async execute(args: { title: string; status?: string; priority?: string; dueAt?: number; tags?: string; parentId?: string; plannedFor?: string | null }) {
       const input: TodoCreate = { title: args.title };
       if (args.status && (TODO_STATUSES as readonly string[]).includes(args.status)) input.status = args.status as TodoStatus;
       if (args.priority && (PRIORITIES as readonly string[]).includes(args.priority)) input.priority = args.priority as Priority;
-      if (args.project !== undefined) input.project = args.project || null;
       if (args.dueAt != null) input.dueAt = args.dueAt;
       if (args.tags) {
         try {
@@ -1224,7 +1299,7 @@ function registerDomainTools(
       }
       if (args.parentId !== undefined) input.parentId = args.parentId || null;
       if (args.plannedFor !== undefined) input.plannedFor = args.plannedFor;
-      const todo = repo.create(input, md.filePathFor('placeholder' as never));
+      const todo = repo.create(input);
       md.writeBody(todo.id as never, '');
       return repo.get(todo.id as never);
     },
@@ -1239,20 +1314,18 @@ function registerDomainTools(
       title: { type: 'string' },
       status: { type: 'string', description: 'next | doing | done | cancelled | blocked' },
       priority: { type: 'string', description: 'none | low | medium | high' },
-      project: { type: 'string', description: 'Project id; null/empty string clears' },
       dueAt: { type: 'number', description: 'Due date as unix ms; null clears' },
       tags: { type: 'string', description: 'JSON array of tag strings; replaces the existing tag set' },
       parentId: { type: 'string', description: 'Parent TODO id to reparent under; null/empty string promotes to top-level.' },
       archivedAt: { type: 'number', description: 'Archive (unix ms, e.g. Date.now()) or restore (null) a task. Archived tasks leave the active list but stay in the 归档 bin.' },
     },
     output: jsonOutput,
-    async execute(args: { id: string; title?: string; status?: string; priority?: string; project?: string; dueAt?: number; tags?: string; parentId?: string; archivedAt?: number | null }) {
+    async execute(args: { id: string; title?: string; status?: string; priority?: string; dueAt?: number; tags?: string; parentId?: string; archivedAt?: number | null }) {
       const { id, tags, ...rest } = args;
       const patch: TodoPatch = {};
       if (rest.title !== undefined) patch.title = rest.title;
       if (rest.status && (TODO_STATUSES as readonly string[]).includes(rest.status)) patch.status = rest.status as TodoStatus;
       if (rest.priority && (PRIORITIES as readonly string[]).includes(rest.priority)) patch.priority = rest.priority as Priority;
-      if (rest.project !== undefined) patch.project = rest.project || null;
       if (rest.dueAt !== undefined) patch.dueAt = rest.dueAt;
       if (rest.parentId !== undefined) patch.parentId = rest.parentId || null;
       if (rest.archivedAt !== undefined) patch.archivedAt = rest.archivedAt;

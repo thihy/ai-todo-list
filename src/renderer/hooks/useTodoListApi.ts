@@ -15,6 +15,7 @@ import type { AIModel, AIStreamEvent } from '../../shared/ai-types';
 import type { SettingsGetRes } from '../../shared/ipc-schema';
 import { useDataVersion } from '../data-bus';
 import { recoverToolResultValue, parseToolArgs } from '../tool-presentation';
+import { compactAiStreamEvents } from '../dsh/stream-buffer';
 
 declare global {
   interface Window {
@@ -39,6 +40,7 @@ export function useTodos(filter: TodoFilter): {
   // Re-fetch when the AI (or any background process) mutates todos — otherwise
   // the left list stays stale after the AI creates/updates/deletes a task.
   const dataVersion = useDataVersion(['todos']);
+  const filterKey = JSON.stringify(filter);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -49,7 +51,7 @@ export function useTodos(filter: TodoFilter): {
 
   useEffect(() => {
     void refresh();
-  }, [refresh, JSON.stringify(filter), dataVersion]);
+  }, [refresh, filterKey, dataVersion]);
 
   return { data, loading, refresh };
 }
@@ -446,9 +448,11 @@ export function useAiStream(): { events: AIStreamEvent[]; clear: () => void } {
       // (time-to-first-token, duration). One now() per batch — coalesced
       // events keep the FIRST push's ts (the arrival we care about).
       const now = Date.now();
-      // Cap history to last 200 events to keep memory bounded.
-      const cap = (arr: AIStreamEvent[]): AIStreamEvent[] =>
-        arr.length > 200 ? arr.slice(arr.length - 200) : arr;
+      // Bound only older invocation residue. Every event from the invocation
+      // currently arriving is retained, so a long live answer can never lose
+      // its prefix. runSubmit still calls clear() before a new local turn.
+      const compact = (arr: AIStreamEvent[]): AIStreamEvent[] =>
+        compactAiStreamEvents(arr, e.invocationId);
 
       if (e.type === 'sessionEvent') {
         const raw = e.event;
@@ -484,7 +488,7 @@ export function useAiStream(): { events: AIStreamEvent[]; clear: () => void } {
               next.push({ type: 'reasoning', invocationId: e.invocationId, text: chunk.text, ts: now });
             }
           }
-          return cap(next);
+          return compact(next);
         }
         // Forward the raw event verbatim so any consumer that wants the
         // full SessionEvent vocabulary (e.g. a future DSH ToolRow drop-in)
@@ -502,6 +506,7 @@ export function useAiStream(): { events: AIStreamEvent[]; clear: () => void } {
               source?: { callId?: unknown };
               content?: Array<{ isError?: boolean; content?: unknown[] }>;
             };
+            meta?: unknown;
           } | undefined;
           const callId = d?.message?.source?.callId;
           const meta = callId != null ? liveCallMeta.current.get(String(callId)) : undefined;
@@ -519,16 +524,17 @@ export function useAiStream(): { events: AIStreamEvent[]; clear: () => void } {
             toolName: meta?.name ?? '',
             args: parseToolArgs(meta?.args),
             result: recoverToolResultValue(block?.content),
+            presentationMeta: d?.meta,
             ok,
             ts: now,
           });
           if (callId != null) liveCallMeta.current.delete(String(callId));
         }
-        return cap(next);
+        return compact(next);
       }
       // start / done / error / permissionRequest: forward verbatim.
       next.push({ ...e, ts: now });
-      return cap(next);
+      return compact(next);
     });
   });
   return { events, clear };

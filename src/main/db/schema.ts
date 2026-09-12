@@ -7,7 +7,7 @@ const { ulid } = ulidPkg;
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 
-export const SCHEMA_VERSION = 14;
+export const SCHEMA_VERSION = 16;
 
 const MIGRATIONS: ReadonlyArray<{ version: number; sql: string }> = [
   {
@@ -609,6 +609,34 @@ const MIGRATIONS: ReadonlyArray<{ version: number; sql: string }> = [
       -- (Windows reported the app as 未响应 during the rebuild). The new
       -- triggers cover ongoing writes; if shadow tables ever drift, the
       -- user can recover with a manual 'rebuild' from a sqlite shell.
+    `,
+  },
+  {
+    version: 15,
+    // Stable DB-backed association between a todo and its directory under
+    // {dataDir}/todos.  It is intentionally independent from the title:
+    // title changes may rename the directory, but a failed filesystem rename
+    // must leave the association pointing at the original directory.
+    sql: `
+      ALTER TABLE todos ADD COLUMN storage_dir TEXT;
+      CREATE UNIQUE INDEX idx_todos_storage_dir ON todos(storage_dir)
+        WHERE storage_dir IS NOT NULL;
+    `,
+  },
+  {
+    version: 16,
+    // Drop the `project` concept. The column has been a dead field since the
+    // Group/SubTask refactor (the sidebar / filter popover both read from
+    // `tags`, never from `project`). Removing the column + index shrinks the
+    // todo row and lets the todo.create / todo.update surfaces stop carrying
+    // a parameter the UI never surfaced.
+    //
+    // SQLite 3.35+ supports `ALTER TABLE ... DROP COLUMN` (and bundled
+    // better-sqlite3 ships a SQLite new enough); the index goes first so
+    // the DROP COLUMN doesn't fail with "indexed column cannot be dropped".
+    sql: `
+      DROP INDEX IF EXISTS idx_todos_project;
+      ALTER TABLE todos DROP COLUMN project;
     `,
   },
 ];

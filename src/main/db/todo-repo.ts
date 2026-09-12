@@ -34,7 +34,6 @@ interface TodoRow {
   title: string;
   status: TodoStatus;
   priority: Priority;
-  project: string | null;
   due_at: number | null;
   body_path: string;
   created_at: number;
@@ -53,7 +52,6 @@ function rowToTodo(row: TodoRow, tags: string[], drawingIds: string[], attachmen
     title: row.title,
     status: row.status,
     priority: row.priority,
-    project: row.project,
     dueAt: row.due_at,
     bodyPath: row.body_path,
     createdAt: row.created_at,
@@ -86,10 +84,6 @@ export class TodoRepo {
     if (filter.priority?.length) {
       where.push(`priority IN (${filter.priority.map(() => '?').join(',')})`);
       params.push(...filter.priority);
-    }
-    if (filter.project?.length) {
-      where.push(`project IN (${filter.project.map(() => '?').join(',')})`);
-      params.push(...filter.project);
     }
     if (filter.dueBefore != null) {
       where.push('due_at IS NOT NULL AND due_at <= ?');
@@ -152,12 +146,11 @@ export class TodoRepo {
       : null;
   }
 
-  create(input: TodoCreate, bodyPath: string): Todo {
+  create(input: TodoCreate, bodyPath = 'progress.html'): Todo {
     const id = newId();
     const now = Date.now();
     const status = input.status ?? 'next';
     const priority = input.priority ?? 'none';
-    const project = input.project ?? null;
     const dueAt = input.dueAt ?? null;
     const parentId = input.parentId ?? null;
     const plannedFor = input.plannedFor ?? null;
@@ -173,10 +166,10 @@ export class TodoRepo {
     const tx = this.db.transaction(() => {
       this.db
         .prepare(
-          `INSERT INTO todos (id, title, status, priority, project, due_at, body_path, created_at, updated_at, parent_id, planned_for)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO todos (id, title, status, priority, due_at, body_path, created_at, updated_at, parent_id, planned_for)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
-        .run(id, input.title, status, priority, project, dueAt, bodyPath, now, now, parentId, plannedFor);
+        .run(id, input.title, status, priority, dueAt, bodyPath, now, now, parentId, plannedFor);
       if (input.tags?.length) {
         const stmt = this.db.prepare('INSERT OR IGNORE INTO tags(todo_id, tag) VALUES (?, ?)');
         for (const t of input.tags) stmt.run(id, t);
@@ -194,7 +187,6 @@ export class TodoRepo {
       title: 'title',
       status: 'status',
       priority: 'priority',
-      project: 'project',
       dueAt: 'due_at',
       parentId: 'parent_id',
       archivedAt: 'archived_at',
@@ -532,7 +524,6 @@ export class TodoRepo {
       title: string;
       status: TodoStatus;
       priority: Priority;
-      project: string | null;
       due_at: number | null;
       body_path: string;
       created_at: number;

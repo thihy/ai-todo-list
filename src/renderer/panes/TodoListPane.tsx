@@ -26,7 +26,7 @@ import type { ToastBus } from '../components/Toast';
 import type { Todo, TodoStatus, ULID } from '../../shared/todo-types';
 import { UserMenu } from '../components/UserMenu';
 import { StatusSelect } from '../components/StatusSelect';
-import { IconCalendar, IconDrawing, IconInboxEmpty, IconTrash } from '../components/icons';
+import { IconCalendar, IconCollapseBar, IconDrawing, IconInboxEmpty, IconTrash } from '../components/icons';
 import { todayDateKey } from '../components/PlanGuideModal';
 
 export const TodoListPane: React.FC<{
@@ -37,8 +37,9 @@ export const TodoListPane: React.FC<{
   onSelect: (id: string) => void;
   onOpenSettings: () => void;
   onCompose: () => void;
+  onCollapse?: () => void;
   toastBus: ToastBus;
-}> = ({ width, filter, sort, selectedId, onSelect, onOpenSettings, onCompose, toastBus }) => {
+}> = ({ width, filter, sort, selectedId, onSelect, onOpenSettings, onCompose, onCollapse, toastBus }) => {
   const repoFilter = filterToRepoFilter(filter);
   const { data, loading, refresh } = useTodos(repoFilter);
 
@@ -86,6 +87,19 @@ export const TodoListPane: React.FC<{
     for (const id of branchIds) next[id] = false;
     setExpandMap(next);
   }, [branchIds]);
+
+  // — Single toggle that replaces the old expand-all / collapse-all pair —
+  // One click flips between the two extremes: if every branching task is
+  // currently expanded, click collapses all; otherwise click expands all.
+  // Tracked separately from branchIds so the button stays "expand-all" while
+  // data is still loading (no branching tasks yet → ambiguous). Once any
+  // branch is collapsed the next click re-opens everything; once everything
+  // is open it folds the tree flat.
+  const allExpanded = branchIds.size > 0 && Array.from(branchIds).every((id) => getExpanded(id));
+  const toggleAll = useCallback(() => {
+    if (allExpanded) collapseAll();
+    else expandAll();
+  }, [allExpanded, collapseAll, expandAll]);
 
   // 创建子任务的入口已迁移到任务列表行尾（hover 行尾的 + 按钮）。这里聚合
   // IPC 调用、强制展开父节点、刷新列表 —— 把"创建后的可见性"问题一次性
@@ -235,13 +249,41 @@ export const TodoListPane: React.FC<{
         </button>
         {branchIds.size > 0 && (
           <div className="task-list__tools">
-            <button type="button" className="task-list__tool-btn" onClick={expandAll} title="全部展开" aria-label="全部展开">
-              <ExpandAllGlyph />
-            </button>
-            <button type="button" className="task-list__tool-btn" onClick={collapseAll} title="全部折叠" aria-label="全部折叠">
-              <CollapseAllGlyph />
+            {/* Single toggle replaces the old expand-all / collapse-all pair.
+                Glyph + label swap with state: when the tree is fully expanded
+                the icon points to the action that FOLDS everything (collapse),
+                and vice versa. aria-pressed communicates the current "all
+                expanded" state for assistive tech; the visual glyph + title
+                text describe the action, not the state, so the user reads it
+                as an actionable control. */}
+            <button
+              type="button"
+              className="task-list__tool-btn"
+              onClick={toggleAll}
+              title={allExpanded ? '全部折叠' : '全部展开'}
+              aria-label={allExpanded ? '全部折叠' : '全部展开'}
+              aria-pressed={allExpanded}
+            >
+              {allExpanded ? <CollapseAllGlyph /> : <ExpandAllGlyph />}
             </button>
           </div>
+        )}
+        {onCollapse && (
+          /* Collapse affordance — same IconCollapseBar as the AI panel
+             header, living ON the task list's own header (right edge) so
+             the user sees it as part of the area they're looking at, not
+             a handle on a separate divider column. Mirrors the AI panel
+             pattern byte-for-byte: chrome button at the title row's far
+             right, after the in-panel tools. */
+          <button
+            type="button"
+            className="task-list__collapse-btn"
+            onClick={onCollapse}
+            title="收起任务列表"
+            aria-label="收起任务列表"
+          >
+            <IconCollapseBar />
+          </button>
         )}
       </header>
 
@@ -1277,7 +1319,6 @@ function filterToRepoFilter(f: ListFilter): Parameters<typeof window.todoList.to
     case 'all': return {};
     case 'archived': return { archivedOnly: true };
     case 'deleted': return { deletedOnly: true };
-    case 'project': return { tag: [f.tag] };
     case 'status': return { status: [f.status as TodoStatus] };
     case 'priority': return { priority: [f.priority as Todo['priority']] };
     default:

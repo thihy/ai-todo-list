@@ -14,14 +14,6 @@ import type { ContentVersionEntry, ULID } from '../../shared/todo-types';
 import { MAX_BODY_VERSIONS } from '../../shared/constants';
 
 export class MarkdownStore {
-  /** Cache of id → taskDir so repeated `resolveTaskDir(id)` calls return the
-   *  same path. `paths.todoDir` adds a ULID suffix when the base dir already
-   *  exists (collision avoidance at creation), so without this cache a
-   *  second lookup of an existing task would resolve to a different (empty)
-   *  dir than the one its files actually live in. Tests must reset this
-   *  between cases; production gets a fresh store per boot. */
-  private readonly taskDirCache = new Map<ULID, string>();
-
   constructor(
     private db: Database.Database,
     private todosDir: string,
@@ -47,13 +39,10 @@ export class MarkdownStore {
     return this.taskDirFor(id);
   }
 
-  /** Internal: cached, deterministic taskDir lookup. */
+  /** Internal: the DB-backed resolver is deterministic and follows a
+   * successful task-directory rename immediately. */
   private taskDirFor(id: ULID): string {
-    const cached = this.taskDirCache.get(id);
-    if (cached) return cached;
-    const dir = this.resolveTaskDir(id);
-    this.taskDirCache.set(id, dir);
-    return dir;
+    return this.resolveTaskDir(id);
   }
 
   readBody(id: ULID): { markdown: string; version: number } {

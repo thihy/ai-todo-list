@@ -12,7 +12,7 @@
 // 这些函数是"看得见但要小心的"：被用户输入直接驱动（标题、文件名），
 // 不能让任何 input 走出 OS 文件名安全的边界。slugify() 是核心入口。
 
-import { existsSync, mkdirSync } from 'node:fs';
+import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 
 /** 用户标题最长保留多少个码点。20 个汉字 ≈ 60 UTF-8 字节，离 NTFS 255 字节
@@ -76,18 +76,10 @@ export function slugify(title: string): string {
   return safe || UNTITLED_SLUG;
 }
 
-/** 给定 todosDir + slug + ulid，返回一个保证不冲突的目录路径。
- *
- *  策略：先尝试 `{todosDir}/{slug}`，如果该目录已存在则追加 `-{ulid-suffix}`
- *  形成 `{todosDir}/{slug}-{xxxx}`。4 字符 ULID 尾巴提供 32^4 ≈ 100 万种
- *  后缀组合，实操下碰撞概率可忽略（即便用户给两个 TODO 起同名标题）。
- *
- *  注意，这个函数不创建目录——它只算路径。是否 mkdir 由调用方决定。
- */
+/** Deterministic collision-free directory name. The first six todo-id
+ * characters identify the task; the slug keeps the directory readable. */
 export function uniqueTodoDir(todosDir: string, slug: string, ulid: string): string {
-  const base = join(todosDir, slug);
-  if (!existsSync(base)) return base;
-  return join(todosDir, `${slug}-${ulid.slice(-4)}`);
+  return join(todosDir, `${ulid.slice(0, 6)}-${slug}`);
 }
 
 /** 解析"这个 TODO 的目录"并按需创建。
