@@ -8,6 +8,11 @@
 //   4. inbox_attachments flat files move + DB file_path rows update
 //   5. re-running is a no-op (marker file short-circuits)
 //   6. a clean (post-migration) data dir produces zero work but still writes the marker
+//
+// Per-task dirs carry a 6-char ULID prefix (TaskDirectoryStore contract):
+//   {todosDir}/{ulid6}-{slug}/...
+// All path expectations go through paths.todoDir(...) so a future layout
+// change can't drift tests and source apart again.
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
@@ -60,8 +65,8 @@ describe('migrateV1Layout', () => {
     rmSync(f.rootDir, { recursive: true, force: true });
   });
 
-  it('migrates flat {todosDir}/{ulid}.md → {todosDir}/{slug}/progress.html', async () => {
-    // v1 fixture: an untitled task with a body file written as `{ulid}.md`.
+  it('migrates flat {todosDir}/{ulid}.md → {todosDir}/{ulid6-slug}/progress.html', async () => {
+    // v1 fixture: a task with a body file written as `{ulid}.md`.
     const todo = f.repo.create({ title: '工作笔记' }, 'x');
     const legacyBodyPath = join(f.todosDir, `${todo.id}.md`);
     writeFileSync(legacyBodyPath, '<p>hello v1</p>', 'utf8');
@@ -76,9 +81,7 @@ describe('migrateV1Layout', () => {
 
     expect(result.migrated).toBeGreaterThanOrEqual(1);
     expect(existsSync(legacyBodyPath)).toBe(false);
-    // The new task dir uses the slug of the title (no suffix because no
-    // collision on first access).
-    const newDir = join(f.todosDir, '工作笔记');
+    const newDir = paths.todoDir(f.todosDir, '工作笔记', todo.id);
     expect(existsSync(join(newDir, 'progress.html'))).toBe(true);
     expect(readFileSync(join(newDir, 'progress.html'), 'utf8')).toBe('<p>hello v1</p>');
   });
@@ -95,7 +98,7 @@ describe('migrateV1Layout', () => {
       db: f.handle.db,
     });
 
-    const taskDir = join(f.todosDir, paths.slugify('Snap'));
+    const taskDir = paths.todoDir(f.todosDir, 'Snap', todo.id);
     const json = JSON.parse(readFileSync(paths.todoJsonPath(taskDir), 'utf8'));
     expect(json.id).toBe(todo.id);
     expect(json.title).toBe('Snap');
@@ -122,10 +125,7 @@ describe('migrateV1Layout', () => {
     });
 
     expect(existsSync(legacy)).toBe(false);
-    // Migration writes to the unsuffixed dir on first access; compute the
-    // expected path the same way (NOT paths.todoDir, which would suffix
-    // now that the dir exists post-migration).
-    const newDir = join(f.todosDir, paths.slugify('画图'));
+    const newDir = paths.todoDir(f.todosDir, '画图', todo.id);
     const moved = paths.drawingFile(newDir, '我的画');
     expect(existsSync(moved)).toBe(true);
   });
@@ -150,7 +150,7 @@ describe('migrateV1Layout', () => {
     });
 
     expect(existsSync(legacyThumb)).toBe(false);
-    const newDir = join(f.todosDir, paths.slugify('ThumbTask'));
+    const newDir = paths.todoDir(f.todosDir, 'ThumbTask', todo.id);
     expect(existsSync(paths.thumbFile(newDir, 'draw1'))).toBe(true);
   });
 
@@ -173,7 +173,7 @@ describe('migrateV1Layout', () => {
     });
 
     expect(existsSync(legacyAtt)).toBe(false);
-    const newDir = join(f.todosDir, paths.slugify('Attach'));
+    const newDir = paths.todoDir(f.todosDir, 'Attach', todo.id);
     const expected = paths.attachmentFile(newDir, '01abcdef-note.txt');
     expect(existsSync(expected)).toBe(true);
     const row = f.handle.db
