@@ -42,7 +42,7 @@
 // (GFM + KaTeX + Shiki); HITL and composer adapters use DSH primitives.
 
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { useAiStream, useAppEvent, useSettings } from '../hooks/useTodoListApi';
+import { useAiStream, useAppEvent, useProviderStatus, useSettings } from '../hooks/useTodoListApi';
 import { useDataVersion } from '../data-bus';
 import {
   IconEnhanceOutline16,
@@ -485,9 +485,12 @@ export const AIPane: React.FC<{
   const busy = streamingTurnId !== null;
   const awaitingAnswer = activeQuestion?.convId === currentId;
   const awaitingApproval = activeApproval?.convId === currentId;
-  // Do not trust only `connected`: older still-running main processes computed
-  // it from the shared API key and misreported configured custom providers.
-  const needsAiSetup = !isAiProviderConfigured(aiSettings);
+  const providerStatus = useProviderStatus();
+  const needsAiSetup = !providerStatus.configured;
+  // 已配置但 health 探测失败 → 不阻止用户输入,但在标题旁加一个"未连接"
+  // 提示,告诉他这次提问大概率会失败。
+  const connectivityIssue = providerStatus.configured
+    && providerStatus.connectivity.state === 'error';
   // Use the official composer blocking vocabulary at the host boundary.
   const composerBlock: ComposerBlock | undefined = awaitingAnswer
     ? { reason: questionSubmitting ? '正在提交答案…' : '请先回答上方的问题…' }
@@ -1077,6 +1080,26 @@ export const AIPane: React.FC<{
           <span className="aipane__provider-notice-copy">
             <strong>AI 尚未配置</strong>
             <span>请先配置 {PROVIDER_LABELS[aiSettings.provider]}，再开始对话。</span>
+          </span>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => { location.hash = '#/settings'; }}
+          >
+            打开设置
+          </Button>
+        </div>
+      )}
+
+      {connectivityIssue && (
+        <div className="aipane__provider-notice aipane__provider-notice--warn" role="status">
+          <IconWarningOutline16 size={16} />
+          <span className="aipane__provider-notice-copy">
+            <strong>AI 已配置但未连接</strong>
+            <span>
+              最近一次与 {PROVIDER_LABELS[aiSettings?.provider ?? 'deepseek']} 的连接探测失败,
+              提问前请检查网络或 API key。可在「设置」中重新测试。
+            </span>
           </span>
           <Button
             variant="ghost"

@@ -671,6 +671,18 @@ a:hover {
   background: var(--accent-success);
   box-shadow: 0 0 0 3px rgba(4, 120, 87, 0.16);
 }
+.dot--warn {
+  background: var(--accent-warning);
+  box-shadow: 0 0 0 3px rgba(183, 121, 31, 0.18);
+}
+.dot--pending {
+  background: var(--border-strong);
+  animation: dot-pending-pulse 1.4s ease-in-out infinite;
+}
+@keyframes dot-pending-pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
 
 /* ===== AI panel ===== */
 

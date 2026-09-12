@@ -5,17 +5,18 @@
 // useDocuments, useDocument, useDrawing, useDrawings). Hooks use AbortController
 // to drop in-flight responses when the consuming component unmounts.
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { TodoListApi, AppEvent, AppEventMap, SettingsPatchArgs } from '../../shared/todo-list-api';
 import type { Todo, TodoFilter, SearchHit, TodoStats } from '../../shared/todo-types';
 import type { ContentVersionEntry, GitHistoryEntry, ProgressLogEntry } from '../../shared/todo-types';
 import type { TaskDocument } from '../../shared/todo-types';
 import type { DrawingMeta, DrawingScene, InboxAttachment } from '../../shared/todo-types';
 import type { AIModel, AIStreamEvent } from '../../shared/ai-types';
-import type { SettingsGetRes } from '../../shared/ipc-schema';
+import type { AIHealthRes, SettingsGetRes } from '../../shared/ipc-schema';
 import { useDataVersion } from '../data-bus';
 import { recoverToolResultValue, parseToolArgs } from '../tool-presentation';
 import { compactAiStreamEvents } from '../dsh/stream-buffer';
+import { deriveProviderStatus, type ProviderStatus } from '../dsh/provider-status';
 
 declare global {
   interface Window {
@@ -414,6 +415,56 @@ export function useSettings(): {
     return window.todoList.on('app:settings-changed', () => { void refresh(); });
   }, [refresh]);
   return { data, patch, chooseDataDir };
+}
+
+/** 周期性地 ping 一次 ai.health,把"已连接"的真实信号带进渲染端。
+ *
+ *  注意:health 探测在 main 进程跑 fetch,renderer 只拿到布尔/latency/error
+ *  —— API key 永远不出 main 进程边界。 */
+export function useAiHealth(options?: { intervalMs?: number }): {
+  health: AIHealthRes | null;
+  checkedAt: number;
+  refresh: () => Promise<void>;
+} {
+  const intervalMs = options?.intervalMs ?? 30_000;
+  const [health, setHealth] = useState<AIHealthRes | null>(null);
+  const [checkedAt, setCheckedAt] = useState<number>(0);
+  const inFlight = useRef(false);
+
+  const refresh = useCallback(async () => {
+    if (inFlight.current) return;
+    inFlight.current = true;
+    try {
+      const res = await window.todoList.ai.health();
+      if (res.ok) {
+        setHealth(res.data);
+        setCheckedAt(Date.now());
+      }
+    } catch {
+      // 网络/主进程异常:维持上一次结果,不刷成 null 把"已连接"误报成"未知"。
+    } finally {
+      inFlight.current = false;
+    }
+  }, []);
+
+  useEffect(() => {
+    void refresh();
+    const t = window.setInterval(() => { void refresh(); }, intervalMs);
+    return () => window.clearInterval(t);
+  }, [refresh, intervalMs]);
+
+  return { health, checkedAt, refresh };
+}
+
+/** 把 useSettings 的静态配置 + useAiHealth 的实时探测合成单个 ProviderStatus,
+ *  给 Statusbar / AIPane 这种纯展示组件用,避免每个组件都重复组装逻辑。 */
+export function useProviderStatus(): ProviderStatus {
+  const { data: settings } = useSettings();
+  const { health, checkedAt } = useAiHealth();
+  return useMemo(
+    () => deriveProviderStatus(settings, health, checkedAt),
+    [settings, health, checkedAt],
+  );
 }
 
 export function useAppEvent<E extends AppEvent>(
