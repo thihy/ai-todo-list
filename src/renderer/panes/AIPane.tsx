@@ -685,11 +685,14 @@ export const AIPane: React.FC<{
     // The visual composer is disabled while a turn or HITL request is active,
     // but submissions can also arrive from the centre Composer custom event.
     // Enforce the same single-flight rule at the shared action boundary so no
-    // alternate entry point can start a second invocation concurrently.
+    // alternate entry point can start a second invocation concurrently. Also
+    // gate on needsAiSetup so an external submission can't slip past the
+    // disabled textarea when the user has no provider configured yet.
     if (
       streamingTurnId !== null ||
       activeQuestion?.convId === currentId ||
-      activeApproval?.convId === currentId
+      activeApproval?.convId === currentId ||
+      needsAiSetup
     ) return;
     let prompt: string;
     let attached: AttachedFile[];
