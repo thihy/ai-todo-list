@@ -4,7 +4,7 @@
 // + API key + streaming.
 
 import React, { useEffect, useState } from 'react';
-import { useSettings } from '../hooks/useTodoListApi';
+import { useSettings, useSettingsPatchWithToast } from '../hooks/useTodoListApi';
 import { useDimTitleBar } from '../hooks/useDimTitleBar';
 import type { SettingsGetRes } from '../../shared/ipc-schema';
 import type { SettingsPatchArgs } from '../../shared/todo-list-api';
@@ -37,6 +37,10 @@ const CATEGORIES: { key: Category; label: string }[] = [
 export const SettingsModal: React.FC<{ open: boolean; onClose: () => void }> = ({ open, onClose }) => {
   const [cat, setCat] = useState<Category>('model');
   const settings = useSettings();
+  // `patchWithToast` swallows save failures into an error toast — used by
+  // the simple, per-keystroke panels below. TaskAppearancePane gets the raw
+  // `patch` (which throws) so it can drive its own saving/saved/failed UI.
+  const patchWithToast = useSettingsPatchWithToast();
   // Dim the frameless titleBarOverlay (native min/max/close glyphs) while
   // this modal covers the app — see useDimTitleBar for why an IPC is needed.
   useDimTitleBar(open);
@@ -84,24 +88,24 @@ export const SettingsModal: React.FC<{ open: boolean; onClose: () => void }> = (
             {!data ? (
               <div className="muted">加载中…</div>
             ) : cat === 'general' ? (
-              <GeneralPane data={data} patch={patch} />
+              <GeneralPane data={data} patch={patchWithToast} />
             ) : cat === 'model' ? (
-              <ModelPane data={data} patch={patch} />
+              <ModelPane data={data} patch={patchWithToast} />
             ) : cat === 'data' ? (
-              <DataPane data={data} patch={patch} chooseDataDir={chooseDataDir} />
+              <DataPane data={data} patch={patchWithToast} chooseDataDir={chooseDataDir} />
             ) : cat === 'tags' ? (
-              <TagsPane data={data} patch={patch} />
+              <TagsPane data={data} patch={patchWithToast} />
             ) : cat === 'appearance' ? (
               <TaskAppearancePane
                 value={data.taskAppearance}
-                onChange={(next) => void patch({ taskAppearance: next })}
+                onSave={async (next) => { await patch({ taskAppearance: next }); }}
               />
             ) : cat === 'hotkeys' ? (
-              <HotkeysPane data={data} patch={patch} />
+              <HotkeysPane data={data} patch={patchWithToast} />
             ) : cat === 'reminder' ? (
-              <ReminderPane data={data} patch={patch} />
+              <ReminderPane data={data} patch={patchWithToast} />
             ) : (
-              <AboutPane data={data} patch={patch} />
+              <AboutPane data={data} patch={patchWithToast} />
             )}
           </div>
         </div>
@@ -134,6 +138,7 @@ const GeneralPane: React.FC<PaneProps> = ({ data, patch }) => (
 const ModelPane: React.FC<PaneProps> = ({ data, patch }) => {
   const [apiKey, setApiKey] = useState('');
   const [showKey, setShowKey] = useState(false);
+  const [savingKey, setSavingKey] = useState(false);
 
   useEffect(() => {
     setApiKey('');
@@ -148,6 +153,19 @@ const ModelPane: React.FC<PaneProps> = ({ data, patch }) => {
     const nextModels = PROVIDER_MODELS[p] ?? [];
     if (p !== 'custom' && !nextModels.includes(data.model)) {
       await patch({ model: nextModels[0] });
+    }
+  };
+
+  const onSaveApiKey = async (): Promise<void> => {
+    if (!apiKey || savingKey) return;
+    setSavingKey(true);
+    try {
+      await patch({ apiKey });
+      // 只有成功后才清空本地草稿；失败时由 patchWithToast 弹错误提示，
+      // 用户可以重试而无需重新输入 Key。
+      setApiKey('');
+    } finally {
+      setSavingKey(false);
     }
   };
 
@@ -208,13 +226,10 @@ const ModelPane: React.FC<PaneProps> = ({ data, patch }) => {
               <button
                 type="button"
                 className="btn-primary"
-                disabled={!apiKey}
-                onClick={() => {
-                  void patch({ apiKey });
-                  setApiKey('');
-                }}
+                disabled={!apiKey || savingKey}
+                onClick={() => void onSaveApiKey()}
               >
-                保存
+                {savingKey ? '保存中…' : '保存'}
               </button>
             </div>
           </Field>
@@ -253,6 +268,12 @@ const CustomProvidersEditor: React.FC<PaneProps> = ({ data, patch }) => {
   const [model, setModel] = useState('');
   const [apiKey, setApiKey] = useState('');
   const [showKey, setShowKey] = useState(false);
+  // Saving state machine — disables re-entry while a patch is in flight
+  // and surfaces success/failure for the buttons that aren't tied to a
+  // draft row (新建 / 删除 / 选择当前). The 保存 button below stays
+  // tied to the existing dirty check + add its own saving flag.
+  const [busy, setBusy] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   // Load draft from the instance being edited whenever editingId changes.
   // (Not on every `custom` refresh — that would clobber unsaved edits; after a
@@ -265,6 +286,7 @@ const CustomProvidersEditor: React.FC<PaneProps> = ({ data, patch }) => {
     setBaseUrl(inst?.baseUrl ?? '');
     setModel(inst?.model ?? '');
     setApiKey('');
+    setSaveError(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editingId]);
 
@@ -277,7 +299,27 @@ const CustomProvidersEditor: React.FC<PaneProps> = ({ data, patch }) => {
 
   const editing = custom.find((c) => c.id === editingId) ?? null;
 
+  // Run a write and surface failure inline (don't rely on toast for the
+  // 草稿表单 —— 用户在敲文本框，看到 toast 还要回头找上下文)。成功后清
+  // 除错误状态。
+  const runSave = async (apply: () => Promise<void>): Promise<boolean> => {
+    if (busy) return false;
+    setBusy(true);
+    setSaveError(null);
+    try {
+      await apply();
+      return true;
+    } catch (err) {
+      const reason = err instanceof Error && err.message ? err.message : '未知错误';
+      setSaveError(reason);
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const onNew = async (): Promise<void> => {
+    if (busy) return;
     const id = crypto.randomUUID();
     const newInstance: CustomProviderInput = {
       id,
@@ -286,8 +328,10 @@ const CustomProvidersEditor: React.FC<PaneProps> = ({ data, patch }) => {
       baseUrl: '',
       model: '',
     };
-    await patch({ customProviders: [...toInputs(custom), newInstance], customProviderId: id });
-    setEditingId(id);
+    const ok = await runSave(
+      () => patch({ customProviders: [...toInputs(custom), newInstance], customProviderId: id }),
+    );
+    if (ok) setEditingId(id);
   };
 
   const onSave = async (): Promise<void> => {
@@ -297,21 +341,25 @@ const CustomProvidersEditor: React.FC<PaneProps> = ({ data, patch }) => {
         ? { id: c.id, name, protocol, baseUrl, model, ...(apiKey ? { apiKey } : {}) }
         : c,
     );
-    await patch({ customProviders: next, customProviderId: editingId });
-    setApiKey('');
+    const ok = await runSave(
+      () => patch({ customProviders: next, customProviderId: editingId }),
+    );
+    if (ok) setApiKey('');
   };
 
   const onDelete = async (): Promise<void> => {
     if (!editingId) return;
     const next = toInputs(custom).filter((c) => c.id !== editingId);
     const nextActive = next[0]?.id ?? null;
-    await patch({ customProviders: next, customProviderId: nextActive });
-    setEditingId(nextActive);
+    const ok = await runSave(
+      () => patch({ customProviders: next, customProviderId: nextActive }),
+    );
+    if (ok) setEditingId(nextActive);
   };
 
   const onSelectInstance = async (id: string): Promise<void> => {
     setEditingId(id);
-    await patch({ customProviderId: id });
+    await runSave(() => patch({ customProviderId: id }));
   };
 
   const dirty =
@@ -331,6 +379,7 @@ const CustomProvidersEditor: React.FC<PaneProps> = ({ data, patch }) => {
             value={activeId ?? ''}
             onChange={(e) => void onSelectInstance(e.target.value)}
             aria-label="选择当前生效的自定义实例"
+            disabled={busy}
           >
             {custom.length === 0 ? (
               <option value="">尚未创建</option>
@@ -343,7 +392,12 @@ const CustomProvidersEditor: React.FC<PaneProps> = ({ data, patch }) => {
               ))
             )}
           </select>
-          <button type="button" className="btn-secondary" onClick={() => void onNew()}>
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={() => void onNew()}
+            disabled={busy}
+          >
             ＋ 新建
           </button>
           {editing && (
@@ -351,7 +405,7 @@ const CustomProvidersEditor: React.FC<PaneProps> = ({ data, patch }) => {
               type="button"
               className="btn-secondary"
               onClick={() => void onDelete()}
-              disabled={custom.length === 0}
+              disabled={busy || custom.length === 0}
             >
               删除
             </button>
@@ -369,6 +423,7 @@ const CustomProvidersEditor: React.FC<PaneProps> = ({ data, patch }) => {
               onChange={(e) => setName(e.target.value)}
               placeholder="实例名称"
               autoComplete="off"
+              disabled={busy}
             />
           </Field>
 
@@ -380,6 +435,7 @@ const CustomProvidersEditor: React.FC<PaneProps> = ({ data, patch }) => {
               className="input"
               value={protocol}
               onChange={(e) => setProtocol(e.target.value as AICustomProtocol)}
+              disabled={busy}
             >
               {CUSTOM_PROTOCOLS.map((p) => (
                 <option key={p} value={p}>
@@ -400,6 +456,7 @@ const CustomProvidersEditor: React.FC<PaneProps> = ({ data, patch }) => {
               onChange={(e) => setBaseUrl(e.target.value)}
               placeholder="https://api.example.com/v1"
               autoComplete="off"
+              disabled={busy}
             />
           </Field>
 
@@ -411,6 +468,7 @@ const CustomProvidersEditor: React.FC<PaneProps> = ({ data, patch }) => {
               onChange={(e) => setModel(e.target.value)}
               placeholder="模型 ID"
               autoComplete="off"
+              disabled={busy}
             />
           </Field>
 
@@ -423,20 +481,26 @@ const CustomProvidersEditor: React.FC<PaneProps> = ({ data, patch }) => {
                 placeholder={editing.apiKeyRedacted || '在此粘贴 Key…'}
                 className="input mono"
                 autoComplete="off"
+                disabled={busy}
               />
-              <button type="button" className="btn-secondary" onClick={() => setShowKey((v) => !v)}>
+              <button type="button" className="btn-secondary" onClick={() => setShowKey((v) => !v)} disabled={busy}>
                 {showKey ? '隐藏' : '显示'}
               </button>
               <button
                 type="button"
                 className="btn-primary"
-                disabled={!dirty}
+                disabled={!dirty || busy}
                 onClick={() => void onSave()}
               >
-                保存
+                {busy ? '保存中…' : '保存'}
               </button>
             </div>
           </Field>
+          {saveError && (
+            <div className="field-hint" role="status" aria-live="polite" style={{ color: 'var(--accent-danger)' }}>
+              保存失败：{saveError}（草稿已保留，可直接重试）
+            </div>
+          )}
         </>
       ) : (
         <div className="field-hint">

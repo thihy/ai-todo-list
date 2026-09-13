@@ -128,7 +128,11 @@ export const App: React.FC = () => {
       const alreadyPlannedToday = all.some((t) => t.plannedFor === todayKey);
       if (alreadyPlannedToday) {
         // 仅写 lastPlanGuideDate，避免明天重复判定同一段 loaded 状态。
-        void settings.patch({ lastPlanGuideDate: todayKey });
+        // 失败时仅 toast —— 不会让用户卡在引导界面。
+        settings.patch({ lastPlanGuideDate: todayKey }).catch((err: unknown) => {
+          const reason = err instanceof Error && err.message ? err.message : '未知错误';
+          toast.push({ kind: 'error', message: `保存引导状态失败：${reason}`, ttl: 3000 });
+        });
         return;
       }
       // 全集作为候选 —— modal 自己排序 + 截前 12。
@@ -257,7 +261,15 @@ export const App: React.FC = () => {
       const res = await window.todoList.todo.update(id, { plannedFor: todayKey });
       if (!res.ok) toast.push({ kind: 'error', message: '添加今日任务失败', ttl: 2000 });
     }
-    await settings.patch({ lastPlanGuideDate: todayKey });
+    try {
+      await settings.patch({ lastPlanGuideDate: todayKey });
+    } catch (err) {
+      // The actual task updates already happened; failing only to record
+      // the resolved date just means tomorrow's boot may re-prompt. Surface
+      // it but don't block the modal from closing.
+      const reason = err instanceof Error && err.message ? err.message : '未知错误';
+      toast.push({ kind: 'error', message: `保存引导状态失败：${reason}`, ttl: 3000 });
+    }
     setPlanGuideOpen(false);
     // 通知 TodoListPane refresh — 已有 app:data-changed { scope: 'todos' }
     // 会驱动 refresh；这里额外 emit 一次以防 race。
@@ -265,16 +277,26 @@ export const App: React.FC = () => {
   }, [todayKey, settings, toast]);
 
   const onPlanGuideSkip = useCallback(async (): Promise<void> => {
-    await settings.patch({ lastPlanGuideDate: todayKey });
+    try {
+      await settings.patch({ lastPlanGuideDate: todayKey });
+    } catch (err) {
+      const reason = err instanceof Error && err.message ? err.message : '未知错误';
+      toast.push({ kind: 'error', message: `保存引导状态失败：${reason}`, ttl: 3000 });
+    }
     setPlanGuideOpen(false);
-  }, [todayKey, settings]);
+  }, [todayKey, settings, toast]);
 
   const onPlanGuideSnooze = useCallback(async (): Promise<void> => {
     // 24h 后再提醒。lastPlanGuideDate 不写 —— 24h 后仍属"未解决"，boot + 通知
     // 都会重新询问。
-    await settings.patch({ snoozePlanGuideUntil: Date.now() + 24 * 60 * 60_000 });
+    try {
+      await settings.patch({ snoozePlanGuideUntil: Date.now() + 24 * 60 * 60_000 });
+    } catch (err) {
+      const reason = err instanceof Error && err.message ? err.message : '未知错误';
+      toast.push({ kind: 'error', message: `保存引导状态失败：${reason}`, ttl: 3000 });
+    }
     setPlanGuideOpen(false);
-  }, [settings]);
+  }, [settings, toast]);
 
   return (
     <ErrorBoundary>

@@ -14,10 +14,10 @@ import type { DrawingMeta, DrawingScene, InboxAttachment } from '../../shared/to
 import type { AIModel, AIStreamEvent } from '../../shared/ai-types';
 import type { SettingsGetRes } from '../../shared/ipc-schema';
 import { useDataVersion } from '../data-bus';
-import { recoverToolResultValue, parseToolArgs } from '../tool-presentation';
 import { compactAiStreamEvents } from '../dsh/stream-buffer';
 import { deriveProviderStatus, type ProviderStatus } from '../dsh/provider-status';
 import { normalizeTaskAppearance } from '../../shared/task-appearance';
+import { useToastBus } from '../components/Toast';
 
 declare global {
   interface Window {
@@ -396,20 +396,49 @@ function normalizeSettingsResponse(settings: SettingsGetRes): SettingsGetRes {
   };
 }
 
+/** Thrown by `useSettings().patch` when the settings store rejects a
+ *  write. We strip the patch argument before it can reach the message so a
+ *  failure reading `保存 API Key 时磁盘满了` doesn't leak the key into a
+ *  toast / log line / devtools console. */
+export class SettingsPatchError extends Error {
+  public readonly code: string;
+  constructor(message: string, code = 'settings_patch_failed') {
+    super(message);
+    this.name = 'SettingsPatchError';
+    this.code = code;
+  }
+}
+
 export function useSettings(): {
   data: SettingsGetRes | null;
+  /** True when the most recent settings read is older than the in-flight
+   *  `patch` round-trip — i.e. the user-visible settings may be lagging
+   *  the freshly-saved value while we wait for the broadcast. */
+  syncing: boolean;
   patch: (patch: SettingsPatchArgs) => Promise<void>;
   chooseDataDir: () => Promise<string | null>;
 } {
   const [data, setData] = useState<SettingsGetRes | null>(null);
+  const [syncing, setSyncing] = useState(false);
   const refresh = useCallback(async () => {
     const res = await window.todoList.settings.get();
     if (res.ok) setData(normalizeSettingsResponse(res.data));
   }, []);
   const patch = useCallback(
     async (patch: SettingsPatchArgs) => {
-      const res = await window.todoList.settings.set(patch);
-      if (res.ok) setData(normalizeSettingsResponse(res.data));
+      setSyncing(true);
+      try {
+        const res = await window.todoList.settings.set(patch);
+        if (!res.ok) {
+          // Surface a human-readable reason but NEVER include the patch
+          // payload (it can carry apiKey, customProviders.apiKey, etc.).
+          const reason = res.message ?? '保存失败';
+          throw new SettingsPatchError(reason);
+        }
+        setData(normalizeSettingsResponse(res.data));
+      } finally {
+        setSyncing(false);
+      }
     },
     [],
   );
@@ -422,11 +451,48 @@ export function useSettings(): {
     void refresh();
   }, [refresh]);
   // L4-E: re-fetch when the AI turns add cost. Without this the SettingsPane
-  // shows stale `monthlyCostUsd` until the user reopens it.
+  // shows stale `monthlyCostUsd` until the user reopens it. We also re-fetch
+  // after any other renderer/main patch so concurrent writers stay aligned.
+  //
+  // The patch write itself updates `data` synchronously inside `patch()`,
+  // so this broadcast only matters for CHANGES MADE BY OTHER ACTORS (the AI
+  // bumping monthlyCostUsd is the only one in practice). We still replace
+  // `data` on the broadcast — consumers that need draft-isolation handle
+  // it themselves (TaskAppearancePane keeps its own draft).
   useEffect(() => {
     return window.todoList.on('app:settings-changed', () => { void refresh(); });
   }, [refresh]);
-  return { data, patch, chooseDataDir };
+  return { data, syncing, patch, chooseDataDir };
+}
+
+/** Run a `useSettings().patch(...)` call with the project's standard
+ *  toast feedback. Designed for one-shot settings writes (API key save,
+ *  custom-provider save, plan-guide snooze, etc.) where the caller does
+ *  not want to manage the saving/saved/failed state machine itself.
+ *
+ *  Contract:
+ *    - Logs and shows an error toast on rejection (never throws — failures
+ *      become a visible toast so the user knows their action did NOT save).
+ *    - Does NOT modify the patch payload — the underlying hook handles
+ *      redaction on the error path; this wrapper just decides UI feedback.
+ *
+ *  Use this for any one-shot write where a save failure is best surfaced as
+ *  a non-blocking toast. For draft-style edits with their own status row,
+ *  call `patch` directly and manage the state machine yourself. */
+export function useSettingsPatchWithToast(): (patch: SettingsPatchArgs) => Promise<void> {
+  const { patch } = useSettings();
+  const toast = useToastBus();
+  return useCallback(
+    async (next: SettingsPatchArgs) => {
+      try {
+        await patch(next);
+      } catch (err) {
+        const reason = err instanceof Error && err.message ? err.message : '保存失败';
+        toast.push({ kind: 'error', message: `保存失败：${reason}`, ttl: 4000 });
+      }
+    },
+    [patch, toast],
+  );
 }
 
 /** 把 useSettings 的静态配置派生成本地展示用的 ProviderStatus,
@@ -452,17 +518,16 @@ export function useAppEvent<E extends AppEvent>(
 }
 
 export function useAiStream(): { events: AIStreamEvent[]; clear: () => void } {
-  // L5-A: wire carries raw DSH `sessionEvent`s. We re-emit the synthesized
-  // token / reasoning / toolCall / done / error events that AIPane consumes.
-  // The merge map (callId → {name, args}) lives here, on the renderer, so
-  // main doesn't need to track call/result pairing — pure passthrough there.
+  // L5-A: wire carries raw DSH `sessionEvent`s. We re-emit the narrower
+  // synthesized token / reasoning events that AIPane needs (so it doesn't
+  // have to walk the SessionEventMap vocabulary). Tool-call pairing +
+  // projection lives in `projectStreamTurn` as a pure function against the
+  // raw sessionEvents — it MUST NOT live in this React updater, because
+  // StrictMode runs the updater twice and any side-effect map mutation
+  // here would be lost / duplicated, breaking call/result pairing.
   const [events, setEvents] = useState<AIStreamEvent[]>([]);
-  // useRef so the map survives across renders without triggering rerender.
-  // Mutable, never put in state.
-  const liveCallMeta = useRef<Map<string, { name: string; args: string }>>(new Map());
   const clear = useCallback(() => {
     setEvents([]);
-    liveCallMeta.current.clear();
   }, []);
 
   useAppEvent('ai:stream', (e) => {
@@ -514,46 +579,10 @@ export function useAiStream(): { events: AIStreamEvent[]; clear: () => void } {
           }
           return compact(next);
         }
-        // Forward the raw event verbatim so any consumer that wants the
-        // full SessionEvent vocabulary (e.g. a future DSH ToolRow drop-in)
-        // can read it directly. AIPane itself only reads the synthesized
-        // variants below.
+        // Forward the raw sessionEvent verbatim. Tool-call pairing is
+        // reconstructed downstream by projectStreamTurn as a pure function
+        // over the events array — see the comment at the top of this hook.
         next.push({ ...e, ts: now });
-        if (t === 'tool/call') {
-          const d = raw.data as { callId?: unknown; name?: string; arguments?: string } | undefined;
-          if (d?.callId != null && d.name) {
-            liveCallMeta.current.set(String(d.callId), { name: d.name, args: d.arguments ?? '' });
-          }
-        } else if (t === 'tool/result') {
-          const d = raw.data as {
-            message?: {
-              source?: { callId?: unknown };
-              content?: Array<{ isError?: boolean; content?: unknown[] }>;
-            };
-            meta?: unknown;
-          } | undefined;
-          const callId = d?.message?.source?.callId;
-          const meta = callId != null ? liveCallMeta.current.get(String(callId)) : undefined;
-          const block = d?.message?.content?.[0];
-          const ok = !block?.isError;
-          // L5-A: recover the RAW tool value from the rendered ContentBlock[]
-          // the wire carries (jsonOutput.render produced
-          // [{type:'text', text: JSON.stringify(value)}]). Feeding the block
-          // array directly made presentToolResult render a
-          // <pre>[{"type":"text","text":"..."}]</pre> dump. Parse the args
-          // JSON string too, so per-tool presentResult handlers see an object.
-          next.push({
-            type: 'toolCall',
-            invocationId: e.invocationId,
-            toolName: meta?.name ?? '',
-            args: parseToolArgs(meta?.args),
-            result: recoverToolResultValue(block?.content),
-            presentationMeta: d?.meta,
-            ok,
-            ts: now,
-          });
-          if (callId != null) liveCallMeta.current.delete(String(callId));
-        }
         return compact(next);
       }
       // start / done / error / permissionRequest: forward verbatim.

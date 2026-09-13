@@ -586,24 +586,39 @@ function registerSettingsHandlers(
 ): void {
   register('settings.get', () => Promise.resolve(okResult(store.publicView())));
   register('settings.set', (_e, req) => {
-    store.patch({
-      ...(req.provider ? { provider: req.provider } : {}),
-      ...(req.model ? { model: req.model } : {}),
-      ...(req.streaming != null ? { streaming: req.streaming } : {}),
-      ...(req.captureHotkey ? { captureHotkey: req.captureHotkey } : {}),
-      ...(req.theme ? { theme: req.theme } : {}),
-      ...(typeof req.apiKey === 'string' ? { apiKey: req.apiKey } : {}),
-      ...(typeof req.dataDir === 'string' ? { dataDir: req.dataDir } : {}),
-      ...(req.customProviderId !== undefined ? { customProviderId: req.customProviderId } : {}),
-      ...(req.archiveAfterDays !== undefined ? { archiveAfterDays: req.archiveAfterDays } : {}),
-      ...(req.tags ? { tags: req.tags } : {}),
-      ...(req.dailyPlanReminderTime !== undefined ? { dailyPlanReminderTime: req.dailyPlanReminderTime } : {}),
-      ...(req.lastPlanGuideDate !== undefined ? { lastPlanGuideDate: req.lastPlanGuideDate } : {}),
-      ...(req.snoozePlanGuideUntil !== undefined ? { snoozePlanGuideUntil: req.snoozePlanGuideUntil } : {}),
-      ...(req.taskAppearance !== undefined ? { taskAppearance: req.taskAppearance } : {}),
-    });
-    if (req.customProviders) {
-      store.mergeCustomProviders(req.customProviders);
+    // Settings writes hit the disk synchronously inside `store.patch` /
+    // `mergeCustomProviders` (writeFileSync on userData/config.json). A full
+    // disk, revoked write permission, or read-only volume throws — surface
+    // it as an `IpcResult` failure so the renderer's `patch()` can show a
+    // toast and keep the user's draft instead of silently dropping the
+    // change. We MUST NOT echo the request payload back in the failure
+    // message (it carries apiKey / customProviders.apiKey); the renderer
+    // already has a typed SettingsPatchError to fall back on.
+    try {
+      store.patch({
+        ...(req.provider ? { provider: req.provider } : {}),
+        ...(req.model ? { model: req.model } : {}),
+        ...(req.streaming != null ? { streaming: req.streaming } : {}),
+        ...(req.captureHotkey ? { captureHotkey: req.captureHotkey } : {}),
+        ...(req.theme ? { theme: req.theme } : {}),
+        ...(typeof req.apiKey === 'string' ? { apiKey: req.apiKey } : {}),
+        ...(typeof req.dataDir === 'string' ? { dataDir: req.dataDir } : {}),
+        ...(req.customProviderId !== undefined ? { customProviderId: req.customProviderId } : {}),
+        ...(req.archiveAfterDays !== undefined ? { archiveAfterDays: req.archiveAfterDays } : {}),
+        ...(req.tags ? { tags: req.tags } : {}),
+        ...(req.dailyPlanReminderTime !== undefined ? { dailyPlanReminderTime: req.dailyPlanReminderTime } : {}),
+        ...(req.lastPlanGuideDate !== undefined ? { lastPlanGuideDate: req.lastPlanGuideDate } : {}),
+        ...(req.snoozePlanGuideUntil !== undefined ? { snoozePlanGuideUntil: req.snoozePlanGuideUntil } : {}),
+        ...(req.taskAppearance !== undefined ? { taskAppearance: req.taskAppearance } : {}),
+      });
+      if (req.customProviders) {
+        store.mergeCustomProviders(req.customProviders);
+      }
+    } catch (err) {
+      // Generic, payload-free reason. `err` is intentionally NOT included
+      // verbatim — it can mention file paths the user didn't ask to share.
+      const reason = err instanceof Error && err.message ? `保存设置失败：${err.message}` : '保存设置失败';
+      return Promise.resolve(failResult('settings_set_failed', reason));
     }
     // Broadcast so non-modal consumers of settings (e.g. the TagInput
     // autocomplete in the task detail) refresh their registry live.

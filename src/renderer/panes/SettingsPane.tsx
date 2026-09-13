@@ -1,15 +1,26 @@
 // Settings — API key, model, streaming, hotkey, theme, data directory.
+//
+// Save-failure contract:
+//   - All `patch` calls go through `useSettingsPatchWithToast`, which catches
+//     errors and emits a visible error toast. No `void patch(...)` is left
+//     unhandled — every write either succeeds, toasts an error, or shows its
+//     own inline error state.
+//   - The API Key input keeps its local draft while saving; the draft is
+//     cleared ONLY on success. A failed save lets the user retry without
+//     re-typing the key.
 
 import React, { useEffect, useState } from 'react';
-import { useSettings } from '../hooks/useTodoListApi';
+import { useSettings, useSettingsPatchWithToast } from '../hooks/useTodoListApi';
 import type { AIModel } from '../../shared/ai-types';
 
 export const SettingsPane: React.FC = () => {
-  const { data, patch, chooseDataDir } = useSettings();
+  const { data, chooseDataDir } = useSettings();
+  const patchWithToast = useSettingsPatchWithToast();
   const [apiKey, setApiKey] = useState('');
   const [showKey, setShowKey] = useState(false);
   const [relocating, setRelocating] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [savingKey, setSavingKey] = useState(false);
 
   useEffect(() => {
     if (data) setApiKey('');
@@ -26,6 +37,20 @@ export const SettingsPane: React.FC = () => {
     }
   };
 
+  const onSaveApiKey = async (): Promise<void> => {
+    if (!apiKey || savingKey) return;
+    setSavingKey(true);
+    try {
+      // patchWithToast already toasts on failure; here we only gate the
+      // local-draft clear so the user can retry the same key after a
+      // transient disk error.
+      await patchWithToast({ apiKey });
+      setApiKey('');
+    } finally {
+      setSavingKey(false);
+    }
+  };
+
   return (
     <form className="settings-pane" autoComplete="off">
       <h1 className="pane-title">设置</h1>
@@ -39,17 +64,18 @@ export const SettingsPane: React.FC = () => {
             placeholder={data.apiKeyRedacted || 'sk-...'}
             className="input mono"
             autoComplete="off"
+            disabled={savingKey}
           />
-          <button type="button" className="btn-secondary" onClick={() => setShowKey((v) => !v)}>
+          <button type="button" className="btn-secondary" onClick={() => setShowKey((v) => !v)} disabled={savingKey}>
             {showKey ? '隐藏' : '显示'}
           </button>
           <button
             type="button"
             className="btn-primary"
-            disabled={!apiKey}
-            onClick={() => { void patch({ apiKey }); setApiKey(''); }}
+            disabled={!apiKey || savingKey}
+            onClick={() => void onSaveApiKey()}
           >
-            保存
+            {savingKey ? '保存中…' : '保存'}
           </button>
         </div>
       </Field>
@@ -58,7 +84,7 @@ export const SettingsPane: React.FC = () => {
         <select
           className="input"
           value={data.model}
-          onChange={(e) => { void patch({ model: e.target.value as AIModel }); }}
+          onChange={(e) => { void patchWithToast({ model: e.target.value as AIModel }); }}
         >
           <option value="deepseek-chat">deepseek-chat</option>
           <option value="deepseek-reasoner">deepseek-reasoner</option>
@@ -70,7 +96,7 @@ export const SettingsPane: React.FC = () => {
           <input
             type="checkbox"
             checked={data.streaming}
-            onChange={(e) => { void patch({ streaming: e.target.checked }); }}
+            onChange={(e) => { void patchWithToast({ streaming: e.target.checked }); }}
           />
           <span>启用流式输出</span>
         </label>
@@ -80,7 +106,7 @@ export const SettingsPane: React.FC = () => {
         <input
           className="input mono"
           value={data.captureHotkey}
-          onChange={(e) => { void patch({ captureHotkey: e.target.value }); }}
+          onChange={(e) => { void patchWithToast({ captureHotkey: e.target.value }); }}
           placeholder="CommandOrControl+Shift+T"
         />
       </Field>
@@ -106,7 +132,7 @@ export const SettingsPane: React.FC = () => {
         <select
           className="input"
           value={data.theme}
-          onChange={(e) => { void patch({ theme: e.target.value as 'system' | 'light' | 'dark' }); }}
+          onChange={(e) => { void patchWithToast({ theme: e.target.value as 'system' | 'light' | 'dark' }); }}
         >
           <option value="system">跟随系统</option>
           <option value="dark">深色</option>
@@ -126,7 +152,7 @@ export const SettingsPane: React.FC = () => {
             value={data.archiveAfterDays}
             onChange={(e) => {
               const n = Math.max(0, Math.floor(Number(e.target.value) || 0));
-              void patch({ archiveAfterDays: n });
+              void patchWithToast({ archiveAfterDays: n });
             }}
           />
           <span className="muted" style={{ alignSelf: 'center' }}>天</span>
