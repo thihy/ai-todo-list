@@ -139,6 +139,8 @@ MIT — see [LICENSE](./LICENSE).
 
 ## See also
 
+- [AGENTS.md](./AGENTS.md) — concise implementation invariants for AI coding agents.
+- [docs/task-creation-and-storage.md](./docs/task-creation-and-storage.md) — current task creation, AI intent, and storage contracts.
 - [DEVELOPING.md](./DEVELOPING.md) — local dev loop, code layout, conventions.
 - [docs/architecture.md](./docs/architecture.md) — deeper architecture notes.
 - [openspec/changes/todo-list-desktop/](./openspec/changes/todo-list-desktop/) — design specs.

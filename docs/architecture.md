@@ -4,6 +4,13 @@ Deeper notes on the thihy-todolist architecture. For the high-level overview
 and diagram see [README.md](../README.md); this file goes into the parts
 that didn't fit.
 
+> **Current-contract notice:** Parts of this document describe an older
+> flat-file storage and DSH integration design. For task creation, AI-create
+> intent, task-directory association, and per-task files, use
+> [Task Creation and Storage Contracts](./task-creation-and-storage.md) and
+> the repository [AI Contributor Guide](../AGENTS.md). Those documents take
+> precedence for these areas until this broader guide is fully refreshed.
+
 ## Boot sequence
 
 1. `src/main/index.ts` requests the single-instance lock. The second invocation
