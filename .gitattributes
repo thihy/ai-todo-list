@@ -1,0 +1,43 @@
+# Normalize line endings. This project targets Windows (Electron) where
+# `core.autocrlf=true` is the user default. We pin EOL behaviour per category
+# so the "LF will be replaced by CRLF" warning stops firing on every
+# checkout / add, and so contributors on macOS / Linux can edit the same
+# files without cross-platform churn.
+#
+#   *        text=auto   : let Git detect text vs binary
+#   *.md    text eol=crlf : documentation files use CRLF on Windows
+#   *.ts    text eol=crlf : source files (matches Windows Electron tooling)
+#   *.tsx   text eol=crlf
+#   *.js    text eol=crlf
+#   *.jsx   text eol=crlf
+#   *.mjs   text eol=crlf
+#   *.css   text eol=crlf
+#   *.json  text eol=crlf
+#   *.yml   text eol=crlf
+#   *.yaml  text eol=crlf
+#   *.html  text eol=crlf
+#   *.svg   text
+#
+# Binary files keep their byte-for-byte contents (no `text` attribute).
+
+* text=auto eol=crlf
+
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.webp binary
+*.ico  binary
+*.icns binary
+*.exe  binary
+*.dll  binary
+*.node binary
+*.woff binary
+*.woff2 binary
+*.ttf  binary
+*.otf  binary
+*.pdf  binary
+*.zip  binary
+*.tar  binary
+*.gz   binary
+*.br   binary
