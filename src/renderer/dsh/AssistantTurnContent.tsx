@@ -43,6 +43,10 @@ export const AssistantTurnContent: React.FC<{
             />
           );
         }
+        // 文本块空 / 纯空白时不渲染 .bubble——否则会留下一块带 padding /
+        // border 的空方块（"空白小块"）。流式中也跳：流式阶段的"思考中…"
+        // 提示由下方的 blocks.length === 0 分支承担，不重复占位。
+        if (block.text.trim() === '') return null;
         return (
           <div key={`t-${index}`} className="bubble bubble--assistant">
             <AssistantMarkdown
