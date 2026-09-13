@@ -13,7 +13,9 @@
 
 import type { StartupSnapshot } from '../shared/ipc-schema';
 import type { TodoListApi } from '../shared/todo-list-api';
-import './global';
+// `window.__splash` 的类型由 src/renderer/global.d.ts 自动合入 Window
+// 全局类型空间 —— 不需要也不应该在这里 side-effect import 该声明文件，
+// 那样会让 Vite 的 import-analysis 当成运行时模块去解析它并报错。
 
 const SLOW_THRESHOLD_MS = 4000;
 const startupWatchStart = Date.now();
