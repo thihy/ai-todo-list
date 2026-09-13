@@ -386,17 +386,17 @@ const MergeDialog: React.FC<MergeDialogProps> = ({ initial, allActive, onClose, 
   );
   const totalAffected = sources.reduce((acc, s) => acc + s.activeCount, 0);
   return (
-    <div className="modal-backdrop" role="dialog" aria-modal="true">
-      <div className="modal">
+    <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="merge-tags-title">
+      <div className="modal settings-tags-dialog">
         <div className="modal__header">
-          <h3>合并标签</h3>
+          <h3 id="merge-tags-title">合并标签</h3>
           <button type="button" className="icon-btn" onClick={onClose} aria-label="关闭">×</button>
         </div>
         <div className="modal__body">
-          <div className="muted" style={{ marginBottom: 8, fontSize: 12, lineHeight: 1.6 }}>
+          <div className="settings-tags-dialog__notice">
             合并仅影响未删除、未归档任务。已删除或已归档任务上的原标签保持不变。
           </div>
-          <div className="form-row">
+          <div className="form-row settings-tags-dialog__field">
             <label>源标签（要合并掉的）</label>
             <div className="settings-tags__chip-row">
               {sources.map((s) => (
@@ -424,7 +424,7 @@ const MergeDialog: React.FC<MergeDialogProps> = ({ initial, allActive, onClose, 
               ))}
             </select>
           </div>
-          <div className="form-row">
+          <div className="form-row settings-tags-dialog__field">
             <label>目标标签（保留）</label>
             <select
               className="input"
@@ -442,7 +442,7 @@ const MergeDialog: React.FC<MergeDialogProps> = ({ initial, allActive, onClose, 
                 ))}
             </select>
           </div>
-          <div className="muted" style={{ fontSize: 12, lineHeight: 1.6 }}>
+          <div className="settings-tags-dialog__summary">
             将影响 <strong>{totalAffected}</strong> 个有效任务。同任务已有源和目标时,合并后只保留目标。
           </div>
         </div>
@@ -528,14 +528,14 @@ const CleanupDialog: React.FC<CleanupDialogProps> = ({ preview, loading, onClose
   };
 
   return (
-    <div className="modal-backdrop" role="dialog" aria-modal="true">
-      <div className="modal modal--wide">
+    <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="cleanup-tags-title">
+      <div className="modal modal--wide settings-tags-dialog settings-tags-dialog--cleanup">
         <div className="modal__header">
-          <h3>扫描清理</h3>
+          <h3 id="cleanup-tags-title">扫描清理</h3>
           <button type="button" className="icon-btn" onClick={onClose} aria-label="关闭">×</button>
         </div>
         <div className="modal__body">
-          <div className="muted" style={{ marginBottom: 12, fontSize: 12, lineHeight: 1.6 }}>
+          <div className="settings-tags-dialog__notice">
             仅影响未删除、未归档任务。已删除或已归档任务的标签保持原样。
           </div>
           {loading && <div className="muted">扫描中…</div>}
@@ -599,10 +599,10 @@ const CleanupSection: React.FC<{ title: string; hint: string; empty: string; chi
 }) => {
   const arr = React.Children.toArray(children);
   return (
-    <section style={{ marginBottom: 16 }}>
-      <h4 style={{ marginBottom: 4 }}>{title}</h4>
-      <div className="muted" style={{ fontSize: 11, marginBottom: 8, lineHeight: 1.5 }}>{hint}</div>
-      {arr.length === 0 ? <div className="muted" style={{ fontSize: 12 }}>{empty}</div> : children}
+    <section className="cleanup-section">
+      <h4 className="cleanup-section__title">{title}</h4>
+      <div className="cleanup-section__hint">{hint}</div>
+      {arr.length === 0 ? <div className="cleanup-section__empty">{empty}</div> : children}
     </section>
   );
 };
@@ -632,13 +632,12 @@ const SimilarGroupRow: React.FC<{
         </span>
       ))}
     </div>
-    <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
+    <label className="cleanup-similar__target">
       <span className="muted">目标:</span>
       <select
         className="input"
         value={selectedTarget}
         onChange={(e) => onChangeTarget(e.target.value)}
-        style={{ fontSize: 12, padding: '2px 6px' }}
       >
         {group.members.map((m) => (
           <option key={m.name} value={m.name}>{m.name}</option>
