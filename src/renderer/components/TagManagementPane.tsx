@@ -35,7 +35,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTagList } from '../hooks/useTodoListApi';
 import { useToastBus } from './Toast';
-import { TagColorPicker } from './TagInput';
 import type {
   CleanupActions,
   CleanupApplyResult,
@@ -50,7 +49,11 @@ export const TagManagementPane: React.FC = () => {
   const { data: retired, refresh: refreshRetired } = useTagList({ activeOnly: false });
   const [tab, setTab] = useState<'active' | 'retired'>('active');
   const [search, setSearch] = useState('');
-  const [editing, setEditing] = useState<{ row: TagCatalogEntry; draftName: string } | null>(null);
+  const [editing, setEditing] = useState<{
+    originalName: string;
+    row: TagCatalogEntry;
+    draftName: string;
+  } | null>(null);
   const [mergeFrom, setMergeFrom] = useState<{ sources: TagCatalogEntry[]; target: TagCatalogEntry | null } | null>(null);
   const [cleanupPreview, setCleanupPreview] = useState<CleanupPreview | null>(null);
   const [cleanupLoading, setCleanupLoading] = useState(false);
@@ -92,46 +95,71 @@ export const TagManagementPane: React.FC = () => {
   }, []);
 
   return (
-    <div className="settings-pane">
+    <div className="settings-pane settings-tags-pane">
+      <header className="settings-tags__header">
+        <div>
+          <h3 className="settings-tags__title">标签管理</h3>
+          <p className="settings-tags__description">
+            管理标签名称、查看使用情况，或合并和停用不再需要的标签。
+          </p>
+        </div>
+        <button type="button" className="btn-secondary" onClick={openCleanup}>
+          扫描清理
+        </button>
+      </header>
+
       <div className="settings-tags__toolbar">
-        <input
-          className="input"
-          placeholder="搜索标签名称…"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-        />
+        <label className="settings-tags__search">
+          <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
+            <circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" strokeWidth="1.4" />
+            <path d="m10.5 10.5 3 3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+          </svg>
+          <input
+            className="input"
+            aria-label="搜索标签名称"
+            placeholder="搜索标签名称…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+        </label>
         <div className="settings-tags__tabs" role="tablist">
           <button
             type="button"
             role="tab"
             aria-selected={tab === 'active'}
-            className={`btn-secondary${tab === 'active' ? ' is-active' : ''}`}
+            className={`settings-tags__tab${tab === 'active' ? ' is-active' : ''}`}
             onClick={() => setTab('active')}
           >
-            活跃 ({activeRows.length})
+            活跃 <span className="settings-tags__tab-count">{activeRows.length}</span>
           </button>
           <button
             type="button"
             role="tab"
             aria-selected={tab === 'retired'}
-            className={`btn-secondary${tab === 'retired' ? ' is-active' : ''}`}
+            className={`settings-tags__tab${tab === 'retired' ? ' is-active' : ''}`}
             onClick={() => setTab('retired')}
           >
-            已停用 ({retiredRows.length})
+            已停用 <span className="settings-tags__tab-count">{retiredRows.length}</span>
           </button>
         </div>
-        <button type="button" className="btn-secondary" onClick={openCleanup}>
-          扫描清理
-        </button>
       </div>
 
       <div className="settings-tags">
-        {loading && <div className="muted">加载中…</div>}
+        {loading && <div className="settings-tags__empty">正在加载标签…</div>}
         {!loading && visible.length === 0 && (
-          <div className="muted">
-            {tab === 'active'
-              ? '还没有标签。在任务详情中输入 #标签 即可自动加入管理。'
-              : '已停用列表为空。'}
+          <div className="settings-tags__empty">
+            <strong>
+              {search.trim()
+                ? `没有匹配“${search.trim()}”的标签`
+                : tab === 'active' ? '还没有标签' : '没有已停用标签'}
+            </strong>
+            <span>
+              {search.trim()
+                ? '换一个关键词试试。'
+                : tab === 'active'
+                  ? '在任务详情中输入 #标签，即可自动加入管理。'
+                  : '停用的标签会显示在这里，并可随时恢复。'}
+            </span>
           </div>
         )}
         {visible.map((t) => (
@@ -139,7 +167,8 @@ export const TagManagementPane: React.FC = () => {
             key={t.name}
             row={t}
             editing={editing}
-            onStartEdit={(row) => setEditing({ row, draftName: row.name })}
+            onStartEdit={(row) => setEditing({ originalName: row.name, row, draftName: row.name })}
+            onDraftChange={(draftName) => setEditing((current) => current ? { ...current, draftName } : null)}
             onCancelEdit={() => setEditing(null)}
             onCommitRename={async (row, newName) => {
               if (newName === row.name) {
@@ -156,15 +185,6 @@ export const TagManagementPane: React.FC = () => {
                 return;
               }
               setEditing(null);
-            }}
-            onRecolour={async (_row, _color) => {
-              // Recolour is intentionally out of scope for the v1
-              // catalog. Tag colour is set when the row is created
-              // (palette-rotated by the catalog import), and the user
-              // re-paints via the TagColorPicker on the task detail
-              // popover. A dedicated tag.recolour channel can be
-              // added later if needed; today this is a no-op so the
-              // per-row swatch still renders without throwing.
             }}
             onStartMerge={(row) => setMergeFrom({ sources: [row], target: null })}
             onRetire={async (row) => {
@@ -249,11 +269,11 @@ export const TagManagementPane: React.FC = () => {
 
 interface TagRowProps {
   row: TagCatalogEntry;
-  editing: { row: TagCatalogEntry; draftName: string } | null;
+  editing: { originalName: string; row: TagCatalogEntry; draftName: string } | null;
   onStartEdit(row: TagCatalogEntry): void;
+  onDraftChange(value: string): void;
   onCancelEdit(): void;
   onCommitRename(row: TagCatalogEntry, newName: string): Promise<void>;
-  onRecolour(row: TagCatalogEntry, color: string): Promise<void>;
   onStartMerge(row: TagCatalogEntry): void;
   onRetire(row: TagCatalogEntry): Promise<void>;
   onReactivate(row: TagCatalogEntry): Promise<void>;
@@ -263,28 +283,28 @@ const TagRow: React.FC<TagRowProps> = ({
   row,
   editing,
   onStartEdit,
+  onDraftChange,
   onCancelEdit,
   onCommitRename,
-  onRecolour,
   onStartMerge,
   onRetire,
   onReactivate,
 }) => {
-  const isEditing = editing?.row.name === row.name;
+  const isEditing = editing?.originalName === row.name;
   const isRetired = row.retiredAt != null;
   return (
     <div className={`settings-tags__row${isRetired ? ' is-retired' : ''}`}>
-      <TagColorPicker
-        value={row.color}
-        onChange={(c) => void onRecolour(row, c)}
-        ariaLabel={`${row.name} 颜色`}
+      <span
+        className="settings-tags__swatch"
+        style={{ backgroundColor: row.color }}
+        aria-hidden="true"
       />
       {isEditing ? (
         <input
           className="input settings-tags__name"
           value={editing!.draftName}
           autoFocus
-          onChange={(e) => onStartEdit({ ...row, name: e.target.value } as TagCatalogEntry) /* rewrite handled below */}
+          onChange={(e) => onDraftChange(e.target.value)}
           onBlur={(e) => void onCommitRename(row, e.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
@@ -294,24 +314,30 @@ const TagRow: React.FC<TagRowProps> = ({
       ) : (
         <span
           className="settings-tags__name"
-          onDoubleClick={() => onStartEdit(row)}
-          title="双击重命名"
+          title={row.name}
         >
-          {row.name}
+          #{row.name}
         </span>
       )}
-      <span className="settings-tags__counts" title={`有效任务 ${row.activeCount} · 历史任务 ${row.historicalCount}`}>
+      <span className={`settings-tags__status${row.activeCount === 0 ? ' is-unused' : ''}`} title={`有效任务 ${row.activeCount} · 历史任务 ${row.historicalCount}`}>
         {row.activeCount === 0
           ? (isRetired
-              ? `0 个有效任务 · 已停用`
-              : `0 个有效任务 · 仅历史使用`)
+              ? '已停用'
+              : row.historicalCount > 0 ? '仅历史使用' : '未使用')
           : `${row.activeCount} 个有效任务`}
       </span>
       {!isRetired && (
-        <>
+        <div className="settings-tags__actions">
           <button
             type="button"
-            className="btn-secondary"
+            className="settings-tags__action"
+            onClick={() => onStartEdit(row)}
+          >
+            重命名
+          </button>
+          <button
+            type="button"
+            className="settings-tags__action"
             onClick={() => onStartMerge(row)}
             title="合并到其他标签"
           >
@@ -319,22 +345,24 @@ const TagRow: React.FC<TagRowProps> = ({
           </button>
           <button
             type="button"
-            className="btn-secondary"
+            className="settings-tags__action settings-tags__action--danger"
             onClick={() => void onRetire(row)}
             title="停用 — 仅从管理列表隐藏,不影响历史任务"
           >
             停用
           </button>
-        </>
+        </div>
       )}
       {isRetired && (
-        <button
-          type="button"
-          className="btn-secondary"
-          onClick={() => void onReactivate(row)}
-        >
-          恢复
-        </button>
+        <div className="settings-tags__actions">
+          <button
+            type="button"
+            className="settings-tags__action settings-tags__action--restore"
+            onClick={() => void onReactivate(row)}
+          >
+            恢复
+          </button>
+        </div>
       )}
     </div>
   );
