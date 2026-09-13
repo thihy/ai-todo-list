@@ -10,6 +10,25 @@
 // threshold + observedTopRef pattern. We deliberately do NOT pull in that
 // module's pagination / chat store — those are out of scope here. This hook
 // only handles "sticky-to-bottom" semantics for one container.
+//
+// Scheduler model
+// ---------------
+// Every "go to bottom" intent (historyLoaded first-paint, requestFollow after
+// a new turn commits, ResizeObserver on content growth) is funnelled through
+// `scheduleFollowFrame`. The scheduler keeps the latest rAF handle in a ref so
+// bursts coalesce into one scroll, and so user-driven "stop following" can
+// cancel them before the write happens. We additionally tag each scheduled
+// frame with:
+//
+//   - the target conversation id it was scheduled for
+//   - a monotonically increasing `generation` counter
+//
+// Switching conversations, the user pausing follow, and component unmount all
+// bump the generation AND cancel the pending frame. The frame's check on
+// execution compares both the live id and the live generation — only if
+// BOTH still match the snapshot it carries do we write to scrollTop. This is
+// what stops "user scrolled up, but the rAF queued at send-time yanks them
+// back" after the user has explicitly opted out of following.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 
@@ -48,12 +67,31 @@ export interface UseChatAutoFollowResult {
    *  target conversation's DOM (i.e. setState has flushed and React has
    *  committed). We schedule a follow on the next frame so the scroll lands
    *  after layout. The id is checked at frame time — if the user switched
-   *  conversations meanwhile, the frame is a no-op. */
+   *  conversations meanwhile, the frame is a no-op.
+   *
+   *  The conversation id argument is authoritative: if it does not match
+   *  `currentConversationId` at call time, the request is ignored. Callers
+   *  should pass the id of the conversation they want the follow to apply
+   *  to (which may equal `currentConversationId`, or — when a brand-new
+   *  conversation was just created — equal the brand-new id). */
   requestFollow: (conversationId: string) => void;
 }
 
 interface FollowState {
   following: boolean;
+}
+
+/** A snapshot captured at schedule time and re-checked at execution time.
+ *  Both fields must still match the live hook state for the write to
+ *  happen. The generation counter is bumped on conv switch / unmount /
+ *  pause-follow, invalidating every still-queued frame in one step. */
+interface ScheduledFrame {
+  /** The id the request was scheduled FOR. */
+  forConversationId: string | null;
+  /** Generation captured at schedule time. */
+  generation: number;
+  /** The rAF handle so we can cancel it before it fires. */
+  rafId: number;
 }
 
 export function useChatAutoFollow(opts: UseChatAutoFollowOpts): UseChatAutoFollowResult {
@@ -67,9 +105,13 @@ export function useChatAutoFollow(opts: UseChatAutoFollowOpts): UseChatAutoFollo
 
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
 
-  // Single rAF handle shared by content growth / resize / requestFollow.
-  // Coalesces bursts (e.g. a chunk of streaming tokens) into one scroll.
-  const pendingFrameRef = useRef<number | null>(null);
+  // Currently-queued frame, if any. Single handle shared by content growth /
+  // resize / requestFollow so bursts coalesce into one scroll.
+  const pendingFrameRef = useRef<ScheduledFrame | null>(null);
+
+  // Generation counter — bumped on conv switch / pause-follow / unmount.
+  // Any frame whose captured generation < this value has been invalidated.
+  const generationRef = useRef(0);
 
   // When the hook (not the user) writes scrollTop, the browser fires a
   // scroll event. We suppress that single event by recording the value we
@@ -85,8 +127,9 @@ export function useChatAutoFollow(opts: UseChatAutoFollowOpts): UseChatAutoFollo
   // --- helpers -----------------------------------------------------------
 
   const cancelPendingFrame = useCallback((): void => {
-    if (pendingFrameRef.current !== null) {
-      cancelAnimationFrame(pendingFrameRef.current);
+    const pending = pendingFrameRef.current;
+    if (pending !== null) {
+      cancelAnimationFrame(pending.rafId);
       pendingFrameRef.current = null;
     }
   }, []);
@@ -110,10 +153,17 @@ export function useChatAutoFollow(opts: UseChatAutoFollowOpts): UseChatAutoFollo
 
   /** Schedules a follow-scroll on the next frame if the conversation is
    *  still active and the user is still following. Coalesces bursts — the
-   *  second call within the same frame just re-arms to the same handle. */
-  const scheduleFollowFrame = useCallback((): void => {
+   *  second call within the same frame just re-arms to the same handle.
+   *
+   *  `forConversationId` is the id the caller believes it wants the follow
+   *  to land on. We snapshot both that id and the current generation so
+   *  the rAF can re-validate before writing scrollTop. */
+  const scheduleFollowFrame = useCallback((forConversationId: string | null): void => {
     if (pendingFrameRef.current !== null) return;
-    pendingFrameRef.current = requestAnimationFrame(() => {
+    const generation = generationRef.current;
+    const rafId = requestAnimationFrame(() => {
+      // Clear our handle ref first so a follow-up schedule during this
+      // callback isn't suppressed by stale-state bookkeeping.
       pendingFrameRef.current = null;
       const convId = activeConvIdRef.current;
       const el = scrollRef.current;
@@ -121,20 +171,30 @@ export function useChatAutoFollow(opts: UseChatAutoFollowOpts): UseChatAutoFollo
       // Background conversations don't drive this container. If the active
       // id changed since scheduling, drop the scroll silently.
       if (convId !== activeConvIdRef.current) return;
+      // Generation invalidation: conv switch / pause-follow / unmount all
+      // bumped the counter, and any old frame captured at a lower number
+      // must not write.
+      if (generation !== generationRef.current) return;
+      // Caller asked for a specific id (e.g. a freshly created conversation
+      // whose state hasn't propagated yet). When that id no longer matches
+      // the live id (user switched away, generation bumped, etc.), drop it.
+      if (forConversationId !== null && forConversationId !== convId) return;
       if (!followingRef.current.following) return;
       scrollToBottom(el);
       // Button reflects the post-scroll state: at-bottom ⇒ hide.
       setShowJumpToLatest(false);
     });
+    pendingFrameRef.current = { forConversationId, generation, rafId };
   }, [scrollRef, scrollToBottom]);
 
   // --- conversation-id lifecycle ----------------------------------------
 
   // Switching conversations resets everything: drop the frame, reset
   // following to true (a fresh conversation starts at the bottom), hide the
-  // button. The actual first-paint scroll happens via the historyLoaded
-  // effect below — we don't want to fight an unmounted/incomplete DOM.
+  // button, AND bump the generation so any still-queued frame (with the
+  // old generation captured) becomes a no-op when it fires.
   useEffect(() => {
+    generationRef.current += 1;
     followingRef.current = { following: true };
     setShowJumpToLatest(false);
     cancelPendingFrame();
@@ -146,22 +206,13 @@ export function useChatAutoFollow(opts: UseChatAutoFollowOpts): UseChatAutoFollo
   // First bottom-pinned scroll when a conversation's history finishes
   // loading (or right away if it was already loaded). The hook doesn't
   // observe `historyLoaded` as a scroll trigger beyond this initial pin;
-  // subsequent growth is picked up by the ResizeObserver.
+  // subsequent growth is picked up by the ResizeObserver. Goes through the
+  // unified scheduler so a conv-switch / pause-follow in the same frame
+  // cancels it cleanly.
   useEffect(() => {
     if (!historyLoaded) return;
-    const el = scrollRef.current;
-    if (!el) return;
-    // Two rAFs: first lets the new conversation's React subtree commit,
-    // second lets the layout settle (especially with images / fonts).
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        if (activeConvIdRef.current !== currentConversationId) return;
-        const e = scrollRef.current;
-        if (!e) return;
-        scrollToBottom(e);
-      });
-    });
-  }, [historyLoaded, currentConversationId, scrollRef, scrollToBottom]);
+    scheduleFollowFrame(currentConversationId);
+  }, [historyLoaded, currentConversationId, scheduleFollowFrame]);
 
   // --- DOM listeners -----------------------------------------------------
 
@@ -194,6 +245,11 @@ export function useChatAutoFollow(opts: UseChatAutoFollowOpts): UseChatAutoFollo
      *  yank the user back. */
     const onWheel = (e: WheelEvent): void => {
       if (e.deltaY < 0 && followingRef.current.following) {
+        // Bump generation so any still-queued frame (e.g. one scheduled at
+        // send-time before the user scrolled up) becomes a no-op even if
+        // cancelPendingFrame somehow misses it. Belt-and-braces with the
+        // explicit cancel below.
+        generationRef.current += 1;
         followingRef.current.following = false;
         setShowJumpToLatest(true);
         cancelPendingFrame();
@@ -214,6 +270,7 @@ export function useChatAutoFollow(opts: UseChatAutoFollowOpts): UseChatAutoFollo
       if (y === null) return;
       // Touch clientY gets smaller as finger moves UP the screen.
       if (y > lastTouchY && followingRef.current.following) {
+        generationRef.current += 1;
         followingRef.current.following = false;
         setShowJumpToLatest(true);
         cancelPendingFrame();
@@ -241,6 +298,7 @@ export function useChatAutoFollow(opts: UseChatAutoFollowOpts): UseChatAutoFollo
       const isUpKey = e.key === ARROW_UP || e.key === PAGE_UP || e.key === HOME;
       const isDownKey = e.key === ARROW_DOWN || e.key === PAGE_DOWN || e.key === END || e.key === SPACE;
       if (isUpKey && followingRef.current.following) {
+        generationRef.current += 1;
         followingRef.current.following = false;
         setShowJumpToLatest(true);
         cancelPendingFrame();
@@ -252,13 +310,32 @@ export function useChatAutoFollow(opts: UseChatAutoFollowOpts): UseChatAutoFollo
 
     /** Dragging the scrollbar: the browser doesn't fire wheel, but scroll
      *  events arrive. The same onScroll comparison-vs-programmatic handles
-     *  it — when the user drags, scrollTop won't match our written value. */
+     *  it — when the user drags, scrollTop won't match our written value.
+     *  Note: a scrollbar drag can also leave us above the bottom, in which
+     *  case onScroll sets following=false. We also bump the generation so
+     *  any queued follow frame can't drag the user back during the drag. */
+    const onPointerDown = (e: PointerEvent): void => {
+      // Only care about drags on the scrollbar area — buttons inside the
+      // content area are handled by their own listeners. The scrollbar
+      // lives in the gap between clientWidth and offsetWidth.
+      const onScrollbar = e.clientX >= el.clientWidth;
+      if (onScrollbar && followingRef.current.following) {
+        // We don't know yet whether the user is dragging up or down; just
+        // record that we're now in a "maybe leaving the bottom" state and
+        // cancel the queued frame. onScroll will sort out the rest once
+        // the drag actually moves the scroll position.
+        generationRef.current += 1;
+        cancelPendingFrame();
+      }
+    };
+
     el.addEventListener('scroll', onScroll, { passive: true });
     el.addEventListener('wheel', onWheel, { passive: true });
     el.addEventListener('touchstart', onTouchStart, { passive: true });
     el.addEventListener('touchmove', onTouchMove, { passive: true });
     el.addEventListener('touchend', onTouchEnd, { passive: true });
     el.addEventListener('keydown', onKeyDown);
+    el.addEventListener('pointerdown', onPointerDown, { passive: true });
 
     return () => {
       el.removeEventListener('scroll', onScroll);
@@ -267,6 +344,7 @@ export function useChatAutoFollow(opts: UseChatAutoFollowOpts): UseChatAutoFollo
       el.removeEventListener('touchmove', onTouchMove);
       el.removeEventListener('touchend', onTouchEnd);
       el.removeEventListener('keydown', onKeyDown);
+      el.removeEventListener('pointerdown', onPointerDown);
     };
   }, [scrollRef, distanceFromBottom, cancelPendingFrame]);
 
@@ -286,7 +364,7 @@ export function useChatAutoFollow(opts: UseChatAutoFollowOpts): UseChatAutoFollo
       // we're watching the right DOM, but defensively) doesn't drag us.
       if (activeConvIdRef.current !== currentConversationId) return;
       if (!followingRef.current.following) return;
-      scheduleFollowFrame();
+      scheduleFollowFrame(currentConversationId);
     };
 
     const ro = new ResizeObserver(() => scheduleIfFollowing());
@@ -302,6 +380,10 @@ export function useChatAutoFollow(opts: UseChatAutoFollowOpts): UseChatAutoFollo
 
   useEffect(() => {
     return () => {
+      // Bump the generation so any in-flight frame — even if it sneaks
+      // past the rAF cancellation — becomes a no-op when it fires. Then
+      // cancel and reset bookkeeping.
+      generationRef.current += 1;
       cancelPendingFrame();
       lastProgrammaticScrollTopRef.current = null;
     };
@@ -315,28 +397,30 @@ export function useChatAutoFollow(opts: UseChatAutoFollowOpts): UseChatAutoFollo
     followingRef.current.following = true;
     setShowJumpToLatest(false);
     // Same instant scroll as streaming follow — clicking the button is an
-    // explicit "go to bottom", no smooth animation needed.
+    // explicit "go to bottom", no smooth animation needed. No rAF: the
+    // user gesture is the explicit intent, and the layout is already
+    // settled by the time the click event runs.
     scrollToBottom(el);
   }, [scrollRef, scrollToBottom]);
 
   const requestFollow = useCallback((conversationId: string): void => {
-    if (conversationId !== currentConversationId) return;
+    // Do NOT drop the request based on `currentConversationId` here. The
+    // prop value lags behind React commits: when a brand-new conversation
+    // is created in the same submit pipeline that just called
+    // `setCurrentId(convId)`, the hook still sees the OLD id until React
+    // re-renders. Dropping here would silently lose the follow for the
+    // first message of a fresh conversation.
+    //
+    // Instead we hand the target id to the scheduler as `forConversationId`
+    // and let the frame's execution-time check
+    // (`forConversationId !== activeConvIdRef.current`) drop the request
+    // if the active id never caught up (i.e. the user switched away
+    // between submit and frame-fire). The generation check covers the
+    // user-paused-follow case.
     followingRef.current.following = true;
     setShowJumpToLatest(false);
-    // Two rAFs: first lets the new turn commit, second lets layout settle.
-    // Same shape as the historyLoaded effect — the host calls this only
-    // AFTER setTurnsByConv has flushed, so a single rAF would usually do,
-    // but the double-rAF is cheap insurance against a sync re-layout
-    // triggered by the same React commit.
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        if (activeConvIdRef.current !== conversationId) return;
-        const el = scrollRef.current;
-        if (!el) return;
-        scrollToBottom(el);
-      });
-    });
-  }, [currentConversationId, scrollRef, scrollToBottom]);
+    scheduleFollowFrame(conversationId);
+  }, [scheduleFollowFrame]);
 
   return {
     showJumpToLatest,
