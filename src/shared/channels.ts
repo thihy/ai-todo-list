@@ -114,6 +114,8 @@ const RUNTIME_CHANNEL_KEYS = [
   // OBS-01 — diagnostics export + save-to-file.
   'app.diagnostics.export',
   'app.diagnostics.saveToFile',
+  // QUALITY-01 — deterministic task-health rule check.
+  'app.health.check',
 ] as const satisfies readonly IpcChannelName[];
 
 /** The compile-time guard. If the developer adds a key to

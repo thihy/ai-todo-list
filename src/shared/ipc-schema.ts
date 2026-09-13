@@ -667,6 +667,17 @@ export interface IpcRegistry {
     { defaultName: string; json: string },
     IpcResult<{ path: string | null }>
   >;
+  /** QUALITY-01 — run deterministic task-health rules and return
+   *  the issue list. Pure read; does NOT mutate anything. The
+   *  renderer is expected to call this after data changes
+   *  (subscribe to `app:data-changed` and re-query). */
+  'app.health.check': IpcChannel<
+    undefined,
+    IpcResult<{
+      issues: HealthIssue[];
+      checkedAt: number;
+    }>
+  >;
 }
 
 export interface StartupSnapshot {
@@ -728,6 +739,30 @@ export interface DiagnosticsBundle {
   };
   sdkBridgeEnabled: boolean;
   recentLogs: string[];
+}
+
+/** QUALITY-01 — deterministic health issue kinds. Mirror of
+ *  src/main/health/rules.ts → HealthIssue; the web tsconfig doesn't
+ *  include src/main/ so we duplicate the union here. The two stay
+ *  in sync via the `kind` literal — adding a kind requires a
+ *  change in both files (and is intentionally not type-pinned
+ *  because the rules module is the canonical source). */
+export type HealthIssueKind =
+  | 'long_doing_no_progress'
+  | 'overdue'
+  | 'blocked_no_reason'
+  | 'parent_done_child_open'
+  | 'progress_status_conflict'
+  | 'today_overload';
+
+export type HealthSeverity = 'info' | 'warn' | 'blocker';
+
+export interface HealthIssue {
+  kind: HealthIssueKind;
+  severity: HealthSeverity;
+  todoIds: string[];
+  message: string;
+  data?: Record<string, number | string>;
 }
 
 export interface StartupComponentState {

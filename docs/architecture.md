@@ -699,6 +699,62 @@ catalog-insert failure cannot corrupt the task.
   a large log file the renderer may briefly block. 32 KiB is
   small enough that this is not yet a real problem.
 
+## 10.2 Task health (QUALITY-01)
+
+**Current state.**
+
+- `src/main/health/rules.ts → runHealthRules(db)` is a pure,
+  deterministic, AI-free function that scans `todos` once and
+  returns a sorted `HealthIssue[]`. Six rules ship in v1:
+  - `long_doing_no_progress` — `status='doing'` AND `updated_at`
+    older than 7 days (configurable).
+  - `overdue` — `due_at < today` AND status not done/cancelled.
+  - `blocked_no_reason` — `status='blocked'` AND body is empty
+    or shorter than 10 characters.
+  - `parent_done_child_open` — parent.status='done' AND at
+    least one child.status NOT IN ('done','cancelled').
+  - `progress_status_conflict` — status='done' AND progress<100,
+    OR progress=100 AND status NOT IN ('done','cancelled').
+  - `today_overload` — `planned_for = today` count > threshold
+    (default 10).
+- IPC channel `app.health.check` returns
+  `{ issues: HealthIssue[], checkedAt: number }`. Renderer
+  subscribes to `app:data-changed` and re-queries on receipt —
+  no polling, no event channel from main.
+- Settings → 健康 pane renders the issues with severity
+  ordering (blocker → warn → info), colour-coded left borders,
+  per-kind labels, and a count of implicated tasks. The pane
+  is read-only — clicking a task id is a future "deep-link
+  navigation" affordance (not in scope for QUALITY-01).
+- Rules have a `now` injection knob so tests are deterministic.
+
+**What QUALITY-01 deliberately does NOT do.**
+
+- AI explanations / suggestions. AI-01 (P1) covers that as a
+  separate layer; QUALITY-01 stays pure SQL so the renderer can
+  diff reports across time without an AI dependency.
+- Automatic batch repair. The first version is report-only —
+  "扫描 + 报告 + 跳转入口" 即可，"批量修复" 是后续版本的事。
+- Per-task deep-link navigation. The pane surfaces the count
+  + ids; clicking through to a specific todo requires App.tsx
+  routing changes that intersect with `app.focus` and the
+  existing hash-based navigation.
+
+**Known issues.**
+
+- The renderer mirror of `HealthIssueKind` in
+  `shared/ipc-schema.ts` is a string-literal union, not a
+  pinned structural type. Adding a kind requires editing both
+  `src/main/health/rules.ts` and the mirror; the latter is
+  the canonical type for IPC but the former is the canonical
+  implementation. A future iteration could promote
+  `HealthIssue` to a shared `interface` (mirror + assertion
+  guard), like `DiagnosticsBundle` after OBS-01.
+- `body` in rule 3 may include progress HTML; the 10-char
+  threshold is a rough proxy for "has user-written content".
+  A future iteration could look at `progress_log` for a
+  more accurate "last user action" signal.
+
 ## 11. Cross-references
 
 - **Task creation / storage contract** —

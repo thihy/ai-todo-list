@@ -293,6 +293,10 @@ export interface TodoListApi {
      *  chosen path. Returns the absolute path on success, or `null`
      *  if the user cancelled. */
     diagnosticsSaveToFile(defaultName: string, json: string): Promise<IpcResponse<'app.diagnostics.saveToFile'>>;
+    /** QUALITY-01 — run deterministic task-health rules. Pure
+     *  read; does NOT mutate anything. Returns a sorted list of
+     *  issues + the wall-clock time the check ran. */
+    healthCheck(): Promise<IpcResponse<'app.health.check'>>;
   };
   capture: {
     submit(args: CaptureSubmitArgs): Promise<IpcResponse<'capture.submit'>>;

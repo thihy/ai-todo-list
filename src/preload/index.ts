@@ -173,6 +173,11 @@ const api: TodoListApi = {
      *  chosen path. Returns the absolute path on success. */
     diagnosticsSaveToFile: (defaultName: string, json: string) =>
       invoke('app.diagnostics.saveToFile', { defaultName, json }),
+    /** QUALITY-01 — run deterministic task-health rules. Returns
+     *  the issue list + checkedAt timestamp. The renderer is
+     *  expected to call this on boot, after `app:data-changed`,
+     *  and when the user opens the 健康 pane. */
+    healthCheck: () => invoke('app.health.check', undefined as never),
   },
   capture: {
     submit: (args: CaptureSubmitArgs) => invoke('capture.submit', args),

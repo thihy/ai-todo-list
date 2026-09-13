@@ -7,7 +7,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { useSettings, useSettingsPatchWithToast, useStartupAiState } from '../hooks/useTodoListApi';
 import { useDimTitleBar } from '../hooks/useDimTitleBar';
 import { useToastBus } from './Toast';
-import type { SettingsGetRes } from '../../shared/ipc-schema';
+import type { HealthIssue, HealthIssueKind, HealthSeverity, SettingsGetRes } from '../../shared/ipc-schema';
 import type { SettingsPatchArgs } from '../../shared/todo-list-api';
 import {
   AI_PROVIDERS,
@@ -22,7 +22,7 @@ import {
 import { TagManagementPane } from './TagManagementPane';
 import { TaskAppearancePane } from './TaskAppearancePane';
 
-type Category = 'general' | 'model' | 'data' | 'tags' | 'appearance' | 'hotkeys' | 'reminder' | 'integration' | 'about';
+type Category = 'general' | 'model' | 'data' | 'tags' | 'appearance' | 'hotkeys' | 'reminder' | 'integration' | 'health' | 'about';
 
 const CATEGORIES: { key: Category; label: string }[] = [
   { key: 'general', label: '通用' },
@@ -33,6 +33,7 @@ const CATEGORIES: { key: Category; label: string }[] = [
   { key: 'hotkeys', label: '快捷键' },
   { key: 'reminder', label: '提醒' },
   { key: 'integration', label: '外部访问' },
+  { key: 'health', label: '健康' },
   { key: 'about', label: '关于' },
 ];
 
@@ -123,6 +124,11 @@ export const SettingsModal: React.FC<{ open: boolean; onClose: () => void }> = (
               // user isn't surprised when the socket doesn't bind/unbind
               // immediately.
               <BridgePane data={data} />
+            ) : cat === 'health' ? (
+              // QUALITY-01 — deterministic task health. Read-only; the
+              // pane re-queries when the user clicks "刷新" or after a
+              // data-changed event (see useDataVersion refresh).
+              <HealthPane />
             ) : (
               <AboutPane data={data} patch={patchWithToast} />
             )}
@@ -872,6 +878,125 @@ const ReminderPane: React.FC<PaneProps> = ({ data, patch }) => {
     </div>
   );
 };
+
+/** QUALITY-01 — deterministic task health. The pane calls
+ *  `app.health.check` on mount, after `app:data-changed` (via the
+ *  data-bus hook), and when the user clicks "刷新". AI suggestions
+ *  are NOT in scope; this pane is read-only. */
+const HealthPane: React.FC = () => {
+  const [issues, setIssues] = useState<HealthIssue[]>([]);
+  const [checkedAt, setCheckedAt] = useState<number | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const refresh = useCallback(async (): Promise<void> => {
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await window.todoList.app.healthCheck();
+      if (!res.ok) {
+        setError(`健康检查失败：${res.message}`);
+        return;
+      }
+      setIssues(res.data.issues);
+      setCheckedAt(res.data.checkedAt);
+    } catch (err) {
+      setError(`健康检查失败：${(err as Error).message}`);
+    } finally {
+      setBusy(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+  // Re-check whenever a data-change event fires. The data bus is the
+  // canonical signal — explicit refresh is only needed when the user
+  // opens the pane cold.
+  useEffect(() => {
+    return window.todoList.on('app:data-changed', () => { void refresh(); });
+  }, [refresh]);
+
+  return (
+    <div className="settings-pane">
+      <Field
+        label="任务健康"
+        hint="按确定性规则扫描：长期 doing 无进展、已过期、blocked 无说明、父任务完成但子任务未完成、progress/status 矛盾、今日超载。只报告，不自动修复。"
+      >
+        <div className="row">
+          <button
+            type="button"
+            className="btn-secondary"
+            disabled={busy}
+            onClick={() => void refresh()}
+          >
+            {busy ? '扫描中…' : '刷新'}
+          </button>
+          {checkedAt && (
+            <span className="muted mono" style={{ fontSize: 'var(--font-xs)' }}>
+              最近一次 {new Date(checkedAt).toLocaleTimeString()}
+            </span>
+          )}
+        </div>
+      </Field>
+
+      {error && <div className="notice notice--error">{error}</div>}
+
+      {issues.length === 0 && !busy && checkedAt && (
+        <div className="notice">没有发现问题。</div>
+      )}
+
+      {issues.map((issue) => (
+        <div
+          key={issue.kind}
+          className="notice"
+          data-severity={issue.severity}
+          style={{
+            // severity → colour: blocker = red, warn = amber, info = blue.
+            borderLeft:
+              issue.severity === 'blocker'
+                ? '4px solid var(--danger-fg, #d97757)'
+                : issue.severity === 'warn'
+                  ? '4px solid var(--warning-fg, #c8a44c)'
+                  : '4px solid var(--info-fg, #5eafe6)',
+          }}
+        >
+          <div style={{ fontWeight: 500, marginBottom: 4 }}>
+            {severityLabel(issue.severity)} · {kindLabel(issue.kind)}
+          </div>
+          <div>{issue.message}</div>
+          {issue.todoIds.length > 0 && (
+            <div
+              className="muted"
+              style={{ fontSize: 'var(--font-xs)', marginTop: 4 }}
+            >
+              涉及 {issue.todoIds.length} 个任务
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+};
+
+function severityLabel(s: HealthSeverity): string {
+  switch (s) {
+    case 'blocker': return '阻断';
+    case 'warn': return '警告';
+    case 'info': return '提示';
+  }
+}
+
+function kindLabel(k: HealthIssueKind): string {
+  switch (k) {
+    case 'long_doing_no_progress': return '长期 doing 无进展';
+    case 'overdue': return '已过期';
+    case 'blocked_no_reason': return 'blocked 无说明';
+    case 'parent_done_child_open': return '父任务完成但子任务未完成';
+    case 'progress_status_conflict': return 'progress / status 矛盾';
+    case 'today_overload': return '今日超载';
+  }
+}
 
 const AboutPane: React.FC<PaneProps> = ({ data }) => {
   // OBS-01 — drive a Save-As dialog from the renderer. Two-step:

@@ -143,6 +143,11 @@ See `startup[ai]` log lines and ADR-004.
   and the last ~32 KiB of the log file (with paths / keys /
   emails scrubbed). It does NOT include task bodies, drawing
   scenes, AI conversations or attachments.
+- The 设置 → 健康 pane (QUALITY-01) runs six deterministic rules
+  every time `app:data-changed` fires. The pane surfaces issues
+  with severity ordering (blocker → warn → info). It is
+  read-only by design — automatic repair is intentionally out of
+  scope to keep the layer AI-free and testable.
 - DSH boot is best-effort: a failed boot surfaces as
   `ai.ask → dsh_unavailable` and is visible in the AI pane as a
   non-blocking banner. The rest of the app stays usable.
