@@ -12,6 +12,8 @@ import { registerContentHandlers } from './ipc/content-handlers';
 import { registerDocumentHandlers } from './ipc/document-handlers';
 import { registerLinkHandlers } from './ipc/link-handlers';
 import { registerCapturePreviewHandler } from './ipc/capture-preview-handler';
+import { registerStartupHandler } from './ipc/startup-handler';
+import { startupState } from './startup-state';
 import { logger } from './logger';
 import { openDb, type DbHandle } from './db/schema';
 import { TodoRepo } from './db/todo-repo';
@@ -133,9 +135,20 @@ protocol.registerSchemesAsPrivileged([
 ]);
 
 function bootstrap(): void {
+  // whenReady fires after Chromium has finished its own setup; measure from
+  // there so the logs reflect "time the user is waiting for content", not
+  // cold-process / disk-paging noise.
   void app.whenReady().then(async () => {
+    const bootStart = Date.now();
+    const mark = (label: string): number => {
+      const t = Date.now() - bootStart;
+      logger.info(`startup[core]: ${label} @ ${t}ms`);
+      return t;
+    };
+
     // Register `app://` to serve files from out/renderer. We use net.fetch
     // so the same code path works for both disk files (prod) and dev server.
+    // Cheap (just installs a handler); not timing-meaningful.
     if (!process.env['ELECTRON_RENDERER_URL']) {
       protocol.handle('app', async (req) => {
         try {
@@ -151,11 +164,30 @@ function bootstrap(): void {
       });
     }
 
-    // Settings must be read FIRST so we know the data directory before opening
-    // the DB or any file store. The config file itself lives in userData
-    // (stable); dataDir points at where DB/markdown/drawings actually live.
+    // Phase: window-ready comes very early so the renderer's static splash
+    // can paint before we finish core init. Window creation only — IPC +
+    // stores finish before window.show() fires (ready-to-show waits for the
+    // first paint, so we want the page to load the splash first).
+    startupState.setCorePhase('window');
+    const main = createMainWindow();
+    main.once('ready-to-show', () => {
+      logger.info(`startup[core]: window shown @ ${Date.now() - bootStart}ms`);
+      main.show();
+    });
+    mark('window-created');
+
+    // Phase: settings + data dir + DB. Synchronous on purpose — the renderer
+    // is gated on core-ready (see startup-state.markCoreReady below), so we
+    // can't honestly mark the app usable until the DB has been opened and
+    // migrations have completed. We do NOT mark core-ready for the renderer
+    // to start fetching todos — that comes after the file stores are also
+    // constructed.
+    startupState.setCorePhase('settings');
     const settings = new SettingsStore();
     const rootDir = settings.getDataDir();
+    mark('settings-loaded');
+
+    startupState.setCorePhase('data-dir');
     mkdirSync(rootDir, { recursive: true });
     const dbPath = join(rootDir, DB_FILENAME);
     const todosDir = join(rootDir, TODOS_SUBDIR);
@@ -164,33 +196,18 @@ function bootstrap(): void {
     mkdirSync(todosDir, { recursive: true });
     mkdirSync(drawingsDir, { recursive: true });
     mkdirSync(attachmentsDir, { recursive: true });
+    mark('data-dirs-created');
 
+    startupState.setCorePhase('db-open');
     const handle = openDb(dbPath);
+    mark('db-opened');
+
     const repo = new TodoRepo(handle.db);
     const { TaskDirectoryStore } = await import('./files/task-directories');
     const taskDirectories = new TaskDirectoryStore(handle.db, todosDir);
     const conversations = new ConversationRepo(handle.db);
 
-    // v1 → v2 layout migration sweep. Runs once per process (marker file
-    // makes it idempotent). Old flat files get relocated into per-task dirs
-    // before any new code touches them. Fire-and-forget so a slow sweep on
-    // a large data dir doesn't block the IPC router boot — subsequent file
-    // ops simply see the post-migration layout.
-    try {
-      const { migrateV1Layout } = await import('./files/migrate-v1-layout');
-      void migrateV1Layout({
-        dataDir: rootDir,
-        todosDir,
-        drawingsDir,
-        attachmentsDir,
-        db: handle.db,
-      }).catch((err) => {
-        logger.warn(`migrateV1Layout: ${(err as Error).message}`);
-      });
-    } catch (err) {
-      logger.warn(`migrateV1Layout import failed: ${(err as Error).message}`);
-    }
-
+    startupState.setCorePhase('file-stores');
     // Per-task dir lookup. The relative directory name is persisted in DB;
     // all document stores therefore agree on one directory even after a
     // title change or a failed filesystem rename.
@@ -199,9 +216,14 @@ function bootstrap(): void {
     const drawings = new DrawingStore(handle.db, drawingsDir, resolveTaskDir);
     const docs = new DocumentStore(handle.db);
     const inbox = new InboxStore(handle.db, attachmentsDir, todosDir, resolveTaskDir);
+    mark('file-stores-constructed');
 
-    // Wire IPC router
+    // Phase: business IPC. Must register before the renderer is told core
+    // is ready (otherwise the first todo.list would hit no_handler and the
+    // splash would stay up).
+    startupState.setCorePhase('ipc');
     installRouter();
+    registerStartupHandler();
     registerTodoHandlers(repo, md, handle.db, todosDir, resolveTaskDir, taskDirectories);
     registerContentHandlers(md, drawings, repo);
     registerDocumentHandlers(docs, resolveTaskDir);
@@ -241,6 +263,14 @@ function bootstrap(): void {
       resolveTaskDir: (todoId) => resolveTaskDir(todoId as ULID),
       todosDir,
     });
+    mark('ipc-registered');
+
+    // Phase: core ready. From this point the renderer's splash can mount
+    // the main App and start querying todos. The splash itself polls
+    // app.startup.get() + app:startup events and only removes itself when
+    // core.status === 'ready'. AI status is intentionally independent and
+    // does not block the splash from coming down.
+    startupState.markCoreReady();
 
     // Set DSH_SESSIONS_ROOT BEFORE importing the DSH container, because the
     // cordis YAML loader evaluates `!js` expressions (like
@@ -253,48 +283,68 @@ function bootstrap(): void {
     mkdirSync(sessionsRoot, { recursive: true });
     process.env['DSH_SESSIONS_ROOT'] = sessionsRoot;
 
-    // Show the window as soon as the todo IPC + file stores are ready so the
-    // app feels instant. DSH container boot (cordis plugin loading +
-    // session-persistence backend init) is the dominant startup cost and is
-    // deferred to a background promise below. The AI panel is closed by
-    // default; its IPC handlers return `ai_not_ready` until DSH resolves, so
-    // a user who opens the AI pane in the first second sees the lazy
-    // "加载中…" fallback rather than a blank frozen shell.
-    const main = createMainWindow();
-    main.once('ready-to-show', () => main.show());
-
-    // DSH container (AI runtime) — lazy imported so app launches even if DSH
-    // init fails. Fire-and-forget so window show isn't blocked by cordis
-    // plugin loading + session-persistence backend init. AI IPC handlers
-    // return `ai_not_ready` until this resolves.
+    // Phase: AI runtime. All of this is post-core-ready so it never blocks
+    // the splash. The AI pane shows "AI 正在准备" until ai.status becomes
+    // 'ready'; failure is logged + recorded in startup-state, never thrown.
+    startupState.setAiPhase('ai-loading');
     void (async () => {
+      const aiStart = Date.now();
       try {
         const { initDshContainer } = await import('./dsh/container');
         const dsh = await initDshContainer({ repo, md, drawings, settings, db: handle.db, docs });
         const { registerAiHandlers, bindAiDeps } = await import('./ipc/ai-handlers');
         registerAiHandlers(dsh);
         bindAiDeps({ dsh, settings, repo, conversations, md, drawings, docs, db: handle.db, attachmentsDir });
-        logger.info('DSH AI handlers registered');
-
-        // L3-C: backfill DB rows for sessions that exist on disk but have no
-        // conversations row. Runs once per boot, idempotent — safe to re-run.
-        // We don't await: the migration is best-effort and the renderer's
-        // first conversation.list() call will pick up whatever rows are ready.
-        try {
-          const { migrateOrphanSessions } = await import('./dsh/dsh-runtime');
-          void migrateOrphanSessions(conversations).catch((err) => {
-            logger.warn(`migrateOrphanSessions: ${(err as Error).message}`);
-          });
-        } catch (err) {
-          logger.warn(`migrateOrphanSessions import failed: ${(err as Error).message}`);
-        }
+        logger.info(`startup[ai]: DSH handlers registered @ ${Date.now() - aiStart}ms`);
+        startupState.markAiReady();
       } catch (err) {
-        logger.error(`DSH init skipped: ${(err as Error).message}`);
+        logger.error(`startup[ai]: DSH init failed after ${Date.now() - aiStart}ms: ${(err as Error).message}`);
+        startupState.markAiFailed((err as Error).message);
       }
     })();
 
+    // v1 → v2 layout migration sweep. Deferred until after core-ready so a
+    // slow sweep on a large data dir doesn't hold the splash up. We do NOT
+    // mark the renderer core-ready until the migration gate is closed
+    // (migrateV1Layout's marker file is the marker; the function itself
+    // is idempotent). file stores above still see the existing on-disk
+    // layout; subsequent file ops simply see whatever migrateV1Layout
+    // produced. New task dirs created mid-sweep are not at risk because
+    // TaskDirectoryStore uses the DB row, not the FS walk.
+    try {
+      const { migrateV1Layout } = await import('./files/migrate-v1-layout');
+      void migrateV1Layout({
+        dataDir: rootDir,
+        todosDir,
+        drawingsDir,
+        attachmentsDir,
+        db: handle.db,
+      }).then(() => {
+        logger.info(`startup[maintenance]: migrateV1Layout done @ ${Date.now() - bootStart}ms`);
+      }).catch((err) => {
+        logger.warn(`startup[maintenance]: migrateV1Layout failed: ${(err as Error).message}`);
+      });
+    } catch (err) {
+      logger.warn(`startup[maintenance]: migrateV1Layout import failed: ${(err as Error).message}`);
+    }
+
+    // L3-C: backfill DB rows for sessions that exist on disk but have no
+    // conversations row. Runs once per boot, idempotent — safe to re-run.
+    // Deferred so it doesn't race the renderer. The renderer's first
+    // conversation.list() call will pick up whatever rows are ready by then.
+    try {
+      const { migrateOrphanSessions } = await import('./dsh/dsh-runtime');
+      void migrateOrphanSessions(conversations).then(() => {
+        logger.info(`startup[maintenance]: migrateOrphanSessions done @ ${Date.now() - bootStart}ms`);
+      }).catch((err) => {
+        logger.warn(`startup[maintenance]: migrateOrphanSessions failed: ${(err as Error).message}`);
+      });
+    } catch (err) {
+      logger.warn(`startup[maintenance]: migrateOrphanSessions import failed: ${(err as Error).message}`);
+    }
+
     // External SDK + JSON-RPC bridge for plugins / scripts — also deferred
-    // so it never blocks window show.
+    // so it never blocks window show / core-ready.
     void (async () => {
       try {
         const { createSdk } = await import('./sdk/sdk');
@@ -304,7 +354,7 @@ function bootstrap(): void {
         bridge.start();
         app.on('before-quit', () => bridge.stop());
       } catch (err) {
-        logger.warn(`SDK bridge skipped: ${(err as Error).message}`);
+        logger.warn(`startup[maintenance]: SDK bridge skipped: ${(err as Error).message}`);
       }
     })();
 
@@ -339,8 +389,6 @@ function bootstrap(): void {
     tray.install();
 
     // Chinese application menu (menu bar auto-hidden — press Alt to reveal).
-    // `main` was created earlier (before DSH init) so the window shows fast;
-    // the menu just attaches to it here.
     installAppMenu({
       onCapture: () => capture.toggle(),
       getMainWindow: () => main,
@@ -360,7 +408,7 @@ function bootstrap(): void {
       if (!days || days <= 0) return;
       const cutoff = Date.now() - days * 86_400_000;
       const n = repo.archiveStale(cutoff);
-      if (n > 0) logger.info(`auto-archive: archived ${n} done task(s) older than ${days} day(s)`);
+      if (n > 0) logger.info(`startup[maintenance]: auto-archived ${n} done task(s) older than ${days} day(s)`);
     };
     runArchiveSweep();
     const archiveTimer = setInterval(runArchiveSweep, 3_600_000);

@@ -49,6 +49,11 @@ const APP_EVENTS: AppEvent[] = [
   'app:toggle-ai',
   'app:data-changed',
   'app:settings-changed',
+  'app:plan-guide',
+  // Startup state push — fired whenever main's core / ai component changes
+  // phase. Renderer reads `startupGet()` first to avoid missing the initial
+  // transition (see src/main/startup-state.ts for the contract).
+  'app:startup',
   'ai:stream',
   'ai:permission-request',
   // L4-G: human-in-the-loop events. The main-process waterfall listener
@@ -142,6 +147,10 @@ const api: TodoListApi = {
     getFocus: () => invoke('app.focus.get', undefined as never),
     openTaskDir: (todoId) => invoke('app.openTaskDir', { todoId }),
     setTitleBarOverlay: (opts: { dim: boolean }) => invoke('app.setTitleBarOverlay', opts),
+    /** Snapshot query — current core + ai startup state. Renderer MUST call
+     *  this once before subscribing to `app:startup` so it doesn't miss a
+     *  ready transition that fired between page-load and listener-ready. */
+    startupGet: () => invoke('app.startup.get', undefined as never),
   },
   capture: {
     submit: (args: CaptureSubmitArgs) => invoke('capture.submit', args),

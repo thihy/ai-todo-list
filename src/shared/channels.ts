@@ -87,6 +87,11 @@ const DECLARED_CHANNELS: ReadonlySet<string> = new Set([
   // renderer's modal dim state. Channel is type-checked in ipc-schema.ts
   // IpcRegistry; this Set is the runtime allowlist consulted by router.ts.
   'app.setTitleBarOverlay',
+  // Snapshot of main-process startup state (core + ai phases). Renderer
+  // queries this once on boot, then subscribes to `app:startup` events for
+  // subsequent changes. First-read-then-subscribe avoids the race where a
+  // ready event fires between page-load and listener registration.
+  'app.startup.get',
 ]);
 
 export function isKnownChannel(name: string): name is IpcChannelName {

@@ -497,6 +497,45 @@ export interface IpcRegistry {
   // when any modal opens / closes. Idempotent; safe to call repeatedly with
   // the same `dim` value.
   'app.setTitleBarOverlay': IpcChannel<{ dim: boolean }, IpcResult<void>>;
+
+  // Snapshot query — returns the current startup state. Renderer calls this
+  // once on boot BEFORE wiring the `app:startup` event listener to avoid
+  // missing the transition that fires between page-load and listener-ready.
+  // See src/main/startup-state.ts for the source of truth.
+  'app.startup.get': IpcChannel<undefined, IpcResult<StartupSnapshot>>;
+}
+
+export interface StartupSnapshot {
+  core: StartupComponentState;
+  ai: StartupComponentState;
+  /** 自进程启动到当前的总耗时 ms,渲染端展示「启动时间较长…」用。 */
+  elapsedMs: number;
+}
+
+export type StartupPhase =
+  | 'boot'
+  | 'settings'
+  | 'data-dir'
+  | 'db-open'
+  | 'file-stores'
+  | 'ipc'
+  | 'window'
+  | 'core-ready'
+  | 'ai-loading'
+  | 'ai-ready'
+  | 'ai-failed';
+
+export type StartupStatus = 'pending' | 'loading' | 'ready' | 'failed';
+
+export interface StartupComponentState {
+  status: StartupStatus;
+  phase: StartupPhase;
+  /** 阶段开始时间(epoch ms,主进程内部时钟)。 */
+  startedAt: number;
+  /** 进入当前 status 的时间,用于计算阶段耗时。 */
+  statusAt: number;
+  /** 人话错误,绝不包含原始堆栈 / 密钥 / 绝对路径。 */
+  errorMessage?: string;
 }
 
 export interface AppFocus {

@@ -40,6 +40,7 @@ export type AppEvent =
   | 'app:data-changed'
   | 'app:settings-changed'
   | 'app:plan-guide'
+  | 'app:startup'
   | 'ai:stream'
   | 'ai:permission-request'
   // L4-G: human-in-the-loop bridges for DSH user-questions + user-approval.
@@ -70,6 +71,10 @@ export interface AppEventMap {
    *  Payload currently empty — the renderer recomputes todayStart + candidates
    *  on receipt, so a stale payload can never pin the user to yesterday. */
   'app:plan-guide': Record<string, never>;
+  /** Startup state snapshot pushed whenever core / ai changes phase. The
+   *  renderer calls `app.startup.get()` once before subscribing to make sure
+   *  it doesn't miss a transition that already fired. */
+  'app:startup': import('./ipc-schema').StartupSnapshot;
   'ai:stream': AIStreamEvent;
   'ai:permission-request': PermissionRequest;
   'ai:user-question-request': UserQuestionRequest;
@@ -246,6 +251,10 @@ export interface TodoListApi {
     /** Dim / restore the frameless titleBarOverlay so the native min/max/close
      *  glyphs blend with a modal backdrop. See ipc-schema.ts. */
     setTitleBarOverlay(opts: { dim: boolean }): Promise<IpcResponse<'app.setTitleBarOverlay'>>;
+    /** Snapshot query — current core + ai startup state. Renderer MUST call
+     *  this once before subscribing to `app:startup` so it doesn't miss a
+     *  ready transition that fired between page-load and listener-ready. */
+    startupGet(): Promise<IpcResponse<'app.startup.get'>>;
   };
   capture: {
     submit(args: CaptureSubmitArgs): Promise<IpcResponse<'capture.submit'>>;

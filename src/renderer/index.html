@@ -5,9 +5,226 @@
     <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' data: blob: rsms.me https://rsms.me; img-src 'self' data: blob:; connect-src 'self' https:; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://rsms.me" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>AI待办</title>
+    <style>
+      /* Non-React splash — paints BEFORE main.tsx downloads + executes.
+         Inline CSS only so the first paint doesn't wait for stylesheets.
+         Respects prefers-color-scheme to avoid the white-flash / dark-flash
+         that a default-white browser background produces on dark Windows. */
+      :root {
+        color-scheme: light dark;
+        --splash-bg: #F6F7F9;
+        --splash-fg: #1F2329;
+        --splash-fg-dim: #6B7280;
+        --splash-accent: #2563EB;
+        --splash-border: rgba(0,0,0,0.08);
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --splash-bg: #15171B;
+          --splash-fg: #E5E7EB;
+          --splash-fg-dim: #9CA3AF;
+          --splash-accent: #60A5FA;
+          --splash-border: rgba(255,255,255,0.10);
+        }
+      }
+      html, body {
+        margin: 0;
+        padding: 0;
+        height: 100%;
+        background: var(--splash-bg);
+        color: var(--splash-fg);
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+          'Microsoft YaHei', 'Hiragino Sans GB', Roboto, Helvetica, Arial, sans-serif;
+        overflow: hidden;
+      }
+      #root { height: 100%; display: block; }
+      /* The splash is a sibling of #root. While it's visible, #root is
+         hidden — once React + core data are both ready, main.tsx calls
+         splashRemove() which fades it out and unhides the real app. */
+      #splash {
+        position: fixed; inset: 0;
+        display: flex; flex-direction: column;
+        align-items: center; justify-content: center;
+        gap: 18px;
+        background: var(--splash-bg);
+        color: var(--splash-fg);
+        z-index: 10000;
+        transition: opacity 200ms ease-out;
+      }
+      #splash.is-fading { opacity: 0; pointer-events: none; }
+      #splash.is-hidden { display: none; }
+      .splash-title {
+        font-size: 22px; font-weight: 600; letter-spacing: 0.5px;
+      }
+      .splash-spinner {
+        width: 28px; height: 28px;
+        border-radius: 50%;
+        border: 2.5px solid var(--splash-border);
+        border-top-color: var(--splash-accent);
+        animation: splash-spin 800ms linear infinite;
+      }
+      @keyframes splash-spin {
+        to { transform: rotate(360deg); }
+      }
+      .splash-stage {
+        font-size: 13px;
+        color: var(--splash-fg-dim);
+        max-width: 70vw;
+        text-align: center;
+        line-height: 1.5;
+        min-height: 1.5em;
+      }
+      .splash-stage.is-slow {
+        color: var(--splash-fg);
+      }
+      .splash-error {
+        display: none;
+        max-width: 70vw;
+        text-align: center;
+        font-size: 13px;
+        line-height: 1.6;
+        color: var(--splash-fg);
+        padding: 12px 16px;
+        border: 1px solid var(--splash-border);
+        border-radius: 8px;
+        background: rgba(0,0,0,0.04);
+      }
+      @media (prefers-color-scheme: dark) {
+        .splash-error { background: rgba(255,255,255,0.05); }
+      }
+      .splash-error.is-shown { display: block; }
+      .splash-actions {
+        display: none;
+        gap: 8px;
+      }
+      .splash-actions.is-shown { display: flex; }
+      .splash-btn {
+        font: inherit;
+        font-size: 13px;
+        padding: 6px 14px;
+        border-radius: 6px;
+        border: 1px solid var(--splash-border);
+        background: transparent;
+        color: var(--splash-fg);
+        cursor: pointer;
+      }
+      .splash-btn:hover { background: rgba(0,0,0,0.05); }
+      @media (prefers-color-scheme: dark) {
+        .splash-btn:hover { background: rgba(255,255,255,0.08); }
+      }
+      .splash-btn--primary {
+        background: var(--splash-accent);
+        color: white;
+        border-color: transparent;
+      }
+      .splash-btn--primary:hover { filter: brightness(1.08); background: var(--splash-accent); }
+    </style>
   </head>
   <body>
-    <div id="root"></div>
-    <script type="module" src="./main.tsx"></script>
+    <!-- React mount target — empty until the React bundle parses + runs.
+         Hidden while the splash is showing so the user only ever sees the
+         splash, then a single swap to the real app. -->
+    <div id="root" hidden></div>
+
+    <!-- Splash: NO React, NO DSH, NO external fonts. Plain DOM + inline CSS
+         so the first paint is meaningful before any heavy module loads. -->
+    <div id="splash" role="status" aria-live="polite">
+      <div class="splash-title">AI 待办</div>
+      <div class="splash-spinner" aria-hidden="true"></div>
+      <div id="splash-stage" class="splash-stage">正在启动…</div>
+      <div id="splash-error" class="splash-error"></div>
+      <div id="splash-actions" class="splash-actions">
+        <button id="splash-reload" type="button" class="splash-btn splash-btn--primary">重新加载</button>
+        <button id="splash-quit" type="button" class="splash-btn">退出</button>
+      </div>
+    </div>
+
+    <script>
+      // Splash control surface. Pure DOM so we never depend on the React
+      // bundle being available. main.tsx takes over once it's loaded and
+      // flips coreReady / removes the splash via these helpers.
+      (function () {
+        var splash = document.getElementById('splash');
+        var stage = document.getElementById('splash-stage');
+        var errorBox = document.getElementById('splash-error');
+        var actions = document.getElementById('splash-actions');
+        var reloadBtn = document.getElementById('splash-reload');
+        var quitBtn = document.getElementById('splash-quit');
+        var SLOW_MS = 4000;
+
+        // Map main-process StartupPhase -> human-readable label. Mirror the
+        // values used in src/main/startup-state.ts so the language stays in
+        // sync; new phases added there must be added here too.
+        var PHASE_LABEL = {
+          boot: '准备启动…',
+          settings: '读取设置…',
+          'data-dir': '准备数据目录…',
+          'db-open': '打开数据库…',
+          'file-stores': '初始化文件存储…',
+          ipc: '注册命令接口…',
+          window: '创建窗口…',
+          'core-ready': '就绪',
+          'ai-loading': '准备 AI 助手…',
+          'ai-ready': 'AI 已就绪',
+          'ai-failed': 'AI 初始化失败',
+        };
+
+        var slowTimer = null;
+
+        window.__splash = {
+          setPhase: function (phase) {
+            if (!stage) return;
+            var label = PHASE_LABEL[phase] || phase || '正在启动…';
+            stage.textContent = label;
+            // Reset slow-warning timer on every phase change. If we sit on
+            // the same phase for >4s without making progress, surface the
+            // "still working" hint — this is a signal, not an error.
+            if (slowTimer) clearTimeout(slowTimer);
+            slowTimer = setTimeout(function () {
+              stage.classList.add('is-slow');
+              stage.textContent = '启动时间较长,仍在处理…(' + label + ')';
+            }, SLOW_MS);
+          },
+          showError: function (message, canReload) {
+            if (slowTimer) { clearTimeout(slowTimer); slowTimer = null; }
+            stage.style.display = 'none';
+            document.querySelector('.splash-spinner').style.display = 'none';
+            errorBox.classList.add('is-shown');
+            errorBox.textContent = message || '启动失败';
+            if (canReload !== false) actions.classList.add('is-shown');
+          },
+          remove: function () {
+            // Called by main.tsx when core data + React app are both ready.
+            // Fade out, then display:none so screen-readers don't see two
+            // trees.
+            if (!splash) return;
+            if (slowTimer) { clearTimeout(slowTimer); slowTimer = null; }
+            splash.classList.add('is-fading');
+            setTimeout(function () {
+              splash.classList.add('is-hidden');
+              var root = document.getElementById('root');
+              if (root) root.removeAttribute('hidden');
+            }, 220);
+          },
+        };
+
+        if (reloadBtn) reloadBtn.addEventListener('click', function () {
+          // location.reload() forces a fresh HTML + main.tsx fetch. The
+          // main process keeps running; only the renderer restarts.
+          window.location.reload();
+        });
+        if (quitBtn) quitBtn.addEventListener('click', function () {
+          // Tell main to quit; falls through to native window close if the
+          // bridge isn't ready yet (it always is by the time the user can
+          // click, since the splash only appears after webContents load).
+          if (window.todoList && window.todoList.app && window.todoList.app.action) {
+            window.todoList.app.action('quit');
+          } else {
+            window.close();
+          }
+        });
+      })();
+    </script>
+    <script type="module" src="./main.tsx" onerror="window.__splash && window.__splash.showError('入口脚本加载失败,请重新加载', true)"></script>
   </body>
 </html>

@@ -11,16 +11,35 @@ import { Statusbar } from './layout/Statusbar';
 import { AIPanel } from './layout/AIPanel';
 import { useToastBus } from './components/Toast';
 import { CommandPaletteHost } from './components/CommandPalette';
-import { SettingsModal } from './components/SettingsModal';
+// SettingsModal pulls the whole settings UI tree (ModelPane + CustomProviders-
+// Editor + TaskAppearancePane + TagInput + useSettings). It's only opened
+// occasionally — keep it out of the initial bundle.
+const SettingsModal = React.lazy(() =>
+  import('./components/SettingsModal').then((m) => ({ default: m.SettingsModal })),
+);
 import {
   PlanGuideModal,
   todayDateKey,
 } from './components/PlanGuideModal';
 import { Composer, type ExternalAiSubmitDetail } from './components/Composer';
 import { TodoListPane } from './panes/TodoListPane';
-import { TodoEditorPane } from './panes/TodoEditorPane';
-import { StatsPane } from './panes/StatsPane';
-import { DrawingPane } from './panes/DrawingPane';
+// TodoEditorPane is the task-detail body. Only rendered when the user has
+// actually selected a task — split it off so the typical cold-start (no
+// selection yet) doesn't pay for its dependencies (MarkdownEditor +
+// DocumentsView + DrawingPane chains).
+const TodoEditorPane = React.lazy(() =>
+  import('./panes/TodoEditorPane').then((m) => ({ default: m.TodoEditorPane })),
+);
+// StatsPane is a separate top-level view; pulling Excalidraw-adjacent
+// deps isn't worth it for a route most users only open occasionally.
+const StatsPane = React.lazy(() =>
+  import('./panes/StatsPane').then((m) => ({ default: m.StatsPane })),
+);
+// DrawingPane wraps an Excalidraw canvas — heavy and isolated. Only
+// loaded when the user navigates to the drawing route.
+const DrawingPane = React.lazy(() =>
+  import('./panes/DrawingPane').then((m) => ({ default: m.DrawingPane })),
+);
 // Lazy-load DocumentsView: it statically pulls MarkdownEditor + the mermaid
 // dependency tree, which is heavy and only needed in the fullscreen-doc route.
 // Splitting it off the entry chunk keeps cold start on the todo-list shell.
@@ -382,9 +401,15 @@ export const App: React.FC = () => {
                 />
               </div>
             )}
-            {view === 'stats' && <StatsPane />}
+            {view === 'stats' && (
+              <Suspense fallback={<div className="ai-panel__loading" role="status" aria-live="polite">加载中…</div>}>
+                <StatsPane />
+              </Suspense>
+            )}
             {view === 'drawing' && route.name === 'todo-drawing' && (
-              <DrawingPane todoId={route.id} drawingId={route.drawingId} navigate={navigate} />
+              <Suspense fallback={<div className="ai-panel__loading" role="status" aria-live="polite">加载中…</div>}>
+                <DrawingPane todoId={route.id} drawingId={route.drawingId} navigate={navigate} />
+              </Suspense>
             )}
           </main>
           {aiOpen && <PaneDivider onDrag={(dx) => setAiWidth(aiWidth - dx)} />}
@@ -398,7 +423,9 @@ export const App: React.FC = () => {
         </div>
         <Statusbar route={route} />
         <CommandPaletteHost open={paletteOpen} onClose={() => setPaletteOpen(false)} navigate={navigate} onCompose={() => { setPaletteOpen(false); setComposing(true); }} />
-        <SettingsModal open={settingsOpen} onClose={closeSettings} />
+        <Suspense fallback={null}>
+          <SettingsModal open={settingsOpen} onClose={closeSettings} />
+        </Suspense>
         <PlanGuideModal
           open={planGuideOpen}
           candidates={planCandidates}
@@ -442,12 +469,14 @@ const TaskDetail: React.FC<{
   }
   return (
     <div className="task-detail">
-      <TodoEditorPane
-        todoId={todoId}
-        onFullscreen={() => onFullscreen(todoId)}
-        selectedDocId={selectedDocId}
-        onSelectDoc={onSelectDoc}
-      />
+      <Suspense fallback={<div className="ai-panel__loading" role="status" aria-live="polite">加载任务详情…</div>}>
+        <TodoEditorPane
+          todoId={todoId}
+          onFullscreen={() => onFullscreen(todoId)}
+          selectedDocId={selectedDocId}
+          onSelectDoc={onSelectDoc}
+        />
+      </Suspense>
     </div>
   );
 };
