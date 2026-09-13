@@ -27,6 +27,7 @@ import type { ProgressLogEntry } from './todo-types';
 import type { DocumentVersionEntry, TaskDocument } from './todo-types';
 import type { DrawingMeta, DrawingScene } from './todo-types';
 import type { TagDef } from './todo-types';
+import type { TaskAppearance } from './task-appearance';
 
 // --- App events pushed from main ---
 
@@ -120,6 +121,8 @@ export interface SettingsPatchArgs {
   lastPlanGuideDate?: string | null;
   /** Epoch-ms until which the guide and scheduled reminder stay muted. */
   snoozePlanGuideUntil?: number | null;
+  /** 任务优先级配色。theme 模式不修改 colors；custom 模式传完整 colors。 */
+  taskAppearance?: TaskAppearance;
 }
 
 // --- TodoListApi ---
@@ -273,6 +276,10 @@ export interface TodoListApi {
       tools?: string[];
       invocationId?: string;
       history?: { role: 'user' | 'assistant'; content: string }[];
+      /** Explicit user intent. `'create-task'` flips main into the
+       *  create-task envelope path; absent / `'chat'` keeps the request
+       *  as a normal chat turn. See src/shared/task-creation.ts. */
+      intent?: 'chat' | 'create-task';
     }): Promise<IpcResponse<'ai.ask'>>;
     /** Rule-based NL capture preview (works offline; returns structured fields). */
     parseCapturePreview(text: string): Promise<IpcResponse<'ai.parseCapturePreview'>>;

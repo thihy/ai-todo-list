@@ -13,11 +13,9 @@ export const AssistantTurnContent: React.FC<{
   error?: string;
 }> = ({ blocks, status, error }) => {
   const streaming = status === 'streaming';
-  const lastReasoningIndex = blocks.reduce(
-    (last, block, index) => block.kind === 'reasoning' ? index : last,
-    -1,
-  );
-  const hasAnswer = blocks.some((block) => block.kind === 'text');
+  // 按"当前输出尾块"判断 running:正文之后再来一段 thinking,新的 reasoning
+  // 也会落在最后,所以直接 index === lastIndex 就够,不再用 lastReasoningIndex
+  // + hasAnswer(那会让正文之后的新思考丢失 running 态)。
   const lastIndex = blocks.length - 1;
 
   return (
@@ -28,7 +26,7 @@ export const AssistantTurnContent: React.FC<{
             <DomainReasoningRow
               key={`r-${index}`}
               text={block.text}
-              running={streaming && index === lastReasoningIndex && !hasAnswer}
+              running={streaming && index === lastIndex}
             />
           );
         }

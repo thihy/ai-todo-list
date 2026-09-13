@@ -19,14 +19,16 @@ import {
   type CustomProviderInput,
 } from '../../shared/ai-types';
 import { TagColorPicker, TAG_PALETTE } from './TagInput';
+import { TaskAppearancePane } from './TaskAppearancePane';
 
-type Category = 'general' | 'model' | 'data' | 'tags' | 'hotkeys' | 'reminder' | 'about';
+type Category = 'general' | 'model' | 'data' | 'tags' | 'appearance' | 'hotkeys' | 'reminder' | 'about';
 
 const CATEGORIES: { key: Category; label: string }[] = [
   { key: 'general', label: '通用' },
   { key: 'model', label: '模型' },
   { key: 'data', label: '数据' },
   { key: 'tags', label: '标签' },
+  { key: 'appearance', label: '任务配色' },
   { key: 'hotkeys', label: '快捷键' },
   { key: 'reminder', label: '提醒' },
   { key: 'about', label: '关于' },
@@ -89,6 +91,11 @@ export const SettingsModal: React.FC<{ open: boolean; onClose: () => void }> = (
               <DataPane data={data} patch={patch} chooseDataDir={chooseDataDir} />
             ) : cat === 'tags' ? (
               <TagsPane data={data} patch={patch} />
+            ) : cat === 'appearance' ? (
+              <TaskAppearancePane
+                value={data.taskAppearance}
+                onChange={(next) => void patch({ taskAppearance: next })}
+              />
             ) : cat === 'hotkeys' ? (
               <HotkeysPane data={data} patch={patch} />
             ) : cat === 'reminder' ? (

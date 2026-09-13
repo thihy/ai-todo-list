@@ -13,6 +13,7 @@ import { tmpdir } from 'node:os';
 import { DEFAULT_CAPTURE_HOTKEY, ROOT_DIR_NAME, CONFIG_FILENAME, DEFAULT_PROVIDER } from '../../shared/constants';
 import type { AIModel, AIProvider, CustomProviderConfig, CustomProviderInput } from '../../shared/ai-types';
 import type { TagDef } from '../../shared/todo-types';
+import { DEFAULT_TASK_APPEARANCE, type TaskAppearance, normalizeTaskAppearance } from '../../shared/task-appearance';
 
 export interface PersistedSettings {
   provider: AIProvider;
@@ -52,6 +53,11 @@ export interface PersistedSettings {
    *  this time passes, neither the boot-time guide nor the scheduled
    *  reminder re-prompts. Cleared by the next launch that finds it expired. */
   snoozePlanGuideUntil: number | null;
+  /** Per-priority row background/foreground colours (none/low/medium/high).
+   *  Theme mode lets the renderer fall back to CSS defaults; custom mode
+   *  injects the user-chosen values as CSS custom properties. Normalised on
+   *  load so any partial / corrupted JSON falls back to defaults. */
+  taskAppearance: TaskAppearance;
 }
 
 const DEFAULTS: PersistedSettings = {
@@ -71,6 +77,7 @@ const DEFAULTS: PersistedSettings = {
   dailyPlanReminderTime: '09:00',
   lastPlanGuideDate: null,
   snoozePlanGuideUntil: null,
+  taskAppearance: { ...DEFAULT_TASK_APPEARANCE, colors: { ...DEFAULT_TASK_APPEARANCE.colors } },
 };
 
 /** Default data root when the user has not picked a directory. */
@@ -105,12 +112,15 @@ export class SettingsStore {
   }
 
   private load(): PersistedSettings {
-    if (!existsSync(this.path)) return { ...DEFAULTS };
+    if (!existsSync(this.path)) return { ...DEFAULTS, taskAppearance: { ...DEFAULT_TASK_APPEARANCE, colors: { ...DEFAULT_TASK_APPEARANCE.colors } } };
     try {
       const raw = JSON.parse(readFileSync(this.path, 'utf8'));
-      return { ...DEFAULTS, ...raw };
+      // 旧 config.json 没有 taskAppearance 字段：归一化成默认值而不是整对象 spread 覆盖。
+      const merged = { ...DEFAULTS, ...raw };
+      merged.taskAppearance = normalizeTaskAppearance(raw.taskAppearance);
+      return merged;
     } catch {
-      return { ...DEFAULTS };
+      return { ...DEFAULTS, taskAppearance: { ...DEFAULT_TASK_APPEARANCE, colors: { ...DEFAULT_TASK_APPEARANCE.colors } } };
     }
   }
 
@@ -174,6 +184,7 @@ export class SettingsStore {
       dailyPlanReminderTime: v.dailyPlanReminderTime,
       lastPlanGuideDate: v.lastPlanGuideDate,
       snoozePlanGuideUntil: v.snoozePlanGuideUntil,
+      taskAppearance: v.taskAppearance,
     };
   }
 

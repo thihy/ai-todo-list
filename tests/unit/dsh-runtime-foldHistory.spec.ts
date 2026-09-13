@@ -8,6 +8,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { foldHistory } from '../../src/main/dsh/dsh-runtime';
+import { encodeTaskCreationEnvelope } from '../../src/shared/task-creation';
 
 /** Build a user/message event with the DSH shape used in the wild. */
 function userMsg(text: string, id = 'u1') {
@@ -243,5 +244,47 @@ describe('foldHistory', () => {
     // ok=false (the "no result" sentinel) — even with no data, the call
     // happened and the user should see that.
     expect(turns.some((t) => t.type === 'tool' && t.ok === false)).toBe(true);
+  });
+
+  // ----- create-task envelope regression -----
+  // 用户反馈：重启后「AI 创建任务」卡片丢失，变为普通聊天气泡。
+  // 锁定「`user/message` 携带 create-task envelope → foldHistory 必须
+  // 输出 intent='create-task'」这条契约，防止后续 foldHistory 的小改动
+  // 悄悄打破 AIPane 的卡片渲染。
+
+  it('emits a create-task user turn with intent for the versioned envelope', () => {
+    // 直接通过 encodeTaskCreationEnvelope 生成 wire 文本，避免硬编码 JSON
+    // 格式漂移——只要 envelope 编码契约稳定，测试就稳定。
+    const wire = encodeTaskCreationEnvelope('周五交季度报告');
+    const turns = foldHistory([userMsg(wire)]);
+    expect(turns).toHaveLength(1);
+    expect(turns[0]).toEqual({
+      type: 'user',
+      text: '周五交季度报告',
+      intent: 'create-task',
+    });
+  });
+
+  it('emits a create-task user turn with intent for the legacy envelope markers', () => {
+    // 严格旧封套兼容：pre-L4 JSONL 日志仍带旧方括号标记。
+    // foldHistory 必须识别并打上 create-task 标签，让旧会话在重启后
+    // 也能继续渲染卡片（向后兼容保证）。
+    const legacy =
+      '[应用操作模式：创建任务]\n十条规则…\n[用户的任务描述开始]\n旧描述\n[用户的任务描述结束]';
+    const turns = foldHistory([userMsg(legacy)]);
+    expect(turns).toHaveLength(1);
+    expect(turns[0]).toEqual({
+      type: 'user',
+      text: '旧描述',
+      intent: 'create-task',
+    });
+  });
+
+  it('emits a plain user turn (no intent) for ordinary chat', () => {
+    // 反向断言：普通聊天绝不能被错标成 create-task，防止未来某次改动
+    // 让所有用户消息都变成卡片。
+    const turns = foldHistory([userMsg('今天天气不错')]);
+    expect(turns).toEqual([{ type: 'user', text: '今天天气不错' }]);
+    expect((turns[0] as { intent?: unknown }).intent).toBeUndefined();
   });
 });

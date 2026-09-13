@@ -1,9 +1,11 @@
-// Statusbar — bottom strip: active view, counts, AI connection.
+// Statusbar — bottom strip: active view, counts, AI configuration.
 //
-// AI 状态分三档显示:
-//   未配置          → 红色 / 灰色圆点,引导去设置
-//   已配置 · 未连接 → 黄色,提示用户后端探活失败(网络/key 错)
-//   已配置 · 已连接 → 绿色,带可选 latency
+// AI 状态只显示"配置是否齐全",不探测网络连通性。
+//   loading        → 中性样式,等待 settings IPC 首次返回
+//   not-configured → 引导去设置
+//   configured     → 中性样式,不暗示"已连接"
+// 真实请求失败由该轮回答的错误展示承担——不在状态栏常驻"未连接"标签,
+// 否则 /models 拒绝的自定义服务会被误报成全局告警。
 
 import React, { useEffect, useState } from 'react';
 import type { Route } from '../router';
@@ -23,26 +25,21 @@ const ROUTE_LABEL: Record<string, string> = {
 };
 
 /** Render the AI status pill. Pure function so we can unit-test the three
- *  branches (not-configured / configured-but-error / connected) without
- *  mounting a Statusbar. */
+ *  branches (loading / not-configured / configured) without mounting a
+ *  Statusbar. */
 export function aiStatusLabel(status: ProviderStatus): {
   text: string;
   ariaLabel: string;
   dotClass: string;
 } {
-  if (!status.configured) {
+  if (status.state === 'loading') {
+    return { text: 'AI 状态加载中', ariaLabel: 'AI 状态加载中', dotClass: 'dot--pending' };
+  }
+  if (status.state === 'not-configured') {
     return { text: 'AI 未配置', ariaLabel: 'AI 未配置', dotClass: 'dot--off' };
   }
-  const c = status.connectivity;
-  if (c.state === 'connected') {
-    const latency = c.latencyMs != null ? ` · ${c.latencyMs}ms` : '';
-    return { text: `AI 已连接${latency}`, ariaLabel: 'AI 已连接', dotClass: 'dot--on' };
-  }
-  if (c.state === 'error') {
-    return { text: 'AI 未连接', ariaLabel: 'AI 已配置但未连接', dotClass: 'dot--warn' };
-  }
-  // state === 'unknown' | (any other transient): show configured-but-pending.
-  return { text: 'AI 配置中…', ariaLabel: 'AI 已配置,正在检查连接', dotClass: 'dot--pending' };
+  // configured —— 中性样式,不带"已连接 / latency"等隐含承诺。
+  return { text: 'AI 已配置', ariaLabel: 'AI 已配置', dotClass: 'dot--on' };
 }
 
 export const Statusbar: React.FC<{ route: Route }> = ({ route }) => {

@@ -58,15 +58,16 @@ import type {
 } from '../../shared/ai-types';
 import { PROVIDER_LABELS } from '../../shared/ai-types';
 import { AI_SUBMIT_EVENT, type ExternalAiSubmitDetail } from '../components/Composer';
-import { buildAiTaskCreationPrompt } from '../../shared/task-creation';
 import { recoverToolResultValue, parseToolArgs } from '../tool-presentation';
 import type { ComposerBlock } from '@deepseek-ai/dsh-client-ui-conversation/client';
 import { AIComposer, type AIComposerAttachment } from '../dsh/AIComposer';
 import { PendingQuestionCard } from '../dsh/PendingQuestionCard';
 import { PendingApprovalCard } from '../dsh/PendingApprovalCard';
 import { AssistantTurnContent } from '../dsh/AssistantTurnContent';
+import { AiCreateTaskMessage } from '../components/AiCreateTaskMessage';
 import { projectStreamTurn, type AssistantTurnBlock } from '../dsh/stream-turn';
-import { isAiProviderConfigured } from '../dsh/provider-status';
+import { normalizeAssistantBlocks } from '../dsh/normalize-assistant-blocks';
+import { decodeUserMessage } from '../../shared/task-creation';
 
 type AttachedFile = AIComposerAttachment;
 
@@ -97,6 +98,11 @@ interface TurnMetrics {
 interface Turn {
   id: string;
   user: string;
+  /** User intent for this turn. `create-task` renders the dedicated
+   *  operation card in TurnView; `chat` (or absent) keeps the plain user
+   *  bubble. Persisted through HistoryTurnLike / historyToTurn so reload
+   *  shows the same card. */
+  userIntent?: 'chat' | 'create-task';
   /** Ordered trace of the assistant turn — reasoning ↔ tool-call ↔ text,
    *  in arrival order. Source of truth for the whole assistant payload;
    *  the legacy `reasoning / assistant / tools` triple has been removed. */
@@ -127,6 +133,7 @@ interface ConversationRow {
 interface HistoryTurnLike {
   type: 'user' | 'assistant' | 'tool';
   text?: string;
+  intent?: 'chat' | 'create-task';
   reasoning?: string;
   name?: string;
   args?: unknown;
@@ -486,11 +493,7 @@ export const AIPane: React.FC<{
   const awaitingAnswer = activeQuestion?.convId === currentId;
   const awaitingApproval = activeApproval?.convId === currentId;
   const providerStatus = useProviderStatus();
-  const needsAiSetup = !providerStatus.configured;
-  // 已配置但 health 探测失败 → 不阻止用户输入,但在标题旁加一个"未连接"
-  // 提示,告诉他这次提问大概率会失败。
-  const connectivityIssue = providerStatus.configured
-    && providerStatus.connectivity.state === 'error';
+  const needsAiSetup = providerStatus.state === 'not-configured';
   // Use the official composer blocking vocabulary at the host boundary.
   const composerBlock: ComposerBlock | undefined = awaitingAnswer
     ? { reason: questionSubmitting ? '正在提交答案…' : '请先回答上方的问题…' }
@@ -717,15 +720,11 @@ export const AIPane: React.FC<{
       attached = attachments;
     }
 
-    // No per-message wrapper needed any more: the DSH system prompt now
-    // declares the "Composer input → todo.create" framing (see
-    // resources/dsh/cordis.yml, 输入源与默认行为 section). The model sees
-    // exactly what the user typed and decides from context which path to
-    // take. The user bubble still renders `prompt` (not `wirePrompt`) so no
-    // framing text ever bleeds into the visible chat.
-    const wirePrompt = override?.intent === 'create-task'
-      ? buildAiTaskCreationPrompt(prompt)
-      : prompt;
+    // User intent drives how main wraps the wire prompt: `create-task`
+    // becomes a tiny JSON envelope (the ten fixed rules live in the DSH
+    // system prompt), plain chat goes through verbatim. The renderer
+    // stays out of envelope construction — see `src/shared/task-creation.ts`.
+    const userIntent: 'chat' | 'create-task' | undefined = override?.intent;
 
     let convId = currentId;
     if (!convId) {
@@ -740,13 +739,13 @@ export const AIPane: React.FC<{
 
     if (!override) setAttachments([]);
 
-    let finalWire = wirePrompt;
+    let finalWire = prompt;
     if (attached.length > 0) {
       const blocks = attached.map((a) => {
         const header = `[attached: ${a.name} (${a.mime}, ${a.size} 字节)]`;
         return `${header}\n${a.text}`;
       });
-      finalWire = `${wirePrompt}\n\n---\n\n${blocks.join('\n\n---\n\n')}`;
+      finalWire = `${prompt}\n\n---\n\n${blocks.join('\n\n---\n\n')}`;
     }
 
     const priorTurns = (turnsByConv[convId] ?? [])
@@ -772,8 +771,9 @@ export const AIPane: React.FC<{
         ...(prev[convId!] ?? []),
         // Display the user's literal prompt in the bubble, NOT the wrapped
         // system-instruction version — the user should see exactly what
-        // they typed.
-        { id, user: prompt, blocks: [], status: 'streaming', attached: attached.length > 0 ? attached : undefined, metrics: { startMs: Date.now() } },
+        // they typed. For create-task the literal text becomes the card
+        // description (not a chat bubble).
+        { id, user: prompt, userIntent, blocks: [], status: 'streaming', attached: attached.length > 0 ? attached : undefined, metrics: { startMs: Date.now() } },
       ],
     }));
     if (!override) {
@@ -783,7 +783,7 @@ export const AIPane: React.FC<{
     openedCreatedTodoIdRef.current = null;
     setStreamingConvId(convId);
     setStreamingTurnId(id);
-    const res = await window.todoList.ai.ask({ prompt: finalWire, conversationId: convId, invocationId: id, history: priorTurns, tools: undefined });
+    const res = await window.todoList.ai.ask({ prompt: finalWire, conversationId: convId, invocationId: id, history: priorTurns, tools: undefined, intent: userIntent });
     // L6-A: the turn's status flip is authoritative HERE, not in the
     // streaming useEffect. The ai:stream `done` event and this IPC reply
     // race: if the IPC resolves first, runSubmit clears streamingTurnId
@@ -820,10 +820,21 @@ export const AIPane: React.FC<{
           // surfaces as turnResult.content; seeding it here guarantees the
           // assistant bubble renders ("思考中… 然后没有任何内容" bug).
           const blocks = t.blocks.slice();
-          const hasText = blocks.some((b) => b.kind === 'text');
+          // L6-B + L7:兜底只用于"本次没有接收过任何助手内容"的情况。这里
+          // 包含 text / reasoning 两种块:如果流式聚合阶段已经采集到了 thinking
+          // 但没有 text,我们不能简单地把 done.content 整体再追加成 text——
+          // 否则就会变成"思考 + 同一份完整响应 = 重复内容"。判定基准是
+          // "是否收到过任何助手内容",而不是"归一化后是否还剩 text"。
+          const hasAnyAssistantContent = blocks.some(
+            (b) => b.kind === 'text' || b.kind === 'reasoning',
+          );
           const content = res.data?.content;
-          if (!hasText && content) {
+          if (!hasAnyAssistantContent && content) {
             blocks.push({ kind: 'text', text: content });
+            // 兜底内容也走一遍归一化,以应对非流式 adapter 把 `<think>...</think>`
+            // 字面写进 content 的情况;若已经经过流式归一化(已 hasAssistant),
+            // 不会进入这条分支,因此不会重复 normalize。
+            blocks.splice(0, blocks.length, ...normalizeAssistantBlocks(blocks, { settled: true }));
           }
           const prevMetrics = t.metrics;
           const metrics: TurnMetrics = {
@@ -1094,26 +1105,6 @@ export const AIPane: React.FC<{
         </div>
       )}
 
-      {connectivityIssue && (
-        <div className="aipane__provider-notice aipane__provider-notice--warn" role="status">
-          <IconWarningOutline16 size={16} />
-          <span className="aipane__provider-notice-copy">
-            <strong>AI 已配置但未连接</strong>
-            <span>
-              最近一次与 {PROVIDER_LABELS[aiSettings?.provider ?? 'deepseek']} 的连接探测失败,
-              提问前请检查网络或 API key。可在「设置」中重新测试。
-            </span>
-          </span>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => { location.hash = '#/settings'; }}
-          >
-            打开设置
-          </Button>
-        </div>
-      )}
-
       {/* Scroll-tracked "current question" pin — INDEPENDENT flex sibling of
           .aipane__title / .aipane__body / .aipane__composer. Sits as Region 1b
           between title and body so it occupies its OWN box in the column
@@ -1249,9 +1240,18 @@ export const AIPane: React.FC<{
  *  one assistant step). */
 function historyToTurn(h: HistoryTurnLike): Turn {
   if (h.type === 'user') {
+    const rawText = h.text ?? '';
+    // Defense in depth: `h.intent` 是 main 侧 foldHistory 已经填好的权威
+    // 字段，但若将来 IPC schema 改动或上游某条路径漏写 intent，渲染端
+    // 仍能从 envelope 文本本身识别 create-task——保证「创建任务」卡片
+    // 在重启回放时不丢样式。`decodeUserMessage` 是纯函数、never-throws，
+    // 只在加载历史时跑一次，不在流式热路径上。
+    const userIntent: 'chat' | 'create-task' | undefined =
+      h.intent ?? (decodeUserMessage(rawText).intent ?? undefined);
     return {
       id: crypto.randomUUID(),
-      user: h.text ?? '',
+      user: rawText,
+      userIntent,
       blocks: [],
       status: 'done',
     };
@@ -1265,10 +1265,13 @@ function historyToTurn(h: HistoryTurnLike): Turn {
     // the answer text inside that step, so blocks are built in that order.
     if (reasoning) blocks.push({ kind: 'reasoning', text: reasoning });
     if (text) blocks.push({ kind: 'text', text });
+    // settled=true:历史数据已固定,残片降级 prose;`<think>` 出现在 text 段
+    // 开头时,把内联标签解析成 reasoning 块(与实时投影一致)。
+    const normalized = normalizeAssistantBlocks(blocks, { settled: true });
     return {
       id: crypto.randomUUID(),
       user: '',
-      blocks,
+      blocks: normalized,
       status: 'done',
     };
   }
@@ -1330,7 +1333,12 @@ function formatTurnMetrics(m: TurnMetrics): string | null {
 }
 
 const TurnView: React.FC<{ turn: Turn }> = ({ turn }) => {
-  const { blocks, status } = turn;
+  const { blocks, status, userIntent } = turn;
+  // Create-task intent → dedicated operation card. Plain chat (or absent
+  // intent on older turns) keeps the regular user bubble. The card uses
+  // the same `data-user-q` / `data-turn-id` hooks so the scroll-tracked
+  // pinned-question tracker still works without a code change.
+  const isCreateTask = userIntent === 'create-task';
   return (
     <div className="turn">
       {turn.attached && turn.attached.length > 0 && (
@@ -1342,11 +1350,13 @@ const TurnView: React.FC<{ turn: Turn }> = ({ turn }) => {
           ))}
         </div>
       )}
-      {turn.user && (
+      {turn.user && (isCreateTask ? (
+        <AiCreateTaskMessage description={turn.user} turnId={turn.id} />
+      ) : (
         <div className="bubble bubble--user" data-user-q data-turn-id={turn.id}>
           {turn.user}
         </div>
-      )}
+      ))}
       <AssistantTurnContent blocks={blocks} status={status} error={turn.error} />
       {(() => {
         const line = turn.metrics ? formatTurnMetrics(turn.metrics) : null;

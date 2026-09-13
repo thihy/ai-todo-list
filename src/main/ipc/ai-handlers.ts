@@ -131,6 +131,14 @@ export function registerAiHandlers(dsh: DshHandle): void {
     // events that arrive before this IPC response resolves.
     const invocationId = req.invocationId ?? crypto.randomUUID();
 
+    // Validate intent up-front so a typo from a future caller can't leak
+    // into the runtime's envelope encoding (only `'create-task'` flips the
+    // wire; anything else — including a bad value — falls back to chat).
+    const intent: 'chat' | 'create-task' | undefined =
+      req.intent === 'create-task' ? 'create-task'
+      : req.intent === 'chat' ? 'chat'
+      : undefined;
+
     const send = (event: AIStreamEvent): void => {
       for (const w of BrowserWindow.getAllWindows()) {
         if (!w.isDestroyed()) w.webContents.send('ai:stream', event);
@@ -184,6 +192,7 @@ export function registerAiHandlers(dsh: DshHandle): void {
         prompt: req.prompt,
         conversationId: req.conversationId,
         invocationId,
+        intent,
         onEvent: (e) => {
           // 透传：所有 DSH 事件原样发给渲染端。渲染端 useAiStream 负责把
           // assistant/chunk 转成 token/reasoning、把 tool/call + tool/result

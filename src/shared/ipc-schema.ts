@@ -32,6 +32,8 @@ import type {
   UserApprovalAnswer,
 } from './ai-types';
 
+import type { TaskAppearance } from './task-appearance';
+
 // ----- Generic envelope -----
 
 export interface IpcSuccess<T> { ok: true; data: T }
@@ -176,6 +178,11 @@ export interface AIAskReq {
   /** Prior conversation turns (user/assistant) sent so the model has multi-turn
    *  context. `prompt` is the newest user message, appended after these. */
   history?: { role: 'user' | 'assistant'; content: string }[];
+  /** Explicit user intent for this turn. `'create-task'` flips main into the
+   *  create-task envelope path (see `src/shared/task-creation.ts`); absent or
+   *  `'chat'` keeps the request as a normal chat turn. Main validates the
+   *  value and rejects anything else with `bad_request`. */
+  intent?: 'chat' | 'create-task';
 }
 export interface AIAskRes {
   invocationId: string;
@@ -253,9 +260,12 @@ export interface AIConversationConfirmDeleteReq { id: string; title: string }
 export interface AIConversationConfirmDeleteRes { confirmed: boolean }
 
 export interface AIConversationHistoryReq { id: string }
-/** Mirrors DshRuntime.HistoryTurn — see src/main/dsh/dsh-runtime.ts. */
+/** Mirrors DshRuntime.HistoryTurn — see src/main/dsh/dsh-runtime.ts.
+ *  The `intent` field on user turns is preserved through foldHistory so the
+ *  renderer can render the create-task operation card for older turns too
+ *  (not just the live one). Absent on non-create-task turns. */
 export type AIConversationHistoryTurn =
-  | { type: 'user'; text: string }
+  | { type: 'user'; text: string; intent?: 'chat' | 'create-task' }
   | { type: 'assistant'; text: string; reasoning?: string }
   | { type: 'tool'; name: string; args?: unknown; ok: boolean; data?: unknown; error?: string };
 export interface AIConversationHistoryRes { turns: AIConversationHistoryTurn[] }
@@ -295,6 +305,9 @@ export interface SettingsSetReq {
   // Snooze deadline (epoch ms) set by 「改天再提醒」. Until this passes, no
   // boot guide or scheduled reminder fires. Renderer clears it on next launch.
   snoozePlanGuideUntil?: number | null;
+  // 任务优先级配色 —— mode=theme 时跟随 CSS 主题；mode=custom 时 colors
+  // 完整覆盖 4 个优先级的背景/前景。具体值由 Settings UI 编辑 / 选预设。
+  taskAppearance?: TaskAppearance;
 }
 export interface SettingsGetRes extends AISettings {
   captureHotkey: string;
@@ -305,6 +318,7 @@ export interface SettingsGetRes extends AISettings {
   dailyPlanReminderTime: string;
   lastPlanGuideDate: string | null;
   snoozePlanGuideUntil: number | null;
+  taskAppearance: TaskAppearance;
 }
 export interface SettingsChooseDataDirRes {
   /** Chosen path, or null if the user cancelled the dialog. */

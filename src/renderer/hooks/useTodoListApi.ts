@@ -12,11 +12,12 @@ import type { ContentVersionEntry, GitHistoryEntry, ProgressLogEntry } from '../
 import type { TaskDocument } from '../../shared/todo-types';
 import type { DrawingMeta, DrawingScene, InboxAttachment } from '../../shared/todo-types';
 import type { AIModel, AIStreamEvent } from '../../shared/ai-types';
-import type { AIHealthRes, SettingsGetRes } from '../../shared/ipc-schema';
+import type { SettingsGetRes } from '../../shared/ipc-schema';
 import { useDataVersion } from '../data-bus';
 import { recoverToolResultValue, parseToolArgs } from '../tool-presentation';
 import { compactAiStreamEvents } from '../dsh/stream-buffer';
 import { deriveProviderStatus, type ProviderStatus } from '../dsh/provider-status';
+import { normalizeTaskAppearance } from '../../shared/task-appearance';
 
 declare global {
   interface Window {
@@ -384,6 +385,17 @@ export function useDrawing(id: string | null): { scene: DrawingScene | null } {
   return { scene };
 }
 
+/** 在设置读取边界统一归一化——只覆盖 taskAppearance 字段，其他字段原样
+ *  保留。这样响应里缺 / null / 旧格式的 taskAppearance 都不会让 TaskAppearancePane
+ *  在 `value.mode` 上炸掉。SettingsGetRes 的 taskAppearance 类型是必填，但跨
+ *  版本主进程（更老的二进制没下发这个字段）仍是现实情况，必须在边界做兜底。 */
+function normalizeSettingsResponse(settings: SettingsGetRes): SettingsGetRes {
+  return {
+    ...settings,
+    taskAppearance: normalizeTaskAppearance(settings.taskAppearance),
+  };
+}
+
 export function useSettings(): {
   data: SettingsGetRes | null;
   patch: (patch: SettingsPatchArgs) => Promise<void>;
@@ -392,12 +404,12 @@ export function useSettings(): {
   const [data, setData] = useState<SettingsGetRes | null>(null);
   const refresh = useCallback(async () => {
     const res = await window.todoList.settings.get();
-    if (res.ok) setData(res.data);
+    if (res.ok) setData(normalizeSettingsResponse(res.data));
   }, []);
   const patch = useCallback(
     async (patch: SettingsPatchArgs) => {
       const res = await window.todoList.settings.set(patch);
-      if (res.ok) setData(res.data);
+      if (res.ok) setData(normalizeSettingsResponse(res.data));
     },
     [],
   );
@@ -417,54 +429,15 @@ export function useSettings(): {
   return { data, patch, chooseDataDir };
 }
 
-/** 周期性地 ping 一次 ai.health,把"已连接"的真实信号带进渲染端。
+/** 把 useSettings 的静态配置派生成本地展示用的 ProviderStatus,
+ *  给 Statusbar / AIPane 这种纯展示组件用。
  *
- *  注意:health 探测在 main 进程跑 fetch,renderer 只拿到布尔/latency/error
- *  —— API key 永远不出 main 进程边界。 */
-export function useAiHealth(options?: { intervalMs?: number }): {
-  health: AIHealthRes | null;
-  checkedAt: number;
-  refresh: () => Promise<void>;
-} {
-  const intervalMs = options?.intervalMs ?? 30_000;
-  const [health, setHealth] = useState<AIHealthRes | null>(null);
-  const [checkedAt, setCheckedAt] = useState<number>(0);
-  const inFlight = useRef(false);
-
-  const refresh = useCallback(async () => {
-    if (inFlight.current) return;
-    inFlight.current = true;
-    try {
-      const res = await window.todoList.ai.health();
-      if (res.ok) {
-        setHealth(res.data);
-        setCheckedAt(Date.now());
-      }
-    } catch {
-      // 网络/主进程异常:维持上一次结果,不刷成 null 把"已连接"误报成"未知"。
-    } finally {
-      inFlight.current = false;
-    }
-  }, []);
-
-  useEffect(() => {
-    void refresh();
-    const t = window.setInterval(() => { void refresh(); }, intervalMs);
-    return () => window.clearInterval(t);
-  }, [refresh, intervalMs]);
-
-  return { health, checkedAt, refresh };
-}
-
-/** 把 useSettings 的静态配置 + useAiHealth 的实时探测合成单个 ProviderStatus,
- *  给 Statusbar / AIPane 这种纯展示组件用,避免每个组件都重复组装逻辑。 */
+ *  注意:本 hook 不再触发 ai.health 探测。"已配置" ≠ "网络可达",常驻
+ *  的"已配置但未连接"标签会让实际可用但 /models 拒绝的自定义服务被误
+ *  报成未连接——所有失败信号由当次提问的错误展示承担。 */
 export function useProviderStatus(): ProviderStatus {
   const { data: settings } = useSettings();
-  const { health, checkedAt } = useAiHealth();
-  return useMemo(
-    () => deriveProviderStatus(settings, health, checkedAt),
-    [settings, health, checkedAt],
-  );
+  return useMemo(() => deriveProviderStatus(settings), [settings]);
 }
 
 export function useAppEvent<E extends AppEvent>(

@@ -868,6 +868,11 @@ a:hover {
    spelled out here so the three-region contract is explicit at the rule. */
 .aipane__title {
   flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  font-weight: 650;
+  font-size: var(--font-md);
   /* Single child (title-row) — keeps the title row pinned to the top of
      the column flex. The scroll-tracked current-question overlay is NOT
      inside this region; it is an independent flex sibling of .aipane
@@ -883,14 +888,19 @@ a:hover {
   gap: var(--space-sm);
   min-height: var(--topbar-h);
   padding: 0 var(--space-md);
-  /* Three-zone flex: brand (left, intrinsic) | title (sits next to brand,
-     ellipsises when squeezed) | .aipane__title-spacer (flex: 1, absorbs
-     leftover space) | actions (right edge, via the spacer pushing them
-     outward — .aipane__actions' own margin-left:auto is redundant but kept
-     as belt-and-braces for any future wrapping contexts). The previous
-     symmetric-spacer layout (spacer on BOTH sides of the title) fought
-     margin-left:auto on the actions for the same right-side space and
-     pushed actions off-screen when the title was long. */
+  flex: 1 1 0%;
+  min-width: 0;
+  /* Three-zone flex: brand (left, intrinsic) | conv-title (sits next to
+     brand, ellipsises when squeezed) | .aipane__title-spacer (flex: 1,
+     absorbs leftover space) | actions (right edge, via the spacer
+     pushing them outward — .aipane__actions' own margin-left:auto is
+     redundant but kept as belt-and-braces for any future wrapping
+     contexts). The earlier symmetric-spacer layout (spacer on BOTH
+     sides of the title) fought margin-left:auto on the actions for the
+     same right-side space and pushed actions off-screen when the title
+     was long. flex: 1 1 0% lets the row fill the parent so the spacer
+     actually has slack to absorb; min-width: 0 lets long titles give
+     way instead of forcing the actions off-screen. */
 }
 
 .aipane__title-spacer {
@@ -929,6 +939,7 @@ a:hover {
   align-items: center;
   gap: var(--space-xs);
   margin-left: auto;
+  flex: 0 0 auto;
 }
 .aipane__new-btn,
 .aipane__history-btn {
@@ -999,12 +1010,12 @@ a:hover {
 }
 
 .aipane__conv-title {
-  /* Inline flex child of .aipane__title-row, sitting between two
-     .aipane__title-spacer elements. The spacers absorb leftover space
-     so brand (left) and actions (right) stay glued to the edges
-     regardless of title length; the title shrinks (white-space:nowrap +
-     overflow:hidden + text-overflow:ellipsis) to fit. font-size +
-     color match the original so the title's prominence is unchanged
+  /* Inline flex child of .aipane__title-row, sitting between the brand
+     and the single .aipane__title-spacer. The spacer absorbs leftover
+     space so the brand (left) and actions (right) stay glued to the
+     edges regardless of title length; the title shrinks (white-space:
+     nowrap + overflow:hidden + text-overflow:ellipsis) to fit. font-size
+     + color match the original so the title's prominence is unchanged
      after the layout refactor. No margin/padding: the parent row owns
      vertical alignment via align-items:center. */
   margin: 0;
@@ -1181,13 +1192,6 @@ a:hover {
      multi-line layout (they don't need previews). */
   padding: var(--space-xs) var(--space-md);
   font-size: var(--font-sm);
-}
-.aipane__title {
-  display: flex;
-  align-items: center;
-  gap: var(--space-xs);
-  font-weight: 650;
-  font-size: var(--font-md);
 }
 .aipane__glyph {
   color: var(--accent-bright);
@@ -1565,6 +1569,52 @@ a:hover {
   color: var(--accent-danger);
   border: 1px solid color-mix(in srgb, var(--accent-danger) 35%, transparent);
   border-radius: var(--radius-md);
+}
+
+/* Create-task operation card — light operation card used when the user
+ * originates a create-task request from the Composer (intent=create-task).
+ * Distinct from .bubble--user: the body shows "创建任务：<description>"
+ * framing, not the raw prompt alone. Inherits .bubble / .bubble--user for
+ * layout (right-aligned, max-width, padding) but overrides colour so the
+ * intent reads as an action, not a chat message. */
+.ai-create-task-card {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-xs);
+  background: color-mix(in srgb, var(--accent-primary) 18%, var(--bg-surface));
+  color: var(--fg-primary);
+  border: 1px solid color-mix(in srgb, var(--accent-primary) 35%, var(--border-default));
+  border-bottom-right-radius: var(--radius-sm);
+}
+.ai-create-task-card__head {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--font-xs);
+  font-weight: 600;
+  color: var(--accent-primary);
+  letter-spacing: 0.01em;
+}
+.ai-create-task-card__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--accent-primary) 20%, transparent);
+}
+.ai-create-task-card__label {
+  /* Visual tag, not a heading — use sentence case and avoid bold contrast */
+  font-weight: 600;
+}
+.ai-create-task-card__body {
+  font-size: var(--font-sm);
+  line-height: 1.55;
+  color: var(--fg-primary);
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 /* Markdown content inside assistant bubbles. */
@@ -2504,6 +2554,96 @@ a:hover {
    "you are here" signal never gets confused with the danger rail. */
 .task-row.is-blocked.is-active {
   background: color-mix(in srgb, var(--accent-danger) 12%, var(--bg-active));
+}
+
+/* ---- task-row priority colours (custom mode) ---- */
+/* When settings.taskAppearance.mode === 'custom', the .task-list section
+   root injects 8 CSS custom properties (--task-prio-<p>-bg / -fg). These
+   selectors apply them to .task-row[data-priority="<p>"]. The rest of the
+   row's state classes (.is-active / .is-done / .is-blocked / :hover) keep
+   precedence so the priority tint never overpowers selection feedback,
+   completion fade, or the blocked danger rail. */
+.task-row[data-priority="none"] {
+  background: var(--task-prio-none-bg, var(--bg-base));
+  color: var(--task-prio-none-fg, var(--fg-primary));
+}
+.task-row[data-priority="low"] {
+  background: var(--task-prio-low-bg, var(--bg-base));
+  color: var(--task-prio-low-fg, var(--fg-primary));
+}
+.task-row[data-priority="medium"] {
+  background: var(--task-prio-medium-bg, var(--bg-base));
+  color: var(--task-prio-medium-fg, var(--fg-primary));
+}
+.task-row[data-priority="high"] {
+  background: var(--task-prio-high-bg, var(--bg-base));
+  color: var(--task-prio-high-fg, var(--fg-primary));
+}
+/* Title inside a tinted row picks up the row's fg as the default, but
+   state classes (.is-done / .is-cancelled) still strike-through + fade
+   with --fg-muted as before. We only override the FALLBACK colour. */
+.task-row[data-priority="none"] .task-row__title,
+.task-row[data-priority="low"] .task-row__title,
+.task-row[data-priority="medium"] .task-row__title,
+.task-row[data-priority="high"] .task-row__title {
+  color: inherit;
+}
+/* Hover keeps the priority tint but visibly darkens toward the row's own
+   fg colour (opaque, theme-coherent). Mixing the priority bg with its fg
+   gives a perceptual "lift on hover" that reads as feedback even on light
+   priorities — earlier variants mixed with rgba(--bg-hover) at low opacity,
+   which produced 2-3% green at best and was effectively invisible. */
+.task-row[data-priority="none"]:hover {
+  background: color-mix(in srgb, var(--task-prio-none-bg, var(--bg-base)) 82%, var(--task-prio-none-fg, var(--fg-primary)));
+}
+.task-row[data-priority="low"]:hover {
+  background: color-mix(in srgb, var(--task-prio-low-bg, var(--bg-base)) 82%, var(--task-prio-low-fg, var(--fg-primary)));
+}
+.task-row[data-priority="medium"]:hover {
+  background: color-mix(in srgb, var(--task-prio-medium-bg, var(--bg-base)) 82%, var(--task-prio-medium-fg, var(--fg-primary)));
+}
+.task-row[data-priority="high"]:hover {
+  background: color-mix(in srgb, var(--task-prio-high-bg, var(--bg-base)) 82%, var(--task-prio-high-fg, var(--fg-primary)));
+}
+/* Active selection must always read as "you are here", never as "the row
+   picked a bright priority bg". Push the mix harder (70/30) and keep
+   blending toward its own fg so a saturated red high-priority row still
+   reads as selected + keeps the accent-primary border. */
+.task-row[data-priority="none"].is-active {
+  background: color-mix(in srgb, var(--task-prio-none-bg, var(--bg-base)) 70%, var(--task-prio-none-fg, var(--fg-primary)));
+}
+.task-row[data-priority="low"].is-active {
+  background: color-mix(in srgb, var(--task-prio-low-bg, var(--bg-base)) 70%, var(--task-prio-low-fg, var(--fg-primary)));
+}
+.task-row[data-priority="medium"].is-active {
+  background: color-mix(in srgb, var(--task-prio-medium-bg, var(--bg-base)) 70%, var(--task-prio-medium-fg, var(--fg-primary)));
+}
+.task-row[data-priority="high"].is-active {
+  background: color-mix(in srgb, var(--task-prio-high-bg, var(--bg-base)) 70%, var(--task-prio-high-fg, var(--fg-primary)));
+}
+/* Done / cancelled rows fade as before; the priority bg stays so a
+   completed high-priority task still shows it once hit. .is-cancelled
+   uses opacity to fade the whole row (incl. priority tint). */
+.task-row[data-priority="none"].is-done,
+.task-row[data-priority="low"].is-done,
+.task-row[data-priority="medium"].is-done,
+.task-row[data-priority="high"].is-done {
+  /* Keep the priority bg; only the title text strikes through. */
+  color: color-mix(in srgb, var(--task-prio-none-fg, var(--fg-primary)) 60%, transparent);
+}
+.task-row[data-priority="none"].is-cancelled,
+.task-row[data-priority="low"].is-cancelled,
+.task-row[data-priority="medium"].is-cancelled,
+.task-row[data-priority="high"].is-cancelled {
+  opacity: 0.6;
+}
+/* Blocked wins on top of any priority tint (the danger rail must always
+   be visible regardless of the bg colour). */
+.task-row[data-priority="none"].is-blocked,
+.task-row[data-priority="low"].is-blocked,
+.task-row[data-priority="medium"].is-blocked,
+.task-row[data-priority="high"].is-blocked {
+  background: color-mix(in srgb, var(--accent-danger) 12%, transparent);
 }
 .task-row__main {
   flex: 1;
@@ -4495,6 +4635,161 @@ a:hover {
 .settings-tags__del:hover {
   background: var(--bg-hover);
   color: var(--danger);
+}
+
+/* ---- task appearance (priority colours) pane ---- */
+
+.task-appearance {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+.task-appearance__presets {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: var(--space-sm);
+}
+.task-appearance__preset {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: stretch;
+  padding: var(--space-sm);
+  background: var(--bg-soft);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: border-color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
+  text-align: left;
+  font: inherit;
+  color: var(--fg-primary);
+  /* 预留右上角给 ✓ 角标绝对定位 */
+  position: relative;
+}
+.task-appearance__preset:hover {
+  border-color: var(--accent-primary);
+}
+.task-appearance__preset.is-selected {
+  border-color: var(--accent-primary);
+  background: color-mix(in srgb, var(--accent-primary) 12%, var(--bg-soft));
+  /* 加一层 inset 高亮让选中态在所有预设里一眼可辨——单靠边框/底色用户
+     反馈"没反应",所以叠一层半透明主色填充来强化对比 */
+  box-shadow: inset 0 0 0 1px var(--accent-primary);
+}
+.task-appearance__preset-check {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--accent-primary);
+  /* 让 ✓ 不占按钮的 flex 高度,避免把它推到 swatches 下方 */
+  pointer-events: none;
+}
+.task-appearance__preset-swatches {
+  display: flex;
+  gap: 3px;
+  align-items: center;
+  /* 给右上角 ✓ 留点空间,不撞到第一个色块 */
+  padding-right: 16px;
+}
+.task-appearance__preset-swatch {
+  display: inline-block;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  border: 1px solid;
+}
+.task-appearance__preset-label {
+  font-size: var(--font-sm);
+  font-weight: 500;
+}
+.task-appearance__editor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+.task-appearance__row {
+  display: grid;
+  /* 优先级名 | 背景(色块+输入) | 文字(色块+输入) —— 之前多了一个
+     "优先级 · 无"预览格子,既冗余又占布局,现在色块直接挨着输入框,
+     信息更紧凑。 */
+  grid-template-columns: 60px minmax(0, 1fr) minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  background: var(--bg-soft);
+}
+.task-appearance__row-label {
+  font-weight: 500;
+  text-align: center;
+}
+.task-appearance__field {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-xs);
+  font-size: var(--font-xs);
+  min-width: 0;
+}
+.task-appearance__field-label {
+  color: var(--fg-muted);
+  flex-shrink: 0;
+}
+.task-appearance__color-input {
+  flex: 1;
+  min-width: 60px;
+}
+.task-appearance__color-input.is-error {
+  border-color: var(--accent-danger);
+  color: var(--accent-danger);
+}
+/* Preset mode (mode !== 'custom')：整行只读,文本 input 设 readOnly 可以
+   选中复制,色板 input 完全 disabled 以免误开原生弹窗。视觉上把行降低对比
+   度 + 锁定鼠标手势,告诉用户这一档不能直接改。 */
+.task-appearance__row.is-disabled {
+  opacity: 0.7;
+}
+.task-appearance__row.is-disabled .task-appearance__color-input {
+  cursor: default;
+  background: var(--bg-surface);
+}
+.task-appearance__row.is-disabled .task-appearance__picker {
+  cursor: not-allowed;
+}
+.task-appearance__picker {
+  /* 系统原生色板入口:Electron 里 <input type="color"> 点击弹出 OS 颜色
+     选择器,出来的永远是合法 #RRGGBB。样式上把外框/内框去掉做成一个
+     28×28 的小色块——本身就是视觉颜色显示,旁边不用再放预览 swatch。 */
+  appearance: none;
+  -webkit-appearance: none;
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  background: transparent;
+  cursor: pointer;
+  flex-shrink: 0;
+  /* 透明度 0 让原生 swatch 完全盖住,只露 28×28 的内框 */
+  overflow: hidden;
+}
+.task-appearance__picker::-webkit-color-swatch-wrapper {
+  padding: 2px;
+}
+.task-appearance__picker::-webkit-color-swatch {
+  border: none;
+  border-radius: 2px;
+}
+.task-appearance__picker:hover:not(:disabled) {
+  border-color: var(--accent-primary);
+}
+.task-appearance__picker:disabled {
+  /* 锁定后整体降饱和,跟旁边 readOnly 的 hex 输入一致;hover 不变色 */
+  filter: grayscale(0.5);
 }
 
 /* --- progress bar + progress view --- */

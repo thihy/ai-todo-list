@@ -19,7 +19,7 @@
 //     a focused row does the same.
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useTodos } from '../hooks/useTodoListApi';
+import { useTodos, useSettings } from '../hooks/useTodoListApi';
 import type { ListFilter, SortKey } from '../router';
 import { ToastHost } from '../components/Toast';
 import type { ToastBus } from '../components/Toast';
@@ -28,6 +28,7 @@ import { UserMenu } from '../components/UserMenu';
 import { StatusSelect } from '../components/StatusSelect';
 import { IconCalendar, IconCollapseBar, IconDrawing, IconInboxEmpty, IconTrash } from '../components/icons';
 import { todayDateKey } from '../components/PlanGuideModal';
+import type { TaskAppearance } from '../../shared/task-appearance';
 
 export const TodoListPane: React.FC<{
   width: number;
@@ -42,6 +43,10 @@ export const TodoListPane: React.FC<{
 }> = ({ width, filter, sort, selectedId, onSelect, onOpenSettings, onCompose, onCollapse, toastBus }) => {
   const repoFilter = filterToRepoFilter(filter);
   const { data, loading, refresh } = useTodos(repoFilter);
+  // 任务优先级配色 —— mode=custom 时把 colors 注入 CSS 自定义属性；
+  // mode=theme 时不注入，由 CSS 主题默认样式接管，节省一次序列化。
+  const { data: settings } = useSettings();
+  const taskAppearance = settings?.taskAppearance;
 
   // Auto-refresh when a new todo is created elsewhere (capture window, AI).
   useEffect(() => {
@@ -242,7 +247,7 @@ export const TodoListPane: React.FC<{
   }, [data, deletedView]);
   const isEmpty = !loading && data.length === 0;
   return (
-    <section className="task-list" aria-label="任务列表" style={{ width }}>
+    <section className="task-list" aria-label="任务列表" style={taskListStyle(taskAppearance, width)}>
       <header className="task-list__header">
         <button type="button" className="task-list__add-btn" onClick={onCompose}>
           <PlusGlyph /> 新建任务
@@ -864,6 +869,7 @@ const TaskRow: React.FC<{
       role="button"
       tabIndex={0}
       className={`task-row${active ? ' is-active' : ''}${statusCls}${creatingCls}${plannedCls}`}
+      data-priority={todo.priority || 'none'}
       style={
         {
           '--row-depth': depth,
@@ -1277,6 +1283,7 @@ const DeletedRow: React.FC<{
       role="button"
       tabIndex={0}
       className={`task-row${active ? ' is-active' : ''}`}
+      data-priority={todo.priority || 'none'}
       onClick={() => onSelect(todo.id)}
       onKeyDown={(e) => {
         if (e.key === 'Enter') onSelect(todo.id);
@@ -1325,6 +1332,35 @@ function filterToRepoFilter(f: ListFilter): Parameters<typeof window.todoList.to
       // Exhaustive — future filter kinds should land here.
       return {};
   }
+}
+
+/** 把 taskAppearance 转换为顶层 <section> 的 style —— 始终把 colors 注入
+ *  8 个 CSS 自定义属性（--task-prio-<p>-bg / -fg）。`mode` 只决定 Settings
+ *  UI 是否可编辑（custom=可调 / theme=只读），不应该影响行是否上色：无论
+ *  选「柔和彩色」预设还是手工调色，最终效果都是把当前
+ *  `colors` 应用到 .task-row[data-priority="..."] 上。这里不再按 mode 短路，
+ *  否则 theme 模式下所有行都会回退到 --bg-base，看起来「配色没生效」。
+ *  当 appearance 还没加载（首次渲染）时仍然不注入，让 CSS 默认接管。 */
+function taskListStyle(
+  appearance: TaskAppearance | undefined,
+  width: number,
+): React.CSSProperties {
+  const base: React.CSSProperties = { width };
+  if (!appearance) return base;
+  const c = appearance.colors;
+  return {
+    ...base,
+    // CSS 自定义属性键在 React 里用 camelCase，对应 CSS 里的 kebab-case；
+    // 我们在 CSS 里直接写 kebab-case 字符串键（TS 在 cast 里允许任意键）。
+    ['--task-prio-none-bg' as never]: c.none.background,
+    ['--task-prio-none-fg' as never]: c.none.foreground,
+    ['--task-prio-low-bg' as never]: c.low.background,
+    ['--task-prio-low-fg' as never]: c.low.foreground,
+    ['--task-prio-medium-bg' as never]: c.medium.background,
+    ['--task-prio-medium-fg' as never]: c.medium.foreground,
+    ['--task-prio-high-bg' as never]: c.high.background,
+    ['--task-prio-high-fg' as never]: c.high.foreground,
+  };
 }
 
 function formatDate(ms: number): string {

@@ -1,4 +1,5 @@
 import type { AIStreamEvent } from '../../shared/ai-types';
+import { normalizeAssistantBlocks } from './normalize-assistant-blocks';
 
 export type AssistantTurnBlock =
   | { kind: 'reasoning'; text: string }
@@ -66,14 +67,25 @@ export function projectStreamTurn(
     }
   }
 
+  // 用原始 token / reasoning 判断是否已经收到任何助手内容。done.content 兜底只
+  // 用于"流式聚合空"的情况(非流式 / adapter 没有回放 token),且仅追加一次;之
+  // 后会与归一化一起走,避免与归一化后是否还剩 text 之间的耦合——纯思考响应在
+  // 结束时如果按"归一化后是否还有 text"判定,就会被错误地再追加一次 content。
+  const hasAnyAssistantContent = blocks.some(
+    (block) => block.kind === 'text' || block.kind === 'reasoning',
+  );
   const doneEvent = mine.find((event): event is Extract<AIStreamEvent, { type: 'done' }> => event.type === 'done');
-  if (doneEvent?.content && !blocks.some((block) => block.kind === 'text')) {
+  if (doneEvent?.content && !hasAnyAssistantContent) {
     blocks.push({ kind: 'text', text: doneEvent.content });
   }
   const errorEvent = mine.find((event): event is Extract<AIStreamEvent, { type: 'error' }> => event.type === 'error');
 
+  // 归一化:在所有块聚合完成后、含 done.content 兜底,统一识别 `<think>...</think>`。
+  const settled = Boolean(doneEvent || errorEvent);
+  const normalizedBlocks = normalizeAssistantBlocks(blocks, { settled });
+
   return {
-    blocks,
+    blocks: normalizedBlocks,
     status: errorEvent ? 'error' : doneEvent ? 'done' : 'streaming',
     ...(errorEvent ? { error: errorEvent.message } : {}),
     ...(firstTokenTs === undefined ? {} : { firstTokenTs }),

@@ -33,6 +33,7 @@ import type { UserQuestionAnswer, UserQuestionRequest } from '../../shared/ai-ty
 import { presentToolCall, presentToolResult } from '@shared/tool-presentation';
 import type Database from 'better-sqlite3';
 import { mimeExt, sanitizeName } from '../util/mime';
+import { decodeUserMessage, encodeTaskCreationEnvelope, type UserIntent } from '../../shared/task-creation';
 
 // DSH 走动态 import：这样即使依赖没装，主 bundle 也能编译；同时启动失败时
 // 渲染端能看到显式的 "DSH unavailable" 而不是 import 阶段崩掉。
@@ -70,7 +71,7 @@ export interface DshRuntimeDeps {
 // onEvent 实时产生。形状与 AIPane 已有的渲染一致：turn 文本 + 工具 call/result
 // chip + 可选 reasoning 块，让 "实时轮次" 和 "历史轮次" 走同一渲染路径。
 export type HistoryTurn =
-  | { type: 'user'; text: string }
+  | { type: 'user'; text: string; intent?: UserIntent }
   | { type: 'assistant'; text: string; reasoning?: string }
   | { type: 'tool'; name: string; args?: unknown; ok: boolean; data?: unknown; presentationMeta?: unknown; error?: string };
 
@@ -108,6 +109,10 @@ export interface DshRuntime {
     prompt: string;
     conversationId: string;
     invocationId: string;
+    /** Explicit user intent for this turn. When `create-task`, main has
+     *  already wrapped `prompt` into the create-task envelope, and the
+     *  envelope is what the model sees. Absent on chat turns. */
+    intent?: UserIntent;
     onEvent: (e: DshRawEvent) => void;
     signal?: AbortSignal;
   }): Promise<{ content: string; tokensIn: number; tokensOut: number }>;
@@ -488,7 +493,9 @@ function isInjectionUserMessage(data: unknown): boolean {
   return d?.source?.kind === 'plugin' || d?.source?.kind === 'system';
 }
 
-/** 从 DSH 事件流里取第一条 user/message 文本（跳过运行时上下文注入） */
+/** 从 DSH 事件流里取第一条 user/message 文本（跳过运行时上下文注入）。
+ *  通过共享解码函数剥离封套前缀 / JSON——返回的永远是用户视角的明文，
+ *  否则会话标题会变成 "[todo-list:create-task:v1] {…}" 这种泄露。 */
 function extractFirstUserText(events: ReadonlyArray<{ type: string; data?: unknown }>): string {
   for (const ev of events) {
     if (ev.type !== 'user/message') continue;
@@ -498,7 +505,7 @@ function extractFirstUserText(events: ReadonlyArray<{ type: string; data?: unkno
       .filter((b) => b?.type === 'text' && typeof b.text === 'string')
       .map((b) => b.text as string)
       .join('');
-    if (text) return text;
+    if (text) return decodeUserMessage(text).text;
   }
   return '';
 }
@@ -869,12 +876,20 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
 
   // 4. 暴露 runtime API
   const runtime: DshRuntime = {
-    async runTurn({ prompt, conversationId, invocationId, onEvent, signal }) {
+    async runTurn({ prompt, conversationId, invocationId, intent, onEvent, signal }) {
       void invocationId; // 留作对外 API 兼容；事件流里的 invocationId 由 ai.ask 自行追踪
       const { createUserMessage } = await import('@deepseek-ai/dsh-llm');
       const endpoint = deps.getEndpoint();
       const model = endpoint?.model ?? 'deepseek-chat';
       const entry = await ensureAgent(conversationId, model);
+      // Create-task envelope assembly lives here, not in the renderer: the
+      // fixed creation rules (default status, conservative priority, etc.)
+      // are in the DSH system prompt (resources/dsh/cordis.yml), so the wire
+      // envelope only carries the prefix + JSON {intent, localDate, text}.
+      // Chat turns keep the literal user text verbatim.
+      const wirePrompt = intent === 'create-task'
+        ? encodeTaskCreationEnvelope(prompt)
+        : prompt;
       // L4-E：监听器只做透传，本轮 fullText / tokens 在闭包里累加并最终
       // 写进 runTurn 的返回值。ai.ask 用返回的 tokens 算价格、用 fullText
       // 当 AIStreamEvent.done.content，不再依赖一条合成的 'done' 事件。
@@ -932,7 +947,7 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
       });
       try {
         const userMsg = createUserMessage({
-          content: [{ type: 'text', text: prompt }],
+          content: [{ type: 'text', text: wirePrompt }],
           source: { kind: 'user' },
         });
         entry.agent.followup(userMsg);
@@ -1108,7 +1123,18 @@ export function foldHistory(events: ReadonlyArray<{ type: string; data?: unknown
         .filter((b) => b?.type === 'text' && typeof b.text === 'string')
         .map((b) => b.text as string)
         .join('');
-      if (text) turns.push({ type: 'user', text });
+      if (text) {
+        // 通过共享解码函数剥离封套前缀 / JSON——卡片只展示 description
+        // (description=用户原始描述，attachment 等附加内容剥离)；intent
+        // 用来在渲染端挑出 create-task 卡片。解析失败仍保留原始文本
+        // (decodeUserMessage 兜底)，不丢消息。
+        const decoded = decodeUserMessage(text);
+        if (decoded.intent === 'create-task') {
+          turns.push({ type: 'user', text: decoded.description ?? decoded.text, intent: 'create-task' });
+        } else {
+          turns.push({ type: 'user', text: decoded.text });
+        }
+      }
     } else if (ev.type === 'assistant/chunk') {
       // 聚合 streaming delta。chunks 只在当前 step 内有效，step 边界
       // （step/end、user turn、tool call）触发下面的 flush。
