@@ -470,6 +470,190 @@ export function registerAiHandlers(dsh: DshHandle): void {
     if (!ok) return okResult({ ok: true });
     return okResult({ ok: true });
   });
+
+  // Tag-input popover uses this as a fire-and-forget hint. STRICTLY advisory:
+  // every failure path collapses to `{tags: []}` so the renderer's popover
+  // never blocks on the AI. The renderer drops the response if the user closes
+  // the popover or switches tasks before it lands (request id), so we don't
+  // need an explicit cancellation channel here.
+  const SUGGEST_TIMEOUT_MS = 5_000;
+  const SUGGEST_DEFAULT_LIMIT = 4;
+  const SUGGEST_MAX_LIMIT = 8;
+
+  function clampSuggestLimit(req: unknown): number {
+    if (typeof req !== 'number' || !Number.isFinite(req)) return SUGGEST_DEFAULT_LIMIT;
+    const n = Math.floor(req);
+    if (n <= 0) return SUGGEST_DEFAULT_LIMIT;
+    return Math.min(n, SUGGEST_MAX_LIMIT);
+  }
+
+  function normalizeSuggestedTags(raw: unknown, existing: Set<string>, limit: number): string[] {
+    if (!Array.isArray(raw)) return [];
+    const out: string[] = [];
+    const seen = new Set<string>();
+    for (const item of raw) {
+      if (typeof item !== 'string') continue;
+      const norm = item.trim().replace(/^#/, '').toLowerCase();
+      if (!norm) continue;
+      if (seen.has(norm)) continue;
+      if (existing.has(norm)) continue;
+      seen.add(norm);
+      out.push(norm);
+      if (out.length >= limit) break;
+    }
+    return out;
+  }
+
+  /** Pull a JSON array out of the model's text. Most models return clean JSON
+   *  for a strong prompt, but a defensive `[…]` extraction fallback handles
+   *  cases where the model wraps its answer in a markdown fence or appends a
+   *  one-line rationale after the array. */
+  function parseTagsFromText(text: string): unknown {
+    const trimmed = text.trim();
+    if (!trimmed) return null;
+    try { return JSON.parse(trimmed); } catch { /* fall through */ }
+    const m = trimmed.match(/\[[^\[\]]*\]/);
+    if (!m) return null;
+    try { return JSON.parse(m[0]); } catch { return null; }
+  }
+
+  /** One-shot non-streaming chat completion across the three protocols the
+   *  app supports (openai / openresponses / anthropic). Returns the raw text
+   *  of the model's first message, or null on any structural problem —
+   *  callers treat null and `[]` the same way (advisory, no error path). */
+  async function callNonStreamingChat(
+    ep: { protocol: 'openai' | 'openresponses' | 'anthropic'; baseUrl: string; apiKey: string; model: string },
+    systemMsg: string,
+    userMsg: string,
+    signal: AbortSignal,
+  ): Promise<string | null> {
+    const baseUrl = ep.baseUrl.replace(/\/+$/, '');
+    const headers: Record<string, string> = { 'content-type': 'application/json' };
+    let url: string;
+    let body: unknown;
+
+    if (ep.protocol === 'anthropic') {
+      url = `${baseUrl}/v1/messages`;
+      headers['x-api-key'] = ep.apiKey;
+      headers['anthropic-version'] = '2023-06-01';
+      body = {
+        model: ep.model,
+        max_tokens: 256,
+        system: systemMsg,
+        messages: [{ role: 'user', content: userMsg }],
+      };
+    } else if (ep.protocol === 'openresponses') {
+      url = `${baseUrl}/responses`;
+      if (ep.apiKey) headers.Authorization = `Bearer ${ep.apiKey}`;
+      body = {
+        model: ep.model,
+        input: `${systemMsg}\n\n${userMsg}`,
+        max_output_tokens: 256,
+        stream: false,
+      };
+    } else {
+      url = `${baseUrl}/chat/completions`;
+      if (ep.apiKey) headers.Authorization = `Bearer ${ep.apiKey}`;
+      body = {
+        model: ep.model,
+        stream: false,
+        messages: [
+          { role: 'system', content: systemMsg },
+          { role: 'user', content: userMsg },
+        ],
+      };
+    }
+
+    const res = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body), signal });
+    if (!res.ok) {
+      logger.warn(`suggestTags: HTTP ${res.status} from ${url}`);
+      return null;
+    }
+    const data = (await res.json()) as unknown;
+
+    if (ep.protocol === 'anthropic') {
+      const content = (data as { content?: Array<{ type: string; text?: string }> }).content;
+      if (!Array.isArray(content)) return null;
+      const text = content.find((b) => b?.type === 'text' && typeof b.text === 'string')?.text;
+      return typeof text === 'string' ? text : null;
+    }
+    if (ep.protocol === 'openresponses') {
+      const output = (data as { output?: Array<{ content?: Array<{ type: string; text?: string }> }> }).output;
+      if (!Array.isArray(output)) return null;
+      for (const item of output) {
+        const parts = item?.content;
+        if (Array.isArray(parts)) {
+          const text = parts.find((p) => p?.type === 'output_text' && typeof p.text === 'string')?.text;
+          if (typeof text === 'string') return text;
+        }
+      }
+      return null;
+    }
+    // openai (DeepSeek, OpenAI, Ollama, anything OpenAI-compatible)
+    const choice = (data as { choices?: Array<{ message?: { content?: unknown } }> }).choices?.[0];
+    const content = choice?.message?.content;
+    if (typeof content === 'string') return content;
+    if (Array.isArray(content)) {
+      const parts: string[] = [];
+      for (const part of content) {
+        if (part && typeof part === 'object' && (part as { type?: string }).type === 'text') {
+          const t = (part as { text?: string }).text;
+          if (typeof t === 'string') parts.push(t);
+        }
+      }
+      if (parts.length > 0) return parts.join('\n');
+    }
+    return null;
+  }
+
+  register('ai.suggestTags', async (_e, req) => {
+    // Missing context / unconfigured endpoint → silent empty. The popover's
+    // AI section is rendered as "no recs" in that case, which is fine and
+    // avoids polluting the log on every popover open.
+    const title = typeof req?.title === 'string' ? req.title.trim() : '';
+    if (!title) return okResult({ tags: [] });
+    if (!deps) return okResult({ tags: [] });
+    const ep = resolveEndpoint(deps.settings.get());
+    if (!ep) return okResult({ tags: [] });
+
+    const limit = clampSuggestLimit(req?.limit);
+    const existing = new Set<string>();
+    if (Array.isArray(req?.existingTags)) {
+      for (const t of req.existingTags) {
+        if (typeof t === 'string' && t.trim()) {
+          existing.add(t.trim().replace(/^#/, '').toLowerCase());
+        }
+      }
+    }
+
+    const systemMsg =
+      'You are a tag-suggester for a personal todo list. ' +
+      'Return ONLY a JSON array of lowercase, single-word or hyphenated tag names. ' +
+      'No markdown, no prose, no explanation.';
+    const bodyChunk =
+      typeof req?.body === 'string' && req.body.trim().length > 0
+        ? `\nBody: ${req.body.trim().slice(0, 1200)}`
+        : '';
+    const userMsg =
+      `Title: ${title}${bodyChunk}\n\n` +
+      `Suggest up to ${limit} tags. Avoid: ${Array.from(existing).join(', ') || '(none)'}. ` +
+      `Return ONLY the JSON array, e.g. ["work","urgent"].`;
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), SUGGEST_TIMEOUT_MS);
+    try {
+      const text = await callNonStreamingChat(ep, systemMsg, userMsg, controller.signal);
+      if (!text) return okResult({ tags: [] });
+      const parsed = parseTagsFromText(text);
+      const tags = normalizeSuggestedTags(parsed, existing, limit);
+      return okResult({ tags });
+    } catch (err) {
+      logger.warn(`suggestTags: ${(err as Error).message}`);
+      return okResult({ tags: [] });
+    } finally {
+      clearTimeout(timer);
+    }
+  });
 }
 
 export function bindAiDeps(d: HandlerDeps): void {

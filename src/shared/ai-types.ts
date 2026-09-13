@@ -129,20 +129,14 @@ export interface AITokenEvent extends AIStreamEventBase {
   token: string;
 }
 
-/** Synthesized tool-call event: a call/result pair merged by the renderer
- *  into one AIPane-friendly shape. Source data still lives on the
- *  `sessionEvent` variant — this is the renderer-side projection. */
-export interface AIToolCallEvent extends AIStreamEventBase {
-  type: 'toolCall';
-  toolName: string;
-  args: unknown;
-  result: unknown;
-  /** DSH tool-owned, replayable presentation payload from tool/result.meta.
-   *  Rich cards such as WebBlock consume this instead of parsing the
-   *  model-facing text result. */
-  presentationMeta?: unknown;
-  ok: boolean;
-}
+/** Synthesized tool-call event is intentionally NOT part of this surface.
+ *  Tool-call pairing + projection lives in the renderer as a pure function
+ *  (`projectStreamTurn`) over the raw `sessionEvent` stream — see
+ *  `src/renderer/dsh/stream-turn.ts`. Keeping pairing OUT of the React
+ *  useState updater avoids the StrictMode-double-invocation hazard (a
+ *  side-effect map would lose / duplicate entries). Main forwards raw
+ *  SessionEvents via `AISessionEvent`; the renderer pairs tool/call and
+ *  tool/result keyed by callId. */
 
 /** Raw DSH SessionEvent passthrough. Renderer ingests this and re-emits the
  *  narrower synthesized events (token / reasoning / toolCall) that AIPane
@@ -182,7 +176,6 @@ export type AIStreamEvent =
   | AIStartEvent
   | AITokenEvent
   | AIReasoningEvent
-  | AIToolCallEvent
   | AISessionEvent
   | AIPermissionRequestEvent
   | AIDoneEvent

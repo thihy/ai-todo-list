@@ -30,7 +30,7 @@ import type { SettingsStore } from '../settings/store';
 import type { TodoFilter, TodoStatus, TodoCreate, TodoPatch, Priority } from '../../shared/todo-types';
 import { TODO_STATUSES, PRIORITIES } from '../../shared/todo-types';
 import type { UserQuestionAnswer, UserQuestionRequest } from '../../shared/ai-types';
-import { presentToolCall, presentToolResult } from '@shared/tool-presentation';
+import { presentToolCall, presentToolResult, recoverToolResultValue } from '@shared/tool-presentation';
 import type Database from 'better-sqlite3';
 import { mimeExt, sanitizeName } from '../util/mime';
 import { decodeUserMessage, encodeTaskCreationEnvelope, type UserIntent } from '../../shared/task-creation';
@@ -73,7 +73,27 @@ export interface DshRuntimeDeps {
 export type HistoryTurn =
   | { type: 'user'; text: string; intent?: UserIntent }
   | { type: 'assistant'; text: string; reasoning?: string }
-  | { type: 'tool'; name: string; args?: unknown; ok: boolean; data?: unknown; presentationMeta?: unknown; error?: string };
+  | {
+      type: 'tool';
+      /** Wire callId from tool/call (or synthesised orphan-N when only a
+       *  tool/result was on the wire). Stable React key for the renderer. */
+      callId: string;
+      name: string;
+      /** Raw args JSON string from tool/call. Passed through verbatim so the
+       *  renderer can round-trip it through `parseToolArgs`. */
+      args?: unknown;
+      ok: boolean;
+      data?: unknown;
+      presentationMeta?: unknown;
+      error?: string;
+      /** Explicit lifecycle. The renderer mirrors this from projectStreamTurn;
+       *  a `missing-result` turn is NOT an automatic failure — only `error` /
+       *  `stopped` indicate execution went wrong. */
+      state: 'done' | 'error' | 'stopped' | 'missing-call' | 'missing-result';
+      /** False only for orphan tool/result turns (no matching tool/call in
+       *  the log). Distinguishes "args = {}" from "未记录输入" downstream. */
+      argsKnown: boolean;
+    };
 
 /** DSH 原始 session/event 形状（cordis 推过来的事件载荷）。
  *  监听器不再二次合成本地表状 TurnEvent——把这条流原样给上层，
@@ -1055,8 +1075,13 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
  *   为空（流式答案在 chunks 里，不在 final 事件里——DSH 的序列化怪癖），
  *   所以以 chunks 为准。reasoning 内容从 reasoning-delta 聚合后挂到
  *   assistant turn 的 `reasoning` 字段。
- * - tool/call + tool/result → 一个 tool turn（按 callId 配对；缺失 result
- *   也照样输出 tool turn，ok=false，error="no result"）。
+ * - tool/call + tool/result → 一个 tool turn（按 callId 配对）。
+ *   - 都按真实 callId 配对；同一次会话里多次同名调用走不同 callId。
+ *   - 缺失 result 不自动等于执行失败——只在 `error` / `stopped` 状态下
+ *     标红；`missing-result` 是中性提示。
+ *   - `cancelled:` 前缀的结果标记为 `stopped`（琥珀色，非红色）。
+ *   - 只有 result 没有 call 的情况（理论）→ `state: 'missing-call'` +
+ *     `argsKnown: false`，渲染端兜底显示「工具调用信息缺失」/「未记录输入」。
  * - 结构事件（turn/start、step/end）跳过，只用作 assistant 文本 flush 边界。
  *
  * L3-I: 导出给 vitest 直接单测。形状测试在 tests/dsh-runtime-foldHistory.test.ts，
@@ -1066,8 +1091,13 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
 export function foldHistory(events: ReadonlyArray<{ type: string; data?: unknown }>): HistoryTurn[] {
   const turns: HistoryTurn[] = [];
 
-  // 第一遍：按 callId 索引 tool/result，方便后面跟 tool/call 配对。
+  // First pass: index tool/result by callId so tool/call can pair with it
+  // even when the result landed first (chunks arrive out-of-order under load).
+  // Orphan results (no source.callId) are buffered separately and emitted
+  // at the end of pass 2 — defensive only, real DSH sessions always carry
+  // a callId on tool/result.
   const pendingResults = new Map<string, { ok: boolean; data?: unknown; presentationMeta?: unknown; error?: string }>();
+  const orphanResults: Array<{ block: { isError?: boolean; content?: unknown[] } | undefined; presentationMeta: unknown }> = [];
   for (const ev of events) {
     if (ev.type === 'tool/result') {
       const d = ev.data as {
@@ -1077,21 +1107,38 @@ export function foldHistory(events: ReadonlyArray<{ type: string; data?: unknown
         };
         meta?: unknown;
       } | undefined;
-      const callId = d?.message?.source?.callId;
+      const rawCallId = d?.message?.source?.callId;
       const block = d?.message?.content?.[0];
-      if (callId != null) {
-        pendingResults.set(String(callId), {
+      if (rawCallId != null) {
+        pendingResults.set(String(rawCallId), {
           ok: !block?.isError,
           data: block?.content,
           presentationMeta: d?.meta,
           error: block?.isError ? JSON.stringify(block?.content) : undefined,
         });
+      } else {
+        orphanResults.push({ block, presentationMeta: d?.meta });
       }
     }
   }
 
-  // 第二遍：按序走，累加 assistant text / reasoning，在边界（user turn、
-  // tool call、step end）flush。
+  let orphanSynthCounter = 0;
+
+  // Helper: classify a tool/result's terminal state. Mirrors stream-turn.ts'
+  // `handleToolResult` — `cancelled:` prefix ⇒ stopped, not error.
+  const classifyResult = (
+    ok: boolean,
+    data: unknown,
+    error: string | undefined,
+  ): 'done' | 'error' | 'stopped' => {
+    if (ok) return 'done';
+    const recovered = recoverToolResultValue(data);
+    if (typeof recovered === 'string' && recovered.startsWith('cancelled:')) return 'stopped';
+    // Preserve explicit error string; otherwise unknown failure.
+    void error;
+    return 'error';
+  };
+
   let bufText = '';
   let bufReasoning = '';
 
@@ -1104,6 +1151,32 @@ export function foldHistory(events: ReadonlyArray<{ type: string; data?: unknown
       bufText = '';
       bufReasoning = '';
     }
+  };
+
+  const emitOrphan = (orphan: { block: { isError?: boolean; content?: unknown[] } | undefined; presentationMeta: unknown }): void => {
+    flushAssistant();
+    const ok = !orphan.block?.isError;
+    const data = orphan.block?.content;
+    const resultState = classifyResult(ok, data, undefined);
+    turns.push({
+      type: 'tool',
+      // Synthesised callId — orphan results never carried a source.callId,
+      // and we mint a stable per-position id so React keys don't churn if
+      // the user reloads.
+      callId: `orphan-${orphanSynthCounter++}`,
+      name: '',
+      args: undefined,
+      ok,
+      data,
+      presentationMeta: orphan.presentationMeta,
+      // `missing-call` always — there is no tool/call, so the renderer
+      // falls back to "工具调用信息缺失" + "未记录输入". The result-side
+      // state (done / stopped / error) is preserved as `ok` and `error`
+      // so the status dot still tells the truth about the execution.
+      error: ok ? undefined : resultState === 'stopped' ? undefined : JSON.stringify(data),
+      state: 'missing-call',
+      argsKnown: false,
+    });
   };
 
   for (const ev of events) {
@@ -1176,20 +1249,100 @@ export function foldHistory(events: ReadonlyArray<{ type: string; data?: unknown
       // 输出 tool turn。
       flushAssistant();
       const d = ev.data as { callId?: unknown; name?: string; arguments?: string } | undefined;
-      const callId = d?.callId != null ? String(d.callId) : '';
-      const result = callId ? pendingResults.get(callId) : undefined;
-      turns.push({
-        type: 'tool',
-        name: d?.name ?? '',
-        args: d?.arguments,
-        ok: result?.ok ?? false,
-        data: result?.data,
-        presentationMeta: result?.presentationMeta,
-        error: result?.error ?? (result ? undefined : 'no result'),
-      });
+      const rawCallId = d?.callId != null ? String(d.callId) : '';
+      // tool/call with no callId (corrupt / partial log) is still surfaced
+      // as a tool turn — synthesis is better than dropping the call on
+      // the floor, but we mark it as `missing-call` so the renderer knows
+      // to show "工具调用信息缺失" + "未记录输入". Same treatment as an
+      // orphan tool/result so the historical view stays resilient.
+      const callId = rawCallId !== '' ? rawCallId : `orphan-${orphanSynthCounter++}`;
+      const result = pendingResults.get(callId);
+      if (result) {
+        const state = classifyResult(result.ok, result.data, result.error);
+        turns.push({
+          type: 'tool',
+          callId,
+          name: d?.name ?? '',
+          args: d?.arguments,
+          ok: result.ok,
+          data: result.data,
+          presentationMeta: result.presentationMeta,
+          error: state === 'stopped' ? undefined : result.error,
+          state,
+          argsKnown: true,
+        });
+        pendingResults.delete(callId);
+      } else {
+        // tool/call with NO matching tool/result — `missing-result` is NOT
+        // an automatic failure (the renderer treats it as "结果未记录" with
+        // a neutral pill, not a red dot). Only `error` / `stopped` indicate
+        // execution went wrong. For the no-callId path above we ALSO emit
+        // a tool turn (instead of dropping) but with state='missing-call'
+        // since we don't even know whether a result would have matched.
+        if (rawCallId === '') {
+          turns.push({
+            type: 'tool',
+            callId,
+            name: d?.name ?? '',
+            args: d?.arguments,
+            ok: false,
+            data: undefined,
+            presentationMeta: undefined,
+            error: undefined,
+            state: 'missing-call',
+            argsKnown: true,
+          });
+        } else {
+          turns.push({
+            type: 'tool',
+            callId,
+            name: d?.name ?? '',
+            args: d?.arguments,
+            ok: false,
+            data: undefined,
+            presentationMeta: undefined,
+            error: undefined,
+            state: 'missing-result',
+            argsKnown: true,
+          });
+        }
+      }
     }
     // 其他事件（已处理的 chunks、结构性 start 事件、session/end-seed、
     // request/*）刻意跳过。
+  }
+
+  // Drain orphan results — tool/result events whose callId never matched
+  // any tool/call in the log (rare; defensive). Emit them with
+  // `state='missing-call'` and `argsKnown=false` so the renderer can
+  // surface "未记录输入" and the title fallback "工具调用信息缺失".
+  for (const orphan of orphanResults) {
+    emitOrphan(orphan);
+  }
+
+  // Drain straggler tool/results — buffered in pass 1 whose matching
+  // tool/call never arrived. The renderer needs to render them as orphans
+  // rather than silently dropping them. This branch is rare (result-only
+  // without any matching call) and is what makes the historical view
+  // resilient to partial logs.
+  for (const [strayCallId, result] of pendingResults.entries()) {
+    flushAssistant();
+    const resultState = classifyResult(result.ok, result.data, result.error);
+    turns.push({
+      type: 'tool',
+      callId: `orphan-${orphanSynthCounter++}-${strayCallId}`,
+      name: '',
+      args: undefined,
+      ok: result.ok,
+      data: result.data,
+      presentationMeta: result.presentationMeta,
+      // `missing-call` regardless of result ok-ness — the call is missing.
+      // `ok` and `error` still carry the result's truth so the row's
+      // status dot is honest about what we know happened.
+      error: resultState === 'stopped' ? undefined : result.error,
+      state: 'missing-call',
+      argsKnown: false,
+    });
   }
 
   // 末尾 flush——日志中途结束、没显式边界时也要把累积的内容吐出来。

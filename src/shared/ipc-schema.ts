@@ -263,11 +263,26 @@ export interface AIConversationHistoryReq { id: string }
 /** Mirrors DshRuntime.HistoryTurn — see src/main/dsh/dsh-runtime.ts.
  *  The `intent` field on user turns is preserved through foldHistory so the
  *  renderer can render the create-task operation card for older turns too
- *  (not just the live one). Absent on non-create-task turns. */
+ *  (not just the live one). Absent on non-create-task turns.
+ *  Tool turns carry a stable `callId` (synthesised `orphan-N` when no
+ *  matching call/result was on the wire) and an explicit `state` so the
+ *  renderer can distinguish "args = {}" from "未记录输入" and "missing-
+ *  result" from a real failure. */
 export type AIConversationHistoryTurn =
   | { type: 'user'; text: string; intent?: 'chat' | 'create-task' }
   | { type: 'assistant'; text: string; reasoning?: string }
-  | { type: 'tool'; name: string; args?: unknown; ok: boolean; data?: unknown; error?: string };
+  | {
+      type: 'tool';
+      callId: string;
+      name: string;
+      args?: unknown;
+      ok: boolean;
+      data?: unknown;
+      presentationMeta?: unknown;
+      error?: string;
+      state: 'done' | 'error' | 'stopped' | 'missing-call' | 'missing-result';
+      argsKnown: boolean;
+    };
 export interface AIConversationHistoryRes { turns: AIConversationHistoryTurn[] }
 
 // ----- permission.* -----
@@ -381,6 +396,20 @@ export interface IpcRegistry {
   'ai.forgetMemory': IpcChannel<AIForgetMemoryReq, IpcResult<void>>;
   'ai.event': IpcChannel<{ event: AIStreamEvent }, IpcResult<void>>; // push main -> renderer
   'ai.parseCapturePreview': IpcChannel<{ text: string }, IpcResult<ParsedTodo>>;
+  // One-shot non-streaming tag recommendation for the tag-input popover.
+  // Returns 0..limit tags (default 4) inferred from the task title (+ optional
+  // body markdown). Caller passes `existingTags` so the prompt can steer away
+  // from names already in use. Failure modes all collapse to `{tags: []}` —
+  // this channel is advisory and must NEVER reject the popover render.
+  'ai.suggestTags': IpcChannel<
+    {
+      title: string;
+      body?: string;
+      existingTags?: string[];
+      limit?: number;
+    },
+    IpcResult<{ tags: string[] }>
+  >;
 
   // ----- ai.conversation.* -----
   'ai.conversation.list': IpcChannel<AIConversationListReq, IpcResult<AIConversationListRes>>;
