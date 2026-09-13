@@ -10,6 +10,7 @@ import { installRouter, okResult, failResult, register } from './ipc/router';
 import { registerTodoHandlers } from './ipc/todo-handlers';
 import { registerContentHandlers } from './ipc/content-handlers';
 import { registerDocumentHandlers } from './ipc/document-handlers';
+import { registerDiagnosticsHandlers } from './ipc/diagnostics-handler';
 import { registerLinkHandlers } from './ipc/link-handlers';
 import { registerCapturePreviewHandler } from './ipc/capture-preview-handler';
 import { registerStartupHandler } from './ipc/startup-handler';
@@ -299,6 +300,7 @@ function bootstrap(): void {
       }
     });
     registerSettingsHandlers(settings, handle, rootDir);
+    registerDiagnosticsHandlers(settings, handle.db);
     registerAppHandlers(() => main);
     registerCaptureHandlers(repo, md);
     registerCapturePreviewHandler();

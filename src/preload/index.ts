@@ -164,6 +164,15 @@ const api: TodoListApi = {
     /** SEC-01 — generate a fresh capability token. Always disables the
      *  bridge; user re-enables afterwards. */
     sdkBridgeRotateToken: () => invoke('app.sdkBridge.rotateToken', undefined as never),
+    /** OBS-01 — produce a redacted diagnostics bundle. The renderer is
+     *  responsible for writing the `json` field to a user-chosen path
+     *  via `dialog.showSaveDialog`. The bundle is redacted in main —
+     *  no key / token / absolute path is exposed. */
+    diagnosticsExport: () => invoke('app.diagnostics.export', undefined as never),
+    /** OBS-01 — drive the OS Save dialog and write the bundle to the
+     *  chosen path. Returns the absolute path on success. */
+    diagnosticsSaveToFile: (defaultName: string, json: string) =>
+      invoke('app.diagnostics.saveToFile', { defaultName, json }),
   },
   capture: {
     submit: (args: CaptureSubmitArgs) => invoke('capture.submit', args),

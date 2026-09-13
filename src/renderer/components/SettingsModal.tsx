@@ -873,19 +873,71 @@ const ReminderPane: React.FC<PaneProps> = ({ data, patch }) => {
   );
 };
 
-const AboutPane: React.FC<PaneProps> = ({ data }) => (
-  <div className="settings-pane">
-    <p className="muted" style={{ lineHeight: 1.8 }}>
-      AI待办 — AI 原生 TODO 清单 · Markdown 进展 · Excalidraw 绘图
-    </p>
-    <Field label="用量统计">
-      <div className="muted mono">
-        本月累计 ${data.monthlyCostUsd.toFixed(2)} · 心跳{' '}
-        {data.lastHeartbeatAt ? new Date(data.lastHeartbeatAt).toLocaleString() : '—'}
-      </div>
-    </Field>
-  </div>
-);
+const AboutPane: React.FC<PaneProps> = ({ data }) => {
+  // OBS-01 — drive a Save-As dialog from the renderer. Two-step:
+  // build the bundle (redacted in main), then ask main to write it.
+  // The button is gated on `busy` to prevent double-clicks.
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const onExport = async (): Promise<void> => {
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await window.todoList.app.diagnosticsExport();
+      if (!res.ok) {
+        setError(`生成诊断包失败：${res.message}`);
+        return;
+      }
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+      const saveRes = await window.todoList.app.diagnosticsSaveToFile(
+        `diagnostics-${stamp}.json`,
+        res.data.json,
+      );
+      if (!saveRes.ok) {
+        setError(`保存失败：${saveRes.message}`);
+        return;
+      }
+      if (saveRes.data.path === null) {
+        setNotice(null); // user cancelled — silent
+        return;
+      }
+      setNotice(`已保存到 ${saveRes.data.path}`);
+    } catch (err) {
+      setError(`生成诊断包失败：${(err as Error).message}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="settings-pane">
+      <p className="muted" style={{ lineHeight: 1.8 }}>
+        AI待办 — AI 原生 TODO 清单 · Markdown 进展 · Excalidraw 绘图
+      </p>
+      <Field label="用量统计">
+        <div className="muted mono">
+          本月累计 ${data.monthlyCostUsd.toFixed(2)} · 心跳{' '}
+          {data.lastHeartbeatAt ? new Date(data.lastHeartbeatAt).toLocaleString() : '—'}
+        </div>
+      </Field>
+      <Field
+        label="诊断包"
+        hint="导出一份脱敏的应用 / 数据库 / 启动信息摘要（不含 API Key、token、附件、绝对路径、AI 会话正文），方便附在 bug 报告里。"
+      >
+        <button
+          type="button"
+          className="btn-secondary"
+          disabled={busy}
+          onClick={() => void onExport()}
+        >
+          {busy ? '生成中…' : '导出诊断包…'}
+        </button>
+      </Field>
+      {notice && <div className="notice">{notice}</div>}
+      {error && <div className="notice notice--error">{error}</div>}
+    </div>
+  );
+};
 
 const Field: React.FC<{ label: string; hint?: string; children: React.ReactNode }> = ({ label, hint, children }) => (
   <div className="field">

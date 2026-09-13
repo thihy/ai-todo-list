@@ -283,6 +283,16 @@ export interface TodoListApi {
      *  the user re-enables it via `sdkBridgeSetEnabled(true)`. Returns
      *  the new token exactly once. */
     sdkBridgeRotateToken(): Promise<IpcResponse<'app.sdkBridge.rotateToken'>>;
+    /** OBS-01 — build a redacted diagnostics bundle and return both the
+     *  structured form (`bundle`) and the JSON-serialized form
+     *  (`json`). The renderer is expected to write `json` to a
+     *  user-chosen file via `dialog.showSaveDialog`. The bundle is
+     *  redacted in main; never logs / writes the unredacted form. */
+    diagnosticsExport(): Promise<IpcResponse<'app.diagnostics.export'>>;
+    /** OBS-01 — open the OS Save dialog and write `json` to the
+     *  chosen path. Returns the absolute path on success, or `null`
+     *  if the user cancelled. */
+    diagnosticsSaveToFile(defaultName: string, json: string): Promise<IpcResponse<'app.diagnostics.saveToFile'>>;
   };
   capture: {
     submit(args: CaptureSubmitArgs): Promise<IpcResponse<'capture.submit'>>;

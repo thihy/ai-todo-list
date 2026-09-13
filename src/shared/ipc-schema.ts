@@ -646,6 +646,27 @@ export interface IpcRegistry {
    *  bridge (rotation is usually paired with invalidating outstanding
    *  clients); the user re-enables to bring the bridge back up. */
   'app.sdkBridge.rotateToken': IpcChannel<undefined, IpcResult<{ token: string }>>;
+  /** OBS-01 — export a redacted diagnostics bundle. The bundle is
+   *  already stripped of api keys / tokens / absolute paths / emails
+   *  before it leaves main; the renderer is expected to write it to
+   *  a user-chosen path via `dialog.showSaveDialog`. `bundle` is the
+   *  structured form for in-app display; `json` is the serialized
+   *  form for the file. */
+  'app.diagnostics.export': IpcChannel<
+    undefined,
+    IpcResult<{
+      bundle: DiagnosticsBundle;
+      json: string;
+    }>
+  >;
+  /** OBS-01 — drive the OS Save dialog from main and write the bundle
+   *  JSON to the chosen path. Returns the chosen path or null on
+   *  cancel. The renderer is expected to call `app.diagnostics.export`
+   *  first to obtain `json`, then pass it here. */
+  'app.diagnostics.saveToFile': IpcChannel<
+    { defaultName: string; json: string },
+    IpcResult<{ path: string | null }>
+  >;
 }
 
 export interface StartupSnapshot {
@@ -669,6 +690,45 @@ export type StartupPhase =
   | 'ai-failed';
 
 export type StartupStatus = 'pending' | 'loading' | 'ready' | 'failed';
+
+/** OBS-01 — redacted snapshot of the app + DB state for attaching to
+ *  a bug report. The mirror lives here so the renderer can import it
+ *  without reaching into `src/main/` (which the web tsconfig doesn't
+ *  include). Main builds an object that satisfies this interface. */
+export interface DiagnosticsBundle {
+  generatedAt: string;
+  appVersion: string;
+  system: {
+    platform: string;
+    arch: string;
+    release: string;
+    electron: string;
+    node: string;
+    chrome: string;
+  };
+  schemaVersion: number;
+  startup: StartupSnapshot;
+  aiProvider: {
+    name: string;
+    customName: string | null;
+    model: string;
+    lastHeartbeatAt: number | null;
+    monthlyCostUsd: number;
+  };
+  taskCounts: {
+    total: number;
+    byStatus: Partial<Record<string, number>>;
+  };
+  dataSizes: {
+    dbBytes: number | null;
+    todosBytes: number | null;
+    drawingsBytes: number | null;
+    attachmentsBytes: number | null;
+    dshSessionsBytes: number | null;
+  };
+  sdkBridgeEnabled: boolean;
+  recentLogs: string[];
+}
 
 export interface StartupComponentState {
   status: StartupStatus;

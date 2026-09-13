@@ -136,6 +136,13 @@ See `startup[ai]` log lines and ADR-004.
   line `bridge: <phase> ...` (under `${userData}/todo-list.log`)
   is the source of truth for "who connected when and how many
   calls they made"; it never includes params or the token.
+- To attach a redacted diagnostics snapshot to a bug report,
+  open 设置 → 关于 → 「导出诊断包…」(OBS-01). The resulting
+  JSON file contains app / OS / schema versions, startup state,
+  provider name + model (no key), task counts, data-dir sizes
+  and the last ~32 KiB of the log file (with paths / keys /
+  emails scrubbed). It does NOT include task bodies, drawing
+  scenes, AI conversations or attachments.
 - DSH boot is best-effort: a failed boot surfaces as
   `ai.ask → dsh_unavailable` and is visible in the AI pane as a
   non-blocking banner. The rest of the app stays usable.

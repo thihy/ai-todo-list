@@ -648,6 +648,57 @@ insertion is part of the `TodoRepo.create` transaction family only
 insofar as the hook runs synchronously after the row commits — a
 catalog-insert failure cannot corrupt the task.
 
+## 10.1 Diagnostics bundle (OBS-01)
+
+**Current state.**
+
+- `src/main/diagnostics/bundle.ts` builds a redacted JSON snapshot
+  in one synchronous pass: app version, OS / arch, DB schema
+  version (`SCHEMA_VERSION` constant), live startup-state snapshot
+  (already redacted by `redactMessage`), provider name + model
+  (NEVER the API key), task counts by status, data-dir sizes,
+  `sdkBridge.enabled` flag (NEVER the token), and a 200-line / 32
+  KiB tail of the recent log file with paths / keys / emails /
+  base64-shaped blobs scrubbed.
+- The renderer asks for the bundle via `app.diagnostics.export`,
+  then writes it to a user-chosen path via
+  `app.diagnostics.saveToFile` (which calls
+  `dialog.showSaveDialog` from main and `writeFileSync`).
+- `SettingsModal → 关于 → 「导出诊断包…」` is the only UI entry
+  point. The default filename is
+  `diagnostics-<ISO-timestamp>.json`.
+
+**What is redacted.**
+
+- API keys (custom-provider, provider-level).
+- The bridge capability token (32-byte base64url).
+- Absolute paths in Windows (`C:\…`) or POSIX (`/home/...`,
+  `/Users/...`, etc.) form.
+- Anything that looks like a long base64 blob (≥32 chars of
+  `[A-Za-z0-9_-]`).
+- Emails (`user@host`).
+
+**What is NOT redacted.**
+
+- Task titles / bodies / progress text — not included in the
+  bundle. The bundle only has task *counts*, not task *content*.
+- Drawing scenes — not included.
+- AI conversation bodies — not included.
+- Attachments — not included.
+
+**Known issues.**
+
+- The diagnostics module lives in `src/main/`. The renderer sees
+  its shape via the mirror in `shared/ipc-schema.ts →
+  DiagnosticsBundle` so the web tsconfig (which excludes
+  `src/main/`) still type-checks. Drift between the two is not
+  checked at compile time — a future iteration could export the
+  shared interface as a structural type and have main assert at
+  startup that the runtime object satisfies it.
+- The bundle is generated synchronously; on a slow disk with
+  a large log file the renderer may briefly block. 32 KiB is
+  small enough that this is not yet a real problem.
+
 ## 11. Cross-references
 
 - **Task creation / storage contract** —
