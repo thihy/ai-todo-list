@@ -8,6 +8,29 @@ Local dev loop, code layout, conventions.
 - pnpm ≥ 9
 - Windows 10/11, macOS 12+, or Linux with `libnss3` / `libgtk-3-0` for Electron.
 
+## Code exploration
+
+The repo ships with a local CodeGraph index under `.codegraph/`
+(it is gitignored). Before opening a task, orient yourself:
+
+```bash
+codegraph status --no-color          # confirm the index is alive
+codegraph sync --no-color            # refresh if Pending Changes > 0
+codegraph context "<真实用户行为或数据流>"
+```
+
+CodeGraph is excellent for static call relationships but cannot
+see IPC channel strings, Electron events, dynamic `import()`,
+YAML plugins, CSS classes, or React closure relationships. For
+those, run `rg` — see [`docs/code-exploration.md`](docs/code-exploration.md)
+for the full mandatory supplement list and three worked
+end-to-end examples (form task creation, AI `todo.create`, stable
+task-directory resolution).
+
+If `codegraph` is denied by the current Agent sandbox, fall back
+to `rg` + hand-traced call chains without stopping the task.
+Never invent call relationships from memory.
+
 ## First-time setup
 
 ```bash

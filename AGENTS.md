@@ -116,6 +116,30 @@ When changing a contract, update all relevant layers:
 | AI behavior | `resources/dsh/cordis.yml` and matching tool descriptions |
 | Storage path | `TaskDirectoryStore` and every file store; never add a separate title resolver |
 
+## Code exploration workflow
+
+Before opening a task, orient yourself in the codebase. The full
+step-by-step, including fallback to plain `rg` when CodeGraph is
+unavailable, lives in [`docs/code-exploration.md`](docs/code-exploration.md).
+In short:
+
+1. `codegraph status --no-color` — confirm the index exists; sync if it
+   is stale.
+2. `codegraph context <真实用户行为或数据流>` — drive the query with
+   concrete user behaviour, not broad keywords. Use exact symbol
+   names (`codegraph node / callers / callees / impact`) for any
+   non-trivial symbol.
+3. `rg` is **not optional**. CodeGraph cannot see IPC channel
+   strings, Electron events, dynamic `import()`, YAML plugins,
+   CSS classes, or React closure relationships. Always
+   cross-check the static graph with `rg`.
+4. `codegraph affected <改动文件>` before committing — locate the
+   tests that exercise the changed code.
+
+If CodeGraph is unavailable in the current Agent sandbox, fall back
+to `rg` plus hand-traced call chains without stopping the task.
+Do not invent call relationships from memory.
+
 ## Validation
 
 Run checks proportional to the change:
