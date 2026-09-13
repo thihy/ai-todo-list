@@ -156,6 +156,21 @@ See `startup[ai]` log lines and ADR-004.
 - DSH boot is best-effort: a failed boot surfaces as
   `ai.ask → dsh_unavailable` and is visible in the AI pane as a
   non-blocking banner. The rest of the app stays usable.
+- The splash waits for the LOCAL DSH bootstrap (Cordis boot +
+  adapter + tools + persistence + listeners) to reach a terminal
+  state before mounting the renderer (STARTUP-DSH-001). The
+  warm-up performs no network requests, no API-key checks, no
+  `/models` calls — those live in the `ai.ask` per-request
+  path. If the user sees the splash stuck on "准备 AI 助手…"
+  for more than ~3 s on a cold machine, that's the
+  `@deepseek-ai/dsh-app-boot` import + cordis.yml parse; the
+  `startup[ai]` log lines in `${userData}/todo-list.log` carry
+  the per-phase timing for diagnosis.
+- Orphan-session migration runs synchronously inside the boot
+  body AFTER `warmupDshRuntime` resolves, reusing the live
+  runtime's persistence facade. There is no second Cordis
+  boot for migration; the `boot('todo-list-migrate', ...)`
+  path that existed before STARTUP-DSH-001 is gone.
 - The renderer preload runs with `sandbox: false`. This is
   documented in `createMainWindow()` and is required by the inline
   splash script in `index.html`.

@@ -472,6 +472,105 @@ changes, does **not** add a second AI boot path, and does
 remains untouched and task management stays usable throughout
 the retry.
 
+**Splash-gated DSH warm-up (STARTUP-DSH-001).**
+
+Prior to this change, the splash came down as soon as `core`
+became ready. The first user interaction that touched the AI
+panel paid the full Cordis cold-boot cost (dynamic
+`@deepseek-ai/dsh-app-boot` import + cordis.yml parse +
+plugin tree assembly + adapter registration + tools
+registration + session persistence handle acquisition +
+listener installation). On a cold Windows process this could
+push the BrowserWindow into "未响应" before the AI pane
+had any content.
+
+The new gate is:
+
+```text
+core.status === 'ready'
+  AND
+  (ai.status === 'ready' OR ai.status === 'failed')
+```
+
+`ai.failed` is treated as "DSH local boot failed" (cordis.yml
+missing, plugin tree didn't assemble, a critical ctx service
+like `llm` / `tools` / `agents` was absent). It does **not**
+block the splash from coming down: the AIPane renders its own
+"AI 初始化失败" banner and the rest of the app is fully usable.
+Network / API-key / provider failures are surfaced per-request
+inside `ai.ask` and never reach the splash.
+
+The orchestration lives in three places:
+
+1. `src/main/dsh/dsh-runtime.ts` exports
+   `warmupDshRuntime(deps)`. It is a thin wrapper around the
+   existing `getDshRuntime(deps)` singleton that throws a
+   typed `DshBootFailedError` when the boot resolves to `null`
+   (cordis.yml missing / boot returned null). Concurrent
+   callers share the same `runtimePromise` — single-flight
+   remains an invariant of `getDshRuntime`, not of the new
+   wrapper. The runtime also exposes a `persistence` field
+   built from the live `sessionPersistence` ctx service via
+   the new `buildOrphanMigrationFacade(persistenceApi)` helper.
+
+2. `src/main/index.ts` now awaits `warmupDshRuntime` inside
+   the boot body, then runs `migrateOrphanSessions` with the
+   runtime's facade. `markAiReady()` is only called after
+   both succeed. The previous parallel Cordis boot path
+   (`boot('todo-list-migrate', ...)` inside
+   `bootPersistenceOnly()`) is **gone** — orphan migration
+   reuses the formal runtime's persistence, no second plugin
+   tree. Migration failures are logged at warn but do not
+   downgrade `ai` from ready to failed (per the STARTUP-DSH-001
+   step 五 compatibility requirement: migration isn't a hard
+   runtime dependency).
+
+3. `src/renderer/main.tsx` waits for the combined gate
+   above before dynamically importing the App bundle.
+   `mountPromise` (Promise-typed, not boolean) is the
+   single-flight guard — assigned on first entry, awaited on
+   every subsequent snapshot/event so React StrictMode +
+   duplicate startup events cannot trigger two App dynamic
+   imports.
+
+Things the splash does **not** wait for (deliberately):
+
+- `ai.ask` provider discovery / `/models` calls
+- API key validation
+- Conversation list rendering (the SQLite metadata scan
+  in `ai.conversation.list` is fast enough to render
+  immediately after mount)
+- Health probe results
+- The first model round-trip
+
+Things the splash **does** wait for:
+
+- Core services and IPC registered (existing)
+- Local DSH Cordis boot completed (NEW)
+- LLM adapter registered (NEW — part of `bootDsh`)
+- Domain tools registered (NEW)
+- Session persistence handle acquired (NEW)
+- Session-title listener registered (NEW)
+- User-question + approval listeners registered (NEW)
+- Singleton `DshRuntime` object constructed (NEW)
+
+This means a successful `ai.ready` guarantees the first
+`ai.ask` does not pay any Cordis-boot cost; it only pays the
+per-request cost of `ensureAgent` (resume-or-create on the
+JSONL backend) + the actual model call.
+
+**Known issues.**
+
+- The cold-start Cordis boot is still the slowest phase in
+  the trace (~1–3 s on warm cache, more on cold Windows
+  install). The roadmap target is worker-thread split for
+  `bootDsh()` (outside this task's scope).
+- The splash gate cannot distinguish "DSH boot is taking a
+  long time because the dep tree is still loading" from
+  "DSH boot genuinely failed". The 4 s "启动时间较长…"
+  hint is the only signal. A future iteration could
+  surface per-phase progress from `bootDsh()` itself.
+
 **Target state.**
 
 - ARCH-03 / F / G in the roadmap — tighter AI / DSH boundary,

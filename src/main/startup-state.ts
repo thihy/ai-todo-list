@@ -107,6 +107,18 @@ class StartupState {
   }
 
   markAiReady(): void {
+    // STARTUP-DSH-001: `ai.ready` now means "the local DSH runtime is
+    // booted" — i.e. Cordis plugins loaded, adapter / tools / persistence
+    // registered, listeners installed, the singleton `DshRuntime` object
+    // exists. It does NOT mean:
+    //   - provider network reachable
+    //   - API key valid
+    //   - any specific model available
+    //   - any user-facing request will succeed
+    // Those checks live in `ai.ask`'s per-request path. The renderer
+    // splash waits for this transition because it wants the user to
+    // not see a blank AI pane on first open, not because every model
+    // call will succeed.
     const now = Date.now();
     this.ai = {
       status: 'ready',
@@ -114,11 +126,16 @@ class StartupState {
       startedAt: this.ai.startedAt,
       statusAt: now,
     };
-    logger.info(`startup: ai ready in ${now - this.processStart}ms`);
+    logger.info(`startup: ai ready (local DSH booted) in ${now - this.processStart}ms`);
     this.emit('ai');
   }
 
   markAiFailed(message: string): void {
+    // STARTUP-DSH-001: `ai.failed` now means "the LOCAL DSH boot
+    // failed" — cordis.yml missing, plugin tree didn't assemble, a
+    // critical ctx service (llm/tools/agents) was absent. It does NOT
+    // mean provider / API-key / network failures: those are surfaced
+    // by `ai.ask` per request and remain non-fatal to the splash.
     const now = Date.now();
     this.ai = {
       status: 'failed',
@@ -127,7 +144,7 @@ class StartupState {
       statusAt: now,
       errorMessage: redactMessage(message),
     };
-    logger.warn(`startup: ai failed: ${this.ai.errorMessage}`);
+    logger.warn(`startup: ai failed (local DSH boot): ${this.ai.errorMessage}`);
     this.emit('ai');
   }
 

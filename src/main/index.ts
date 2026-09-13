@@ -15,6 +15,7 @@ import { registerHealthHandlers } from './ipc/health-handler';
 import { registerLinkHandlers } from './ipc/link-handlers';
 import { registerCapturePreviewHandler } from './ipc/capture-preview-handler';
 import { registerStartupHandler } from './ipc/startup-handler';
+import { resolveEndpoint } from './dsh/endpoints';
 import { registerTagHandlers } from './ipc/tag-handler';
 import { startupState } from './startup-state';
 import { logger } from './logger';
@@ -337,16 +338,27 @@ function bootstrap(): void {
     mkdirSync(sessionsRoot, { recursive: true });
     process.env['DSH_SESSIONS_ROOT'] = sessionsRoot;
 
-    // Phase: AI runtime. All of this is post-core-ready so it never blocks
-    // the splash. The AI pane shows "AI 正在准备" until ai.status becomes
-    // 'ready'; failure is logged + recorded in startup-state, never thrown.
+    // Phase: AI runtime. STARTUP-DSH-001 — the splash now waits for the
+    // DSH bootstrap to reach a terminal state (ready OR failed) before
+    // unmounting, so the user never sees a blank AI pane caused by a
+    // first-click cold boot. The boot body is still extracted to
+    // `bootAiAndDispatch()` so the `app.startup.retry { component: 'ai' }`
+    // IPC handler (UX-01) can re-run the same boot after a previous
+    // failure.
     //
-    // The boot body is extracted to `bootAiAndDispatch()` so the
-    // `app.startup.retry { component: 'ai' }` IPC handler (UX-01) can
-    // re-run the same boot after a previous failure. The first invocation
-    // uses `reason: 'boot'` and calls `setAiPhase('ai-loading')`; retries
-    // use `reason: 'retry'` and ask `startupState.tryStartAiRetry()` to
-    // own the loading transition + single-flight guard.
+    // The first invocation uses `reason: 'boot'` and calls
+    // `setAiPhase('ai-loading')`; retries use `reason: 'retry'` and ask
+    // `startupState.tryStartAiRetry()` to own the loading transition +
+    // single-flight guard.
+    //
+    // Inside the async IIFE we now `await warmupDshRuntime(...)` —
+    // this is the SAME module-scoped `runtimePromise` that ai-handlers
+    // use on the lazy path, so there is exactly one Cordis context per
+    // process lifetime. After warm-up resolves we run the orphan-session
+    // migration against the live runtime's persistence facade; migration
+    // failure is logged at warn but does NOT downgrade ai from ready to
+    // failed (per step 五 compatibility requirements: migration isn't a
+    // hard runtime dependency).
     bootAiAndDispatch = (reason: 'boot' | 'retry'): void => {
       if (reason === 'retry') {
         if (!startupState.tryStartAiRetry()) {
@@ -366,7 +378,8 @@ function bootstrap(): void {
         try {
           // UX-01 retry: dispose any cached runtime (live or rejected)
           // BEFORE re-booting. The first-time boot has nothing to dispose.
-          const { resetDshRuntimeForRetry } = await import('./dsh/dsh-runtime');
+          const { resetDshRuntimeForRetry, warmupDshRuntime, migrateOrphanSessions } =
+            await import('./dsh/dsh-runtime');
           await resetDshRuntimeForRetry();
           const { initDshContainer } = await import('./dsh/container');
           const dsh = await initDshContainer({ repo, md, drawings, settings, db: handle.db, docs });
@@ -374,6 +387,33 @@ function bootstrap(): void {
           registerAiHandlers(dsh);
           bindAiDeps({ dsh, settings, repo, conversations, md, drawings, docs, db: handle.db, attachmentsDir });
           logger.info(`startup[ai]: DSH handlers registered (${reason}) @ ${Date.now() - aiStart}ms`);
+
+          // The splash gate. warmupDshRuntime awaits the live DSH
+          // runtime (Cordis boot + adapter + tools + persistence +
+          // listeners). Throws DshBootFailedError on local failure.
+          const runtime = await warmupDshRuntime({
+            getEndpoint: () => resolveEndpoint(settings.get()),
+            repo,
+            md,
+            drawings,
+            docs,
+            conversations,
+            db: handle.db,
+            attachmentsDir,
+            settings,
+          });
+          logger.info(`startup[ai]: DSH runtime warmed (${reason}) @ ${Date.now() - aiStart}ms`);
+
+          // Orphan-session migration. Reuses the SAME persistence
+          // facade that warm-up just built — no second Cordis boot.
+          // Failure here is non-fatal (per migration contract).
+          try {
+            await migrateOrphanSessions(conversations, runtime.persistence);
+            logger.info(`startup[ai]: orphan migration complete (${reason}) @ ${Date.now() - aiStart}ms`);
+          } catch (migErr) {
+            logger.warn(`startup[ai]: orphan migration failed (${reason}, non-fatal): ${(migErr as Error).message}`);
+          }
+
           startupState.markAiReady();
         } catch (err) {
           logger.error(`startup[ai]: DSH init failed (${reason}) after ${Date.now() - aiStart}ms: ${(err as Error).message}`);
@@ -428,20 +468,13 @@ function bootstrap(): void {
       logger.warn(`startup[maintenance]: migrateV1Layout import failed: ${(err as Error).message}`);
     }
 
-    // L3-C: backfill DB rows for sessions that exist on disk but have no
-    // conversations row. Runs once per boot, idempotent — safe to re-run.
-    // Deferred so it doesn't race the renderer. The renderer's first
-    // conversation.list() call will pick up whatever rows are ready by then.
-    try {
-      const { migrateOrphanSessions } = await import('./dsh/dsh-runtime');
-      void migrateOrphanSessions(conversations).then(() => {
-        logger.info(`startup[maintenance]: migrateOrphanSessions done @ ${Date.now() - bootStart}ms`);
-      }).catch((err) => {
-        logger.warn(`startup[maintenance]: migrateOrphanSessions failed: ${(err as Error).message}`);
-      });
-    } catch (err) {
-      logger.warn(`startup[maintenance]: migrateOrphanSessions import failed: ${(err as Error).message}`);
-    }
+    // STARTUP-DSH-001: orphan-session migration used to run here as a
+    // post-core-ready deferred task. It now runs as part of
+    // `bootAiAndDispatch` AFTER `warmupDshRuntime` so the migration
+    // reuses the live runtime's persistence facade (no second Cordis
+    // boot, see STARTUP-DSH-001 step 五). Migration is awaited inside
+    // the boot body before `markAiReady()`; on failure we log a warn
+    // and still mark ai.ready (migration is not a hard runtime dep).
 
     // External SDK + JSON-RPC bridge for plugins / scripts. SEC-01: the
     // bridge is OFF by default and only starts when Settings → 数据 →

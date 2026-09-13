@@ -1,15 +1,36 @@
 // Renderer entry — drives the static splash (defined in index.html) until
-// the main process reports core-ready. Once core is ready, dynamically
-// imports the App bundle (which itself lazy-loads SettingsModal /
-// DocumentsView / DrawingPane / StatsPane) and removes the splash.
+// the main process reports BOTH core-ready AND a terminal DSH state.
+// STARTUP-DSH-001: the splash previously came down as soon as core was
+// ready, which left the first AI interaction paying the full Cordis
+// cold-boot cost (1–3 s on warm cache, much more on cold Windows) and
+// could push the BrowserWindow into "未响应" while the dsh-runtime
+// was still resolving its dynamic imports. The new gate is:
 //
-// Why dynamic import for App?
-//   - `main.tsx` stays tiny so the splash paints immediately. The full
-//     React + react-dom + hook tree of App is only paid for AFTER we know
-//     core data is usable.
-//   - If the App bundle fails to parse (chunk loading error, runtime
-//     exception during eval) we surface the failure on the splash with a
-//     reload button, instead of leaving a blank white window.
+//   core.status === 'ready' AND ai.status IN ('ready', 'failed')
+//
+// `ai.failed` here is a LOCAL DSH boot failure only (cordis.yml missing,
+// plugin tree assembly failed, critical ctx service absent — see
+// src/main/startup-state.ts markAiFailed). It does NOT block the
+// splash from coming down: the AIPane renders its own "DSH 初始化失败"
+// state and the rest of the app is fully usable. Network / API-key /
+// provider errors are surfaced per-request inside `ai.ask` and never
+// reach the splash.
+//
+// Single-flight: a module-scoped `mountPromise` is assigned on first
+// entry. Subsequent transitions (snapshot + every app:startup event)
+// call `maybeMountApp` but only the first call performs the dynamic
+// import + React mount. This avoids the StrictMode / duplicate-event
+// race where two snapshots arrive back-to-back with `core.ready +
+// ai.ready` and each one would otherwise kick its own dynamic import.
+//
+// Once React has mounted, the splash fades out and the unhides the
+// #root container. The dynamic import keeps the splash chunk tiny —
+// the bulk of React + react-dom + the hook tree is paid for only
+// after we know core data is usable.
+//
+// If the App bundle fails to parse (chunk loading error, runtime
+// exception during eval) we surface the failure on the splash with a
+// reload button, instead of leaving a blank white window.
 
 import type { StartupSnapshot } from '../shared/ipc-schema';
 import type { TodoListApi } from '../shared/todo-list-api';
@@ -65,6 +86,13 @@ async function bootstrap(): Promise<void> {
   //    AppEventMap.
   bridge.on('app:startup', ((next: StartupSnapshot) => {
     window.__splash.setPhase(next.core.phase);
+    // STARTUP-DSH-001: surface the DSH loading phase on the splash
+    // too — when core is ready but the warm-up is still in flight the
+    // user should see "正在启动 DSH…" rather than the now-familiar
+    // "就绪" (which would falsely imply AI is ready).
+    if (next.core.status === 'ready') {
+      window.__splash.setPhase(next.ai.phase);
+    }
     void maybeMountApp(next);
   }) as Parameters<TodoListApi['on']>[1]);
 
@@ -72,9 +100,22 @@ async function bootstrap(): Promise<void> {
   void maybeMountApp(snapshot);
 }
 
-let appMounted = false;
+// STARTUP-DSH-001 — single-flight mount. The previous implementation
+// used a boolean `appMounted` guard, which is correct but doesn't
+// help with concurrent snapshots arriving in the same microtask: both
+// callers could observe `appMounted === false` before the first one
+// flips it. The `mountPromise` pattern (assign on first call, await
+// it on every subsequent call) is strictly race-free — the React
+// mount sequence runs at most once per page load, even under
+// React StrictMode double-mount + duplicate startup events.
+let mountPromise: Promise<void> | null = null;
+
 async function maybeMountApp(snap: StartupSnapshot): Promise<void> {
-  if (appMounted) return;
+  if (mountPromise) {
+    // Someone else is already mounting. Wait for them; this resolves
+    // immediately if they've already finished.
+    return mountPromise;
+  }
   if (snap.core.status === 'failed') {
     showFatal(snap.core.errorMessage ?? '核心数据初始化失败。');
     return;
@@ -88,7 +129,26 @@ async function maybeMountApp(snap: StartupSnapshot): Promise<void> {
     lastPhaseAt = Date.now();
     return;
   }
-  appMounted = true;
+  // STARTUP-DSH-001: core is ready but the splash must remain up until
+  // the DSH bootstrap reaches a terminal state. `ai.loading` and
+  // `ai.pending` mean "still booting locally"; `ai.ready` and
+  // `ai.failed` are both acceptable triggers for mount.
+  if (snap.ai.status !== 'ready' && snap.ai.status !== 'failed') {
+    // Show the DSH loading phase on the splash so the user sees
+    // progress rather than a static "ready" label.
+    window.__splash.setPhase(snap.ai.phase);
+    return;
+  }
+  mountPromise = mountApp(snap);
+  try {
+    await mountPromise;
+  } finally {
+    // Keep the resolved promise around so subsequent calls observe
+    // the "already-mounted" fast-path. We don't null it.
+  }
+}
+
+async function mountApp(snap: StartupSnapshot): Promise<void> {
   try {
     // Dynamic import keeps the splash chunk small. The App bundle pulls
     // react-dom, the global stylesheet, and the bulk of the app shell.
@@ -121,10 +181,15 @@ async function maybeMountApp(snap: StartupSnapshot): Promise<void> {
     requestAnimationFrame(() => {
       window.__splash.remove();
     });
-    logger.info(`renderer: app mounted after ${Date.now() - startupWatchStart}ms`);
+    const dshNote = snap.ai.status === 'failed'
+      ? `dsh=local-failed (${snap.ai.errorMessage ?? 'no-message'})`
+      : 'dsh=local-ready';
+    logger.info(`renderer: app mounted after ${Date.now() - startupWatchStart}ms (${dshNote})`);
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
     showFatal(`加载主界面失败:${reason}`);
+    // Reset so a future reload can try again.
+    mountPromise = null;
   }
 }
 

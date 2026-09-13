@@ -264,40 +264,19 @@ export function registerAiHandlers(dsh: DshHandle): void {
   register('ai.conversation.list', async (_e, req) => {
     if (!deps) return Promise.resolve(failResult('ai_not_ready', 'DSH not initialised'));
     try {
+      // STARTUP-DSH-001: list is now a pure SQLite metadata scan. The
+      // previous implementation enriched every row with `loadHistory()`,
+      // which spawned one JSONL read per conversation. On a workspace
+      // with N sessions (including L3-C orphans that existed before the
+      // DB row existed), the first ai.conversation.list() after splash
+      // could scan every session log — blocking the AI pane and, on
+      // Windows, tripping "Application Not Responding". The renderer
+      // already declares `lastMessagePreview` / `messageCount` as
+      // optional; until they're re-introduced via a dedicated per-row
+      // hydration endpoint, they're simply absent. The history menu
+      // already hides both when either is missing.
       const list = deps.conversations.list(req?.includeArchived === true);
-      // L3-J: enrich each row with lastMessagePreview + messageCount from
-      // the JSONL log. We load each conversation's history in parallel —
-      // bounded by the conversation count, typically <100. Each load is a
-      // zstd-decoded JSONL scan; fast enough that the round-trip latency
-      // is dominated by fs reads, not model calls. For lists >200 rows
-      // this becomes worth caching, but at that scale the user already
-      // has L3-H search and we're past the affordance's intent.
-      const enriched = await Promise.all(list.map(async (conv) => {
-        try {
-          const runtime = await getDshRuntime(buildRuntimeDeps()!);
-          if (!runtime) return conv;
-          const turns = await runtime.loadHistory({ conversationId: conv.id });
-          if (turns.length === 0) return conv;
-          // Last non-tool turn = the most recent user prompt or assistant
-          // answer. Walk from the end so tool cards don't dominate the
-          // preview (they're noisy and not what the user wants to scan).
-          let lastPreview: string | undefined;
-          for (let i = turns.length - 1; i >= 0; i--) {
-            const t = turns[i]!;
-            if (t.type === 'user') { lastPreview = t.text; break; }
-            if (t.type === 'assistant') { lastPreview = t.text; break; }
-            // tool turns are skipped — they're intermediate.
-          }
-          // messageCount = user + assistant turns (tools not counted).
-          const messageCount = turns.filter((t) => t.type === 'user' || t.type === 'assistant').length;
-          return { ...conv, lastMessagePreview: lastPreview, messageCount };
-        } catch {
-          // Per-row enrichment is best-effort — a torn log shouldn't
-          // blank the whole list.
-          return conv;
-        }
-      }));
-      return Promise.resolve(okResult({ conversations: enriched }));
+      return Promise.resolve(okResult({ conversations: list }));
     } catch (err) {
       return Promise.resolve(failResult('list_failed', (err as Error).message));
     }

@@ -147,6 +147,13 @@ export interface DshRuntime {
    *  递归删除 <DSH_SESSIONS_ROOT>/<project>/<id>/。DB 行由 ConversationRepo
    *  负责，本函数只管日志。对未知 id 安全，返回静默。 */
   removeSession(conversationId: string): Promise<{ removed: boolean }>;
+  /** STARTUP-DSH-001: orphan-migration facade built from the live
+   *  runtime's `sessionPersistence` ctx service. Null when the
+   *  persistence plugin didn't register (caller must skip migration
+   *  gracefully — boot is still considered successful). Used by
+   *  `warmupDshRuntime()` so migration reuses the SAME Cordis fiber
+   *  instead of booting a second `todo-list-migrate` context. */
+  persistence: OrphanMigrationFacade | null;
   dispose(): Promise<void>;
 }
 
@@ -441,14 +448,61 @@ function questionRequestPayload(reqId: string, request: { questions: ReadonlyArr
  * 留给后续）。第一条 user message 为空的孤儿（罕见——开了 session 没发消息）
  * 退回默认 `未命名对话`。
  */
-export async function migrateOrphanSessions(conversations: ConversationRepo): Promise<void> {
+/** STARTUP-DSH-001: minimal facade for orphan-session migration.
+ *  Built from a live `SessionPersistence015` (inside `bootDsh()` after the
+ *  Cordis fiber has registered `sessionPersistence`), OR by the legacy
+ *  `bootPersistenceOnly()` path used by the very first migration at app
+ *  startup when no live DSH runtime exists yet. The function takes this
+ *  facade instead of booting its own Cordis context — see
+ *  `migrateOrphanSessions` below. */
+export interface OrphanMigrationFacade {
+  list: () => Promise<ReadonlyArray<SessionListEntry>>;
+  readEvents: (id: string) => Promise<ReadonlyArray<{ type: string; data?: unknown }>>;
+}
+
+/** Build an `OrphanMigrationFacade` from a live `SessionPersistence015`.
+ *  Returns null when the persistence plugin didn't register `list` or
+ *  `open` (caller must treat null as "skip migration; not fatal"). */
+export function buildOrphanMigrationFacade(
+  persistence: SessionPersistence015 | undefined,
+): OrphanMigrationFacade | null {
+  if (!persistence?.list || !persistence?.open) return null;
+  return {
+    list: () => persistence.list!(),
+    readEvents: (id) => readSessionEvents(persistence, id),
+  };
+}
+
+/**
+ * Backfill DB rows for sessions that exist on disk but have no
+ * `conversations` row.
+ *
+ * STARTUP-DSH-001 contract:
+ *   - Caller MUST supply a `facade` (live or read-only). This function
+ *     must NOT boot its own Cordis context — running two `boot('...')`
+ *     invocations against `cordis.yml` simultaneously forks duplicate
+ *     plugin trees and races the runtime dispose path. The pre-startup
+ *     version of this function called `bootPersistenceOnly()` internally;
+ *     the warm-up orchestrator now passes in the live runtime's facade.
+ *   - Idempotent: skips sessions that already have a DB row.
+ *   - Tolerant: per-session read/insert failures are logged at `warn`,
+ *     never thrown — a torn log or a single bad row must not block boot.
+ *
+ * Originally a separate `boot('todo-list-migrate', ...)` Cordis context
+ * was spawned here so the migration could run before any live runtime
+ * existed. That context is gone — the warm-up orchestrator now owns the
+ * single Cordis boot and passes its facade in.
+ */
+export async function migrateOrphanSessions(
+  conversations: ConversationRepo,
+  facade: OrphanMigrationFacade | null,
+): Promise<void> {
   const TITLE_MAX = 24;
-  const persistence = await bootPersistenceOnly();
-  if (!persistence) {
-    logger.warn('migrateOrphanSessions: persistence plugin unavailable; skipping');
+  if (!facade) {
+    logger.warn('migrateOrphanSessions: persistence facade unavailable; skipping');
     return;
   }
-  const list = await persistence.list();
+  const list = await facade.list();
   if (list.length === 0) {
     logger.info('migrateOrphanSessions: 0 sessions on disk; nothing to migrate');
     return;
@@ -471,7 +525,7 @@ export async function migrateOrphanSessions(conversations: ConversationRepo): Pr
     }
     let title = '未命名对话';
     try {
-      const events = await persistence.readEvents(sid);
+      const events = await facade.readEvents(sid);
       const firstUser = extractFirstUserText(events);
       if (firstUser) title = truncateTitle(firstUser, TITLE_MAX);
     } catch (err) {
@@ -536,35 +590,12 @@ function extractFirstUserText(events: ReadonlyArray<{ type: string; data?: unkno
 // 持久化层当 runtime 公开方法（会和 runtime 内部耦合），不如再启一次只跑
 // 持久化——便宜、隔离、无副作用。~50ms 且只跑一次（首次开 app 时）。
 
-/** 启一个最小 cordis 树，只挂 session persistence 插件，返回 list()/readEvents()。
- *  失败返回 null。 */
-async function bootPersistenceOnly(): Promise<{
-  list: () => Promise<ReadonlyArray<SessionListEntry>>;
-  readEvents: (id: string) => Promise<ReadonlyArray<{ type: string; data?: unknown }>>;
-} | null> {
-  try {
-    const cfg = resolveAppPath('resources/dsh/cordis.yml');
-    if (!cfg || !existsSync(cfg)) return null;
-    const appRoot = app.getAppPath();
-    const bareBase = new URL('.', pathToFileURL(appRoot).href).href;
-    const bootMod = await import('@deepseek-ai/dsh-app-boot');
-    const { boot } = bootMod;
-    const ctx = (await boot('todo-list-migrate', cfg, undefined, undefined, bareBase)) as DshContext;
-    // 0.1.5-rc.2: persistence exposes `open(id,'read')` + `list`, NOT `load`.
-    const persistence = ctx.get('sessionPersistence') as SessionPersistence015 | undefined;
-    if (!persistence?.list || !persistence?.open) {
-      await ctx.fiber?.dispose?.();
-      return null;
-    }
-    return {
-      list: () => persistence.list!(),
-      readEvents: (id) => readSessionEvents(persistence, id),
-    };
-  } catch (err) {
-    logger.warn(`bootPersistenceOnly failed: ${(err as Error).message}`);
-    return null;
-  }
-}
+/** STARTUP-DSH-001: `bootPersistenceOnly()` was removed. The orphan
+ *  migration now runs after the live `bootDsh()` and reuses that
+ *  runtime's persistence facade via `buildOrphanMigrationFacade()`.
+ *  Keeping a second Cordis context alive for migration forked the
+ *  plugin tree (and could race the formal runtime's dispose). The
+ *  legacy helper lived here from L3-C and is no longer reachable. */
 
 /** DSH 懒启动一次；失败返回 null（渲染端会显示"DSH unavailable"，无回退路径） */
 export function getDshRuntime(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
@@ -604,6 +635,46 @@ export async function resetDshRuntimeForRetry(): Promise<void> {
     // promise and logged. Nothing more to do.
     logger.warn(`resetDshRuntimeForRetry: previous boot rejected: ${(err as Error).message}`);
   }
+}
+
+/**
+ * STARTUP-DSH-001 — explicit DSH warm-up entry point used by the
+ * splash gate. Returns the live `DshRuntime` after Cordis / adapter /
+ * tools / persistence / listeners are wired up. Reuses the singleton
+ * `runtimePromise` from `getDshRuntime` so callers cannot accidentally
+ * fork a second boot.
+ *
+ * Behaviour:
+ *   - Multiple concurrent calls share the same Promise (single-flight
+ *     via the module-scoped `runtimePromise`).
+ *   - On resolved `null` (cordis.yml missing or local boot threw), this
+ *     function THROWS `DshBootFailedError` so the caller can mark
+ *     `ai-failed` without ambiguity. The promise itself is NOT leaked;
+ *     `getDshRuntime` already nulls its cache on failure.
+ *   - On resolved runtime, returns it for downstream use (e.g. orphan
+ *     migration). No background work is queued; callers decide whether
+ *     to run migration synchronously or in the background.
+ *   - Performs NO network requests, NO API-key checks, NO `/models`
+ *     calls — those are deferred to per-request paths in `ai.ask`.
+ */
+export class DshBootFailedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'DshBootFailedError';
+  }
+}
+
+export async function warmupDshRuntime(deps: DshRuntimeDeps): Promise<DshRuntime> {
+  const t0 = Date.now();
+  const runtime = await getDshRuntime(deps);
+  if (!runtime) {
+    // getDshRuntime() already logged the cause at warn; here we just
+    // raise a typed signal so the boot orchestrator can convert to
+    // ai-failed without inspecting log lines.
+    throw new DshBootFailedError('DSH runtime boot failed; see previous warn log');
+  }
+  logger.info(`warmupDshRuntime: runtime ready in ${Date.now() - t0}ms`);
+  return runtime;
 }
 
 async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
@@ -924,6 +995,11 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
 
   // 4. 暴露 runtime API
   const runtime: DshRuntime = {
+    // STARTUP-DSH-001: capture the persistence facade at boot time so
+    // warmupDshRuntime can pass it to migrateOrphanSessions without
+    // spawning a second Cordis context. Null = plugin missing; migration
+    // treats that as a no-op (already documented contract).
+    persistence: buildOrphanMigrationFacade(persistenceApi),
     async runTurn({ prompt, conversationId, invocationId, intent, onEvent, signal }) {
       void invocationId; // 留作对外 API 兼容；事件流里的 invocationId 由 ai.ask 自行追踪
       const { createUserMessage } = await import('@deepseek-ai/dsh-llm');
