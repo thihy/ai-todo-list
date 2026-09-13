@@ -43,6 +43,23 @@ export interface ToolRowProps {
   summarySuffix?: string | null | undefined
   /** Original argument JSON formatted only while the row is expanded. */
   bodyRaw?: string | null | undefined
+  /**
+   * When true AND a structured card is also rendered, force the input section
+   * to be shown ABOVE the card (instead of suppressed). Diff / read / search /
+   * web / terminal all set bodyRaw=null by default because the card carries
+   * the same info — but our callers want the raw args visible regardless of
+   * card type so the user can distinguish "{} = 无参数" from
+   * "argsKnown=false = 未记录输入". Generic / code paths leave this off: the
+   * IO card's own input section below would otherwise double up.
+   */
+  showInputWithCard?: boolean | undefined
+  /**
+   * When `showInputWithCard` is on AND `bodyRaw` is null (no tool/call event
+   * arrived — only the result), render this hint string in the input section
+   * instead. Default: the row's `bodyRaw=null` input section just disappears.
+   * The caller passes "未记录输入" (or its translation) for missing-call rows.
+   */
+  missingInputHint?: string | null | undefined
   /** Flattened result text for the expanded Output section; null/absent = no output section. */
   output?: string | null | undefined
   /** Ask-user transcript card; card fields are mutually exclusive and replace text sections. */
@@ -117,6 +134,8 @@ export function ToolRow({
   summary,
   summarySuffix,
   bodyRaw,
+  showInputWithCard,
+  missingInputHint,
   output,
   askQuestion,
   errorSummary,
@@ -153,7 +172,14 @@ export function ToolRow({
   const askQuestionBody = askQuestion ?? null
   const outputText = output ?? null
   const card = askQuestionBody ?? terminalBody ?? diffBody ?? readBody ?? imageBody ?? searchBody ?? webBody
-  const expandable = bodyRaw != null || outputText !== null || card !== null
+  // The header input section is reachable in two ways:
+  //   1. `bodyRaw != null` — we know the args and can render them.
+  //   2. `missingInputHint != null` — the caller saw only a tool/result and
+  //      tells us to surface "未记录输入" so the user can tell the difference
+  //      from "args = {}".
+  // Both also make the row expandable (otherwise the section would never
+  // show up and the toggle would feel dead).
+  const expandable = bodyRaw != null || outputText !== null || card !== null || missingInputHint != null
   const open = expanded && expandable
   const bodyText = useMemo(
     () => open && card === null && bodyRaw != null ? formatToolBody(variant, bodyRaw) : null,
@@ -191,7 +217,12 @@ export function ToolRow({
   }
   // The code variant's program renders through CodeBlock (shiki), so only its
   // output joins the IN/OUT card; every other variant's input does too.
-  const cardBody = variant === 'code' ? null : bodyText
+  // When showInputWithCard is on, the header input section already rendered
+  // the raw args above the structured card — suppress cardBody so the IO
+  // card's own input section does not double up.
+  const cardBody = (showInputWithCard === true && card !== null)
+    ? null
+    : variant === 'code' ? null : bodyText
   return (
     <div className={css.root} data-variant={variant} data-tool={toolName} data-state={state}>
       {status !== null && <span className={css.visuallyHidden}>{status}</span>}
@@ -235,6 +266,27 @@ export function ToolRow({
         )}
       >
         <div className={css.bodyWrap}>
+          {/* Header input section — only when showInputWithCard is on AND a
+              structured card is also being rendered. Rendered BEFORE the card
+              so the card's own input section (in the IO card path) doesn't
+              double up. The wrapper is scrollable (`.bodyScroll` caps height)
+              so a giant args payload doesn't push the result off-screen; the
+              row's title sits outside this wrapper in DisclosureRow and
+              stays visible while the user scrolls the args.
+              Generic / code paths skip this — their IO card already has the
+              input section below. */}
+          {showInputWithCard === true && card !== null && (bodyRaw != null || missingInputHint != null) && (
+            <div className={css.bodyScroll}>
+              <div className={css.ioCard}>
+                <div className={css.ioSection}>
+                  <span className={css.ioLabel}>{t('row.input')}</span>
+                  <span className={css.ioText}>
+                    {bodyRaw != null ? formatToolBody(variant, bodyRaw) : missingInputHint}
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
           {askQuestionBody !== null
             ? <AskQuestionCard card={askQuestionBody} />
             : terminalBody !== null

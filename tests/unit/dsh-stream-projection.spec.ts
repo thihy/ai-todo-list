@@ -29,18 +29,37 @@ describe('compactAiStreamEvents', () => {
 
 describe('projectStreamTurn', () => {
   it('preserves reasoning, tool and text order and exposes metrics', () => {
+    // Live wire uses `sessionEvent` envelopes carrying the raw DSH
+    // SessionEvent (projectStreamTurn is a pure function over that
+    // stream). Synthetic `toolCall` events were the old React-updater
+    // shape and are no longer emitted — only the session-event form
+    // reaches projectStreamTurn now.
     const events: AIStreamEvent[] = [
       { type: 'reasoning', invocationId: 'run', text: '先分析', ts: 10 },
       { type: 'reasoning', invocationId: 'run', text: '再判断', ts: 11 },
       {
-        type: 'toolCall',
+        type: 'sessionEvent',
         invocationId: 'run',
-        toolName: 'todo.create',
-        args: { title: '新任务' },
-        result: { id: 'todo-1' },
-        presentationMeta: { id: 'todo-1' },
-        ok: true,
+        event: {
+          type: 'tool/call',
+          data: { callId: 'tool-0', name: 'todo.create', arguments: JSON.stringify({ title: '新任务' }) },
+        },
         ts: 12,
+      },
+      {
+        type: 'sessionEvent',
+        invocationId: 'run',
+        event: {
+          type: 'tool/result',
+          data: {
+            message: {
+              source: { callId: 'tool-0' },
+              content: [{ isError: false, content: [{ type: 'text', text: JSON.stringify({ id: 'todo-1' }) }] }],
+            },
+            meta: { id: 'todo-1' },
+          },
+        },
+        ts: 13,
       },
       { type: 'token', invocationId: 'run', token: '已经', ts: 20 },
       { type: 'token', invocationId: 'run', token: '完成', ts: 21 },
@@ -56,9 +75,12 @@ describe('projectStreamTurn', () => {
           callId: 'tool-0',
           name: 'todo.create',
           args: { title: '新任务' },
+          argsKnown: true,
           result: { id: 'todo-1' },
+          resultKnown: true,
           presentationMeta: { id: 'todo-1' },
           ok: true,
+          state: 'done',
         },
         { kind: 'text', text: '已经完成' },
       ],

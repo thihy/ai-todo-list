@@ -444,6 +444,7 @@ export const TodoEditorPane: React.FC<{
           <TagInput
             value={tagDraft}
             onChange={(tags) => { setTagDraft(tags); void commitMeta({ tags }); }}
+            taskContext={todo ? { title: todo.title } : null}
           />
         </div>
 

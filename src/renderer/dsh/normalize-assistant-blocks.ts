@@ -42,9 +42,12 @@ export function normalizeAssistantBlocks(
         callId: block.callId,
         name: block.name,
         args: block.args,
+        argsKnown: block.argsKnown,
         result: block.result,
+        resultKnown: block.resultKnown,
         presentationMeta: block.presentationMeta,
         ok: block.ok,
+        state: block.state,
       });
       continue;
     }

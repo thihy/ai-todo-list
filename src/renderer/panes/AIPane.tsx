@@ -137,12 +137,20 @@ interface HistoryTurnLike {
   text?: string;
   intent?: 'chat' | 'create-task';
   reasoning?: string;
+  /** Wire callId from tool/call (or synthesised `orphan-N` when no matching
+   *  call/result was on the wire). Stable React key for tool blocks. */
+  callId?: string;
   name?: string;
   args?: unknown;
   ok?: boolean;
   data?: unknown;
   presentationMeta?: unknown;
   error?: string;
+  /** Explicit lifecycle, mirrored from the live projection (stream-turn.ts).
+   *  `missing-result` is NOT an automatic failure. */
+  state?: 'done' | 'error' | 'stopped' | 'missing-call' | 'missing-result';
+  /** False only for orphan tool/result turns. */
+  argsKnown?: boolean;
 }
 
 /** Active HITL request — at most one of each kind visible at a time. */
@@ -1315,28 +1323,41 @@ function historyToTurn(h: HistoryTurnLike): Turn {
       status: 'done',
     };
   }
-  // tool — synthesise a stable callId because the historical record does
-  // not carry one (it lives in DSH's session stream, not in the persisted
-  // JSONL). The card name + args act as a tie-breaker so reloading the
-  // same history produces the same React key.
-  const argsKey = (() => {
+  // tool — the historical record carries the real callId (or a synthesised
+  // orphan-N one), the explicit lifecycle state, and an argsKnown flag so
+  // the rendered ToolRow can distinguish "args = {}" from "未记录输入".
+  // Older history logs that don't carry these new fields fall back to the
+  // synthesised `hist-...` key + `argsKnown=true` (we DO have the call) +
+  // `state=ok ? 'done' : 'error'` so reload of pre-fix sessions still works.
+  const legacyCallId = `hist-${h.name ?? 'tool'}-${(() => {
     try { return JSON.stringify(h.args ?? null); } catch { return ''; }
-  })();
+  })()}`;
+  const callId = h.callId ?? legacyCallId;
+  const argsKnown = h.argsKnown ?? true;
+  const state: 'done' | 'error' | 'stopped' | 'missing-call' | 'missing-result' =
+    h.state ?? ((h.ok ?? false) ? 'done' : 'error');
+  // `ok` mirrors the project's projectStreamTurn invariant: true iff
+  // state==='done'. `error` and `stopped` rows paint a red/amber dot;
+  // `missing-result` and `missing-call` rows paint the neutral pill.
+  const ok = state === 'done';
   return {
     id: crypto.randomUUID(),
     user: '',
     blocks: [{
       kind: 'tool-call',
-      callId: `hist-${h.name ?? 'tool'}-${argsKey}`,
+      callId,
       name: h.name ?? '',
       // L5-A: history carries the same wrapped ContentBlock[] the live wire
       // does (foldHistory stores block.content verbatim). Recover the raw
       // value + parse the args JSON string so presentToolResult renders the
       // right card instead of a <pre>[{"type":"text"...}]</pre> dump.
       args: parseToolArgs(h.args),
+      argsKnown,
       result: h.ok ? recoverToolResultValue(h.data) : h.error,
+      resultKnown: Boolean(h.data != null || (h.error != null && h.error !== '')),
       presentationMeta: h.presentationMeta,
-      ok: h.ok ?? false,
+      ok,
+      state,
     }],
     status: 'done',
   };

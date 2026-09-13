@@ -146,8 +146,17 @@ describe('foldHistory', () => {
     const turns = foldHistory(events);
     const tools = turns.filter((t) => t.type === 'tool');
     expect(tools).toHaveLength(1);
-    expect(tools[0]).toMatchObject({ type: 'tool', name: 'todo.list', ok: false });
-    expect((tools[0] as { error?: string }).error).toBe('no result');
+    // `missing-result` is NOT an automatic failure: ok=false paints the
+    // neutral "结果未记录" pill, NOT the red error dot. Error string is
+    // absent — the renderer surfaces the missing-result via the explicit
+    // state field, not a fake error.
+    expect(tools[0]).toMatchObject({
+      type: 'tool',
+      name: 'todo.list',
+      ok: false,
+      state: 'missing-result',
+      error: undefined,
+    });
   });
 
   it('emits a tool turn with ok=false and error content on error result', () => {
