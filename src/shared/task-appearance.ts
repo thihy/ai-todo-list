@@ -4,11 +4,14 @@
 // 在 TodoListPane 顶层注入，.task-row[data-priority="..."] 选择器命中。
 //
 // 设计要点：
+// - mode 只有两种：
+//     theme  = 跟随主题（应用主题默认样式，taskListStyle 不注入颜色）。
+//     custom = 显式配色（包括白底黑字 / 柔和彩色 / 深色预设以及手动配色），
+//              taskListStyle 把 colors 注入 CSS 自定义属性。
 // - 持久化只存 mode + 完整 colors 映射（不存"当前选哪个预设"）。
-//   "当前是否匹配某个预设"由 compareToPreset() 派生，方便任意一侧演进。
-// - 旧数据归一化：mode 缺省 / 非法 → 'theme'；任一 priority 缺字段 → 用
-//   DEFAULT_TASK_APPEARANCE 的对应项补齐。保证不会因为 SettingsJson 损坏
-//   导致任务列表的 CSS 变量失败而显示空白。
+//   "当前是否匹配某个预设"由 presetIdOf() 派生，方便任意一侧演进。
+// - 旧数据归一化：mode 缺省 / 非法 → 'theme'；colors 等于 DEFAULT_TASK_APPEARANCE
+//   默认值时保留 theme；否则迁为 custom 但保留颜色，避免重置用户设置。
 // - 颜色仅作 CSS 字符串接受 #RGB / #RRGGBB / 简单校验，不做语义判断（不
 //   强制对比度，由用户自己选）。
 
@@ -23,7 +26,8 @@ export interface TaskColorPair {
 /** 4 个优先级各一对颜色。 */
 export type PriorityColorMap = Record<Priority, TaskColorPair>;
 
-/** 模式：theme = 跟随预设（不可自定义）；custom = 自定义颜色。 */
+/** mode 语义：theme = 应用主题（跟随主题 / 默认）；custom = 显式使用 colors，
+ *  包括白底黑字 / 柔和彩色 / 深色预设 / 手动配色。 */
 export type TaskAppearanceMode = 'theme' | 'custom';
 
 export interface TaskAppearance {
@@ -45,9 +49,10 @@ export const DEFAULT_TASK_APPEARANCE: TaskAppearance = {
   },
 };
 
-/** 预设 1：白底黑字 —— 全优先级统一 #FFFFFF / #000000。 */
+/** 预设 1：白底黑字 —— 全优先级统一 #FFFFFF / #000000。
+ *  mode = custom：CSS 注入颜色变量，行直接上白底黑字，不再走主题默认。 */
 export const PRESET_WHITE_ON_BLACK: TaskAppearance = {
-  mode: 'theme',
+  mode: 'custom',
   colors: {
     none:   { background: '#FFFFFF', foreground: '#000000' },
     low:    { background: '#FFFFFF', foreground: '#000000' },
@@ -57,9 +62,10 @@ export const PRESET_WHITE_ON_BLACK: TaskAppearance = {
 };
 
 /** 预设 2：柔和彩色 —— 4 个优先级分别淡色 bg + 深色 fg，对应 task-row
- *  历史默认行为（none 接近白底 / low 浅灰 / medium 浅蓝 / high 浅橙黄）。 */
+ *  历史默认行为（none 接近白底 / low 浅灰 / medium 浅蓝 / high 浅橙黄）。
+ *  mode = custom：CSS 注入颜色变量。 */
 export const PRESET_SOFT_COLORS: TaskAppearance = {
-  mode: 'theme',
+  mode: 'custom',
   colors: {
     none:   { background: '#F3F4F6', foreground: '#111827' },
     low:    { background: '#EFF6FF', foreground: '#1E3A8A' },
@@ -70,10 +76,8 @@ export const PRESET_SOFT_COLORS: TaskAppearance = {
 
 /** 预设列表（顺序 = UI 选项顺序）。每项一个稳定 id，便于 settings 字段
  *  比较（不必每次 stringify colors）。label 用于下拉显示。
- *  「深色高对比」预设已下线：深 bg + 亮 fg 在浅色主题下读起来对比过强，
- *  用户反馈效果差，UI 直接砍掉。历史用户的 settings.colors 若碰巧等于
- *  旧预设值，presetIdOf 会返回 null，下拉自然落到「自定义」——无数据
- *  迁移负担。 */
+ *  跟随主题预设 value.mode === 'theme'，选中后让 CSS 主题默认规则生效；
+ *  其他预设 value.mode === 'custom'，选中后 CSS 注入具体颜色。 */
 export const TASK_APPEARANCE_PRESETS: { id: string; label: string; value: TaskAppearance }[] = [
   { id: 'theme',   label: '跟随主题（默认）', value: DEFAULT_TASK_APPEARANCE },
   { id: 'white',   label: '白底黑字',         value: PRESET_WHITE_ON_BLACK },
@@ -89,23 +93,37 @@ export function isValidCssColor(value: string): boolean {
   return /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(v);
 }
 
-/** 把任意输入归一化成有效的 TaskAppearance。非法 / 缺字段都从
- *  DEFAULT_TASK_APPEARANCE 补齐，保证下游不需要判空。 */
+/** 把任意输入归一化成有效的 TaskAppearance。
+ *  - 非法 / 缺字段的 mode → 兼容旧 config：若 colors 等于 DEFAULT 视为
+ *    'theme'，否则视为 'custom'（旧用户改过配色但 mode 字段是 theme 的
+ *    情况 —— 不应重置用户的配色）。
+ *  - 非法 / 缺字段的颜色项 → 用 DEFAULT_TASK_APPEARANCE 的对应项补齐。 */
 export function normalizeTaskAppearance(raw: unknown): TaskAppearance {
   const base: TaskAppearance = JSON.parse(JSON.stringify(DEFAULT_TASK_APPEARANCE));
   if (raw === null || typeof raw !== 'object') return base;
   const obj = raw as Partial<TaskAppearance> & { colors?: Partial<PriorityColorMap> };
-  const mode: TaskAppearanceMode = obj.mode === 'custom' ? 'custom' : 'theme';
-  const out: TaskAppearance = {
-    mode,
-    colors: {
-      none:   mergeColor(obj.colors?.none,   base.colors.none),
-      low:    mergeColor(obj.colors?.low,    base.colors.low),
-      medium: mergeColor(obj.colors?.medium, base.colors.medium),
-      high:   mergeColor(obj.colors?.high,   base.colors.high),
-    },
+  const normalizedColors: PriorityColorMap = {
+    none:   mergeColor(obj.colors?.none,   base.colors.none),
+    low:    mergeColor(obj.colors?.low,    base.colors.low),
+    medium: mergeColor(obj.colors?.medium, base.colors.medium),
+    high:   mergeColor(obj.colors?.high,   base.colors.high),
   };
-  return out;
+  // 旧 config 兼容：
+  //   - mode 显式 'custom'        → 'custom'（保留用户主动编辑的意图）。
+  //   - mode 显式 'theme' + 颜色 = DEFAULT → 'theme'（真跟随主题）。
+  //   - mode 显式 'theme' + 颜色 ≠ DEFAULT → 迁为 'custom'，保留用户的颜色
+  //     （旧版本允许 theme + 自定义颜色并存，现在用 mode 区分，新规则下不应
+  //     默默丢色）。
+  //   - mode 字段缺失 / 非法       → 按颜色是否等于 DEFAULT 推断。
+  let mode: TaskAppearanceMode;
+  if (obj.mode === 'custom') {
+    mode = 'custom';
+  } else if (obj.mode === 'theme') {
+    mode = sameColors(normalizedColors, base.colors) ? 'theme' : 'custom';
+  } else {
+    mode = sameColors(normalizedColors, base.colors) ? 'theme' : 'custom';
+  }
+  return { mode, colors: normalizedColors };
 }
 
 function mergeColor(input: Partial<TaskColorPair> | undefined, fallback: TaskColorPair): TaskColorPair {
@@ -116,16 +134,23 @@ function mergeColor(input: Partial<TaskColorPair> | undefined, fallback: TaskCol
   };
 }
 
-/** 给定当前 appearance，找到第一个匹配它的预设 id；custom 模式或主题色
- *  被用户改过都返回 null（Settings UI 据此把下拉切到"自定义"）。mode =
- *  'custom' 时即便颜色和某个预设完全一致也返回 null —— 因为 mode 本身就
- *  表示"用户主动编辑过颜色"的意图。 */
+/** 给定当前 appearance，找到第一个匹配它的预设 id；返回 'custom' 表示
+ *  当前为自定义配色（mode=custom 或颜色与任意预设不一致）。
+ *  - mode='theme' + 颜色 = DEFAULT_TASK_APPEARANCE → 'theme'（跟随主题）。
+ *  - mode='custom' + 颜色匹配某预设 → 那个预设的 id（保持 custom 模式，
+ *    但下拉仍能识别为某个预设，方便用户回看 / 改回）。
+ *  - mode='custom' + 颜色不匹配任意预设 → 'custom'（手动配色）。 */
 export function presetIdOf(appearance: TaskAppearance): string | null {
-  if (appearance.mode === 'custom') return null;
+  // 跟随主题：仅当 mode 显式为 theme 且颜色等于 DEFAULT 时返回 'theme'。
+  if (appearance.mode === 'theme' && sameColors(appearance.colors, DEFAULT_TASK_APPEARANCE.colors)) {
+    return 'theme';
+  }
+  // 自定义模式：按完整颜色映射匹配某个预设（包括 DEFAULT 也算 theme）。
   for (const preset of TASK_APPEARANCE_PRESETS) {
     if (sameColors(preset.value.colors, appearance.colors)) return preset.id;
   }
-  return null;
+  // 颜色与任意预设都不一致 ——「自定义」选项。
+  return 'custom';
 }
 
 function sameColors(a: PriorityColorMap, b: PriorityColorMap): boolean {

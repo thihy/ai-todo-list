@@ -1,9 +1,17 @@
 // 任务优先级配色面板 —— 在设置里让用户选预设（白底黑字 / 柔和彩色 / 深色
 // 高对比 / 跟随主题）或切到自定义模式后逐个编辑 4 个优先级的背景色和
-// 前景色。色彩由 CSS 自定义属性下发到 .task-row[data-priority="..."]，
-// 该面板只负责把用户的选择落回 settings.taskAppearance。
+// 前景色。色彩由 CSS 自定义属性下发到 .task-row[data-priority="..."]。
+//
+// 持久化契约（与 SettingsModal 的其它面板保持一致）：
+//   - 颜色调整 / 预设切换 / 自定义模式进入 —— 全部只更新本地 draft，不
+//     立即落盘。预览 swatch、任务列表实时刷新都从 draft 读取。
+//   - 用户点击「保存」时才把 draft 提交给父级 onSave 回调。
+//   - 保存期间显示「保存中」并禁用重复提交；成功显示「已保存」；失败显
+//     示「保存失败：原因」，草稿保留，允许重试。
+//   - 外部 app:settings-changed 刷新（AI 月度成本写入等会触发）只有当
+//     当前没有未保存草稿时才同步到 draft。
 
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   PRIORITIES,
   type Priority,
@@ -25,57 +33,159 @@ const PRIORITY_LABEL: Record<Priority, string> = {
   high: '高',
 };
 
+/** Save state machine — drives the status row + button enable/disable. */
+export type SaveState =
+  | { kind: 'idle' }
+  | { kind: 'saving' }
+  | { kind: 'saved'; at: number }
+  | { kind: 'failed'; reason: string };
+
 interface Props {
   /** May be missing / null when an older main process returns a settings
    *  response without the field — the pane normalises to defaults before
    *  reading. Keeping the type loose here is the second layer of the
    *  boundary defence (first layer lives in `useSettings`). */
   value?: TaskAppearance | null;
-  onChange: (next: TaskAppearance) => void;
+  /** Persist the given draft. Returns when the save round-trip is done.
+   *  Throws on failure — the pane catches and turns the error into the
+   *  visible `failed` state, preserving the draft so the user can retry. */
+  onSave: (next: TaskAppearance) => Promise<void>;
+  /** Convenience: settings-pane parent listens for this and pops a save
+   *  toast. Not required. */
+  onSaved?: () => void;
 }
 
-export const TaskAppearancePane: React.FC<Props> = ({ value, onChange }) => {
+export const TaskAppearancePane: React.FC<Props> = ({ value, onSave, onSaved }) => {
   // 顶层归一化：value 缺 / null / 旧格式 / 缺某档颜色，全部走
   // `normalizeTaskAppearance` 补齐成完整的 TaskAppearance，避免后面
   // `value.mode` / `value.colors[priority]` 的连锁崩溃。
-  const appearance = useMemo<TaskAppearance>(
+  const persisted = useMemo<TaskAppearance>(
     () => normalizeTaskAppearance(value),
     [value],
   );
-  // 当前匹配到哪个预设（null = 自定义 / 没匹配的预设）。mode=custom
-  // 永远 null；mode=theme 但用户改过颜色也会 null（让下拉显示"自定义"）。
-  const selectedPreset = useMemo(() => presetIdOf(appearance), [appearance]);
-  const isCustom = appearance.mode === 'custom';
 
-  // 用户选了一个预设 → 把 mode 切到 'theme' 并替换 colors（同时保留
-  // 用户之前在 custom 里调过的颜色，以便"切回上一份"——这里我们直接覆
-  // 盖，因为 mode=custom 才意味着用户主动编辑；切到预设意味着接受预设）。
+  // Draft = 当前用户正在编辑的版本。初始值取自持久化的 settings；保存
+  // 成功后由父级 `value` 更新触发 re-init（见 useEffect on value below）。
+  const [draft, setDraft] = useState<TaskAppearance>(() => cloneAppearance(persisted));
+
+  // 当外部持久化值变化时同步到 draft —— 仅在「没有未保存修改」时才同步，
+  // 否则会冲掉用户正在敲的草稿。dirty 判定：保存状态机不在 idle 时一律
+  // 视为有未保存修改。
+  const [saveState, setSaveState] = useState<SaveState>({ kind: 'idle' });
+  const isSaving = saveState.kind === 'saving';
+  const isDirty = isAppearanceEqual(draft, persisted) === false;
+
+  // 我们用 ref 跟踪「上次同步的持久值」，避免无意义的 re-init。在用户保
+  // 存成功之后 value 会变化，需要重新同步；保存失败或用户编辑中则不重置。
+  const lastSyncedRef = useRef<TaskAppearance>(persisted);
+  useEffect(() => {
+    // 失败 → 保留草稿等用户重试。
+    if (saveState.kind === 'failed') return;
+    // 保存中：父级 value 在 patch 成功后会被覆写，让 draft 跟上即可避
+    // 免「保存后还显示旧草稿」。
+    if (saveState.kind === 'saving') {
+      lastSyncedRef.current = persisted;
+      setDraft(cloneAppearance(persisted));
+      return;
+    }
+    // idle + 草稿未保存 → 外部刷新绝不能覆盖用户正在敲的颜色（taskAppearance
+    // 不会因其它字段被改而变化，但 monthlyCostUsd 的更新会触发同一次
+    // app:settings-changed 广播 —— 这里整体走一次 settings.get，所以
+    // 持久化对象引用变化不等于 taskAppearance 真的变）。我们用「draft vs
+    // 当前 persisted」做 dirty 判断。
+    if (!isAppearanceEqual(persisted, lastSyncedRef.current)) {
+      // 仅 taskAppearance 字段本身没变时直接静默同步 lastSyncedRef；
+      // 变了但草稿未保存 → 保留草稿（用户继续敲即可，保存时由 commit
+      // 把当前 draft 写回，外部值会被覆盖）。这样不会让 toast「已保存」
+      // 的视图突然跳回旧草稿。
+      if (isAppearanceEqual(draft, persisted)) {
+        lastSyncedRef.current = persisted;
+        setDraft(cloneAppearance(persisted));
+      } else {
+        // 草稿有未保存修改 —— 仍更新 lastSyncedRef 以避免下一次外部刷新
+        // 被错误地当作「变了」，但草稿不动。
+        lastSyncedRef.current = persisted;
+      }
+    }
+  }, [persisted, draft, saveState]);
+
+  // 当前匹配到哪个预设（'theme' / 'white' / 'soft' / 'custom' / null）。
+  //   - 'theme'  → 跟随主题（颜色等于 DEFAULT 且 mode=theme）；
+  //   - 'white'/'soft' → 用户选了某个预设（mode=custom，颜色与预设一致）；
+  //   - 'custom' → mode=custom 且颜色与任意预设都不一致（手动配色）；
+  //   - null  → 旧数据兼容回退（理论上 normalizeTaskAppearance 后不会发生）。
+  const selectedPreset = useMemo(() => presetIdOf(draft), [draft]);
+  // 编辑区可编辑 = mode 显式为 custom。presetIdOf 返回 'custom' 同样表示
+  // 用户当前在 custom 模式（手动配色）。
+  const isCustom = draft.mode === 'custom';
+  // 下拉「自定义」按钮高亮：selectedPreset === 'custom' 或 mode=custom 且
+  // 颜色已偏离任何预设（前者已经覆盖后者，但双重判断更稳）。
+  const customSelected = selectedPreset === 'custom' || isCustom;
+
+  // 用户选了一个预设 → 更新 draft（不立即持久化）。
   const applyPreset = (presetId: string): void => {
     const preset = TASK_APPEARANCE_PRESETS.find((p) => p.id === presetId);
     if (!preset) return;
-    onChange({
-      mode: 'theme',
+    setDraft({
+      mode: preset.value.mode,
       colors: cloneColors(preset.value.colors),
     });
   };
 
   // 切到 custom —— mode 翻成 custom，colors 保持当前值（用户开始调）。
   const enterCustom = (): void => {
-    onChange({
+    setDraft({
       mode: 'custom',
-      colors: cloneColors(appearance.colors),
+      colors: cloneColors(draft.colors),
     });
   };
 
-  // 改某一个 priority 的某一通道。dirty 校验失败时不持久化（保留上次
-  // 有效值），但用户继续编辑其他通道不受影响。
+  // 改某一个 priority 的某一通道。校验失败也接受草稿（让用户敲到一半时
+  // 不被强制回弹）；保存动作统一在 commit() 里再做有效性检查。
   const updateColor = (p: Priority, channel: 'background' | 'foreground', next: string): void => {
     const trimmed = next.trim();
-    // 校验失败也接受草稿（让用户敲到一半时不被强制回弹）；保存动作统一
-    // 在 commit() 里再做有效性检查。
-    const colors = cloneColors(appearance.colors);
+    const colors = cloneColors(draft.colors);
     colors[p] = { ...colors[p], [channel]: trimmed };
-    onChange({ mode: 'custom', colors });
+    setDraft({ mode: 'custom', colors });
+  };
+
+  // 提交草稿 → 调父级 onSave 异步保存。保存期间阻止重复提交，失败保留草稿。
+  const onSubmit = async (): Promise<void> => {
+    if (isSaving) return;
+    // 在保存前把任何「半成品 hex」（例如正在敲 #FF 但还没敲完）回退到上次
+    // 合法值，避免 settings.taskAppearance 被无效字符串污染。
+    const sanitized: TaskAppearance = {
+      mode: draft.mode,
+      colors: {
+        none:   sanitizePair(draft.colors.none),
+        low:    sanitizePair(draft.colors.low),
+        medium: sanitizePair(draft.colors.medium),
+        high:   sanitizePair(draft.colors.high),
+      },
+    };
+    // 如果清理后草稿等于持久值，没必要再发一次 IPC。
+    if (isAppearanceEqual(sanitized, persisted)) {
+      setSaveState({ kind: 'saved', at: Date.now() });
+      return;
+    }
+    setSaveState({ kind: 'saving' });
+    try {
+      await onSave(sanitized);
+      setSaveState({ kind: 'saved', at: Date.now() });
+      lastSyncedRef.current = sanitized;
+      // 把清理过的版本写回 draft，避免用户继续编辑时重新触发同样的回退逻辑。
+      setDraft(cloneAppearance(sanitized));
+      onSaved?.();
+    } catch (err) {
+      const reason = err instanceof Error && err.message ? err.message : '未知错误';
+      setSaveState({ kind: 'failed', reason });
+    }
+  };
+
+  // 撤销当前修改 —— 把 draft 复位到持久化值。
+  const onDiscard = (): void => {
+    setDraft(cloneAppearance(persisted));
+    setSaveState({ kind: 'idle' });
   };
 
   return (
@@ -90,6 +200,7 @@ export const TaskAppearancePane: React.FC<Props> = ({ value, onChange }) => {
               className={`task-appearance__preset${selectedPreset === p.id ? ' is-selected' : ''}`}
               onClick={() => applyPreset(p.id)}
               aria-pressed={selectedPreset === p.id}
+              disabled={isSaving}
             >
               {selectedPreset === p.id && (
                 <span className="task-appearance__preset-check" aria-hidden="true">✓</span>
@@ -112,11 +223,12 @@ export const TaskAppearancePane: React.FC<Props> = ({ value, onChange }) => {
           ))}
           <button
             type="button"
-            className={`task-appearance__preset${isCustom ? ' is-selected' : ''}`}
+            className={`task-appearance__preset${customSelected ? ' is-selected' : ''}`}
             onClick={enterCustom}
-            aria-pressed={isCustom}
+            aria-pressed={customSelected}
+            disabled={isSaving}
           >
-            {isCustom && (
+            {customSelected && (
               <span className="task-appearance__preset-check" aria-hidden="true">✓</span>
             )}
             <span className="task-appearance__preset-swatches">
@@ -125,8 +237,8 @@ export const TaskAppearancePane: React.FC<Props> = ({ value, onChange }) => {
                   key={prio}
                   className="task-appearance__preset-swatch"
                   style={{
-                    background: appearance.colors[prio].background,
-                    borderColor: appearance.colors[prio].foreground,
+                    background: draft.colors[prio].background,
+                    borderColor: draft.colors[prio].foreground,
                   }}
                   aria-hidden="true"
                 />
@@ -149,17 +261,43 @@ export const TaskAppearancePane: React.FC<Props> = ({ value, onChange }) => {
             <ColorRow
               key={p}
               priority={p}
-              value={appearance.colors[p]}
+              value={draft.colors[p]}
               onChange={(channel, v) => updateColor(p, channel, v)}
-              disabled={!isCustom}
+              disabled={!isCustom || isSaving}
             />
           ))}
         </div>
         <div className="field-hint">
           {!isCustom
             ? '当前为预设模式，颜色只读；切到「自定义」后可逐项调整。'
-            : '颜色接受 #RGB / #RRGGBB 两种写法。修改任一项会自动保持「自定义」模式。'}
+            : '颜色接受 #RGB / #RRGGBB 两种写法。预览实时刷新；点「保存」后才会写入磁盘。'}
         </div>
+      </div>
+
+      {/* 保存状态行 + 操作按钮：失败时强提示，草稿保留。 */}
+      <div className={`task-appearance__save-row${saveState.kind === 'failed' ? ' is-error' : ''}`}>
+        <span className="task-appearance__save-status" role="status" aria-live="polite">
+          {saveState.kind === 'saving' && '保存中…'}
+          {saveState.kind === 'saved' && '已保存'}
+          {saveState.kind === 'failed' && `保存失败：${saveState.reason}`}
+          {saveState.kind === 'idle' && (isDirty ? '有未保存修改' : '已同步最新设置')}
+        </span>
+        <button
+          type="button"
+          className="btn-ghost"
+          onClick={onDiscard}
+          disabled={isSaving || !isDirty}
+        >
+          撤销
+        </button>
+        <button
+          type="button"
+          className="btn-primary"
+          onClick={() => void onSubmit()}
+          disabled={isSaving || !isDirty}
+        >
+          {saveState.kind === 'saving' ? '保存中…' : '保存'}
+        </button>
       </div>
     </div>
   );
@@ -169,10 +307,10 @@ const ColorRow: React.FC<{
   priority: Priority;
   value: TaskColorPair;
   onChange: (channel: 'background' | 'foreground', next: string) => void;
-  /** True when the row should be read-only — preset mode (mode !== 'custom').
-   *  Inputs use `readOnly` (still selectable for copy), the color picker is
-   *  fully `disabled` since it would otherwise open a native modal the user
-   *  shouldn't be able to invoke. */
+  /** True when the row should be read-only — preset mode (mode !== 'custom')
+   *  or during a save round-trip. Inputs use `readOnly` (still selectable
+   *  for copy), the color picker is fully `disabled` since it would
+   *  otherwise open a native modal the user shouldn't be able to invoke. */
   disabled?: boolean;
 }> = ({ priority, value, onChange, disabled = false }) => {
   const [bg, setBg] = useState(value.background);
@@ -278,6 +416,15 @@ const ColorRow: React.FC<{
   );
 };
 
+/** 把一个 hex 字符串回退到 DEFAULT 的对应通道值，仅用于「保存」时清洗
+ *  半成品输入；不修改用户仍在编辑的 draft 字符串。 */
+function sanitizePair(p: TaskColorPair): TaskColorPair {
+  return {
+    background: isValidCssColor(p.background) ? p.background : '#FFFFFF',
+    foreground: isValidCssColor(p.foreground) ? p.foreground : '#000000',
+  };
+}
+
 function cloneColors(c: PriorityColorMap): PriorityColorMap {
   return {
     none:   { ...c.none },
@@ -285,4 +432,17 @@ function cloneColors(c: PriorityColorMap): PriorityColorMap {
     medium: { ...c.medium },
     high:   { ...c.high },
   };
+}
+
+function cloneAppearance(a: TaskAppearance): TaskAppearance {
+  return { mode: a.mode, colors: cloneColors(a.colors) };
+}
+
+function isAppearanceEqual(a: TaskAppearance, b: TaskAppearance): boolean {
+  if (a.mode !== b.mode) return false;
+  for (const p of PRIORITIES) {
+    if (a.colors[p].background.toLowerCase() !== b.colors[p].background.toLowerCase()) return false;
+    if (a.colors[p].foreground.toLowerCase() !== b.colors[p].foreground.toLowerCase()) return false;
+  }
+  return true;
 }

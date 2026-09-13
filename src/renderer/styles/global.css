@@ -2590,94 +2590,115 @@ a:hover {
   background: color-mix(in srgb, var(--accent-danger) 12%, var(--bg-active));
 }
 
-/* ---- task-row priority colours (custom mode) ---- */
-/* When settings.taskAppearance.mode === 'custom', the .task-list section
-   root injects 8 CSS custom properties (--task-prio-<p>-bg / -fg). These
-   selectors apply them to .task-row[data-priority="<p>"]. The rest of the
-   row's state classes (.is-active / .is-done / .is-blocked / :hover) keep
-   precedence so the priority tint never overpowers selection feedback,
-   completion fade, or the blocked danger rail. */
-.task-row[data-priority="none"] {
+/* ---- task-row priority colours (custom mode only) ---- */
+/* When settings.taskAppearance.mode === 'custom', TodoListPane 注入 class
+ *   .task-list--custom
+ * 到顶层 <section>，并向内注入 8 个 CSS 自定义属性（--task-prio-<p>-bg / -fg）。
+ * 下面所有颜色规则都用 `.task-list--custom` 作作用域，避免污染 theme 模式下
+ * 的默认行外观。theme 模式下用户走应用主题，.task-row 保持原浅色 token
+ * 样式，不被这套规则触碰。
+ *
+ * 自定义模式下 hover / active 不再用 18% 前景色混合覆盖背景 —— 白底黑字
+ * 选中后背景仍然是白，避免破坏配色一致性；hover / active 提示改成左边框
+ * 颜色 + 选中时叠加 outline。 */
+.task-list--custom .task-row[data-priority="none"] {
   background: var(--task-prio-none-bg, var(--bg-base));
   color: var(--task-prio-none-fg, var(--fg-primary));
 }
-.task-row[data-priority="low"] {
+.task-list--custom .task-row[data-priority="low"] {
   background: var(--task-prio-low-bg, var(--bg-base));
   color: var(--task-prio-low-fg, var(--fg-primary));
 }
-.task-row[data-priority="medium"] {
+.task-list--custom .task-row[data-priority="medium"] {
   background: var(--task-prio-medium-bg, var(--bg-base));
   color: var(--task-prio-medium-fg, var(--fg-primary));
 }
-.task-row[data-priority="high"] {
+.task-list--custom .task-row[data-priority="high"] {
   background: var(--task-prio-high-bg, var(--bg-base));
   color: var(--task-prio-high-fg, var(--fg-primary));
 }
 /* Title inside a tinted row picks up the row's fg as the default, but
    state classes (.is-done / .is-cancelled) still strike-through + fade
    with --fg-muted as before. We only override the FALLBACK colour. */
-.task-row[data-priority="none"] .task-row__title,
-.task-row[data-priority="low"] .task-row__title,
-.task-row[data-priority="medium"] .task-row__title,
-.task-row[data-priority="high"] .task-row__title {
+.task-list--custom .task-row[data-priority="none"] .task-row__title,
+.task-list--custom .task-row[data-priority="low"] .task-row__title,
+.task-list--custom .task-row[data-priority="medium"] .task-row__title,
+.task-list--custom .task-row[data-priority="high"] .task-row__title {
   color: inherit;
 }
-/* Hover keeps the priority tint but visibly darkens toward the row's own
-   fg colour (opaque, theme-coherent). Mixing the priority bg with its fg
-   gives a perceptual "lift on hover" that reads as feedback even on light
-   priorities — earlier variants mixed with rgba(--bg-hover) at low opacity,
-   which produced 2-3% green at best and was effectively invisible. */
-.task-row[data-priority="none"]:hover {
-  background: color-mix(in srgb, var(--task-prio-none-bg, var(--bg-base)) 82%, var(--task-prio-none-fg, var(--fg-primary)));
+/* 自定义模式下 hover：不改背景，只把左边框换成当前行的 fg，让颜色变化可见
+   但白底黑字仍然是白底黑字。覆盖默认 .task-row:hover { background: --bg-hover }。 */
+.task-list--custom .task-row:hover {
+  background: inherit;
 }
-.task-row[data-priority="low"]:hover {
-  background: color-mix(in srgb, var(--task-prio-low-bg, var(--bg-base)) 82%, var(--task-prio-low-fg, var(--fg-primary)));
+.task-list--custom .task-row[data-priority="none"]:hover {
+  border-left-color: var(--task-prio-none-fg, var(--fg-primary));
 }
-.task-row[data-priority="medium"]:hover {
-  background: color-mix(in srgb, var(--task-prio-medium-bg, var(--bg-base)) 82%, var(--task-prio-medium-fg, var(--fg-primary)));
+.task-list--custom .task-row[data-priority="low"]:hover {
+  border-left-color: var(--task-prio-low-fg, var(--fg-primary));
 }
-.task-row[data-priority="high"]:hover {
-  background: color-mix(in srgb, var(--task-prio-high-bg, var(--bg-base)) 82%, var(--task-prio-high-fg, var(--fg-primary)));
+.task-list--custom .task-row[data-priority="medium"]:hover {
+  border-left-color: var(--task-prio-medium-fg, var(--fg-primary));
 }
-/* Active selection must always read as "you are here", never as "the row
-   picked a bright priority bg". Push the mix harder (70/30) and keep
-   blending toward its own fg so a saturated red high-priority row still
-   reads as selected + keeps the accent-primary border. */
-.task-row[data-priority="none"].is-active {
-  background: color-mix(in srgb, var(--task-prio-none-bg, var(--bg-base)) 70%, var(--task-prio-none-fg, var(--fg-primary)));
+.task-list--custom .task-row[data-priority="high"]:hover {
+  border-left-color: var(--task-prio-high-fg, var(--fg-primary));
 }
-.task-row[data-priority="low"].is-active {
-  background: color-mix(in srgb, var(--task-prio-low-bg, var(--bg-base)) 70%, var(--task-prio-low-fg, var(--fg-primary)));
+/* Active selection 必须始终读作「你在这」。覆盖默认 .task-row.is-active
+   （会改背景为 --bg-active 并把左 border 染成 accent-primary）；在自定义
+   模式下用「左边框 = fg + outline 描边 fg」提示选中，保持背景是用户选
+   的配色。 */
+.task-list--custom .task-row.is-active {
+  background: inherit;
+  border-left-color: inherit;
 }
-.task-row[data-priority="medium"].is-active {
-  background: color-mix(in srgb, var(--task-prio-medium-bg, var(--bg-base)) 70%, var(--task-prio-medium-fg, var(--fg-primary)));
+.task-list--custom .task-row[data-priority="none"].is-active {
+  border-left-color: var(--task-prio-none-fg, var(--fg-primary));
+  outline: 2px solid var(--task-prio-none-fg, var(--fg-primary));
+  outline-offset: -2px;
 }
-.task-row[data-priority="high"].is-active {
-  background: color-mix(in srgb, var(--task-prio-high-bg, var(--bg-base)) 70%, var(--task-prio-high-fg, var(--fg-primary)));
+.task-list--custom .task-row[data-priority="low"].is-active {
+  border-left-color: var(--task-prio-low-fg, var(--fg-primary));
+  outline: 2px solid var(--task-prio-low-fg, var(--fg-primary));
+  outline-offset: -2px;
+}
+.task-list--custom .task-row[data-priority="medium"].is-active {
+  border-left-color: var(--task-prio-medium-fg, var(--fg-primary));
+  outline: 2px solid var(--task-prio-medium-fg, var(--fg-primary));
+  outline-offset: -2px;
+}
+.task-list--custom .task-row[data-priority="high"].is-active {
+  border-left-color: var(--task-prio-high-fg, var(--fg-primary));
+  outline: 2px solid var(--task-prio-high-fg, var(--fg-primary));
+  outline-offset: -2px;
 }
 /* Done / cancelled rows fade as before; the priority bg stays so a
    completed high-priority task still shows it once hit. .is-cancelled
    uses opacity to fade the whole row (incl. priority tint). */
-.task-row[data-priority="none"].is-done,
-.task-row[data-priority="low"].is-done,
-.task-row[data-priority="medium"].is-done,
-.task-row[data-priority="high"].is-done {
+.task-list--custom .task-row[data-priority="none"].is-done,
+.task-list--custom .task-row[data-priority="low"].is-done,
+.task-list--custom .task-row[data-priority="medium"].is-done,
+.task-list--custom .task-row[data-priority="high"].is-done {
   /* Keep the priority bg; only the title text strikes through. */
   color: color-mix(in srgb, var(--task-prio-none-fg, var(--fg-primary)) 60%, transparent);
 }
-.task-row[data-priority="none"].is-cancelled,
-.task-row[data-priority="low"].is-cancelled,
-.task-row[data-priority="medium"].is-cancelled,
-.task-row[data-priority="high"].is-cancelled {
+.task-list--custom .task-row[data-priority="none"].is-cancelled,
+.task-list--custom .task-row[data-priority="low"].is-cancelled,
+.task-list--custom .task-row[data-priority="medium"].is-cancelled,
+.task-list--custom .task-row[data-priority="high"].is-cancelled {
   opacity: 0.6;
 }
 /* Blocked wins on top of any priority tint (the danger rail must always
    be visible regardless of the bg colour). */
-.task-row[data-priority="none"].is-blocked,
-.task-row[data-priority="low"].is-blocked,
-.task-row[data-priority="medium"].is-blocked,
-.task-row[data-priority="high"].is-blocked {
+.task-list--custom .task-row[data-priority="none"].is-blocked,
+.task-list--custom .task-row[data-priority="low"].is-blocked,
+.task-list--custom .task-row[data-priority="medium"].is-blocked,
+.task-list--custom .task-row[data-priority="high"].is-blocked {
   background: color-mix(in srgb, var(--accent-danger) 12%, transparent);
+}
+/* Blocked + is-active 时清除 outline —— 危险 rail 已经接管状态指示，
+   再叠 fg 颜色 outline 会与红边打架。 */
+.task-list--custom .task-row.is-blocked.is-active {
+  outline: none;
 }
 .task-row__main {
   flex: 1;
@@ -4580,6 +4601,54 @@ a:hover {
   height: 10px;
   border-radius: 50%;
   flex: 0 0 auto;
+}
+
+/* --- tag input: popover sections (最近使用 / AI 推荐 / 全部标签) --- */
+
+.tag-input__section {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.tag-input__section + .tag-input__section {
+  border-top: 1px solid var(--border-subtle);
+  padding-top: 4px;
+  margin-top: 2px;
+}
+.tag-input__section-title {
+  font-size: var(--font-xs);
+  color: var(--fg-muted);
+  padding: 2px var(--space-sm);
+  letter-spacing: 0.02em;
+}
+.tag-input__empty {
+  padding: 4px var(--space-sm);
+  font-size: var(--font-xs);
+  color: var(--fg-muted);
+}
+.tag-input__option--skeleton {
+  cursor: default;
+  pointer-events: none;
+}
+.tag-input__option--skeleton:hover {
+  background: transparent;
+}
+.tag-input__skeleton {
+  display: block;
+  height: 10px;
+  border-radius: var(--radius-sm);
+  background: linear-gradient(
+    90deg,
+    var(--bg-hover) 0%,
+    var(--bg-input) 50%,
+    var(--bg-hover) 100%
+  );
+  background-size: 200% 100%;
+  animation: tag-input-shimmer 1.2s ease-in-out infinite;
+}
+@keyframes tag-input-shimmer {
+  0%   { background-position: 100% 0; }
+  100% { background-position: -100% 0; }
 }
 
 /* --- settings: tag management --- */
