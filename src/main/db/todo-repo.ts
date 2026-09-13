@@ -69,7 +69,20 @@ function rowToTodo(row: TodoRow, tags: string[], drawingIds: string[], attachmen
 }
 
 export class TodoRepo {
-  constructor(private db: Database.Database) {}
+  constructor(
+    private db: Database.Database,
+    /** Hook invoked after a write that mutates the `tags` association
+     *  table (create / update / batchUpdate). Receives the list of tag
+     *  names that ended up attached to the just-written task(s).
+     *
+     *  The hook is the TagRepo's `activateUsedNames` — newly-added
+     *  names get a fresh catalog row, previously retired names come
+     *  back to the active management list, names still active stay
+     *  unchanged. Keeping the hook optional + injected means TodoRepo
+     *  has no compile-time dependency on TagRepo; the wiring lives in
+     *  src/main/index.ts (the bootstrap order). */
+    private onTagsAttached?: (names: readonly string[]) => void,
+  ) {}
 
   list(filter: TodoFilter = {}): Todo[] {
     const where: string[] = [];
@@ -177,6 +190,15 @@ export class TodoRepo {
     });
     tx();
 
+    // After the write, fold any newly-attached names into the catalog
+    // (or revive a retired one) so the management list reflects reality
+    // without a separate settings-page round-trip. The hook is a
+    // best-effort — failure here doesn't break the create, it just
+    // leaves the catalog stale until the next write.
+    if (input.tags?.length && this.onTagsAttached) {
+      try { this.onTagsAttached(input.tags); } catch { /* ignore */ }
+    }
+
     return this.get(id)!;
   }
 
@@ -267,6 +289,12 @@ export class TodoRepo {
       }
     });
     tx();
+    // Mirror the create() hook — any tag names that ended up attached
+    // need to be in the catalog (or revived from retired) so the
+    // Settings management list stays in sync.
+    if (patch.tags && this.onTagsAttached) {
+      try { this.onTagsAttached(patch.tags); } catch { /* ignore */ }
+    }
     return this.get(id)!;
   }
 

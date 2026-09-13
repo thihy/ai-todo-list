@@ -71,6 +71,16 @@ const DECLARED_CHANNELS: ReadonlySet<string> = new Set([
   'settings.get',
   'settings.set',
   'settings.chooseDataDir',
+  // Tag catalog (DB-backed). list / activeCatalog / rename / merge /
+  // previewCleanup / applyCleanup / reactivate. The renderer uses
+  // these instead of the deprecated settings.tags field.
+  'tag.list',
+  'tag.activeCatalog',
+  'tag.rename',
+  'tag.merge',
+  'tag.previewCleanup',
+  'tag.applyCleanup',
+  'tag.reactivate',
   'capture.submit',
   'app.popupMenu',
   'app.popupMenuCategory',

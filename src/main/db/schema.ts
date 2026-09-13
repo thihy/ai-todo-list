@@ -7,7 +7,7 @@ const { ulid } = ulidPkg;
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 
-export const SCHEMA_VERSION = 16;
+export const SCHEMA_VERSION = 17;
 
 const MIGRATIONS: ReadonlyArray<{ version: number; sql: string }> = [
   {
@@ -637,6 +637,75 @@ const MIGRATIONS: ReadonlyArray<{ version: number; sql: string }> = [
     sql: `
       DROP INDEX IF EXISTS idx_todos_project;
       ALTER TABLE todos DROP COLUMN project;
+    `,
+  },
+  {
+    version: 17,
+    // Tag catalog — a directory of tag NAMES with a user-chosen colour and
+    // a retired_at timestamp for logical "no longer in the active
+    // management list" state. Source of truth for:
+    //   - tag autocomplete (TagInput popover)
+    //   - settings UI tag management list (name + colour + usage count)
+    //   - merge / rename / cleanup operations
+    //
+    // Up to now the only writable tag registry lived in userData config.json
+    // (`settings.tags`). That registry could not enumerate names the user
+    // had never explicitly registered, so every cleanup / "used by N tasks"
+    // query had to walk the entire `tags` table — and was incomplete as
+    // soon as an AI tool created a task with a name the user hadn't
+    // pre-registered. This migration hoists the directory into the DB so
+    // the catalog, the autocomplete, the rename/merge/cleanup flow, and the
+    // usage counts all read from one place.
+    //
+    // Migration body:
+    //   1. CREATE TABLE tag_catalog — name is the PRIMARY KEY (case-sensitive;
+    //      we keep `工作` and `WORK` distinct — same-name merging is an
+    //      explicit user action, not a side effect of migration). retired_at
+    //      NULL = active; non-NULL = retired (hidden from the default
+    //      management list, shown in a separate "已停用" tab).
+    //   2. Seed from settings.tags (if any rows in the legacy registry).
+    //      INSERT OR IGNORE so re-running is safe; the catalog is the
+    //      destination of truth so we don't clobber already-cataloged rows.
+    //      NOTE: the legacy registry lives in userData/config.json — NOT
+    //      in this DB. The migration therefore cannot reach it directly.
+    //      The import step is implemented as a separate post-migration
+    //      pass in src/main/index.ts (settings.tags → tag_catalog), which
+    //      runs after openDb returns and is fully idempotent (INSERT OR
+    //      IGNORE on name). We deliberately keep that import outside the
+    //      migration transaction so the schema step stays deterministic
+    //      and doesn't depend on userData being readable from this
+    //      process's cwd at upgrade time.
+    //   3. Seed from task-applied names in the `tags` table (every distinct
+    //      name currently attached to any task, active or not). INSERT OR
+    //      IGNORE on name so a pre-existing catalog row wins; new rows
+    //      get a placeholder colour (palette-rotated by hash, same default
+    //      as TagInput.defaultColorFor) and a NULL retired_at so they
+    //      show up in the active management list the moment the upgrade
+    //      completes.
+    //
+    // Re-running safety: every INSERT uses OR IGNORE on the PK (name), so
+    // a user who manually bumps schema_meta back to v16 and re-runs v17
+    // gets exactly the same end state. There is no UPDATE / DELETE in
+    // this migration — no risk of partial state leaking through.
+    sql: `
+      CREATE TABLE tag_catalog (
+        name TEXT PRIMARY KEY,
+        color TEXT NOT NULL,
+        retired_at INTEGER
+      );
+      CREATE INDEX idx_tag_catalog_active ON tag_catalog(retired_at);
+
+      -- Backfill from task-applied tag names. The catalog column is
+      -- (name PRIMARY KEY, color, retired_at). Names that already
+      -- exist in the catalog (e.g. from settings.tags import above,
+      -- which runs in a separate post-migration step) keep their
+      -- imported colour; new names get a default colour (placeholder
+      -- hex; the renderer applies a real palette swatch via
+      -- defaultColorFor(name) when the user opens Settings). retired_at
+      -- is left NULL — every used-by-some-task name is "active" by
+      -- definition at upgrade time.
+      INSERT OR IGNORE INTO tag_catalog (name, color, retired_at)
+      SELECT DISTINCT tag, '#6B7280', NULL FROM tags;
     `,
   },
 ];

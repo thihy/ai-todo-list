@@ -13,10 +13,12 @@ import { registerDocumentHandlers } from './ipc/document-handlers';
 import { registerLinkHandlers } from './ipc/link-handlers';
 import { registerCapturePreviewHandler } from './ipc/capture-preview-handler';
 import { registerStartupHandler } from './ipc/startup-handler';
+import { registerTagHandlers } from './ipc/tag-handler';
 import { startupState } from './startup-state';
 import { logger } from './logger';
 import { openDb, type DbHandle } from './db/schema';
 import { TodoRepo } from './db/todo-repo';
+import { TagRepo } from './db/tag-repo';
 import { ConversationRepo } from './db/conversation-repo';
 import { MarkdownStore } from './files/markdown';
 import { DrawingStore } from './files/drawings';
@@ -202,10 +204,43 @@ function bootstrap(): void {
     const handle = openDb(dbPath);
     mark('db-opened');
 
-    const repo = new TodoRepo(handle.db);
+    // TagRepo owns the tag_catalog table + rename/merge/cleanup flow. The
+    // TodoRepo hook below ensures any tag name attached to a task (incl.
+    // ones AI tools created) lands in the catalog without a separate
+    // settings-page round-trip. After schema migration we backfill the
+    // catalog from `tags` association table + the legacy settings.tags
+    // array — both paths are idempotent (INSERT OR IGNORE on name).
+    const tagRepo = new TagRepo(handle.db);
+    const repo = new TodoRepo(handle.db, (names) => tagRepo.activateUsedNames(names));
     const { TaskDirectoryStore } = await import('./files/task-directories');
     const taskDirectories = new TaskDirectoryStore(handle.db, todosDir);
     const conversations = new ConversationRepo(handle.db);
+
+    // Post-migration catalog backfill. Two idempotent steps:
+    //   1. Task-applied names (every distinct tag in the `tags` association
+    //      table that the v17 migration already seeded).
+    //   2. Legacy settings.tags — the old userData/config.json registry.
+    //      This is the ONE compatibility import. After this point the
+    //      catalog is the source of truth; settings.tags is ignored.
+    try {
+      const addedFromTasks = tagRepo.ensureFromTagsTable();
+      if (addedFromTasks.length > 0) {
+        logger.info(`tag-catalog: backfilled ${addedFromTasks.length} name(s) from task tags`);
+      }
+      const legacy = settings.get().tags ?? [];
+      if (legacy.length > 0) {
+        const r = tagRepo.importEntries(legacy);
+        if (r.added > 0) {
+          logger.info(`tag-catalog: imported ${r.added} legacy settings.tags entry(ies)`);
+        }
+      }
+    } catch (err) {
+      // Backfill failure must NOT block boot — the catalog starts empty
+      // and subsequent writes via the hook will populate it. Log and
+      // move on.
+      logger.warn(`tag-catalog: post-migration backfill failed: ${(err as Error).message}`);
+    }
+    mark('tag-catalog-seeded');
 
     startupState.setCorePhase('file-stores');
     // Per-task dir lookup. The relative directory name is persisted in DB;
@@ -229,6 +264,7 @@ function bootstrap(): void {
     registerDocumentHandlers(docs, resolveTaskDir);
     registerLinkHandlers();
     registerInboxHandlers(inbox);
+    registerTagHandlers(tagRepo);
 
     // attachment://<id> → serve the inbox_attachments file bytes. Registered
     // after the inbox store exists so the handler closure can capture it.
@@ -653,7 +689,11 @@ function registerSettingsHandlers(
         ...(typeof req.dataDir === 'string' ? { dataDir: req.dataDir } : {}),
         ...(req.customProviderId !== undefined ? { customProviderId: req.customProviderId } : {}),
         ...(req.archiveAfterDays !== undefined ? { archiveAfterDays: req.archiveAfterDays } : {}),
-        ...(req.tags ? { tags: req.tags } : {}),
+        // NOTE: `tags` is intentionally NOT written here. The v17
+        // catalog migration hoisted the tag directory into the DB;
+        // UI rename / merge / cleanup all flow through tag.* channels.
+        // The legacy userData/config.json entry is preserved on disk
+        // for diagnostic purposes but no longer authoritative.
         ...(req.dailyPlanReminderTime !== undefined ? { dailyPlanReminderTime: req.dailyPlanReminderTime } : {}),
         ...(req.lastPlanGuideDate !== undefined ? { lastPlanGuideDate: req.lastPlanGuideDate } : {}),
         ...(req.snoozePlanGuideUntil !== undefined ? { snoozePlanGuideUntil: req.snoozePlanGuideUntil } : {}),

@@ -54,6 +54,10 @@ const APP_EVENTS: AppEvent[] = [
   // phase. Renderer reads `startupGet()` first to avoid missing the initial
   // transition (see src/main/startup-state.ts for the contract).
   'app:startup',
+  // Tag catalog changes (DB-backed since v17). Renderer hooks that
+  // read tag.* state should re-fetch on this event; affectedTodoIds
+  // narrows the refresh to the tasks whose tag list actually moved.
+  'app:tags-changed',
   'ai:stream',
   'ai:permission-request',
   // L4-G: human-in-the-loop events. The main-process waterfall listener
@@ -186,6 +190,18 @@ const api: TodoListApi = {
   },
   aiUserApproval: {
     answer: (reqId, decision) => invoke('ai.userApproval.answer', { reqId, decision }),
+  },
+  // Tag catalog (DB-backed since v17). All mutations broadcast
+  // `app:tags-changed`; consumers should re-fetch on receipt.
+  tag: {
+    list: (opts) => invoke('tag.list', { activeOnly: opts?.activeOnly }),
+    activeCatalog: () => invoke('tag.activeCatalog', undefined as never),
+    rename: (oldName, newName) => invoke('tag.rename', { oldName, newName }),
+    merge: (sources, target, newColor) =>
+      invoke('tag.merge', { sources, target, ...(newColor ? { newColor } : {}) }),
+    previewCleanup: () => invoke('tag.previewCleanup', undefined as never),
+    applyCleanup: (actions) => invoke('tag.applyCleanup', { actions }),
+    reactivate: (name) => invoke('tag.reactivate', { name }),
   },
   on: onAppEvent,
 };

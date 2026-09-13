@@ -19,7 +19,7 @@ import {
   type AICustomProtocol,
   type CustomProviderInput,
 } from '../../shared/ai-types';
-import { TagColorPicker, TAG_PALETTE } from './TagInput';
+import { TagManagementPane } from './TagManagementPane';
 import { TaskAppearancePane } from './TaskAppearancePane';
 
 type Category = 'general' | 'model' | 'data' | 'tags' | 'appearance' | 'hotkeys' | 'reminder' | 'about';
@@ -101,7 +101,12 @@ export const SettingsModal: React.FC<{ open: boolean; onClose: () => void }> = (
             ) : cat === 'data' ? (
               <DataPane data={data} patch={patchWithToast} chooseDataDir={chooseDataDir} />
             ) : cat === 'tags' ? (
-              <TagsPane data={data} patch={patchWithToast} />
+              // TagManagementPane replaces the old TagsPane. The catalog
+              // is DB-backed since v17 — settings.tags is no longer the
+              // source of truth. The pane uses useTagList / tag.* channels
+              // for read / rename / merge / cleanup, and listens to
+              // app:tags-changed via the data bus for live refresh.
+              <TagManagementPane />
             ) : cat === 'appearance' ? (
               <TaskAppearancePane
                 value={data.taskAppearance}
@@ -631,72 +636,10 @@ const HotkeysPane: React.FC<PaneProps> = ({ data, patch }) => (
   </div>
 );
 
-const TagsPane: React.FC<PaneProps> = ({ data, patch }) => {
-  const tags = data.tags ?? [];
-  const [name, setName] = useState('');
-  const [color, setColor] = useState(TAG_PALETTE[0]!);
-
-  const commit = (next: { name: string; color: string }[]): void => {
-    void patch({ tags: next });
-  };
-
-  const add = (): void => {
-    const n = name.trim().replace(/^#/, '');
-    if (!n) return;
-    if (tags.some((t) => t.name.toLowerCase() === n.toLowerCase())) {
-      setName('');
-      return;
-    }
-    commit([...tags, { name: n, color }]);
-    setName('');
-    setColor(TAG_PALETTE[tags.length % TAG_PALETTE.length]!);
-  };
-
-  const remove = (n: string): void => commit(tags.filter((t) => t.name !== n));
-  const recolor = (n: string, c: string): void =>
-    commit(tags.map((t) => (t.name === n ? { ...t, color: c } : t)));
-  const rename = (n: string, nn: string): void => {
-    const trimmed = nn.trim();
-    if (!trimmed || trimmed === n) return;
-    if (tags.some((t) => t.name.toLowerCase() === trimmed.toLowerCase())) return;
-    commit(tags.map((t) => (t.name === n ? { ...t, name: trimmed } : t)));
-  };
-
-  return (
-    <div className="settings-pane">
-      <Field label="标签管理" hint="为标签设置颜色；在任务详情中输入即可联想、新建。">
-        <div className="settings-tags">
-          {tags.length === 0 && <div className="muted">还没有标签。在任务详情中新建，或在此添加。</div>}
-          {tags.map((t) => (
-            <div key={t.name} className="settings-tags__row">
-              <TagColorPicker value={t.color} onChange={(c) => recolor(t.name, c)} ariaLabel={`${t.name} 颜色`} />
-              <input
-                className="input settings-tags__name"
-                defaultValue={t.name}
-                onBlur={(e) => rename(t.name, e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
-              />
-              <button type="button" className="settings-tags__del" onClick={() => remove(t.name)} aria-label={`删除标签 ${t.name}`}>
-                ×
-              </button>
-            </div>
-          ))}
-          <div className="settings-tags__row settings-tags__row--new">
-            <TagColorPicker value={color} onChange={setColor} ariaLabel="新标签颜色" />
-            <input
-              className="input settings-tags__name"
-              placeholder="新标签名称"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') add(); }}
-            />
-            <button type="button" className="btn-secondary" onClick={add} disabled={!name.trim()}>添加</button>
-          </div>
-        </div>
-      </Field>
-    </div>
-  );
-};
+// TagsPane was deleted when the v17 catalog migration hoisted the
+// tag directory into the DB; the new management surface lives in
+// src/renderer/components/TagManagementPane.tsx. The pane slot in
+// <SettingsModal/> now mounts <TagManagementPane/> directly.
 
 /** 每日计划提醒面板 — 控制 `dailyPlanReminderTime`（HH:MM）。到点且今天
  *  还没安排任何任务时，主进程会弹一次系统通知（参见

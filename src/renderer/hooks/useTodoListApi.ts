@@ -12,7 +12,7 @@ import type { ContentVersionEntry, GitHistoryEntry, ProgressLogEntry } from '../
 import type { TaskDocument } from '../../shared/todo-types';
 import type { DrawingMeta, DrawingScene, InboxAttachment } from '../../shared/todo-types';
 import type { AIModel, AIStreamEvent } from '../../shared/ai-types';
-import type { SettingsGetRes } from '../../shared/ipc-schema';
+import type { SettingsGetRes, TagCatalogRow, TagCatalogEntry } from '../../shared/ipc-schema';
 import { useDataVersion } from '../data-bus';
 import { compactAiStreamEvents } from '../dsh/stream-buffer';
 import { deriveProviderStatus, type ProviderStatus } from '../dsh/provider-status';
@@ -601,4 +601,53 @@ export function useModels(): { models: AIModel[] } {
     });
   }, []);
   return { models };
+}
+
+// ---- Tag catalog (DB-backed since v17) ----
+//
+// useTagCatalog is the autocomplete-source hook (active rows only,
+// no usage counts). It re-fetches whenever the 'tags' scope changes
+// via app:tags-changed → emitDataChanged('tags'). TagInput uses this
+// instead of the legacy settings.tags array.
+//
+// useTagList is the management-pane hook (full catalog + usage counts
+// + retired visibility). The management pane typically fetches both
+// `activeOnly=false` (default list) and `activeOnly=true` (active
+// tab) — `useTagList` exposes an opts arg for that.
+
+export function useTagCatalog(): { data: TagCatalogRow[]; loading: boolean; refresh: () => Promise<void> } {
+  const [data, setData] = useState<TagCatalogRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const dataVersion = useDataVersion(['tags']);
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    const res = await window.todoList.tag.activeCatalog();
+    if (res.ok) setData(res.data ?? []);
+    setLoading(false);
+  }, []);
+  useEffect(() => {
+    void refresh();
+  }, [refresh, dataVersion]);
+  return { data, loading, refresh };
+}
+
+export function useTagList(opts?: { activeOnly?: boolean }): {
+  data: TagCatalogEntry[];
+  loading: boolean;
+  refresh: () => Promise<void>;
+} {
+  const [data, setData] = useState<TagCatalogEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+  const dataVersion = useDataVersion(['tags']);
+  const activeOnly = opts?.activeOnly ?? false;
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    const res = await window.todoList.tag.list({ activeOnly });
+    if (res.ok) setData(res.data ?? []);
+    setLoading(false);
+  }, [activeOnly]);
+  useEffect(() => {
+    void refresh();
+  }, [refresh, dataVersion]);
+  return { data, loading, refresh };
 }

@@ -41,6 +41,11 @@ export type AppEvent =
   | 'app:settings-changed'
   | 'app:plan-guide'
   | 'app:startup'
+  // Tag catalog changes (DB-backed since v17). Fired whenever a tag
+  // mutation lands (rename / merge / cleanup / reactivate). The
+  // payload carries the affected todo id list so the renderer can
+  // refresh those rows directly instead of a full re-fetch.
+  | 'app:tags-changed'
   | 'ai:stream'
   | 'ai:permission-request'
   // L4-G: human-in-the-loop bridges for DSH user-questions + user-approval.
@@ -56,7 +61,7 @@ export type AppEvent =
 /** Coarse-grained scope of a data mutation, so the renderer can re-fetch only
  *  the stores that actually changed (e.g. the AI's todo.create tool mutating
  *  the DB in the main process). */
-export type DataScope = 'todos' | 'content' | 'drawings' | 'conversations';
+export type DataScope = 'todos' | 'content' | 'drawings' | 'conversations' | 'tags';
 
 export interface AppEventMap {
   'app:todo-created': { id: string };
@@ -75,6 +80,11 @@ export interface AppEventMap {
    *  renderer calls `app.startup.get()` once before subscribing to make sure
    *  it doesn't miss a transition that already fired. */
   'app:startup': import('./ipc-schema').StartupSnapshot;
+  /** Tag catalog mutation notification. `affectedTodoIds` is the list of
+   *  todo ids whose tag set changed (rename / merge / cleanup may touch
+   *  many tasks; other operations pass an empty list since they don't
+   *  mutate the association table — only the catalog row's retired_at). */
+  'app:tags-changed': { affectedTodoIds?: string[] };
   'ai:stream': AIStreamEvent;
   'ai:permission-request': PermissionRequest;
   'ai:user-question-request': UserQuestionRequest;
@@ -322,6 +332,21 @@ export interface TodoListApi {
     confirmDelete(id: string, title: string): Promise<IpcResponse<'ai.conversation.confirmDelete'>>;
     /** Load decoded history turns from the persistence backend. */
     history(id: string): Promise<IpcResponse<'ai.conversation.history'>>;
+  };
+  // Tag catalog (DB-backed since v17). list() returns the full catalog
+  // (active + retired) with usage counts; activeCatalog() returns just
+  // the active rows for the autocomplete popover. rename / merge /
+  // previewCleanup / applyCleanup / reactivate are the management UI
+  // surface. Every mutation broadcasts `app:tags-changed` with the
+  // affected todo ids so the renderer can refresh in place.
+  tag: {
+    list(opts?: { activeOnly?: boolean }): Promise<IpcResponse<'tag.list'>>;
+    activeCatalog(): Promise<IpcResponse<'tag.activeCatalog'>>;
+    rename(oldName: string, newName: string): Promise<IpcResponse<'tag.rename'>>;
+    merge(sources: string[], target: string, newColor?: string): Promise<IpcResponse<'tag.merge'>>;
+    previewCleanup(): Promise<IpcResponse<'tag.previewCleanup'>>;
+    applyCleanup(actions: import('./ipc-schema').CleanupActions): Promise<IpcResponse<'tag.applyCleanup'>>;
+    reactivate(name: string): Promise<IpcResponse<'tag.reactivate'>>;
   };
   // L4-G: human-in-the-loop answers for DSH user-questions + user-approval
   // waterfalls. The push directions are events (`ai:user-question-request`,

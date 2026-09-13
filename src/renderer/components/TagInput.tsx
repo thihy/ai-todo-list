@@ -1,21 +1,26 @@
 // Tag input — chips + a (+) affordance that opens an autocomplete popover.
-// No resident text field (the user rejected that); the input only appears
-// transiently when adding. Tags are coloured by the registry in Settings
-// (TagDef); chips fall back to a neutral colour for legacy tags not in the
-// registry. Adding a new tag name also registers it (with a palette-rotated
-// default colour) so the palette stays in sync without a settings round-trip.
+// Tag colours come from the DB-backed tag catalog (src/main/db/tag-repo.ts
+// via useTagCatalog() in useTodoListApi.ts). Chips fall back to a neutral
+// colour for legacy tags not in the catalog.
 //
 // Popover layout (when draft is empty):
 //   1. 最近使用 — derived from the cached todo list, sorted by updatedAt DESC.
 //   2. AI 推荐   — fire-and-forget IPC (`ai.suggestTags`) on open; non-blocking,
 //                  cancellable via request id; falls back silently on failure.
-//   3. 全部标签  — the Settings.tags registry, filtered by draft when typed.
+//   3. 全部标签  — the DB catalog (active rows only), filtered by draft when
+//                  typed.
 // When draft is non-empty, only the 全部标签 section is shown + a "新建 …"
 // affordance for new tags — typed text is a filter and the contextual recs
 // would only get in the way.
+//
+// The catalog is the single source of truth since the v17 migration —
+// settings.tags is no longer read here. Adding a brand-new tag inside
+// the popover routes through the unified tag service (via the catalog
+// row created by the TodoRepo onTagsAttached hook) so the management
+// pane shows it immediately without a separate settings round-trip.
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useSettings, useSettingsPatchWithToast, useTodos } from '../hooks/useTodoListApi';
+import { useTagCatalog, useTodos } from '../hooks/useTodoListApi';
 import { IconClose, IconPlus } from './icons';
 
 // A preset palette for tag colours. The user picks from these — no manual
@@ -95,15 +100,14 @@ export const TagInput: React.FC<{
    *  omit) to suppress the AI section entirely (e.g. when no task is loaded). */
   taskContext?: { title: string; body?: string } | null;
 }> = ({ value, onChange, taskContext }) => {
-  const { data } = useSettings();
-  const patch = useSettingsPatchWithToast();
+  const { data: catalog } = useTagCatalog();
   // History recs derive from the cached todo list. The IPC is shared with
   // TodoListPane, so a busy workspace usually has the data already in flight
   // and the first paint of the popover is instant. If the cache is empty
   // (e.g. cold start in a task detail view), the fetch happens once on mount
   // — still local and synchronous-feeling for the user.
   const { data: allTodos } = useTodos({});
-  const registry = data?.tags ?? [];
+  const registry = catalog ?? [];
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState('');
   // AI section state. Kept in component state because we want a stale result
@@ -256,14 +260,15 @@ export const TagInput: React.FC<{
         return;
       }
       onChange([...value, tag]);
-      // Register the tag if it's brand new, so its colour persists and it
-      // appears in Settings + future autocomplete.
-      if (!registry.some((t) => t.name.toLowerCase() === tag.toLowerCase())) {
-        void patch({ tags: [...registry, { name: tag, color: defaultColorFor(tag) }] });
-      }
+      // No settings.patch call: when onChange propagates to the parent,
+      // which calls todo.update({tags: [...]}), TodoRepo fires its
+      // onTagsAttached hook → TagRepo.activateUsedNames → catalog row
+      // created (or retired one revived). The catalog hook re-fetches
+      // on the next app:tags-changed broadcast and the popover's
+      // "全部标签" section shows the new name with the palette colour.
       setDraft('');
     },
-    [value, onChange, applied, registry, patch],
+    [value, onChange, applied],
   );
 
   const remove = (tag: string): void => {

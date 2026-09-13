@@ -238,6 +238,19 @@ export const App: React.FC = () => {
   // main process) to the renderer data bus, which re-fetches affected hooks.
   useAppEvent('app:data-changed', ({ scope }) => emitDataChanged(scope));
 
+  // Tag catalog mutations also need the data bus to notify hooks
+  // reading from tag.activeCatalog / tag.list. The event payload also
+  // carries `affectedTodoIds` — we translate that into a 'todos'
+  // scope bump so any open TodoListPane / detail refetches those rows
+  // (otherwise a rename in the management pane leaves the open list
+  // showing the old name until the next refresh).
+  useAppEvent('app:tags-changed', (payload) => {
+    emitDataChanged('tags');
+    if (payload.affectedTodoIds && payload.affectedTodoIds.length > 0) {
+      emitDataChanged('todos');
+    }
+  });
+
   // 'settings' is a modal: open it when the route matches (deep link / menu).
   useEffect(() => {
     if (route.name === 'settings') setSettingsOpen(true);

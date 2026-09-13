@@ -310,7 +310,10 @@ export interface SettingsSetReq {
   customProviderId?: string | null;
   // Auto-archive: archive done tasks older than N days. 0 = never.
   archiveAfterDays?: number;
-  // Tag registry (name + colour). Replaces the whole list.
+  // Tag registry (name + colour). DEPRECATED: the v17 migration hoists
+  // this directory into the DB (tag_catalog). Settings-store accepts
+  // the field silently for forward-compat callers but no longer reads
+  // or writes it. UI flows through tag.* channels.
   tags?: TagDef[];
   // Daily reminder time for the 「今日待办」 guide / OS notification, format HH:MM.
   dailyPlanReminderTime?: string;
@@ -329,6 +332,11 @@ export interface SettingsGetRes extends AISettings {
   theme: 'system' | 'light' | 'dark';
   dataDir: string;
   archiveAfterDays: number;
+  // Tag registry — DEPRECATED. The v17 migration hoisted the
+  // directory into the DB (tag_catalog). This field is kept on
+  // the response for backward-compat callers (still empty since
+  // the settings store no longer carries it) but the renderer
+  // must read tags via tag.activeCatalog instead.
   tags: TagDef[];
   dailyPlanReminderTime: string;
   lastPlanGuideDate: string | null;
@@ -338,6 +346,74 @@ export interface SettingsGetRes extends AISettings {
 export interface SettingsChooseDataDirRes {
   /** Chosen path, or null if the user cancelled the dialog. */
   path: string | null;
+}
+
+// ----- tag catalog (DB-backed since v17) -----
+//
+// name is the primary key of tag_catalog; retired_at null = active.
+// activeCount counts tasks with deleted_at IS NULL AND archived_at IS
+// NULL that carry the name; historicalCount counts everything else
+// (deleted or archived). The DB layer guarantees COUNT(DISTINCT) so a
+// duplicate tag association can't double-count.
+
+export interface TagCatalogRow {
+  name: string;
+  color: string;
+  /** Epoch ms; null = active. */
+  retiredAt: number | null;
+}
+
+export interface TagCatalogEntry extends TagCatalogRow {
+  /** Number of valid (non-deleted, non-archived) tasks carrying this name. */
+  activeCount: number;
+  /** Number of historical (deleted OR archived) tasks carrying this name. */
+  historicalCount: number;
+}
+
+export interface CleanupPreviewUnused {
+  name: string;
+  /** Historical task count for context — the UI uses this to remind
+   *  the user that retirement only affects the management list, not
+   *  those rows. */
+  historicalCount: number;
+}
+
+export interface CleanupPreviewSimilar {
+  name: string;
+  activeCount: number;
+}
+
+export interface CleanupPreviewSimilarGroup {
+  key: string;
+  /** Suggested merge target (most-used member). The UI must let the
+   *  user override before apply. */
+  target: string;
+  members: CleanupPreviewSimilar[];
+}
+
+export interface CleanupPreview {
+  unused: CleanupPreviewUnused[];
+  similar: CleanupPreviewSimilarGroup[];
+}
+
+export interface CleanupActions {
+  /** Names to mark retired_at (and only those — historical task
+   *  associations stay intact). */
+  retire?: string[];
+  /** Source → target merges to apply. Each entry's sources land on
+   *  valid-task associations of `target`; INSERT OR IGNORE de-dupes
+   *  a task that already has the target tag. */
+  merges?: { sources: string[]; target: string }[];
+}
+
+export interface CleanupSkippedEntry {
+  name: string;
+  reason: string;
+}
+
+export interface CleanupApplyResult {
+  affectedTodoIds: string[];
+  skipped: CleanupSkippedEntry[];
 }
 
 // ----- Channel registry -----
@@ -442,6 +518,41 @@ export interface IpcRegistry {
   'settings.set': IpcChannel<SettingsSetReq, IpcResult<SettingsGetRes>>;
   // Opens a native folder picker; on confirm, persists dataDir and relaunches.
   'settings.chooseDataDir': IpcChannel<undefined, IpcResult<SettingsChooseDataDirRes>>;
+
+  // Tag catalog management. The v17 migration (src/main/db/schema.ts)
+  // hoisted the tag directory into the DB; these channels are the
+  // user-facing surface for rename / merge / cleanup. Counts in `list`
+  // are computed via JOIN against the todos table + COUNT(DISTINCT) so
+  // the renderer doesn't paginate the whole todo list to answer one
+  // management question.
+  'tag.list': IpcChannel<
+    { activeOnly?: boolean },
+    IpcResult<TagCatalogEntry[]>
+  >;
+  'tag.activeCatalog': IpcChannel<
+    undefined,
+    IpcResult<TagCatalogRow[]>
+  >;
+  'tag.rename': IpcChannel<
+    { oldName: string; newName: string },
+    IpcResult<void>
+  >;
+  'tag.merge': IpcChannel<
+    { sources: string[]; target: string; newColor?: string },
+    IpcResult<{ affectedTodoIds: string[] }>
+  >;
+  'tag.previewCleanup': IpcChannel<
+    undefined,
+    IpcResult<CleanupPreview>
+  >;
+  'tag.applyCleanup': IpcChannel<
+    { actions: CleanupActions },
+    IpcResult<CleanupApplyResult>
+  >;
+  'tag.reactivate': IpcChannel<
+    { name: string },
+    IpcResult<void>
+  >;
 
   // Capture window submit. Renderer hands us a title + optional body markdown.
   'capture.submit': IpcChannel<{ title: string; markdown?: string }, IpcResult<{ id: ULID }>>;
