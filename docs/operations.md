@@ -231,3 +231,33 @@ See `startup[ai]` log lines and ADR-004.
   per-process singleton; reload / second window reuse the
   same runtime via the existing `app.renderer.ready`
   handshake.
+- `pnpm dist` (electron-builder) emits three classes of
+  warnings that look like errors but aren't:
+
+  1. **"duplicate dependency references"** — `dsh-base` /
+    `dsh-app-boot` declare cordis plugins both as direct deps
+    and as peer deps. The lockfile stores both copies because
+    each is referenced by a different parent. **Do not
+    deduplicate** — removing the top-level entries will break
+    the `cordis` plugin loader. Electron-builder proceeds; the
+    shipped app is not affected.
+
+  2. **"platform-specific optional dependencies not bundled"** —
+    pnpm 10+ does not install transitive platform binaries
+    for the host's OS family. For Windows distribution we list
+    `@img/sharp-win32-x64`, `@koromix/koffi-win32-x64`, and
+    `@vscode/ripgrep-win32-x64` under `optionalDependencies` in
+    `package.json` so they're guaranteed to be present at
+    dist time. When adding macOS / Linux targets, append the
+    matching `@img/sharp-{darwin,linux,libvips-*}`, `@koromix/
+    koffi-{darwin,linux,freebsd}*`, and `@vscode/ripgrep-{darwin,
+    linux}*` packages with the same versions that the transitive
+    DSH deps pin. The `@deepseek-ai/node-addon-system-*` family
+    is deliberately NOT listed because the Windows variant
+    isn't published (Win ships the prebuilt binary from
+    `dsh-base`).
+
+  3. **"missing optional dependencies"** — entries like
+    `@img/sharp-freebsd-wasm32` or `fsevents` that the DSH
+    dependency graph declares but which have no Windows build.
+    These never affect Windows distribution; ignore.
