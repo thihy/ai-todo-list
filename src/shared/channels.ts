@@ -1,8 +1,31 @@
-// IPC channel validator. Rejects channels not declared in IpcRegistry.
+// IPC channel allowlist. ARCH-IPC-01: this used to be a hand-maintained
+// `Set<string>` that drifted from the type-level `IpcRegistry` in
+// `ipc-schema.ts` (UX-01 / SEC-01 / OBS-01 added channels to the
+// registry without mirroring them here, which silently broke boot via
+// `register: unknown_channel` at startup). The fix is to derive the
+// allowlist from the same source the type system already trusts:
+//
+//   1. The `IpcRegistry` interface in `ipc-schema.ts` lists every
+//      channel as a key — that's the contract.
+//   2. We can't read interface keys at runtime, but the same file
+//      also exports `IpcChannelName = keyof IpcRegistry`.
+//   3. We need a runtime mirror that ASSERTS the type's truth. The
+//      trick: take the type's keys as a const-asserted tuple, then
+//      build the Set from that.
+//
+// Concretely: when a new channel is added, the developer MUST add it
+// to BOTH places (the registry interface AND this tuple). The
+// `IpcRegistryKeysExhaustive` type below errors at compile time when
+// a key is added to the registry but missing from the tuple — closing
+// the drift loop without any codegen.
 
 import type { IpcChannelName, IpcRegistry, IpcRequest, IpcResponse } from './ipc-schema';
 
-const DECLARED_CHANNELS: ReadonlySet<string> = new Set([
+/** Hand-curated mirror of `keyof IpcRegistry`. When you add a channel
+ *  to `IpcRegistry` in `ipc-schema.ts`, add the same key here — the
+ *  `IpcRegistryKeysExhaustive` type assertion at the bottom of this
+ *  file errors at compile time if you forget. */
+const RUNTIME_CHANNEL_KEYS = [
   'todo.list',
   'todo.get',
   'todo.create',
@@ -60,20 +83,11 @@ const DECLARED_CHANNELS: ReadonlySet<string> = new Set([
   'ai.conversation.history',
   'permission.prompt',
   'permission.respond',
-  // L4-G: human-in-the-loop bridges for DSH user-questions + user-approval
-  // waterfalls (see cordis.yml: id:user-questions + id:user-approval).
-  // The renderer POSTS the user's structured answer here; the answerer
-  // listener installed in bootDsh() resolves the pending waterfall
-  // promise on receipt. Two channels (not one) so the type system keeps
-  // question answers and approval answers distinct.
   'ai.userQuestion.answer',
   'ai.userApproval.answer',
   'settings.get',
   'settings.set',
   'settings.chooseDataDir',
-  // Tag catalog (DB-backed). list / activeCatalog / rename / merge /
-  // previewCleanup / applyCleanup / reactivate. The renderer uses
-  // these instead of the deprecated settings.tags field.
   'tag.list',
   'tag.activeCatalog',
   'tag.rename',
@@ -87,22 +101,50 @@ const DECLARED_CHANNELS: ReadonlySet<string> = new Set([
   'app.pickFile',
   'app.action',
   'app.osUser',
-  // Renderer→main "what's the user looking at right now" pointer, so the AI
-  // can ground its answers via app.currentContext.
   'app.focus.set',
   'app.focus.get',
-  // Open the task's documents directory in the OS file manager.
   'app.openTaskDir',
-  // Dim/restore the frameless titleBarOverlay so native chrome matches the
-  // renderer's modal dim state. Channel is type-checked in ipc-schema.ts
-  // IpcRegistry; this Set is the runtime allowlist consulted by router.ts.
   'app.setTitleBarOverlay',
-  // Snapshot of main-process startup state (core + ai phases). Renderer
-  // queries this once on boot, then subscribes to `app:startup` events for
-  // subsequent changes. First-read-then-subscribe avoids the race where a
-  // ready event fires between page-load and listener registration.
   'app.startup.get',
-]);
+  // UX-01 — AI retry. { component: 'ai' } → { accepted, reason? }.
+  'app.startup.retry',
+  // SEC-01 — bridge toggle + token rotation.
+  'app.sdkBridge.setEnabled',
+  'app.sdkBridge.rotateToken',
+  // OBS-01 — diagnostics export + save-to-file.
+  'app.diagnostics.export',
+  'app.diagnostics.saveToFile',
+] as const satisfies readonly IpcChannelName[];
+
+/** The compile-time guard. If the developer adds a key to
+ *  `IpcRegistry` in `ipc-schema.ts` but forgets to add it to
+ *  `RUNTIME_CHANNEL_KEYS`, this type assertion fails:
+ *
+ *    Type 'IpcChannelName' does not satisfy
+ *    'RUNTIME_CHANNEL_KEYS[number] | typeof __exhaustiveGuard'
+ *
+ *  The error tells you which key is missing (the diff is in the
+ *  TypeScript error message). The assertion lives at module load,
+ *  not in test code, so the failure mode is "tsx fails to compile"
+ *  rather than "test fails in CI". */
+type _ExhaustiveCheck =
+  // Force the union of registry keys to be a subset of the runtime
+  // keys (i.e. no key missing from runtime).
+  IpcChannelName extends typeof RUNTIME_CHANNEL_KEYS[number]
+    ? typeof RUNTIME_CHANNEL_KEYS[number] extends IpcChannelName
+      ? true
+      // A runtime key is missing from the registry — that's fine,
+      // it just means someone added a row here and forgot to
+      // remove it. CI guard stays silent.
+      : true
+    // A registry key is missing from runtime — that's the bug we
+    // want to catch.
+    : { __missingRuntimeKey: Exclude<IpcChannelName, typeof RUNTIME_CHANNEL_KEYS[number]> };
+const _exhaustiveGuard: _ExhaustiveCheck = true;
+// Reference the guard so it isn't elided by the minifier / tree-shaker.
+void _exhaustiveGuard;
+
+const DECLARED_CHANNELS: ReadonlySet<string> = new Set(RUNTIME_CHANNEL_KEYS);
 
 export function isKnownChannel(name: string): name is IpcChannelName {
   return DECLARED_CHANNELS.has(name);
