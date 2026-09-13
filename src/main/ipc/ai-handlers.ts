@@ -493,6 +493,8 @@ export function registerAiHandlers(dsh: DshHandle): void {
     const seen = new Set<string>();
     for (const item of raw) {
       if (typeof item !== 'string') continue;
+      // 中文标签 toLowerCase 是 no-op;历史英文标签仍然被规范成小写比较,
+      // 同一个中/英 tag 在大小写无关维度上重复返回会被 seen 去重。
       const norm = item.trim().replace(/^#/, '').toLowerCase();
       if (!norm) continue;
       if (seen.has(norm)) continue;
@@ -627,17 +629,17 @@ export function registerAiHandlers(dsh: DshHandle): void {
     }
 
     const systemMsg =
-      'You are a tag-suggester for a personal todo list. ' +
-      'Return ONLY a JSON array of lowercase, single-word or hyphenated tag names. ' +
-      'No markdown, no prose, no explanation.';
+      '你是一个中文个人 todo 列表的标签推荐助手。' +
+      '只返回一个 JSON 数组,内容是简短的中文标签(2~6 个汉字或常见短词,如"工作"/"家庭"/"紧急")。' +
+      '不要使用英文单词、不要 markdown、不要解释、不要标点。';
     const bodyChunk =
       typeof req?.body === 'string' && req.body.trim().length > 0
-        ? `\nBody: ${req.body.trim().slice(0, 1200)}`
+        ? `\n正文: ${req.body.trim().slice(0, 1200)}`
         : '';
     const userMsg =
-      `Title: ${title}${bodyChunk}\n\n` +
-      `Suggest up to ${limit} tags. Avoid: ${Array.from(existing).join(', ') || '(none)'}. ` +
-      `Return ONLY the JSON array, e.g. ["work","urgent"].`;
+      `标题: ${title}${bodyChunk}\n\n` +
+      `最多推荐 ${limit} 个标签。已存在的标签(避开): ${Array.from(existing).join(', ') || '(无)'}。` +
+      `只返回 JSON 数组,例如 ["工作","紧急"]。`;
 
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), SUGGEST_TIMEOUT_MS);
