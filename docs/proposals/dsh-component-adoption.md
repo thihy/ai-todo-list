@@ -1,6 +1,17 @@
 # DSH component adoption
 
-Verified against installed 0.1.5-rc.2 packages.
+> **状态：部分实施 / 进行中。** 本文件记录「按组件逐步替换为 DSH UI 原始组件」的实施增量。
+>
+> 验收状态以来源为准；不要把这里的描述当作已完成的功能清单。当前事实以 [`docs/architecture.md`](../architecture.md) §6、ADR-003，以及 PR 提交链为准。
+>
+> 已落地（按本文件叙述）：
+> - `AIComposer` / `PendingQuestionCard` / `PendingApprovalCard` 等适配器已就位，UI 由宿主持有。
+> - `AssistantMarkdown` 与 ToolRow 已接入，呈现元数据贯通实时流与历史回放。
+>
+> 仍待落地（在本文件中以「next increments」形式描述）：
+> - 把 DSH session / input / slot 服务接进 Electron host。
+> - 注册 official conversation UI slots 并端到端验证 InputBar。
+> - 适配剩余工具槽位。
 
 ## Integration findings
 

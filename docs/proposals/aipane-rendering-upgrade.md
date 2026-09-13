@@ -1,7 +1,13 @@
 # AIPane 渲染升级方案 — 对齐 DSH 协议层
 
-> 此文档是历史方案，其中“DSH 没有 React UI”和“项目未使用 DSH 工具注册表”的判断已经过时。
-> 当前组件接入边界与实施顺序以 [dsh-component-adoption.md](./dsh-component-adoption.md) 为准。
+> **状态：历史方案。** 此文档保留作设计参考，**不再描述当前实现**。
+>
+> 当前事实以 [`docs/architecture.md`](../architecture.md) §6 与 ADR-003 为准。
+>
+> 本文件中的几项判断已经过时：
+> - 「DSH 没有 React UI」 —— `dsh-client-ui-primitives` 现已公开 Button / DisclosureRow / MarkdownText / RiskConfirmation 等 Cordis-free 的 React 组件（见 [`dsh-component-adoption.md`](./dsh-component-adoption.md)）。
+> - 「项目未使用 DSH 工具注册表」 —— 当前实现把工具注册在 `src/main/dsh/dsh-runtime.ts` 的 `bootDsh()` 中，并暴露 `window.todoList.ai.*` IPC；DSH packages 已落地、非 shim。
+> - 「`StreamChunk` 需要重写」 —— 当前流协议来自 `@deepseek-ai/dsh-llm/assembler`，类型与 `aipane-rendering-upgrade.md` 第 22 行写的草图不一致；把这份文档当实现契约会误导读者。
 
 ## Context
 

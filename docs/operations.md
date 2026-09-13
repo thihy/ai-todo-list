@@ -1,78 +1,136 @@
 # Operations
 
-How thihy-todolist behaves on real hardware, how to recover from problems,
-and where to look when things go wrong.
+How **AI待办** behaves on real hardware, how to recover from
+problems, and where to look when things go wrong. This document
+covers *runtime* concerns only; the structural picture is in
+[`docs/architecture.md`](./architecture.md).
 
 ## Logging
 
 Logs go to:
-- stdout in dev
-- `${userData}/thihy.log` always (rotated implicitly by truncation; no built-in rotation)
 
-Set the threshold via the logger API (or by patching `src/main/logger.ts`):
+- stdout in dev (terminal that launched the app),
+- `${userData}/todo-list.log` always (no built-in rotation;
+  the file is appended to via `appendFileSync` from
+  `src/main/logger.ts`).
+
+The threshold defaults to `info`. To debug:
 
 ```ts
 import { logger } from './logger';
 logger.setThreshold('debug');
 ```
 
+Phase timings written by `src/main/startup-state.ts` show up as
+`startup[core]: <label> @ <Nms>` / `startup[ai]: <label> @ <Nms>` lines
+on boot, and are the first place to look when a cold start feels
+slow.
+
 ## Storage locations
 
-| Platform | Path                                                                   |
-| -------- | ---------------------------------------------------------------------- |
-| Windows  | `%APPDATA%/thihy-todolist/` and `%APPDATA%/../thihy-todolist/thihy.log` |
-| macOS    | `~/Library/Application Support/thihy-todolist/`                         |
-| Linux    | `~/.config/thihy-todolist/`                                            |
+Electron resolves `app.getPath('userData')` against the
+`APP_USER_MODEL_ID` declared in `src/shared/constants.ts`
+(`com.todolist.app`). On a typical machine:
 
-Inside the app root:
+| Platform | `userData` (= config + log) | Default `dataDir` (= DB + files) |
+| -------- | ---------------------------- | -------------------------------- |
+| Windows  | `%APPDATA%/todo-list`        | `%APPDATA%/../.todo-list`        |
+| macOS    | `~/Library/Application Support/todo-list` | `~/.todo-list`         |
+| Linux    | `~/.config/todo-list`        | `~/.todo-list`                    |
+
+The data directory can be moved via
+`settings.chooseDataDir` in the Settings panel; the config path
+in `userData` stays stable so it survives a data-dir relocation.
+
+Inside the data directory:
 
 ```
-thihy-todolist/
-├── todos.db                  SQLite + WAL files
-├── todos.db-wal              WAL
-├── todos.db-shm              shared memory index
-├── todos/<id>.md             one Markdown body per TODO
-├── drawings/<id>.json        one Excalidraw scene per drawing
-├── attachments/<id>-…        clipboard + drag-dropped files
-└── config.json               SettingsStore output (apiKey lives here)
+.todo-list/
+├── db.sqlite                  SQLite database (WAL + shm files alongside)
+├── db.sqlite-wal              write-ahead log
+├── db.sqlite-shm              shared memory index
+├── config.json                NOT HERE — config lives in userData. (Legacy
+│                              mention below.)
+├── todos/
+│   └── {storage_dir}/
+│       ├── todo.json
+│       ├── progress.html
+│       ├── {noteSlug}.md
+│       ├── {drawingSlug}.excalidraw
+│       ├── thumbs/{drawingId}.thumb.png
+│       └── attachments/{attachmentId}-{filename}
+├── drawings/                  (per-drawing files mirrored for older
+│                              tasks; new tasks use the per-task
+│                              `drawings/` subdir)
+├── inbox-attachments/         pending clipboard / drag-drop stash
+└── dsh-sessions/              AI conversation JSONL history
 ```
+
+Inside the user directory:
+
+```
+todo-list/                    ← userData, app-id-stamped
+├── config.json                SettingsStore output (apiKey lives here)
+└── todo-list.log              logger output
+```
+
+> **Why both `userData/config.json` and `dataDir/`.** Settings
+> (provider, API key, hotkey, theme, custom providers) live in
+> `userData` so the data directory can be relocated without losing
+> credentials. The DB and the per-task files live in the data
+> directory so they can be backed up as one unit. The previous
+> architecture doc claimed `config.json` sat inside the data
+> directory — that has not been true since the v15 layout split.
 
 ## Backups
 
-`todos.db` is the source of truth; the `todos/*.md` and `drawings/*.json`
-files are derived. To back up: stop the app, copy the entire directory.
-Restore: copy back, restart.
+The DB is the source of truth; the per-task files are derived
+projections (see ADR-001). To back up: stop the app, copy the
+entire data directory. Restore: copy back, restart. A running
+copy of the app will pick up the moved data directory on the
+next launch (the path is read from `config.json` at boot).
+
+The config file in `userData` is the only piece that lives
+elsewhere; back it up separately if you also want to preserve
+provider credentials and capture hotkey.
 
 ## Auto-update
 
-`electron-updater` checks GitHub Releases on launch. New version → renderer
-gets an `app:update-available` event. User can trigger download from the
-settings pane; on completion they get `app:update-downloaded` and can
-"Restart to install".
+`electron-updater` checks GitHub Releases on launch. A new
+version emits `app:update-available` to the renderer; the user
+can trigger the download from the settings pane; on completion
+the renderer gets `app:update-downloaded` and can "Restart to
+install".
 
-If a release breaks on first boot, downgrade:
-
-```bash
-pnpm dist:dir          # build unpacked
-# ... copy old build over new build in the user's install dir
-```
+If a release breaks on first boot, downgrade by replacing the
+installed `out/` directory with a known-good build and relaunching.
+The data directory survives the swap.
 
 ## Performance
 
-The hot path is the TODO list view. It pulls from FTS5 + the `todos` table;
-the query is index-friendly on `(status, due_at)` and the tag filter is a
-JOIN on the `todo_tags` table.
+The hot path is the task list view. It pulls from the FTS5 +
+`todos` tables; the WHERE clauses are index-friendly on
+`(status, due_at)` and the tag filter is a JOIN on the
+`todo_tags` association table. `TodoRepo.list` excludes deleted
+tasks unconditionally and excludes archived tasks unless the
+filter opts in.
 
-For very large libraries (>50k TODOs) the list pane switches to virtualised
-rows via `react-window`. We lazy-load the dependency on first paint of the
-list pane with >1000 items.
+For very large libraries (currently no `react-window` switch —
+the list renders all rows) the cold path is dominated by DSH boot.
+See `startup[ai]` log lines and ADR-004.
 
 ## Known limitations
 
-- The capture window doesn't HMR; restart it manually.
-- DSH real boot is best-effort; if `@deepseek-ai/dsh-base` peer isn't
-  satisfied we drop to the shim and DSH plugin composition is disabled.
-- The JSON-RPC bridge uses a Unix socket which means it only works on the
-  same machine; remote access requires port-forwarding the pipe, which
-  Windows does not support. Use the IPC surface from a renderer if you need
-  remote access.
+- The capture window does not HMR. Restart it manually when
+  iterating on `src/renderer/capture.tsx`.
+- The JSON-RPC bridge uses a Unix socket which means it only works
+  on the same machine. Remote access requires exposing the socket
+  via the user's own forwarding; Windows named pipes cannot be
+  shared cross-machine. Use the IPC surface from another
+  renderer if you need cross-window control.
+- DSH boot is best-effort: a failed boot surfaces as
+  `ai.ask → dsh_unavailable` and is visible in the AI pane as a
+  non-blocking banner. The rest of the app stays usable.
+- The renderer preload runs with `sandbox: false`. This is
+  documented in `createMainWindow()` and is required by the inline
+  splash script in `index.html`.
