@@ -54,6 +54,10 @@ class StartupState {
   private ai: ComponentState = this.fresh('boot');
   private readonly listeners = new Set<Listener>();
   private readonly processStart = Date.now();
+  /** Single-flight guard for `app.startup.retry { component: 'ai' }`. Reset
+   *  by `finishAiRetry()` once the boot completes. Stays module-scoped
+   *  because the IPC handler closes over the same `startupState` singleton. */
+  private aiRetryInFlight = false;
 
   private fresh(phase: StartupPhase): ComponentState {
     return {
@@ -125,6 +129,41 @@ class StartupState {
     };
     logger.warn(`startup: ai failed: ${this.ai.errorMessage}`);
     this.emit('ai');
+  }
+
+  /** In-session AI retry entry point. Returns `true` if a retry was
+   *  scheduled, `false` if one is already in flight or the AI component is
+   *  not in a state that allows a retry.
+   *
+   *  The actual boot is performed by the caller (src/main/index.ts), which
+   *  knows how to wire the runtime deps. This method only owns the
+   *  single-flight guard + the loading transition. On completion the
+   *  caller must invoke `markAiReady()` or `markAiFailed(reason)`, both
+   *  of which emit `app:startup` to the renderer. */
+  tryStartAiRetry(): boolean {
+    if (this.aiRetryInFlight) return false;
+    // Only allow retry from 'failed' (the documented entry state). 'loading'
+    // means a boot is already pending; 'ready' means nothing to retry;
+    // 'pending' means the boot hasn't happened yet (no-op).
+    if (this.ai.status !== 'failed') return false;
+    this.aiRetryInFlight = true;
+    const now = Date.now();
+    this.ai = {
+      status: 'loading',
+      phase: 'ai-loading',
+      startedAt: this.ai.startedAt,
+      statusAt: now,
+      errorMessage: undefined,
+    };
+    logger.info(`startup: ai retry requested @ ${now - this.processStart}ms`);
+    this.emit('ai');
+    return true;
+  }
+
+  /** Called by the boot callback (success path) after `tryStartAiRetry`
+   *  returned true. Clears the single-flight guard. */
+  finishAiRetry(): void {
+    this.aiRetryInFlight = false;
   }
 
   snapshot(): StartupSnapshot {

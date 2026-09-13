@@ -265,6 +265,12 @@ export interface TodoListApi {
      *  this once before subscribing to `app:startup` so it doesn't miss a
      *  ready transition that fired between page-load and listener-ready. */
     startupGet(): Promise<IpcResponse<'app.startup.get'>>;
+    /** UX-01 in-session retry. Returns `{ accepted, reason? }` — when
+     *  `accepted: false`, the caller should NOT change its UI state
+     *  because main rejected the retry (component already in a non-failed
+     *  state, or another retry is in flight). State transitions still
+     *  arrive via `app:startup` events. */
+    startupRetry(component: 'ai'): Promise<IpcResponse<'app.startup.retry'>>;
   };
   capture: {
     submit(args: CaptureSubmitArgs): Promise<IpcResponse<'capture.submit'>>;

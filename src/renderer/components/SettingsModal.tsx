@@ -3,8 +3,8 @@
 // Categories: 通用 / 模型 / 数据 / 快捷键 / 关于. 模型 includes provider + model
 // + API key + streaming.
 
-import React, { useEffect, useState } from 'react';
-import { useSettings, useSettingsPatchWithToast } from '../hooks/useTodoListApi';
+import React, { useCallback, useEffect, useState } from 'react';
+import { useSettings, useSettingsPatchWithToast, useStartupAiState } from '../hooks/useTodoListApi';
 import { useDimTitleBar } from '../hooks/useDimTitleBar';
 import { useToastBus } from './Toast';
 import type { SettingsGetRes } from '../../shared/ipc-schema';
@@ -158,6 +158,14 @@ const ModelPane: React.FC<PaneProps> = ({ data, patch }) => {
   // retry — Key contents are not echoed in the toast (we never log them).
   const [keyError, setKeyError] = useState<string | null>(null);
 
+  // UX-01 — when the AI component is in 'failed' state, a successful
+  // settings save should automatically schedule a retry so the user
+  // doesn't have to bounce back to the AI pane to click "重试". This
+  // hook is local to ModelPane because model-related fields are the
+  // ones that unblock a previously-failed DSH boot (provider / apiKey /
+  // model / custom providers).
+  const { state: aiStartup, retry: retryAi } = useStartupAiState();
+
   useEffect(() => {
     setApiKey('');
     setKeyError(null);
@@ -166,6 +174,14 @@ const ModelPane: React.FC<PaneProps> = ({ data, patch }) => {
   const isCustom = data.provider === 'custom';
   const models = PROVIDER_MODELS[data.provider] ?? [];
   const noKeyNeeded = data.provider === 'ollama' || data.provider === 'shim';
+
+  // After any AI-relevant save that completes while ai is 'failed', ask
+  // main to retry the boot. No-op otherwise — main will reject if the
+  // component isn't in 'failed' state.
+  const maybeAutoRetryAi = useCallback((): void => {
+    if (aiStartup.status !== 'failed') return;
+    void retryAi();
+  }, [aiStartup.status, retryAi]);
 
   // Switching provider often invalidates the selected model (different
   // provider's model list doesn't contain the previous one). Merge into one
@@ -179,6 +195,7 @@ const ModelPane: React.FC<PaneProps> = ({ data, patch }) => {
         : { provider: p };
     try {
       await patch(nextPatch);
+      maybeAutoRetryAi();
     } catch (err) {
       // Bubble as a toast so the user knows the switch didn't stick. Keep
       // the draft select value as-is — on next render `data.provider` is
@@ -196,6 +213,7 @@ const ModelPane: React.FC<PaneProps> = ({ data, patch }) => {
       await patch({ apiKey });
       // 成功 —— 清空本地草稿;若稍后失败,草稿仍在 input 里。
       setApiKey('');
+      maybeAutoRetryAi();
     } catch (err) {
       // 失败 —— 草稿保留;把原因显示给用户。绝不把密钥本身写进消息。
       const reason = err instanceof Error && err.message ? err.message : '未知错误';
@@ -219,6 +237,7 @@ const ModelPane: React.FC<PaneProps> = ({ data, patch }) => {
   const onModelChange = async (next: string): Promise<void> => {
     try {
       await patch({ model: next as typeof data.model });
+      maybeAutoRetryAi();
     } catch (err) {
       const reason = err instanceof Error && err.message ? err.message : '未知错误';
       toast.push({ kind: 'error', message: `切换模型失败：${reason}`, ttl: 3000 });
@@ -327,6 +346,16 @@ const CustomProvidersEditor: React.FC<PaneProps> = ({ data, patch }) => {
   const custom = data.customProviders;
   const activeId = data.customProviderId ?? custom[0]?.id ?? null;
 
+  // UX-01 — same auto-retry logic as ModelPane: any successful save here
+  // that touches provider / apiKey / baseUrl / model will re-trigger DSH
+  // boot if the previous attempt failed. We gate on `ai.status === 'failed'`
+  // to avoid pointless IPC round-trips on every save when ai is healthy.
+  const { state: aiStartup, retry: retryAi } = useStartupAiState();
+  const maybeAutoRetryAi = useCallback((): void => {
+    if (aiStartup.status !== 'failed') return;
+    void retryAi();
+  }, [aiStartup.status, retryAi]);
+
   // editingId = the instance whose fields are shown below. Defaults to active.
   const [editingId, setEditingId] = useState<string | null>(activeId);
   const [name, setName] = useState('');
@@ -398,7 +427,10 @@ const CustomProvidersEditor: React.FC<PaneProps> = ({ data, patch }) => {
     const ok = await runSave(
       () => patch({ customProviders: [...toInputs(custom), newInstance], customProviderId: id }),
     );
-    if (ok) setEditingId(id);
+    if (ok) {
+      setEditingId(id);
+      maybeAutoRetryAi();
+    }
   };
 
   const onSave = async (): Promise<void> => {
@@ -411,7 +443,10 @@ const CustomProvidersEditor: React.FC<PaneProps> = ({ data, patch }) => {
     const ok = await runSave(
       () => patch({ customProviders: next, customProviderId: editingId }),
     );
-    if (ok) setApiKey('');
+    if (ok) {
+      setApiKey('');
+      maybeAutoRetryAi();
+    }
   };
 
   const onDelete = async (): Promise<void> => {
@@ -426,7 +461,8 @@ const CustomProvidersEditor: React.FC<PaneProps> = ({ data, patch }) => {
 
   const onSelectInstance = async (id: string): Promise<void> => {
     setEditingId(id);
-    await runSave(() => patch({ customProviderId: id }));
+    const ok = await runSave(() => patch({ customProviderId: id }));
+    if (ok) maybeAutoRetryAi();
   };
 
   const dirty =

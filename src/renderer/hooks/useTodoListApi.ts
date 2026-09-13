@@ -12,7 +12,7 @@ import type { ContentVersionEntry, GitHistoryEntry, ProgressLogEntry } from '../
 import type { TaskDocument } from '../../shared/todo-types';
 import type { DrawingMeta, DrawingScene, InboxAttachment } from '../../shared/todo-types';
 import type { AIModel, AIStreamEvent } from '../../shared/ai-types';
-import type { SettingsGetRes, TagCatalogRow, TagCatalogEntry } from '../../shared/ipc-schema';
+import type { SettingsGetRes, TagCatalogRow, TagCatalogEntry, StartupComponentState } from '../../shared/ipc-schema';
 import { useDataVersion } from '../data-bus';
 import { compactAiStreamEvents } from '../dsh/stream-buffer';
 import { deriveProviderStatus, type ProviderStatus } from '../dsh/provider-status';
@@ -650,4 +650,73 @@ export function useTagList(opts?: { activeOnly?: boolean }): {
     void refresh();
   }, [refresh, dataVersion]);
   return { data, loading, refresh };
+}
+
+/** UX-01 — Subscribe to the AI component of the startup state machine.
+ *
+ *  Returns the latest `StartupComponentState` for `ai` and a stable
+ *  `retry()` callback. The state is initialised from a one-shot snapshot
+ *  (must happen BEFORE we subscribe to `app:startup`, otherwise a fast
+ *  ready/failed transition could be lost), and then kept fresh by the
+ *  push event. This mirrors the same pattern main.tsx uses for the splash.
+ *
+ *  `retry()` is safe to call any time. Main enforces single-flight; if the
+ *  retry isn't accepted (component already loading / not failed), the
+ *  returned `accepted` will be false and the hook does not mutate state.
+ *  UI callers should disable retry buttons while `state.status === 'loading'`
+ *  to avoid spamming. */
+export interface UseStartupAiState {
+  state: StartupComponentState;
+  retry: () => Promise<{ accepted: boolean; reason?: 'not_failed' | 'already_in_flight' }>;
+}
+
+export function useStartupAiState(): UseStartupAiState {
+  const [state, setState] = useState<StartupComponentState>({
+    status: 'pending',
+    phase: 'boot',
+    startedAt: 0,
+    statusAt: 0,
+  });
+
+  // Snapshot first. See src/renderer/main.tsx for the same "snapshot then
+  // subscribe" pattern that prevents missing transitions that fire between
+  // page-load and listener-ready.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const res = await window.todoList.app.startupGet();
+      if (cancelled) return;
+      if (res.ok) setState(res.data.ai);
+    })();
+    return (): void => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Push subscription. The ref keeps the latest state for callers without
+  // making `retry` re-create on every status flip.
+  const stateRef = useRef(state);
+  stateRef.current = state;
+
+  useAppEvent('app:startup', (snap) => {
+    setState(snap.ai);
+  });
+
+  const retry = useCallback(async (): Promise<{ accepted: boolean; reason?: 'not_failed' | 'already_in_flight' }> => {
+    const res = await window.todoList.app.startupRetry('ai');
+    if (!res.ok) {
+      // Transport-level error (router rejected the channel, etc.). Surface
+      // as a non-accepted retry so the UI doesn't pretend it succeeded.
+      return { accepted: false, reason: 'already_in_flight' };
+    }
+    // The main handler either sets ai.status='loading' on accept, or
+    // returns the rejection reason. We don't need to optimistically
+    // mutate state here — the `app:startup` event will follow shortly.
+    return {
+      accepted: res.data?.accepted ?? false,
+      reason: res.data?.reason,
+    };
+  }, []);
+
+  return { state, retry };
 }

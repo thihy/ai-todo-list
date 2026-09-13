@@ -60,8 +60,15 @@ modes.
 - This decision is about *startup*. Steady-state AI failures
   (e.g. a provider 4xx mid-conversation) are reported through the
   regular `ai:stream` events, not through `app:startup`.
-- An in-session retry of a failed AI boot is out of scope. The
-  current rule is "launch again to retry AI".
+- In-session retry of a failed AI boot is implemented as UX-01:
+  the renderer subscribes to `app:startup` and offers a "重试"
+  banner when `ai.status === 'failed'`. Main exposes
+  `app.startup.retry { component: 'ai' }`, which enforces
+  single-flight (a module-scope guard in `StartupState`) and
+  re-runs the same DSH boot path the first-time path uses. Core
+  is intentionally not retried in-session — a failed `core`
+  means the renderer can't even mount; restart is the only
+  recovery.
 - Future phases (worker-thread isolation, native tool offload)
   must preserve the two-component split: they may move work
   earlier or later, but they must not collapse the components.

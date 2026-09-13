@@ -614,6 +614,14 @@ export interface IpcRegistry {
   // missing the transition that fires between page-load and listener-ready.
   // See src/main/startup-state.ts for the source of truth.
   'app.startup.get': IpcChannel<undefined, IpcResult<StartupSnapshot>>;
+  /** UX-01 AI retry. Returns `{ accepted: boolean, reason?: 'not_failed' | 'already_in_flight' }`.
+   *  Main guarantees single-flight: concurrent retries return `accepted: false`
+   *  with `reason: 'already_in_flight'`. State transitions are pushed via
+   *  `app:startup`; callers should subscribe and stop polling on receipt. */
+  'app.startup.retry': IpcChannel<
+    { component: 'ai' },
+    IpcResult<{ accepted: boolean; reason?: 'not_failed' | 'already_in_flight' }>
+  >;
 }
 
 export interface StartupSnapshot {

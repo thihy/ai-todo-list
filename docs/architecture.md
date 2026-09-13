@@ -423,6 +423,55 @@ app currently creates; it shares the same preload script and the same
   optimizer (worker-thread split, native tool offload) is not
   done.
 
+**In-session AI retry (UX-01).**
+
+After a failed DSH boot the renderer can ask main to retry
+without quitting the app. The path is:
+
+1. `AIPane.tsx` subscribes to `app:startup` via
+   `useStartupAiState()` (renderer hook in
+   `src/renderer/hooks/useTodoListApi.ts`). When
+   `ai.status === 'failed'` it renders a banner with a
+   "重试" button.
+2. The button calls `window.todoList.app.startupRetry('ai')`,
+   which lands on `app.startup.retry { component: 'ai' }` in
+   `src/main/ipc/startup-handler.ts`. The handler enforces
+   single-flight: concurrent retries return
+   `{ accepted: false, reason: 'already_in_flight' }` (or
+   `'not_failed'` if the AI component is already ready / loading).
+3. On accepted retry, main calls
+   `startupState.tryStartAiRetry()`, which owns the loading
+   transition + a single-flight guard
+   (`StartupState.aiRetryInFlight`). The closure supplied by
+   `src/main/index.ts` (`bootAiAndDispatch('retry')`) then
+   re-runs the same DSH boot the first-time path runs.
+4. Before re-booting, `resetDshRuntimeForRetry()` (exported
+   from `src/main/dsh/dsh-runtime.ts`) disposes any cached
+   `DshRuntime` and nulls the `runtimePromise` so the next
+   `getDshRuntime()` triggers a fresh boot.
+5. Boot outcome flows through `markAiReady()` /
+   `markAiFailed(reason)` (unchanged) and is pushed to the
+   renderer as `app:startup`. `finishAiRetry()` clears the
+   single-flight guard.
+6. The renderer hook observes the push event and re-renders
+   without polling. AI pane is fully usable again once the
+   status reaches `ready`.
+
+`SettingsModal.tsx` also wires auto-retry: when the AI
+component is currently `failed` and the user saves a model /
+provider / API key / custom provider change, the renderer calls
+`app.startupRetry('ai')` immediately so a corrected
+configuration flips the AI pane back online without the user
+having to bounce to the AI pane.
+
+This feature closes the UX gap that previously forced a full
+quit-and-relaunch to recover from `ai.status === 'failed'`. It
+does **not** introduce a new IPC surface for arbitrary config
+changes, does **not** add a second AI boot path, and does
+**not** change the core / ai startup independence — `core`
+remains untouched and task management stays usable throughout
+the retry.
+
 **Target state.**
 
 - ARCH-03 / F / G in the roadmap — tighter AI / DSH boundary,

@@ -253,12 +253,26 @@ function bootstrap(): void {
     const inbox = new InboxStore(handle.db, attachmentsDir, todosDir, resolveTaskDir);
     mark('file-stores-constructed');
 
+    // UX-01 — the IPC handler receives an object so it can dereference
+    // `retryAi` on every call. We pre-bind the object with a placeholder
+    // closure, then mutate the field after `bootAiAndDispatch` is defined.
+    // This is necessary because the IPC handler is registered before the
+    // AI boot body is constructed (the handler must exist by the time the
+    // renderer mounts), and we want it to see the real closure without
+    // having to re-register.
+    const retryHooks: { retryAi: () => boolean } = {
+      retryAi: () => false,
+    };
+    let bootAiAndDispatch: (reason: 'boot' | 'retry') => void = () => {
+      /* replaced below once AI boot body is defined */
+    };
+
     // Phase: business IPC. Must register before the renderer is told core
     // is ready (otherwise the first todo.list would hit no_handler and the
     // splash would stay up).
     startupState.setCorePhase('ipc');
     installRouter();
-    registerStartupHandler();
+    registerStartupHandler(retryHooks);
     registerTodoHandlers(repo, md, handle.db, todosDir, resolveTaskDir, taskDirectories);
     registerContentHandlers(md, drawings, repo);
     registerDocumentHandlers(docs, resolveTaskDir);
@@ -322,22 +336,68 @@ function bootstrap(): void {
     // Phase: AI runtime. All of this is post-core-ready so it never blocks
     // the splash. The AI pane shows "AI 正在准备" until ai.status becomes
     // 'ready'; failure is logged + recorded in startup-state, never thrown.
-    startupState.setAiPhase('ai-loading');
-    void (async () => {
-      const aiStart = Date.now();
-      try {
-        const { initDshContainer } = await import('./dsh/container');
-        const dsh = await initDshContainer({ repo, md, drawings, settings, db: handle.db, docs });
-        const { registerAiHandlers, bindAiDeps } = await import('./ipc/ai-handlers');
-        registerAiHandlers(dsh);
-        bindAiDeps({ dsh, settings, repo, conversations, md, drawings, docs, db: handle.db, attachmentsDir });
-        logger.info(`startup[ai]: DSH handlers registered @ ${Date.now() - aiStart}ms`);
-        startupState.markAiReady();
-      } catch (err) {
-        logger.error(`startup[ai]: DSH init failed after ${Date.now() - aiStart}ms: ${(err as Error).message}`);
-        startupState.markAiFailed((err as Error).message);
+    //
+    // The boot body is extracted to `bootAiAndDispatch()` so the
+    // `app.startup.retry { component: 'ai' }` IPC handler (UX-01) can
+    // re-run the same boot after a previous failure. The first invocation
+    // uses `reason: 'boot'` and calls `setAiPhase('ai-loading')`; retries
+    // use `reason: 'retry'` and ask `startupState.tryStartAiRetry()` to
+    // own the loading transition + single-flight guard.
+    bootAiAndDispatch = (reason: 'boot' | 'retry'): void => {
+      if (reason === 'retry') {
+        if (!startupState.tryStartAiRetry()) {
+          // Either another retry is already in flight, or the AI component
+          // is not currently in 'failed'. Either way: nothing to do. The
+          // boot AI block is intentionally silent on this path — the
+          // caller (IPC handler) returns `accepted:false` so the renderer
+          // can surface a consistent UX.
+          logger.info('startup[ai]: retry rejected (not in failed state)');
+          return;
+        }
+      } else {
+        startupState.setAiPhase('ai-loading');
       }
-    })();
+      void (async () => {
+        const aiStart = Date.now();
+        try {
+          // UX-01 retry: dispose any cached runtime (live or rejected)
+          // BEFORE re-booting. The first-time boot has nothing to dispose.
+          const { resetDshRuntimeForRetry } = await import('./dsh/dsh-runtime');
+          await resetDshRuntimeForRetry();
+          const { initDshContainer } = await import('./dsh/container');
+          const dsh = await initDshContainer({ repo, md, drawings, settings, db: handle.db, docs });
+          const { registerAiHandlers, bindAiDeps } = await import('./ipc/ai-handlers');
+          registerAiHandlers(dsh);
+          bindAiDeps({ dsh, settings, repo, conversations, md, drawings, docs, db: handle.db, attachmentsDir });
+          logger.info(`startup[ai]: DSH handlers registered (${reason}) @ ${Date.now() - aiStart}ms`);
+          startupState.markAiReady();
+        } catch (err) {
+          logger.error(`startup[ai]: DSH init failed (${reason}) after ${Date.now() - aiStart}ms: ${(err as Error).message}`);
+          startupState.markAiFailed((err as Error).message);
+        } finally {
+          // Clear the single-flight guard regardless of outcome. The guard
+          // is also a no-op once the component reaches a terminal state
+          // (ready/failed), but clearing it keeps the invariant local.
+          if (reason === 'retry') startupState.finishAiRetry();
+        }
+      })();
+    };
+
+    bootAiAndDispatch('boot');
+
+    // Now that bootAiAndDispatch is defined, install the real retry closure
+    // on the hooks object. The IPC handler dereferences `retryHooks.retryAi`
+    // on every call, so this single mutation is visible immediately. We
+    // snapshot ai once before and once after to detect the synchronous
+    // transition done inside startupState.tryStartAiRetry(); if status was
+    // not 'failed' to begin with, bootAiAndDispatch early-returns and
+    // after mirrors before.
+    retryHooks.retryAi = (): boolean => {
+      const beforeStatus = startupState.snapshot().ai.status;
+      bootAiAndDispatch('retry');
+      const afterStatus = startupState.snapshot().ai.status;
+      return beforeStatus === 'failed' && afterStatus === 'loading';
+    };
 
     // v1 → v2 layout migration sweep. Deferred until after core-ready so a
     // slow sweep on a large data dir doesn't hold the splash up. We do NOT

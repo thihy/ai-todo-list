@@ -578,6 +578,34 @@ export function getDshRuntime(deps: DshRuntimeDeps): Promise<DshRuntime | null> 
   return runtimePromise;
 }
 
+/** Dispose any live DSH runtime (so its agent loop / tool registry / persistence
+ *  bindings release) and clear the cached `runtimePromise` so the next
+ *  `getDshRuntime()` triggers a fresh boot. Used by UX-01 AI retry.
+ *
+ *  Idempotent: if no runtime is currently cached (initial boot never ran,
+ *  or the previous boot failed and already nulled itself), this is a no-op.
+ *  Disposal errors are logged but never re-thrown — retry must always make
+ *  progress toward a fresh boot, even if cleanup of the previous one was
+ *  partial. */
+export async function resetDshRuntimeForRetry(): Promise<void> {
+  const cached = runtimePromise;
+  runtimePromise = null;
+  if (!cached) return;
+  try {
+    const runtime = await cached;
+    if (!runtime) return;
+    try {
+      await runtime.dispose();
+    } catch (err) {
+      logger.warn(`resetDshRuntimeForRetry: dispose failed: ${(err as Error).message}`);
+    }
+  } catch (err) {
+    // The previous boot itself rejected — its `.catch` already nulled the
+    // promise and logged. Nothing more to do.
+    logger.warn(`resetDshRuntimeForRetry: previous boot rejected: ${(err as Error).message}`);
+  }
+}
+
 async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
   const cfg = resolveAppPath('resources/dsh/cordis.yml');
   if (!cfg || !existsSync(cfg)) {

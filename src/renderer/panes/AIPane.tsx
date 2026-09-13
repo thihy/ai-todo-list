@@ -42,7 +42,7 @@
 // (GFM + KaTeX + Shiki); HITL and composer adapters use DSH primitives.
 
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { useAiStream, useAppEvent, useProviderStatus, useSettings } from '../hooks/useTodoListApi';
+import { useAiStream, useAppEvent, useProviderStatus, useSettings, useStartupAiState } from '../hooks/useTodoListApi';
 import { useChatAutoFollow } from '../hooks/useChatAutoFollow';
 import { useDataVersion } from '../data-bus';
 import {
@@ -519,6 +519,27 @@ export const AIPane: React.FC<{
   const awaitingApproval = activeApproval?.convId === currentId;
   const providerStatus = useProviderStatus();
   const needsAiSetup = providerStatus.state === 'not-configured';
+  // UX-01 — track the AI component of the startup state machine so we can
+  // surface a retry banner when `ai.status === 'failed'`. Loading flips
+  // back to failed on a retry failure via `app:startup` (no manual refresh).
+  const { state: aiStartup, retry: retryAi } = useStartupAiState();
+  const [aiRetryBusy, setAiRetryBusy] = useState(false);
+  const onAiRetryClick = useCallback(async (): Promise<void> => {
+    if (aiRetryBusy) return;
+    setAiRetryBusy(true);
+    try {
+      await retryAi();
+      // Don't optimistically flip state — main will push `app:startup`
+      // with the new status (loading / ready / failed).
+    } finally {
+      // A successful retry transitions ai.status to 'loading' on main
+      // (arrives via app:startup); a rejected retry leaves the state
+      // unchanged. Either way we can clear the local guard once the IPC
+      // round-trip is done — main's single-flight guard handles overlap.
+      setAiRetryBusy(false);
+    }
+  }, [aiRetryBusy, retryAi]);
+  const showAiRetryBanner = aiStartup.status === 'failed';
   // Use the official composer blocking vocabulary at the host boundary.
   const composerBlock: ComposerBlock | undefined = awaitingAnswer
     ? { reason: questionSubmitting ? '正在提交答案…' : '请先回答上方的问题…' }
@@ -1126,6 +1147,31 @@ export const AIPane: React.FC<{
             <strong>AI 尚未配置</strong>
             <span>请先配置 {PROVIDER_LABELS[aiSettings.provider]}，再开始对话。</span>
           </span>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => { location.hash = '#/settings'; }}
+          >
+            打开设置
+          </Button>
+        </div>
+      )}
+
+      {showAiRetryBanner && (
+        <div className="aipane__provider-notice aipane__provider-notice--retry" role="status">
+          <IconWarningOutline16 size={16} />
+          <span className="aipane__provider-notice-copy">
+            <strong>AI 初始化失败</strong>
+            <span>{aiStartup.errorMessage ?? 'DSH 启动失败，可点击重试或前往设置检查模型与密钥。'}</span>
+          </span>
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={aiRetryBusy || aiStartup.status === 'loading'}
+            onClick={() => { void onAiRetryClick(); }}
+          >
+            {aiStartup.status === 'loading' ? '重试中…' : '重试'}
+          </Button>
           <Button
             variant="ghost"
             size="sm"

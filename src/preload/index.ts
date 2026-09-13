@@ -155,6 +155,8 @@ const api: TodoListApi = {
      *  this once before subscribing to `app:startup` so it doesn't miss a
      *  ready transition that fired between page-load and listener-ready. */
     startupGet: () => invoke('app.startup.get', undefined as never),
+    /** UX-01 AI retry. */
+    startupRetry: (component: 'ai') => invoke('app.startup.retry', { component }),
   },
   capture: {
     submit: (args: CaptureSubmitArgs) => invoke('capture.submit', args),
