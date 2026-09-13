@@ -10,6 +10,7 @@ import { app } from 'electron';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { randomBytes } from 'node:crypto';
 import { DEFAULT_CAPTURE_HOTKEY, ROOT_DIR_NAME, CONFIG_FILENAME, DEFAULT_PROVIDER } from '../../shared/constants';
 import type { AIModel, AIProvider, CustomProviderConfig, CustomProviderInput } from '../../shared/ai-types';
 import type { TagDef } from '../../shared/todo-types';
@@ -58,6 +59,18 @@ export interface PersistedSettings {
    *  injects the user-chosen values as CSS custom properties. Normalised on
    *  load so any partial / corrupted JSON falls back to defaults. */
   taskAppearance: TaskAppearance;
+  /** SEC-01 — JSON-RPC bridge settings. The bridge is OFF by default;
+   *  users opt in via Settings → 数据 → 外部访问. The capability token is
+   *  generated on first enable and rotated on demand. The token is
+   *  sensitive but NOT an API key — its purpose is "is this local process
+   *  the same owner as the desktop app", not "can it reach a remote API". */
+  sdkBridge: {
+    enabled: boolean;
+    /** Capability token presented by clients on the first line of each
+     *  request as a `auth: <token>` JSON-RPC extension field. Null until
+     *  first enable (auto-generated on save). */
+    token: string | null;
+  };
 }
 
 const DEFAULTS: PersistedSettings = {
@@ -78,6 +91,7 @@ const DEFAULTS: PersistedSettings = {
   lastPlanGuideDate: null,
   snoozePlanGuideUntil: null,
   taskAppearance: { ...DEFAULT_TASK_APPEARANCE, colors: { ...DEFAULT_TASK_APPEARANCE.colors } },
+  sdkBridge: { enabled: false, token: null },
 };
 
 /** Default data root when the user has not picked a directory. */
@@ -185,6 +199,17 @@ export class SettingsStore {
       lastPlanGuideDate: v.lastPlanGuideDate,
       snoozePlanGuideUntil: v.snoozePlanGuideUntil,
       taskAppearance: v.taskAppearance,
+      // SEC-01 — always return the full state (enabled + token) so the
+      // renderer can show "regenerate / copy" affordances even when the
+      // bridge is currently disabled. The token is NOT an API key — its
+      // sole purpose is local capability gating, see bridge.ts.
+      sdkBridge: {
+        enabled: v.sdkBridge.enabled,
+        token: v.sdkBridge.token,
+        socketPath: process.platform === 'win32'
+          ? '\\\\.\\pipe\\todo-list'
+          : '/tmp/todo-list.sock',
+      },
     };
   }
 
@@ -230,4 +255,34 @@ export class SettingsStore {
     this.cache.monthlyCostUsd = (this.cache.monthlyCostUsd ?? 0) + usd;
     this.persist();
   }
+
+  /** SEC-01 — toggle the bridge. Enabling auto-generates a token if none
+   *  exists. Returns the (possibly new) token so callers can display it
+   *  once for the user to copy. */
+  setSdkBridgeEnabled(enabled: boolean): string | null {
+    const next = { ...this.cache.sdkBridge, enabled };
+    if (enabled && !next.token) {
+      next.token = generateSdkToken();
+    }
+    this.cache = { ...this.cache, sdkBridge: next };
+    this.persist();
+    return next.token;
+  }
+
+  /** SEC-01 — rotate the bridge token. Disables the bridge until the user
+   *  re-enables it (rotation alone is rarely the right answer; usually the
+   *  user also wants to invalidate outstanding clients). */
+  rotateSdkBridgeToken(): string {
+    const token = generateSdkToken();
+    this.cache = { ...this.cache, sdkBridge: { enabled: false, token } };
+    this.persist();
+    return token;
+  }
+}
+
+/** 32 random bytes → base64url. Sufficient for a local-only capability
+ *  token — this is NOT a cryptographic authentication of remote parties
+ *  (the socket / pipe is local). */
+function generateSdkToken(): string {
+  return randomBytes(32).toString('base64url');
 }

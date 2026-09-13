@@ -518,19 +518,65 @@ the retry.
   JSON-RPC 2.0 (line-delimited, one JSON object per line) on a
   Unix socket (`/tmp/todo-list.sock`) or Windows named pipe
   (`\\.\pipe\todo-list`).
-- The bridge is started unconditionally in `bootstrap()` after
-  `markCoreReady()`. It is not gated by any CLI flag (the previous
-  `--enable-sdk-bridge` idea has not landed).
+- The bridge starts ONLY when `SettingsStore.sdkBridge.enabled`
+  is true AND a capability token exists (SEC-01). It is read at
+  the same deferred phase as before (`markCoreReady()` + post),
+  but the bootstrap body now early-returns with an info log when
+  the flag is off. Toggling the flag in Settings takes effect on
+  the next launch — the pane surfaces that explicitly.
 - Each bridge request maps to a `TodoListSdk` call; streaming is
-  not supported — consumers that need streaming should drive the AI
-  pane via `ai.ask` IPC instead.
+  not supported — consumers that need streaming should drive the
+  AI pane via `ai.ask` IPC instead.
+
+**SEC-01 — Capability token and access protection.**
+
+When enabled, the bridge requires a capability token presented
+on the FIRST line of every connection as a JSON-RPC extension
+field (`{ "auth": "<token>" }`). The comparison uses
+`crypto.timingSafeEqual` to avoid leaking token length / prefix
+via timing.
+
+Additional protections in `src/main/sdk/bridge.ts`:
+
+- `MAX_LINE_BYTES = 1 MiB` — a single request line larger than
+  this drops the whole connection (no resync).
+- `RATE_PER_MINUTE = 600` — sliding-window per-socket limit
+  (≈10 req/s sustained). Exceeding returns JSON-RPC code
+  `-32005` (`rate_limited`).
+- `ALLOWED_METHODS` — explicit list of accepted methods (data,
+  not control flow). Unknown methods return `-32601`
+  (`unknown method`).
+- `audit()` writes a redacted log line per dispatch
+  (`bridge: <phase> method=<m> bytes=<n> <ms>ms -> <ok|error>`).
+  Params and the token itself are never logged.
+
+The capability token is generated on first enable as 32 random
+bytes encoded base64url (`src/main/settings/store.ts →
+generateSdkToken`). Rotation is a separate IPC
+(`app.sdkBridge.rotateToken`) that always disables the bridge;
+the user re-enables afterwards. The token is treated as
+sensitive but is NOT an API key — its sole purpose is
+"distinguish a script the user trusts on the same machine from
+anything else that managed to reach the local socket path".
 
 **Known issues.**
 
-- On Windows, the named-pipe path cannot be exposed across machines;
-  same constraint as the older docs noted.
-- No authentication on the socket/pipe. Acceptable on single-user
-  desktops; do not enable on shared hosts.
+- On Windows, the named-pipe path cannot be exposed across
+  machines; same constraint as the older docs noted.
+  Additionally the current code does NOT tighten pipe ACLs to
+  user-level access; a future iteration should call
+  `SetSecurityInfo` / `ConvertStringSecurityDescriptorToSecurityDescriptor`
+  with a DACL scoped to the owner's SID.
+- The bridge does not authenticate the caller beyond the
+  capability token; any local process that reads the token out
+  of the user's settings can impersonate. Acceptable for the
+  current threat model (single-user desktop); a future
+  iteration could use named-pipe impersonation on Windows /
+  SO_PEERCRED on Linux to bind the socket fd to a real user.
+- The rate limit is per-socket; a malicious client could open
+  many sockets in parallel. The current limit is sized for
+  honest script usage; a future hardening pass should add a
+  process-wide counter.
 
 ## 9. Process exit / resource release
 

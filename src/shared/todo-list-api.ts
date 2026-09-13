@@ -271,6 +271,18 @@ export interface TodoListApi {
      *  state, or another retry is in flight). State transitions still
      *  arrive via `app:startup` events. */
     startupRetry(component: 'ai'): Promise<IpcResponse<'app.startup.retry'>>;
+    /** SEC-01 — enable / disable the JSON-RPC bridge. When enabling,
+     *  main auto-generates a capability token (if none exists) and
+     *  returns it in `data.token`. The user MUST copy it before
+     *  dismissing the dialog — it's the auth material their scripts
+     *  present on the first line of each request. Toggling takes effect
+     *  on the next app launch; the settings UI surfaces a hint. */
+    sdkBridgeSetEnabled(enabled: boolean): Promise<IpcResponse<'app.sdkBridge.setEnabled'>>;
+    /** SEC-01 — generate a fresh capability token. Always disables the
+     *  bridge (rotation usually means "invalidate outstanding clients");
+     *  the user re-enables it via `sdkBridgeSetEnabled(true)`. Returns
+     *  the new token exactly once. */
+    sdkBridgeRotateToken(): Promise<IpcResponse<'app.sdkBridge.rotateToken'>>;
   };
   capture: {
     submit(args: CaptureSubmitArgs): Promise<IpcResponse<'capture.submit'>>;

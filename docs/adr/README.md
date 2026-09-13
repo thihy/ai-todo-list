@@ -12,6 +12,7 @@ impact → boundaries. ADRs describe *what was decided* and
 | [ADR-003](003-dsh-integration-layer.md) | DSH enters the application through a stable integration layer | Accepted |
 | [ADR-004](004-core-and-ai-independent-startup.md) | Core and AI use independent startup state | Accepted |
 | [ADR-005](005-tag-catalog-must-not-rewrite-history.md) | Tag catalog mutations must not rewrite historical-task tags | Accepted |
+| [ADR-006](006-json-rpc-bridge-capability-token.md) | JSON-RPC bridge is off by default and gated by a capability token | Accepted |
 
 ## How to add a new ADR
 

@@ -342,6 +342,17 @@ export interface SettingsGetRes extends AISettings {
   lastPlanGuideDate: string | null;
   snoozePlanGuideUntil: number | null;
   taskAppearance: TaskAppearance;
+  /** SEC-01 — current bridge state. `enabled` reflects persistence;
+   *  `token` is the live capability token (returned once on rotation
+   *  / enable so the user can copy it). When `enabled: false`, `token`
+   *  is still returned if one exists, so the user can re-enable without
+   *  losing it. `socketPath` is computed by main and surfaces the actual
+   *  bind address for clients to connect to. */
+  sdkBridge: {
+    enabled: boolean;
+    token: string | null;
+    socketPath: string;
+  };
 }
 export interface SettingsChooseDataDirRes {
   /** Chosen path, or null if the user cancelled the dialog. */
@@ -622,6 +633,19 @@ export interface IpcRegistry {
     { component: 'ai' },
     IpcResult<{ accepted: boolean; reason?: 'not_failed' | 'already_in_flight' }>
   >;
+  /** SEC-01 — toggle the JSON-RPC bridge. Returns the (possibly newly
+   *  generated) capability token so the settings UI can display it
+   *  once for the user to copy. Toggling requires a restart for the
+   *  actual socket to start/stop — the handler records the intent;
+   *  `src/main/index.ts` reads it on next boot. */
+  'app.sdkBridge.setEnabled': IpcChannel<
+    { enabled: boolean },
+    IpcResult<{ enabled: boolean; token: string | null }>
+  >;
+  /** SEC-01 — generate a fresh capability token. Always disables the
+   *  bridge (rotation is usually paired with invalidating outstanding
+   *  clients); the user re-enables to bring the bridge back up. */
+  'app.sdkBridge.rotateToken': IpcChannel<undefined, IpcResult<{ token: string }>>;
 }
 
 export interface StartupSnapshot {

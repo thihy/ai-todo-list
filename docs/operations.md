@@ -128,6 +128,14 @@ See `startup[ai]` log lines and ADR-004.
   via the user's own forwarding; Windows named pipes cannot be
   shared cross-machine. Use the IPC surface from another
   renderer if you need cross-window control.
+- The JSON-RPC bridge is OFF by default (SEC-01). To enable it,
+  open 设置 → 外部访问 → 「外部脚本 / 插件访问」 → 启用，
+  copy the displayed capability token, then send it on the
+  first line of every connection as `auth: "<token>"`. Toggling
+  takes effect on the next application launch. The bridge log
+  line `bridge: <phase> ...` (under `${userData}/todo-list.log`)
+  is the source of truth for "who connected when and how many
+  calls they made"; it never includes params or the token.
 - DSH boot is best-effort: a failed boot surfaces as
   `ai.ask → dsh_unavailable` and is visible in the AI pane as a
   non-blocking banner. The rest of the app stays usable.

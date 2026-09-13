@@ -439,14 +439,23 @@ function bootstrap(): void {
       logger.warn(`startup[maintenance]: migrateOrphanSessions import failed: ${(err as Error).message}`);
     }
 
-    // External SDK + JSON-RPC bridge for plugins / scripts — also deferred
-    // so it never blocks window show / core-ready.
+    // External SDK + JSON-RPC bridge for plugins / scripts. SEC-01: the
+    // bridge is OFF by default and only starts when Settings → 数据 →
+    // 外部访问 has it enabled. When enabled, the bridge requires a
+    // capability token presented on the first line of each connection
+    // (see src/main/sdk/bridge.ts). Deferred so it never blocks window
+    // show / core-ready.
     void (async () => {
       try {
+        const sdkBridge = settings.get().sdkBridge;
+        if (!sdkBridge.enabled || !sdkBridge.token) {
+          logger.info('startup[maintenance]: SDK bridge disabled (settings.sdkBridge.enabled=false)');
+          return;
+        }
         const { createSdk } = await import('./sdk/sdk');
         const { JsonRpcBridge } = await import('./sdk/bridge');
         const sdk = createSdk({ repo, md, drawings });
-        const bridge = new JsonRpcBridge(sdk);
+        const bridge = new JsonRpcBridge(sdk, undefined, { token: sdkBridge.token });
         bridge.start();
         app.on('before-quit', () => bridge.stop());
       } catch (err) {
@@ -867,6 +876,41 @@ function registerSettingsHandlers(
       return okResult({ path: chosen });
     } catch (err) {
       return failResult('choose_data_dir_failed', (err as Error).message);
+    }
+  });
+
+  // SEC-01 — JSON-RPC bridge toggle. Persists `enabled` and the
+  // (possibly newly generated) token. The actual socket start/stop is
+  // wired at boot in src/main/index.ts — toggling here takes effect on
+  // next launch, which the settings UI surfaces via a hint.
+  register('app.sdkBridge.setEnabled', (_e, req) => {
+    try {
+      const token = store.setSdkBridgeEnabled(Boolean(req?.enabled));
+      // Broadcast settings-changed so any other consumers (none today,
+      // but future panes) can react.
+      for (const w of BrowserWindow.getAllWindows()) {
+        if (!w.isDestroyed()) w.webContents.send('app:settings-changed', {});
+      }
+      return okResult({ enabled: Boolean(req?.enabled), token });
+    } catch (err) {
+      // Never echo the token (it's the user's auth material). The
+      // settings UI surfaces a generic failure message.
+      return failResult('sdk_bridge_set_enabled_failed', (err as Error).message);
+    }
+  });
+
+  // SEC-01 — rotate the bridge token. Returns the new token exactly
+  // once; the user is expected to copy it immediately. The bridge is
+  // always disabled after rotation (see store.rotateSdkBridgeToken).
+  register('app.sdkBridge.rotateToken', () => {
+    try {
+      const token = store.rotateSdkBridgeToken();
+      for (const w of BrowserWindow.getAllWindows()) {
+        if (!w.isDestroyed()) w.webContents.send('app:settings-changed', {});
+      }
+      return okResult({ token });
+    } catch (err) {
+      return failResult('sdk_bridge_rotate_failed', (err as Error).message);
     }
   });
 }

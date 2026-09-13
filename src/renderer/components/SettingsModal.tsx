@@ -22,7 +22,7 @@ import {
 import { TagManagementPane } from './TagManagementPane';
 import { TaskAppearancePane } from './TaskAppearancePane';
 
-type Category = 'general' | 'model' | 'data' | 'tags' | 'appearance' | 'hotkeys' | 'reminder' | 'about';
+type Category = 'general' | 'model' | 'data' | 'tags' | 'appearance' | 'hotkeys' | 'reminder' | 'integration' | 'about';
 
 const CATEGORIES: { key: Category; label: string }[] = [
   { key: 'general', label: '通用' },
@@ -32,6 +32,7 @@ const CATEGORIES: { key: Category; label: string }[] = [
   { key: 'appearance', label: '任务配色' },
   { key: 'hotkeys', label: '快捷键' },
   { key: 'reminder', label: '提醒' },
+  { key: 'integration', label: '外部访问' },
   { key: 'about', label: '关于' },
 ];
 
@@ -116,6 +117,12 @@ export const SettingsModal: React.FC<{ open: boolean; onClose: () => void }> = (
               <HotkeysPane data={data} patch={patchWithToast} />
             ) : cat === 'reminder' ? (
               <ReminderPane data={data} patch={patchWithToast} />
+            ) : cat === 'integration' ? (
+              // SEC-01 — JSON-RPC bridge toggle / token management. Toggling
+              // requires restart; the pane surfaces that explicitly so the
+              // user isn't surprised when the socket doesn't bind/unbind
+              // immediately.
+              <BridgePane data={data} />
             ) : (
               <AboutPane data={data} patch={patchWithToast} />
             )}
@@ -671,6 +678,165 @@ const HotkeysPane: React.FC<PaneProps> = ({ data, patch }) => (
     </Field>
   </div>
 );
+
+/** SEC-01 — bridge controls. The pane keeps the freshly-returned token
+ *  in local state so the user can copy it once; we never persist it in
+ *  any renderer-side store. `data.sdkBridge.token` mirrors main's
+ *  current value but we treat it as opaque (the user only needs to know
+ *  "there is one" — copy comes from local state). */
+const BridgePane: React.FC<{ data: SettingsGetRes }> = ({ data }) => {
+  const [busy, setBusy] = useState(false);
+  // The most recent token we received from main. `null` = "haven't
+  // gotten one back yet" or "currently disabled with no token stored".
+  const [freshToken, setFreshToken] = useState<string | null>(data.sdkBridge.token);
+  const [showToken, setShowToken] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  // Reset freshToken when main's response changes (broadcast or other
+  // tab mutation). We only replace it if main actually has one — if
+  // main reports `null`, we keep whatever the user was looking at so
+  // they don't lose a copy mid-session.
+  useEffect(() => {
+    if (data.sdkBridge.token !== null) setFreshToken(data.sdkBridge.token);
+  }, [data.sdkBridge.token]);
+
+  const toggle = async (next: boolean): Promise<void> => {
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await window.todoList.app.sdkBridgeSetEnabled(next);
+      if (!res.ok) {
+        setError(`保存失败：${res.message}`);
+        return;
+      }
+      // Capture the freshly-minted token so the user can copy it.
+      // When disabling, main returns the existing token (if any) —
+      // we deliberately DON'T clear `freshToken` on disable because
+      // re-enabling is a single click away and losing the token from
+      // the UI would be surprising.
+      if (res.data.token !== null) setFreshToken(res.data.token);
+      setNotice(next ? '已启用，下次启动后生效。' : '已停用，下次启动后生效。');
+    } catch (err) {
+      setError(`保存失败：${(err as Error).message}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const rotate = async (): Promise<void> => {
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await window.todoList.app.sdkBridgeRotateToken();
+      if (!res.ok) {
+        setError(`重新生成失败：${res.message}`);
+        return;
+      }
+      setFreshToken(res.data.token);
+      setShowToken(true);
+      setNotice('已重新生成 token；桥接已停用，请重新启用以使其生效。');
+    } catch (err) {
+      setError(`重新生成失败：${(err as Error).message}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const copy = async (): Promise<void> => {
+    if (!freshToken) return;
+    try {
+      await navigator.clipboard.writeText(freshToken);
+      setNotice('已复制到剪贴板。');
+    } catch {
+      setError('复制失败：浏览器拒绝了剪贴板权限。请手动选中 token。');
+    }
+  };
+
+  // Mask all but the first 4 and last 4 chars to discourage shoulder-
+  // surfing while still letting the user verify they're looking at the
+  // right token. Length is preserved so the user can roughly tell when
+  // a rotate produced a new one.
+  const masked = freshToken
+    ? `${freshToken.slice(0, 4)}${'*'.repeat(Math.max(freshToken.length - 8, 0))}${freshToken.slice(-4)}`
+    : null;
+
+  return (
+    <div className="settings-pane">
+      <Field
+        label="外部脚本 / 插件访问"
+        hint="JSON-RPC 桥接（Unix socket / Windows named pipe）。默认关闭；启用后外部脚本可以查询和修改任务，但必须提供本地生成的 token。"
+      >
+        <label className="row" style={{ gap: 8 }}>
+          <input
+            type="checkbox"
+            checked={data.sdkBridge.enabled}
+            disabled={busy}
+            onChange={(e) => void toggle(e.target.checked)}
+          />
+          <span>{data.sdkBridge.enabled ? '已启用（重启后生效）' : '未启用'}</span>
+        </label>
+      </Field>
+
+      <Field
+        label="监听地址"
+        hint="脚本连接到该地址；非本机进程无法连接。"
+      >
+        <div className="row">
+          <input className="input mono" value={data.sdkBridge.socketPath} readOnly aria-label="监听地址" />
+        </div>
+      </Field>
+
+      <Field
+        label="Capability token"
+        hint={`首次启用时自动生成；点击「重新生成」会作废旧 token 并停用桥接。token 只在重启后随桥接启动时校验。脚本必须在第一次请求时附上 auth: "<token>"。`}
+      >
+        {freshToken ? (
+          <div className="row" style={{ gap: 8 }}>
+            <input
+              className="input mono"
+              value={showToken ? freshToken : masked ?? ''}
+              readOnly
+              aria-label="token"
+              style={{ flex: 1, minWidth: 0 }}
+            />
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={() => setShowToken((v) => !v)}
+              disabled={busy}
+            >
+              {showToken ? '隐藏' : '显示'}
+            </button>
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={() => void copy()}
+              disabled={busy || !freshToken}
+            >
+              复制
+            </button>
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={() => void rotate()}
+              disabled={busy}
+            >
+              重新生成
+            </button>
+          </div>
+        ) : (
+          <div className="muted" style={{ fontSize: 'var(--font-xs)' }}>
+            尚未生成 token；启用桥接时会自动创建。
+          </div>
+        )}
+      </Field>
+
+      {notice && <div className="notice">{notice}</div>}
+      {error && <div className="notice notice--error">{error}</div>}
+    </div>
+  );
+};
 
 // TagsPane was deleted when the v17 catalog migration hoisted the
 // tag directory into the DB; the new management surface lives in

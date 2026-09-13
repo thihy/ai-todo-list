@@ -157,6 +157,13 @@ const api: TodoListApi = {
     startupGet: () => invoke('app.startup.get', undefined as never),
     /** UX-01 AI retry. */
     startupRetry: (component: 'ai') => invoke('app.startup.retry', { component }),
+    /** SEC-01 — enable / disable the JSON-RPC bridge. The token field
+     *  in the response is auto-generated on first enable; the user
+     *  must copy it (the settings UI shows it once, with a copy button). */
+    sdkBridgeSetEnabled: (enabled: boolean) => invoke('app.sdkBridge.setEnabled', { enabled }),
+    /** SEC-01 — generate a fresh capability token. Always disables the
+     *  bridge; user re-enables afterwards. */
+    sdkBridgeRotateToken: () => invoke('app.sdkBridge.rotateToken', undefined as never),
   },
   capture: {
     submit: (args: CaptureSubmitArgs) => invoke('capture.submit', args),
