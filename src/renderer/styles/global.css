@@ -1471,15 +1471,27 @@ a:hover {
   color: var(--accent-danger);
 }
 
+/* Region 2 shell: wraps the scroll viewport + the absolutely-positioned
+   "jump to latest" affordance. Replaces the previous direct
+   `.aipane__body` flex sibling with an extra layer so the button can
+   float over the scroll viewport without taking layout space. */
+.aipane__body-shell {
+  flex: 1 1 0;
+  min-height: 0;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
 .aipane__body {
-  /* Region 2: the conversation stream. flex: 1 1 0 + min-height: 0 lets the
-     body absorb all leftover vertical space (the title above + composer
-     below are pinned via flex: 0 0 auto) AND shrink below its content's
-     intrinsic min-content height — without `min-height: 0`, a flex child
-     with a long stream would refuse to shrink and push the composer off-
-     screen. `overflow: auto` then turns the residual height into the
-     scroll viewport. The contract: title pinned, body scrolls, composer
-     pinned. */
+  /* Region 2: the conversation stream's scroll viewport. flex: 1 1 0 +
+     min-height: 0 lets the body absorb all leftover vertical space (the
+     title above + composer below are pinned via flex: 0 0 auto) AND shrink
+     below its content's intrinsic min-content height — without
+     `min-height: 0`, a flex child with a long stream would refuse to shrink
+     and push the composer off-screen. `overflow: auto` then turns the
+     residual height into the scroll viewport. The contract: title pinned,
+     body scrolls, composer pinned. */
   flex: 1 1 0;
   min-height: 0;
   overflow: auto;
@@ -1491,9 +1503,31 @@ a:hover {
      stream guttered. Previously padding-top created a blank strip above
      the sticky header that read as "transparent space above the title". */
   padding: 0 var(--space-lg) var(--space-lg);
+}
+
+/* Inner content wrapper inside the scroll viewport. Owns the message
+   column layout + gap (moved off .aipane__body when the shell layer was
+   added). ResizeObserver watches this so streaming text wrap / image
+   load / reasoning-row expansion extend the scroll viewport even when
+   the viewport itself doesn't change size. */
+.aipane__messages {
   display: flex;
   flex-direction: column;
   gap: var(--space-md);
+}
+
+/* "Jump to latest" affordance — appears when the user has scrolled up
+   out of the auto-follow window. Absolutely positioned so it doesn't
+   consume layout space inside the body-shell. */
+.aipane__jump-to-latest {
+  position: absolute;
+  right: var(--space-lg);
+  bottom: var(--space-md);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  box-shadow: var(--shadow-md);
+  z-index: 2;
 }
 
 .aipane__empty {

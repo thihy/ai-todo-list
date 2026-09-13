@@ -43,12 +43,14 @@
 
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useAiStream, useAppEvent, useProviderStatus, useSettings } from '../hooks/useTodoListApi';
+import { useChatAutoFollow } from '../hooks/useChatAutoFollow';
 import { useDataVersion } from '../data-bus';
 import {
   IconEnhanceOutline16,
   IconPlusOutline16,
   IconPaperclipOutline16,
   IconWarningOutline16,
+  IconChevronDownOutline14,
   Button,
 } from '@deepseek-ai/dsh-client-ui-primitives';
 import { IconHistory, IconCollapseBar } from '../components/icons';
@@ -221,6 +223,11 @@ export const AIPane: React.FC<{
   const renameInputRef = useRef<HTMLInputElement>(null);
   const historySearchRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  // contentRef: inner content wrapper inside .aipane__body. The auto-follow
+  // hook watches this with ResizeObserver so streaming growth (text wrap,
+  // image load, reasoning expand) triggers a bottom-pin even though the
+  // scroll viewport (.aipane__body) doesn't change size itself.
+  const contentRef = useRef<HTMLDivElement>(null);
   const stickyHeadRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   // Live mirror of currentId for stale-closure-safe guards. The initial-load
@@ -404,11 +411,6 @@ export const AIPane: React.FC<{
     setActiveApproval((request) => request?.reqId === reqId ? null : request);
   });
 
-  useEffect(() => {
-    const el = scrollRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [turnsByConv, currentId]);
-
   // Scroll-tracked "current question": recompute which user question has
   // scrolled out of view under the sticky header. The pinned banner mirrors
   // that question so the user never reads an answer without seeing what was
@@ -472,6 +474,21 @@ export const AIPane: React.FC<{
       el.removeEventListener('scroll', onScroll);
     };
   }, [recomputeActiveQuestion]);
+
+  // Auto-follow the bottom of the conversation stream — but only when the
+  // user is at (or near) the bottom. Pauses on upward wheel / touch / keyboard
+  // / scrollbar, resumes when they scroll back near the bottom. Driven by
+  // ResizeObserver on the content + viewport so streaming chunks, image
+  // loads and reasoning-row expands all extend the bottom naturally. The
+  // `currentId` + `historyLoaded` pair is the ONLY trigger for the initial
+  // pin; `turnsByConv` is intentionally NOT a dependency (a fresh turn
+  // contributed by a background conversation must not move this container).
+  const { showJumpToLatest, jumpToLatest, requestFollow } = useChatAutoFollow({
+    currentConversationId: currentId,
+    scrollRef,
+    contentRef,
+    historyLoaded: currentId ? historyLoaded.has(currentId) : false,
+  });
 
   // Autosize the composer textarea between minHeight and a soft cap. Pure
   // DOM measurement — no external lib. Resets to minHeight when the input is
@@ -783,6 +800,12 @@ export const AIPane: React.FC<{
     openedCreatedTodoIdRef.current = null;
     setStreamingConvId(convId);
     setStreamingTurnId(id);
+    // The user message has now been admitted into the target conversation's
+    // list. Ask the auto-follow hook to pin to bottom on the next frame so
+    // the bubble is visible — only valid because validation above passed
+    // (convId resolved, message added). Invalid submits (empty / blocked /
+    // AI-not-configured) bailed out earlier, so this is safe.
+    requestFollow(convId);
     const res = await window.todoList.ai.ask({ prompt: finalWire, conversationId: convId, invocationId: id, history: priorTurns, tools: undefined, intent: userIntent });
     // L6-A: the turn's status flip is authoritative HERE, not in the
     // streaming useEffect. The ai:stream `done` event and this IPC reply
@@ -1138,29 +1161,46 @@ export const AIPane: React.FC<{
         </div>
       )}
 
-      {/* ===== flex Region 2 (middle, flex: 1 1 0; min-height: 0; overflow: auto): BODY =====
-          Conversation stream. `min-height: 0` is critical: without it a flex
-          child refuses to shrink below its content's intrinsic min-content
-          height, so a long turn would push the composer off-screen instead
-          of scrolling inside the body. The body is also a flex column so
-          consecutive turns stack with the configured `gap`. */}
-      <div className="aipane__body" role="log" aria-live="polite" ref={scrollRef}>
-        {bootError && (
-          <div className="aipane__empty aipane__empty--error">
-            <IconWarningOutline16 size={14} /> 会话列表加载失败：{bootError}
+      {/* ===== flex Region 2 (middle, flex: 1 1 0; min-height: 0): BODY SHELL =====
+          Outer wrapper is a column flex; the actual scroll viewport is the
+          inner .aipane__body, and the .aipane__messages div is its content
+          (which useChatAutoFollow ResizeObserves). The jump-to-latest button
+          is absolutely positioned over the shell so it can sit on top of the
+          scroll viewport without taking layout space — clicking it must NOT
+          shift the message area's height. */}
+      <div className="aipane__body-shell">
+        <div className="aipane__body" role="log" aria-live="polite" ref={scrollRef}>
+          <div className="aipane__messages" ref={contentRef}>
+            {bootError && (
+              <div className="aipane__empty aipane__empty--error">
+                <IconWarningOutline16 size={14} /> 会话列表加载失败：{bootError}
+              </div>
+            )}
+            {!bootError && !current && conversations.length === 0 && (
+              <div className="aipane__empty">
+                <p>直接在下方输入问题，回车即创建第一条对话。</p>
+              </div>
+            )}
+            {!bootError && current && currentTurns.length === 0 && (
+              <div className="aipane__empty">
+                <p>这条对话还没有消息。在下方输入问题开始：</p>
+              </div>
+            )}
+            {currentTurns.map((t) => <TurnView key={t.id} turn={t} />)}
           </div>
+        </div>
+        {showJumpToLatest && currentId && (
+          <Button
+            variant="primary"
+            size="sm"
+            className="aipane__jump-to-latest"
+            onClick={jumpToLatest}
+            aria-label="回到最新消息"
+          >
+            <IconChevronDownOutline14 size={14} />
+            <span>回到最新</span>
+          </Button>
         )}
-        {!bootError && !current && conversations.length === 0 && (
-          <div className="aipane__empty">
-            <p>直接在下方输入问题，回车即创建第一条对话。</p>
-          </div>
-        )}
-        {!bootError && current && currentTurns.length === 0 && (
-          <div className="aipane__empty">
-            <p>这条对话还没有消息。在下方输入问题开始：</p>
-          </div>
-        )}
-        {currentTurns.map((t) => <TurnView key={t.id} turn={t} />)}
       </div>
 
       {/* HITL cards — sit just ABOVE the composer so the user sees the
