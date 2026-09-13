@@ -375,6 +375,7 @@ export interface TodoListApi {
     list(opts?: { activeOnly?: boolean }): Promise<IpcResponse<'tag.list'>>;
     activeCatalog(): Promise<IpcResponse<'tag.activeCatalog'>>;
     rename(oldName: string, newName: string): Promise<IpcResponse<'tag.rename'>>;
+    recolor(name: string, color: string): Promise<IpcResponse<'tag.recolor'>>;
     merge(sources: string[], target: string, newColor?: string): Promise<IpcResponse<'tag.merge'>>;
     previewCleanup(): Promise<IpcResponse<'tag.previewCleanup'>>;
     applyCleanup(actions: import('./ipc-schema').CleanupActions): Promise<IpcResponse<'tag.applyCleanup'>>;

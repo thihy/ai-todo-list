@@ -266,6 +266,19 @@ export class TagRepo {
     tx();
   }
 
+  /** Update presentation metadata for one catalog entry without touching
+   *  task associations or task timestamps. */
+  recolor(name: string, color: string): void {
+    const normalizedName = name.trim();
+    const normalizedColor = color.trim().toLowerCase();
+    if (!normalizedName) throw new Error('标签名称不能为空');
+    if (!/^#[0-9a-f]{6}$/.test(normalizedColor)) throw new Error('标签颜色格式无效');
+    const result = this.db
+      .prepare(`UPDATE tag_catalog SET color = ? WHERE name = ?`)
+      .run(normalizedColor, normalizedName);
+    if (result.changes === 0) throw new Error(`标签「${normalizedName}」不存在`);
+  }
+
   /** Merge `sourceNames[]` → `targetName` on valid-task associations only.
    *  Returns the set of todo ids whose tag list changed (for downstream
    *  notifications + .json snapshot rewrite).

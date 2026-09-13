@@ -56,6 +56,17 @@ export function registerTagHandlers(tagRepo: TagRepo): void {
     }
   });
 
+  register('tag.recolor', (_e, req) => {
+    try {
+      tagRepo.recolor(req.name, req.color);
+      logger.info(`tag.recolor: ${req.name} → ${req.color}`);
+      broadcastTagsChanged({});
+      return Promise.resolve(okResult(undefined as never));
+    } catch (err) {
+      return Promise.resolve(failResult('tag_recolor_failed', (err as Error).message));
+    }
+  });
+
   register('tag.merge', (_e, req) => {
     try {
       const result = tagRepo.merge(req.sources, req.target, { newColor: req.newColor });

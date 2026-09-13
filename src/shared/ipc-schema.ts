@@ -548,6 +548,10 @@ export interface IpcRegistry {
     { oldName: string; newName: string },
     IpcResult<void>
   >;
+  'tag.recolor': IpcChannel<
+    { name: string; color: string },
+    IpcResult<void>
+  >;
   'tag.merge': IpcChannel<
     { sources: string[]; target: string; newColor?: string },
     IpcResult<{ affectedTodoIds: string[] }>

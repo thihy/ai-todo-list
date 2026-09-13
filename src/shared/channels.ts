@@ -91,6 +91,7 @@ const RUNTIME_CHANNEL_KEYS = [
   'tag.list',
   'tag.activeCatalog',
   'tag.rename',
+  'tag.recolor',
   'tag.merge',
   'tag.previewCleanup',
   'tag.applyCleanup',

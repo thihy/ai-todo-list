@@ -220,6 +220,7 @@ const api: TodoListApi = {
     list: (opts) => invoke('tag.list', { activeOnly: opts?.activeOnly }),
     activeCatalog: () => invoke('tag.activeCatalog', undefined as never),
     rename: (oldName, newName) => invoke('tag.rename', { oldName, newName }),
+    recolor: (name, color) => invoke('tag.recolor', { name, color }),
     merge: (sources, target, newColor) =>
       invoke('tag.merge', { sources, target, ...(newColor ? { newColor } : {}) }),
     previewCleanup: () => invoke('tag.previewCleanup', undefined as never),

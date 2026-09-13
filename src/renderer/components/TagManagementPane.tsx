@@ -33,8 +33,10 @@
 //     re-fetch the preview if the user wants to retry.
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useTagList } from '../hooks/useTodoListApi';
 import { useToastBus } from './Toast';
+import { TagColorPicker } from './TagInput';
 import type {
   CleanupActions,
   CleanupApplyResult,
@@ -186,6 +188,10 @@ export const TagManagementPane: React.FC = () => {
               }
               setEditing(null);
             }}
+            onRecolor={async (row, color) => {
+              const res = await window.todoList.tag.recolor(row.name, color);
+              if (!res.ok) alert(`修改颜色失败:${res.message ?? '未知错误'}`);
+            }}
             onStartMerge={(row) => setMergeFrom({ sources: [row], target: null })}
             onRetire={async (row) => {
               const ok = window.confirm(
@@ -274,6 +280,7 @@ interface TagRowProps {
   onDraftChange(value: string): void;
   onCancelEdit(): void;
   onCommitRename(row: TagCatalogEntry, newName: string): Promise<void>;
+  onRecolor(row: TagCatalogEntry, color: string): Promise<void>;
   onStartMerge(row: TagCatalogEntry): void;
   onRetire(row: TagCatalogEntry): Promise<void>;
   onReactivate(row: TagCatalogEntry): Promise<void>;
@@ -286,6 +293,7 @@ const TagRow: React.FC<TagRowProps> = ({
   onDraftChange,
   onCancelEdit,
   onCommitRename,
+  onRecolor,
   onStartMerge,
   onRetire,
   onReactivate,
@@ -294,10 +302,10 @@ const TagRow: React.FC<TagRowProps> = ({
   const isRetired = row.retiredAt != null;
   return (
     <div className={`settings-tags__row${isRetired ? ' is-retired' : ''}`}>
-      <span
-        className="settings-tags__swatch"
-        style={{ backgroundColor: row.color }}
-        aria-hidden="true"
+      <TagColorPicker
+        value={row.color}
+        onChange={(color) => void onRecolor(row, color)}
+        ariaLabel={`修改标签「${row.name}」的颜色`}
       />
       {isEditing ? (
         <input
@@ -385,14 +393,15 @@ const MergeDialog: React.FC<MergeDialogProps> = ({ initial, allActive, onClose, 
     [allActive, sources],
   );
   const totalAffected = sources.reduce((acc, s) => acc + s.activeCount, 0);
-  return (
-    <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="merge-tags-title">
-      <div className="modal settings-tags-dialog">
-        <div className="modal__header">
+  return createPortal(
+    <div className="settings-tags-submodal" role="dialog" aria-modal="true" aria-labelledby="merge-tags-title">
+      <button className="settings-tags-submodal__backdrop" type="button" onClick={onClose} aria-label="关闭合并标签窗口" />
+      <div className="settings-tags-submodal__panel settings-tags-dialog">
+        <div className="settings-tags-submodal__header">
           <h3 id="merge-tags-title">合并标签</h3>
           <button type="button" className="icon-btn" onClick={onClose} aria-label="关闭">×</button>
         </div>
-        <div className="modal__body">
+        <div className="settings-tags-submodal__body">
           <div className="settings-tags-dialog__notice">
             合并仅影响未删除、未归档任务。已删除或已归档任务上的原标签保持不变。
           </div>
@@ -446,7 +455,7 @@ const MergeDialog: React.FC<MergeDialogProps> = ({ initial, allActive, onClose, 
             将影响 <strong>{totalAffected}</strong> 个有效任务。同任务已有源和目标时,合并后只保留目标。
           </div>
         </div>
-        <div className="modal__footer">
+        <div className="settings-tags-submodal__footer">
           <button type="button" className="btn-secondary" onClick={onClose}>取消</button>
           <button
             type="button"
@@ -458,7 +467,8 @@ const MergeDialog: React.FC<MergeDialogProps> = ({ initial, allActive, onClose, 
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 };
 
@@ -527,14 +537,15 @@ const CleanupDialog: React.FC<CleanupDialogProps> = ({ preview, loading, onClose
     }
   };
 
-  return (
-    <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="cleanup-tags-title">
-      <div className="modal modal--wide settings-tags-dialog settings-tags-dialog--cleanup">
-        <div className="modal__header">
+  return createPortal(
+    <div className="settings-tags-submodal" role="dialog" aria-modal="true" aria-labelledby="cleanup-tags-title">
+      <button className="settings-tags-submodal__backdrop" type="button" onClick={onClose} aria-label="关闭扫描清理窗口" />
+      <div className="settings-tags-submodal__panel settings-tags-submodal__panel--wide settings-tags-dialog settings-tags-dialog--cleanup">
+        <div className="settings-tags-submodal__header">
           <h3 id="cleanup-tags-title">扫描清理</h3>
           <button type="button" className="icon-btn" onClick={onClose} aria-label="关闭">×</button>
         </div>
-        <div className="modal__body">
+        <div className="settings-tags-submodal__body">
           <div className="settings-tags-dialog__notice">
             仅影响未删除、未归档任务。已删除或已归档任务的标签保持原样。
           </div>
@@ -572,7 +583,7 @@ const CleanupDialog: React.FC<CleanupDialogProps> = ({ preview, loading, onClose
             </>
           )}
         </div>
-        <div className="modal__footer">
+        <div className="settings-tags-submodal__footer">
           <button type="button" className="btn-secondary" onClick={() => void onRefresh()} disabled={loading || applying}>
             重新扫描
           </button>
@@ -590,7 +601,8 @@ const CleanupDialog: React.FC<CleanupDialogProps> = ({ preview, loading, onClose
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 };
 
