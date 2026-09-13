@@ -148,6 +148,11 @@ See `startup[ai]` log lines and ADR-004.
   with severity ordering (blocker → warn → info). It is
   read-only by design — automatic repair is intentionally out of
   scope to keep the layer AI-free and testable.
+- The command palette (Cmd/Ctrl-K, SEARCH-01) lets you multi-select
+  TODO results and apply bulk actions without leaving the keyboard:
+  status changes, priority bumps, "加入今日", or push the selection
+  as AI context for the next prompt. All bulk actions reuse
+  `todo.batchUpdate` — there is no second write path.
 - DSH boot is best-effort: a failed boot surfaces as
   `ai.ask → dsh_unavailable` and is visible in the AI pane as a
   non-blocking banner. The rest of the app stays usable.
