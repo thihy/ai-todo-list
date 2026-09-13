@@ -49,6 +49,7 @@ const DECLARED_CHANNELS: ReadonlySet<string> = new Set([
   'ai.forgetMemory',
   'ai.event',
   'ai.parseCapturePreview',
+  'ai.suggestTags',
   'ai.conversation.list',
   'ai.conversation.create',
   'ai.conversation.rename',

@@ -156,6 +156,7 @@ const api: TodoListApi = {
       invoke('ai.cancel', { conversationId, invocationId }),
     ask: (req) => invoke('ai.ask', req),
     parseCapturePreview: (text) => invoke('ai.parseCapturePreview', { text }),
+    suggestTags: (req) => invoke('ai.suggestTags', req),
   },
   conversation: {
     list: (opts) => invoke('ai.conversation.list', opts ?? {}),

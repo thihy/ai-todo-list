@@ -135,21 +135,29 @@ function mergeColor(input: Partial<TaskColorPair> | undefined, fallback: TaskCol
 }
 
 /** 给定当前 appearance，找到第一个匹配它的预设 id；返回 'custom' 表示
- *  当前为自定义配色（mode=custom 或颜色与任意预设不一致）。
- *  - mode='theme' + 颜色 = DEFAULT_TASK_APPEARANCE → 'theme'（跟随主题）。
- *  - mode='custom' + 颜色匹配某预设 → 那个预设的 id（保持 custom 模式，
- *    但下拉仍能识别为某个预设，方便用户回看 / 改回）。
- *  - mode='custom' + 颜色不匹配任意预设 → 'custom'（手动配色）。 */
+ *  当前为自定义配色（颜色与任何 custom 预设都不一致）。
+ *  - mode='theme'  + 颜色 = DEFAULT_TASK_APPEARANCE → 'theme'（跟随主题）。
+ *  - mode='custom' + 颜色匹配某个 custom 预设 → 那个预设的 id（保持
+ *    custom 模式，但下拉能识别为某个预设，方便用户回看 / 改回）。
+ *  - mode='custom' + 颜色匹配 DEFAULT 但 mode 不是 'theme' → 仍然
+ *    'custom'（重要：用户显式选了 custom，只是恰好把颜色设成了默认。
+ *    不能因为颜色相同就标成 theme —— 那会让下拉回弹到「跟随主题」，
+ *    用户的「自定义」意图被悄悄吞掉）。
+ *  - 任何其它情况 → 'custom'（手动配色）。 */
 export function presetIdOf(appearance: TaskAppearance): string | null {
-  // 跟随主题：仅当 mode 显式为 theme 且颜色等于 DEFAULT 时返回 'theme'。
-  if (appearance.mode === 'theme' && sameColors(appearance.colors, DEFAULT_TASK_APPEARANCE.colors)) {
-    return 'theme';
+  // 已归一化为 theme：颜色等于 DEFAULT 才算 theme；否则视为 custom
+  // （理论上 normalizeTaskAppearance 不会让 theme+非默认色走出来，但保
+  // 守起见仍按颜色判定，避免 UI 误弹「跟随主题」）。
+  if (appearance.mode === 'theme') {
+    return sameColors(appearance.colors, DEFAULT_TASK_APPEARANCE.colors) ? 'theme' : 'custom';
   }
-  // 自定义模式：按完整颜色映射匹配某个预设（包括 DEFAULT 也算 theme）。
+  // mode === 'custom'：只在 custom 预设里匹配颜色，theme 预设不参与
+  // 比对。否则用户手动把颜色调成 DEFAULT 颜色会被误标为 theme。
   for (const preset of TASK_APPEARANCE_PRESETS) {
+    if (preset.value.mode !== 'custom') continue;
     if (sameColors(preset.value.colors, appearance.colors)) return preset.id;
   }
-  // 颜色与任意预设都不一致 ——「自定义」选项。
+  // 颜色与任何 custom 预设都不一致 ——「自定义」选项。
   return 'custom';
 }
 

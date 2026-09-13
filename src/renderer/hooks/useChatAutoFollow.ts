@@ -134,6 +134,22 @@ export function useChatAutoFollow(opts: UseChatAutoFollowOpts): UseChatAutoFollo
     }
   }, []);
 
+  /** Mark the user as "no longer following" in one step:
+    *  - flip `following` off so onScroll / ResizeObserver don't queue more
+    *    bottom-pinned frames from now on,
+    *  - bump the generation so any frame ALREADY queued (e.g. one
+    *    scheduled at send-time before the user scrolled up) becomes a
+    *    no-op even if cancelPendingFrame somehow misses the handle,
+    *  - cancel the queued rAF,
+    *  - surface the jump-to-latest button.
+    *  Used by wheel / touch / keyboard / scrollbar-drag. */
+  const pauseFollowing = useCallback((): void => {
+    generationRef.current += 1;
+    followingRef.current.following = false;
+    setShowJumpToLatest(true);
+    cancelPendingFrame();
+  }, [cancelPendingFrame]);
+
   /** Distance (px) from the bottom of the scroll viewport. 0 = exactly at
    *  bottom. Uses `Math.max` so a content that's shorter than the viewport
    *  (no scrolling possible) returns 0 instead of negative numbers. */
@@ -240,19 +256,11 @@ export function useChatAutoFollow(opts: UseChatAutoFollowOpts): UseChatAutoFollo
     };
 
     /** `wheel` events always come from the user (programmatic scrolls don't
-     *  fire wheel). Up-scrolling pauses the follow; we also cancel any
-     *  pending rAF the hook had scheduled so a half-rendered burst doesn't
-     *  yank the user back. */
+     *  fire wheel). Up-scrolling pauses the follow via the unified helper,
+     *  which also invalidates any pending rAF the hook had scheduled. */
     const onWheel = (e: WheelEvent): void => {
       if (e.deltaY < 0 && followingRef.current.following) {
-        // Bump generation so any still-queued frame (e.g. one scheduled at
-        // send-time before the user scrolled up) becomes a no-op even if
-        // cancelPendingFrame somehow misses it. Belt-and-braces with the
-        // explicit cancel below.
-        generationRef.current += 1;
-        followingRef.current.following = false;
-        setShowJumpToLatest(true);
-        cancelPendingFrame();
+        pauseFollowing();
       } else if (e.deltaY > 0) {
         // Scrolling down — let onScroll decide whether we're back at bottom.
         // No state change here; onScroll handles it.
@@ -270,10 +278,7 @@ export function useChatAutoFollow(opts: UseChatAutoFollowOpts): UseChatAutoFollo
       if (y === null) return;
       // Touch clientY gets smaller as finger moves UP the screen.
       if (y > lastTouchY && followingRef.current.following) {
-        generationRef.current += 1;
-        followingRef.current.following = false;
-        setShowJumpToLatest(true);
-        cancelPendingFrame();
+        pauseFollowing();
       }
       lastTouchY = y;
     };
@@ -298,10 +303,7 @@ export function useChatAutoFollow(opts: UseChatAutoFollowOpts): UseChatAutoFollo
       const isUpKey = e.key === ARROW_UP || e.key === PAGE_UP || e.key === HOME;
       const isDownKey = e.key === ARROW_DOWN || e.key === PAGE_DOWN || e.key === END || e.key === SPACE;
       if (isUpKey && followingRef.current.following) {
-        generationRef.current += 1;
-        followingRef.current.following = false;
-        setShowJumpToLatest(true);
-        cancelPendingFrame();
+        pauseFollowing();
       } else if (isDownKey) {
         // Browser handles the actual scroll; onScroll will fire and either
         // resume follow (at-bottom) or keep the button visible.
@@ -313,19 +315,63 @@ export function useChatAutoFollow(opts: UseChatAutoFollowOpts): UseChatAutoFollo
      *  it — when the user drags, scrollTop won't match our written value.
      *  Note: a scrollbar drag can also leave us above the bottom, in which
      *  case onScroll sets following=false. We also bump the generation so
-     *  any queued follow frame can't drag the user back during the drag. */
+     *  any queued follow frame can't drag the user back during the drag.
+     *
+     *  Scrollbar hit detection must use ELEMENT-LOCAL coordinates — not
+     *  window-level clientX mixed with `el.clientWidth`. We build a rect
+     *  from `getBoundingClientRect()` and compute:
+     *    xInEl = clientX - rect.left
+     *    yInEl = clientY - rect.top
+     *  The scrollbar gutter is the strip BETWEEN `clientLeft + clientWidth`
+     *  (inside the padding box) and `clientLeft + offsetWidth - borderRight`
+     *  (outside the border-right, before the scrollbar). Vertical scrollbars
+     *  on Windows / Linux live there; if `offsetWidth - clientWidth -
+     *  borderLeft - borderRight` is 0, no scrollbar is rendered at all and
+     *  we must NOT pretend one is hit — that's how we avoid mis-firing
+     *  when the user clicks on the rightmost column of message content in
+     *  a container that's short enough to not need a scrollbar.
+     *
+     *  We also gate by yInEl being inside the inner content rect
+     *  (`yInEl ∈ [borderTop, offsetHeight - borderBottom]`) so that clicks
+     *  on the element's border or padding area don't register as a drag —
+     *  that strip can be styled as a button hit-zone.
+     *
+     *  When the scrollbar can't be measured reliably (e.g. macOS overlay
+     *  scrollbars: `offsetWidth === clientWidth` and the gutter isn't
+     *  painted), `onScroll` itself still fires while the user drags and
+     *  already pauses follow via `following = atBottom`. We intentionally
+     *  do NOT speculate about the overlay case from pointer geometry. */
+    const isScrollbarHit = (e: PointerEvent): boolean => {
+      const rect = el.getBoundingClientRect();
+      const cs = window.getComputedStyle(el);
+      const borderLeft = parseFloat(cs.borderLeftWidth) || 0;
+      const borderTop = parseFloat(cs.borderTopWidth) || 0;
+      const borderRight = parseFloat(cs.borderRightWidth) || 0;
+      const borderBottom = parseFloat(cs.borderBottomWidth) || 0;
+      const xInEl = e.clientX - rect.left;
+      const yInEl = e.clientY - rect.top;
+      // Vertical scrollbar gutter (right edge), in element-local coords.
+      // Strip = inner right edge → outer right edge - borderRight.
+      const gutterLeft = borderLeft + el.clientWidth;
+      const gutterRight = el.offsetWidth - borderRight;
+      if (gutterRight <= gutterLeft) return false; // no scrollbar painted
+      // Vertical bounds: stay inside the content rect so border / padding
+      // clicks don't register.
+      const yMin = borderTop;
+      const yMax = el.offsetHeight - borderBottom;
+      if (yInEl < yMin || yInEl > yMax) return false;
+      return xInEl >= gutterLeft && xInEl <= gutterRight;
+    };
+
     const onPointerDown = (e: PointerEvent): void => {
-      // Only care about drags on the scrollbar area — buttons inside the
-      // content area are handled by their own listeners. The scrollbar
-      // lives in the gap between clientWidth and offsetWidth.
-      const onScrollbar = e.clientX >= el.clientWidth;
-      if (onScrollbar && followingRef.current.following) {
-        // We don't know yet whether the user is dragging up or down; just
-        // record that we're now in a "maybe leaving the bottom" state and
-        // cancel the queued frame. onScroll will sort out the rest once
-        // the drag actually moves the scroll position.
-        generationRef.current += 1;
-        cancelPendingFrame();
+      if (!isScrollbarHit(e)) return;
+      if (followingRef.current.following) {
+        // Belt-and-braces: cancel queued frames AND bump generation. The
+        // subsequent scroll events from the drag will land in onScroll,
+        // which may set `following=false` if the drag leaves the bottom —
+        // but the generation bump here stops any still-queued follow-frame
+        // from firing during the drag itself.
+        pauseFollowing();
       }
     };
 
@@ -346,7 +392,7 @@ export function useChatAutoFollow(opts: UseChatAutoFollowOpts): UseChatAutoFollo
       el.removeEventListener('keydown', onKeyDown);
       el.removeEventListener('pointerdown', onPointerDown);
     };
-  }, [scrollRef, distanceFromBottom, cancelPendingFrame]);
+  }, [scrollRef, distanceFromBottom, cancelPendingFrame, pauseFollowing]);
 
   // --- resize observer ---------------------------------------------------
 

@@ -283,6 +283,17 @@ export interface TodoListApi {
     }): Promise<IpcResponse<'ai.ask'>>;
     /** Rule-based NL capture preview (works offline; returns structured fields). */
     parseCapturePreview(text: string): Promise<IpcResponse<'ai.parseCapturePreview'>>;
+    /** Fire-and-forget tag recommendation for the TagInput popover. Advisory
+     *  only — failure paths collapse to `{tags: []}` so the popover is never
+     *  blocked on the AI. See ai-handlers.ts / src/main/ipc/ai-handlers.ts
+     *  for the actual implementation (5s timeout, default limit 4 / max 8,
+     *  existingTags steering). */
+    suggestTags(req: {
+      title: string;
+      body?: string;
+      existingTags?: string[];
+      limit?: number;
+    }): Promise<IpcResponse<'ai.suggestTags'>>;
   };
   /**
    * Conversation control. Each conversation is an independent AI thread the

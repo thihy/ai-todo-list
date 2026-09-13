@@ -6,6 +6,7 @@
 import React, { useEffect, useState } from 'react';
 import { useSettings, useSettingsPatchWithToast } from '../hooks/useTodoListApi';
 import { useDimTitleBar } from '../hooks/useDimTitleBar';
+import { useToastBus } from './Toast';
 import type { SettingsGetRes } from '../../shared/ipc-schema';
 import type { SettingsPatchArgs } from '../../shared/todo-list-api';
 import {
@@ -38,8 +39,10 @@ export const SettingsModal: React.FC<{ open: boolean; onClose: () => void }> = (
   const [cat, setCat] = useState<Category>('model');
   const settings = useSettings();
   // `patchWithToast` swallows save failures into an error toast — used by
-  // the simple, per-keystroke panels below. TaskAppearancePane gets the raw
-  // `patch` (which throws) so it can drive its own saving/saved/failed UI.
+  // the simple, per-keystroke panels below. TaskAppearancePane + ModelPane
+  // + CustomProvidersEditor get the raw `patch` (which throws) so they can
+  // drive their own branch-on-outcome UI (clear draft only on success,
+  // surface inline error, etc.).
   const patchWithToast = useSettingsPatchWithToast();
   // Dim the frameless titleBarOverlay (native min/max/close glyphs) while
   // this modal covers the app — see useDimTitleBar for why an IPC is needed.
@@ -90,7 +93,11 @@ export const SettingsModal: React.FC<{ open: boolean; onClose: () => void }> = (
             ) : cat === 'general' ? (
               <GeneralPane data={data} patch={patchWithToast} />
             ) : cat === 'model' ? (
-              <ModelPane data={data} patch={patchWithToast} />
+              // ModelPane branches on save outcome (clear API key only on
+              // success, etc.) — must receive the raw patch that throws on
+              // failure, NOT patchWithToast which would mask the failure
+              // and let the success branch fire anyway.
+              <ModelPane data={data} patch={patch} />
             ) : cat === 'data' ? (
               <DataPane data={data} patch={patchWithToast} chooseDataDir={chooseDataDir} />
             ) : cat === 'tags' ? (
@@ -136,36 +143,80 @@ const GeneralPane: React.FC<PaneProps> = ({ data, patch }) => (
 );
 
 const ModelPane: React.FC<PaneProps> = ({ data, patch }) => {
+  const toast = useToastBus();
   const [apiKey, setApiKey] = useState('');
   const [showKey, setShowKey] = useState(false);
   const [savingKey, setSavingKey] = useState(false);
+  // Inline error status for the API Key save row. The toast is fine for the
+  // simple toggle/select paths, but a save failure here must keep the user's
+  // Key draft intact AND visibly tell them so they can decide whether to
+  // retry — Key contents are not echoed in the toast (we never log them).
+  const [keyError, setKeyError] = useState<string | null>(null);
 
   useEffect(() => {
     setApiKey('');
+    setKeyError(null);
   }, [data]);
 
   const isCustom = data.provider === 'custom';
   const models = PROVIDER_MODELS[data.provider] ?? [];
   const noKeyNeeded = data.provider === 'ollama' || data.provider === 'shim';
 
+  // Switching provider often invalidates the selected model (different
+  // provider's model list doesn't contain the previous one). Merge into one
+  // patch so a partial-write failure doesn't strand us on a new provider
+  // with a stale / unsupported model still selected.
   const onProviderChange = async (p: AIProvider): Promise<void> => {
-    await patch({ provider: p });
     const nextModels = PROVIDER_MODELS[p] ?? [];
-    if (p !== 'custom' && !nextModels.includes(data.model)) {
-      await patch({ model: nextModels[0] });
+    const nextPatch: SettingsPatchArgs =
+      p !== 'custom' && !nextModels.includes(data.model)
+        ? { provider: p, model: nextModels[0] }
+        : { provider: p };
+    try {
+      await patch(nextPatch);
+    } catch (err) {
+      // Bubble as a toast so the user knows the switch didn't stick. Keep
+      // the draft select value as-is — on next render `data.provider` is
+      // unchanged so the control reflects the persisted value.
+      const reason = err instanceof Error && err.message ? err.message : '未知错误';
+      toast.push({ kind: 'error', message: `切换提供商失败：${reason}`, ttl: 3000 });
     }
   };
 
   const onSaveApiKey = async (): Promise<void> => {
     if (!apiKey || savingKey) return;
     setSavingKey(true);
+    setKeyError(null);
     try {
       await patch({ apiKey });
-      // 只有成功后才清空本地草稿；失败时由 patchWithToast 弹错误提示，
-      // 用户可以重试而无需重新输入 Key。
+      // 成功 —— 清空本地草稿;若稍后失败,草稿仍在 input 里。
       setApiKey('');
+    } catch (err) {
+      // 失败 —— 草稿保留;把原因显示给用户。绝不把密钥本身写进消息。
+      const reason = err instanceof Error && err.message ? err.message : '未知错误';
+      setKeyError(`保存失败：${reason}（草稿已保留，可重试）`);
     } finally {
       setSavingKey(false);
+    }
+  };
+
+  // 流式开关的单独 patch —— 失败必须吞 toast,不让 select 卡在错误态。
+  const onStreamingChange = async (checked: boolean): Promise<void> => {
+    try {
+      await patch({ streaming: checked });
+    } catch (err) {
+      const reason = err instanceof Error && err.message ? err.message : '未知错误';
+      toast.push({ kind: 'error', message: `更新流式设置失败：${reason}`, ttl: 3000 });
+    }
+  };
+
+  // 切换 model —— 失败 toast,保留 select 显示当前持久化值。
+  const onModelChange = async (next: string): Promise<void> => {
+    try {
+      await patch({ model: next as typeof data.model });
+    } catch (err) {
+      const reason = err instanceof Error && err.message ? err.message : '未知错误';
+      toast.push({ kind: 'error', message: `切换模型失败：${reason}`, ttl: 3000 });
     }
   };
 
@@ -193,7 +244,7 @@ const ModelPane: React.FC<PaneProps> = ({ data, patch }) => {
             <select
               className="input"
               value={data.model}
-              onChange={(e) => void patch({ model: e.target.value })}
+              onChange={(e) => void onModelChange(e.target.value)}
             >
               {models.map((m) => (
                 <option key={m} value={m}>
@@ -215,12 +266,13 @@ const ModelPane: React.FC<PaneProps> = ({ data, patch }) => {
               <input
                 type={showKey ? 'text' : 'password'}
                 value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
+                onChange={(e) => { setApiKey(e.target.value); if (keyError) setKeyError(null); }}
                 placeholder={data.apiKeyRedacted || '在此粘贴 Key…'}
                 className="input mono"
                 autoComplete="off"
+                disabled={savingKey}
               />
-              <button type="button" className="btn-secondary" onClick={() => setShowKey((v) => !v)}>
+              <button type="button" className="btn-secondary" onClick={() => setShowKey((v) => !v)} disabled={savingKey}>
                 {showKey ? '隐藏' : '显示'}
               </button>
               <button
@@ -232,6 +284,16 @@ const ModelPane: React.FC<PaneProps> = ({ data, patch }) => {
                 {savingKey ? '保存中…' : '保存'}
               </button>
             </div>
+            {keyError && (
+              <div
+                className="field-hint"
+                role="status"
+                aria-live="polite"
+                style={{ color: 'var(--accent-danger)' }}
+              >
+                {keyError}
+              </div>
+            )}
           </Field>
         </>
       )}
@@ -241,7 +303,7 @@ const ModelPane: React.FC<PaneProps> = ({ data, patch }) => {
           <input
             type="checkbox"
             checked={data.streaming}
-            onChange={(e) => void patch({ streaming: e.target.checked })}
+            onChange={(e) => void onStreamingChange(e.target.checked)}
           />
           <span>启用流式输出</span>
         </label>

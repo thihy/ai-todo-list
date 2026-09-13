@@ -78,10 +78,6 @@ interface CardModels {
   /** Original args JSON for the IN section. Populated for ALL branches
    *  (was previously nulled for diff/read/search/web — see fix below). */
   bodyRaw: string | null
-  /** True when we know the args exist and have been serialised; false when
-   *  the renderer saw only the result event (no tool/call). Distinguishes
-   *  "args is {}" from "args are unknown — show '未记录输入'". */
-  argsKnown: boolean
   /** First line of an error result; replaces the collapsed summary. */
   errorSummary: string | null
 }
@@ -159,11 +155,11 @@ function toCardModels(
   // decides how to render the input.
   const bodyRaw = argsBodyRaw(args, argsKnown);
   if (web !== null) {
-    return { diff: null, read: null, search: null, web, output: null, bodyRaw, argsKnown, errorSummary: null };
+    return { diff: null, read: null, search: null, web, output: null, bodyRaw, errorSummary: null };
   }
   switch (view.card) {
     case 'diff':
-      return { diff: { card: { diffs: view.diffs } }, read: null, search: null, web: null, output: null, bodyRaw, argsKnown, errorSummary: null };
+      return { diff: { card: { diffs: view.diffs } }, read: null, search: null, web: null, output: null, bodyRaw, errorSummary: null };
     case 'read':
       return {
         diff: null,
@@ -172,7 +168,6 @@ function toCardModels(
         web: null,
         output: null,
         bodyRaw,
-        argsKnown,
         errorSummary: null,
       };
     case 'search':
@@ -185,7 +180,6 @@ function toCardModels(
         web: null,
         output: null,
         bodyRaw,
-        argsKnown,
         errorSummary: null,
       };
     // 'generic' / 'terminal' / 'web' fall through to the input/output body.
@@ -198,7 +192,6 @@ function toCardModels(
         web: null,
         output: text === '' ? null : text,
         bodyRaw,
-        argsKnown,
         errorSummary: ok ? null : firstLine(text),
       };
     }
@@ -250,23 +243,64 @@ export const DomainToolRow: React.FC<{
   args: unknown
   argsKnown: boolean
   result: unknown
-  resultKnown: boolean
+  /**
+   * Whether the caller actually saw a tool/result event. False for
+   * "missing-result" rows (turn ended before the result arrived) and any
+   * orphan we couldn't pair. Not consumed here directly — present only
+   * because the wire contract and several call sites pass it; the
+   * presentation effect comes from the explicit `state` field below.
+   */
+  resultKnown?: boolean | undefined
   presentationMeta?: unknown
   ok: boolean
-  state: 'running' | 'done' | 'error' | 'stopped' | 'missing-call' | 'missing-result'
-  running: boolean
-}> = ({ toolName, args, argsKnown, result, resultKnown, presentationMeta, ok, state, running }) => {
+  /**
+   * Explicit lifecycle from the projection layer. When present, this
+   * drives the row state — we do NOT re-derive from `ok` / result-string
+   * heuristics, because that would lose the "missing-call" / "missing-
+   * result" / "stopped" distinctions the new contract is supposed to
+   * surface.
+   */
+  state?: 'running' | 'done' | 'error' | 'stopped' | 'missing-call' | 'missing-result' | undefined
+  /**
+   * Caller's running hint — used only when `state` is absent (legacy call
+   * sites that haven't migrated to the explicit lifecycle yet). When
+   * `state` is provided it takes precedence.
+   */
+  running?: boolean | undefined
+}> = ({ toolName, args, argsKnown, result, presentationMeta, ok, state, running }) => {
   const callView = useMemo(() => presentToolCall(toolName, args), [toolName, args])
   const resultView = useMemo(
     () => presentToolResult(toolName, args, result, ok),
     [toolName, args, result, ok],
   )
-  // Stop state: the runtime's cancel path marks the result with a
-  // 'cancelled:'-prefixed string. DSH uses 'warning' amber for stops; we map
-  // it onto ToolRow's `stopped` state so an interrupted call is distinguishable
-  // from a successful one (amber dot) and a failed one (red dot).
-  const stopped = ok === false && typeof result === 'string' && result.startsWith('cancelled:')
-  const rowState: ToolRowState = running ? 'running' : stopped ? 'stopped' : ok ? 'ok' : 'error'
+  // ToolRow state mapping. The explicit `state` from the projection is the
+  // authoritative source — only fall back to the legacy heuristics when
+  // it's absent (e.g. older call sites that haven't migrated). The
+  // 'missing-call' / 'missing-result' states deliberately do NOT map to
+  // an error: missing-result is "turn ended before result arrived" (not a
+  // failure), missing-call is "result with no corresponding call" (also
+  // not a user-visible error). They render via `ok`-based dot but with a
+  // distinct summary via errorSummary in cards.
+  let rowState: ToolRowState;
+  if (state === 'error') rowState = 'error';
+  else if (state === 'stopped') rowState = 'stopped';
+  else if (state === 'running') rowState = 'running';
+  else if (state === 'done') rowState = 'ok';
+  else if (state === 'missing-call' || state === 'missing-result') {
+    // Surface as ok — the renderer uses a dedicated errorSummary line to
+    // tell the user the result was lost, not the red error dot. We still
+    // keep `ok=false` on the wire so the visual treatment is neutral,
+    // not "success-green".
+    rowState = ok ? 'ok' : 'error';
+  } else {
+    // Legacy fallback (caller didn't provide explicit state):
+    //   running → 'running'
+    //   ok && cancelled prefix → 'stopped'
+    //   ok → 'ok'
+    //   else → 'error'
+    const stopped = ok === false && typeof result === 'string' && result.startsWith('cancelled:');
+    rowState = running ? 'running' : stopped ? 'stopped' : ok ? 'ok' : 'error';
+  }
   // presentToolCall always returns a GenericCallView (card:'generic' + kind),
   // but its declared return type is the full ToolCallView union, where `kind`
   // lives only on the generic arm — narrow before indexing variantByKind.
@@ -329,7 +363,6 @@ export const DomainToolRow: React.FC<{
       output={cards.output}
       errorSummary={cards.errorSummary}
       showInputWithCard={showInputWithCard}
-      argsKnown={cards.argsKnown}
       missingInputHint={argsKnown ? undefined : '未记录输入'}
     />
   )

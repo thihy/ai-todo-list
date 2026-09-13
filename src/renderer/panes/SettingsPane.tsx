@@ -1,29 +1,35 @@
 // Settings — API key, model, streaming, hotkey, theme, data directory.
 //
 // Save-failure contract:
-//   - All `patch` calls go through `useSettingsPatchWithToast`, which catches
-//     errors and emits a visible error toast. No `void patch(...)` is left
-//     unhandled — every write either succeeds, toasts an error, or shows its
-//     own inline error state.
-//   - The API Key input keeps its local draft while saving; the draft is
-//     cleared ONLY on success. A failed save lets the user retry without
-//     re-typing the key.
+//   - Per-keystroke writes (model select, streaming toggle, hotkey input,
+//     theme select, archiveAfterDays) use `patchWithToast`. They don't need
+//     to branch on success/failure — a failed write just stays at the
+//     previous persisted value (because the hook didn't update `data`) and
+//     the toast tells the user it didn't stick.
+//   - API Key save branches on success/failure (must keep the draft when
+//     the disk write failed so the user can retry without re-typing), so it
+//     uses the raw `patch` which throws on failure. Inline error row shows
+//     the reason without echoing the key.
 
 import React, { useEffect, useState } from 'react';
 import { useSettings, useSettingsPatchWithToast } from '../hooks/useTodoListApi';
 import type { AIModel } from '../../shared/ai-types';
 
 export const SettingsPane: React.FC = () => {
-  const { data, chooseDataDir } = useSettings();
+  const { data, patch, chooseDataDir } = useSettings();
   const patchWithToast = useSettingsPatchWithToast();
   const [apiKey, setApiKey] = useState('');
   const [showKey, setShowKey] = useState(false);
   const [relocating, setRelocating] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [savingKey, setSavingKey] = useState(false);
+  const [keyError, setKeyError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (data) setApiKey('');
+    if (data) {
+      setApiKey('');
+      setKeyError(null);
+    }
   }, [data]);
 
   if (!data) return <div style={{ padding: 'var(--space-lg)' }}>加载中…</div>;
@@ -40,12 +46,16 @@ export const SettingsPane: React.FC = () => {
   const onSaveApiKey = async (): Promise<void> => {
     if (!apiKey || savingKey) return;
     setSavingKey(true);
+    setKeyError(null);
     try {
-      // patchWithToast already toasts on failure; here we only gate the
-      // local-draft clear so the user can retry the same key after a
-      // transient disk error.
-      await patchWithToast({ apiKey });
+      // raw `patch` throws on failure. We must only clear the draft on
+      // success — otherwise a disk-full / permission-denied would silently
+      // drop the user's API key.
+      await patch({ apiKey });
       setApiKey('');
+    } catch (err) {
+      const reason = err instanceof Error && err.message ? err.message : '未知错误';
+      setKeyError(`保存失败：${reason}（草稿已保留，可重试）`);
     } finally {
       setSavingKey(false);
     }
@@ -60,7 +70,7 @@ export const SettingsPane: React.FC = () => {
           <input
             type={showKey ? 'text' : 'password'}
             value={apiKey}
-            onChange={(e) => setApiKey(e.target.value)}
+            onChange={(e) => { setApiKey(e.target.value); if (keyError) setKeyError(null); }}
             placeholder={data.apiKeyRedacted || 'sk-...'}
             className="input mono"
             autoComplete="off"
@@ -78,6 +88,16 @@ export const SettingsPane: React.FC = () => {
             {savingKey ? '保存中…' : '保存'}
           </button>
         </div>
+        {keyError && (
+          <div
+            className="field-hint"
+            role="status"
+            aria-live="polite"
+            style={{ color: 'var(--accent-danger)' }}
+          >
+            {keyError}
+          </div>
+        )}
       </Field>
 
       <Field label="模型">
