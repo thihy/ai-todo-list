@@ -297,6 +297,33 @@ export interface TodoListApi {
      *  read; does NOT mutate anything. Returns a sorted list of
      *  issues + the wall-clock time the check ran. */
     healthCheck(): Promise<IpcResponse<'app.health.check'>>;
+    /** REL-01 MVP-1 — create a hot-backup snapshot of the SQLite DB
+     *  + durable file projections (todos/ + drawings/ + attachments/)
+     *  into a unique subfolder under the user-chosen `destDir`. The
+     *  DSH session logs are intentionally excluded (regenerable,
+     *  large, may contain user prompts). Returns the backup path +
+     *  a redacted manifest; the manifest is also written to
+     *  `<path>/manifest.json` byte-for-byte so it survives a renderer
+     *  reload. Restore + delete are not in MVP-1. */
+    backupCreate(destDir: string): Promise<IpcResponse<'app.backup.create'>>;
+    /** REL-01 MVP-1 — open the OS folder picker for the backup
+     *  destination. Returns `{ canceled: true }` if the user dismisses
+     *  the dialog; otherwise `{ canceled: false, path: <abs> }`. */
+    backupChooseDest(): Promise<IpcResponse<'app.backup.chooseDest'>>;
+    /** STARTUP-AI-ASYNC-002 — renderer → main handshake signalling
+     *  that the React App has rendered its first frame. Main uses
+     *  this to schedule the heavy DSH warm-up so the splash can
+     *  come down on core.ready alone. Idempotent — the first call
+     *  schedules `bootAiAndDispatch`, subsequent calls are silent
+     *  no-ops. The IPC promise always resolves with `accepted: true`
+     *  so the renderer's call site doesn't need to retry. */
+    rendererReady(): Promise<IpcResponse<'app.renderer.ready'>>;
+    /** Auto-updater (electron-updater → GitCode releases feed).
+     *  See src/main/updates/updater.ts. dev mode returns
+     *  `devMode: true` so the renderer can disable the button. */
+    updaterStatus(): Promise<IpcResponse<'app.updater.status'>>;
+    updaterCheck(): Promise<IpcResponse<'app.updater.check'>>;
+    updaterInstall(): Promise<IpcResponse<'app.updater.install'>>;
   };
   capture: {
     submit(args: CaptureSubmitArgs): Promise<IpcResponse<'capture.submit'>>;

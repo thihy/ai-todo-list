@@ -13,7 +13,7 @@
 import { register, okResult, failResult } from './router';
 import type { DshHandle } from '../dsh/types';
 import { resolveEndpoint, healthCheck } from '../dsh/endpoints';
-import { getDshRuntime, answerUserQuestion, answerUserApproval, type DshRuntimeDeps } from '../dsh/dsh-runtime';
+import { getDshRuntime, peekDshRuntime, answerUserQuestion, answerUserApproval, type DshRuntimeDeps } from '../dsh/dsh-runtime';
 import { costForUsage } from '../dsh/pricing';
 import { SettingsStore } from '../settings/store';
 import { BrowserWindow, dialog } from 'electron';
@@ -96,6 +96,12 @@ export function registerAiHandlers(dsh: DshHandle): void {
     // L2: cancel by conversationId. The runtime aborts the in-flight turn on
     // the cached agent for that conversation; no-op if no agent is alive.
     if (!deps) return failResult('ai_not_ready', 'DSH not initialised');
+    // STARTUP-AI-ASYNC-002: short-circuit on `peekDshRuntime` instead of
+    // calling `getDshRuntime` — cancel during cold-boot would otherwise
+    // trigger a second boot path. The renderer UI already blocks cancel
+    // while ai.status is loading, so this code path is only reached for
+    // a stale renderer / RPC race.
+    if (!peekDshRuntime()) return failResult('ai_not_ready', 'DSH not initialised');
     if (!req.conversationId) return failResult('no_conversation_id', 'conversationId required');
     try {
       const runtime = await getDshRuntime(buildRuntimeDeps()!);
@@ -170,12 +176,18 @@ export function registerAiHandlers(dsh: DshHandle): void {
     // text-only client.ts fallback: if the runtime did not boot, surface the
     // error to the renderer instead of silently degrading. A null runtime means
     // DSH boot failed (see dsh-runtime.ts getDshRuntime — it logs the cause).
-    const runtime = await getDshRuntime(buildRuntimeDeps()!);
-    if (!runtime) {
-      const message = 'DSH runtime unavailable — agent loop did not boot. Check logs (main process).';
-      send({ type: 'error', invocationId, message });
-      return failResult('dsh_unavailable', message);
-    }
+    //
+    // STARTUP-AI-ASYNC-002: use the synchronous peek so this handler does
+    // NOT trigger a fresh boot when the renderer calls ai.ask while the
+    // splash-gated cold-boot is still in flight. The renderer UI blocks
+    // submit while ai.status === 'loading' (see AIPane); this is the
+    // defence-in-depth gate so a stale event / hot-key / external API
+    // caller can't accidentally wake up a 22 s boot path. If peek says
+    // null we return `ai_not_ready`; the renderer sees it as a transient
+    // error and can surface "AI 仍在启动，请稍候".
+    const peeked = peekDshRuntime();
+    if (!peeked) return failResult('ai_not_ready', 'DSH still booting — try again once the AI panel shows ready');
+    const runtime = peeked;
 
     // L4-E: running cost for this turn. Updated after runTurn resolves,
     // using the tokens the runtime accumulated from the raw DSH event stream.
@@ -387,9 +399,17 @@ export function registerAiHandlers(dsh: DshHandle): void {
   register('ai.conversation.history', async (_e, req) => {
     if (!deps) return failResult('ai_not_ready', 'DSH not initialised');
     if (!req?.id) return failResult('no_conversation_id', 'id required');
+    // STARTUP-AI-ASYNC-002 — synchronously peek; do NOT trigger a fresh
+    // boot from this handler. AIPane gates its history effect on
+    // ai.status === 'ready', so we shouldn't normally get here during
+    // cold-boot, but a stale StrictMode-double effect could fire this
+    // once. Return `ai_not_ready` rather than empty turns so the
+    // renderer's effect re-runs once ready flips true (empty turns
+    // would silently become "loaded").
+    const peeked = peekDshRuntime();
+    if (!peeked) return failResult('ai_not_ready', 'DSH still booting');
+    const runtime = peeked;
     try {
-      const runtime = await getDshRuntime(buildRuntimeDeps()!);
-      if (!runtime) return okResult({ turns: [] });
       const turns = await runtime.loadHistory({ conversationId: req.id });
       return okResult({ turns });
     } catch (err) {

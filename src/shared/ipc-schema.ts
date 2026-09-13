@@ -624,11 +624,33 @@ export interface IpcRegistry {
   // the same `dim` value.
   'app.setTitleBarOverlay': IpcChannel<{ dim: boolean }, IpcResult<void>>;
 
+  /** STARTUP-AI-ASYNC-002 — renderer signals that the React App has
+   *  completed its first paint. Main uses this as the trigger to start
+   *  the heavy DSH warm-up; previously the boot body kicked off
+   *  immediately after `markCoreReady()`, which kept the splash
+   *  visible for the entire 22 s cold-boot window and could starve
+   *  Electron's main-process event loop on Windows.
+   *
+   *  The signal carries no payload — a no-arg ack is enough. The
+   *  handler is idempotent: the first call schedules `bootAiAndDispatch`,
+   *  subsequent calls are silent no-ops. */
+  'app.renderer.ready': IpcChannel<undefined, IpcResult<{ accepted: boolean }>>;
+
   // Snapshot query — returns the current startup state. Renderer calls this
   // once on boot BEFORE wiring the `app:startup` event listener to avoid
   // missing the transition that fires between page-load and listener-ready.
   // See src/main/startup-state.ts for the source of truth.
   'app.startup.get': IpcChannel<undefined, IpcResult<StartupSnapshot>>;
+
+  // Auto-updater (electron-updater). `status` is a sync read of the
+  // latest known feed state (currentVersion + latestVersion +
+  // downloaded); `check` triggers a user-initiated feed check and
+  // returns the updated status; `install` calls quitAndInstall on
+  // the next tick (the OS dialog / app-restart handoff is
+  // platform-specific inside electron-updater).
+  'app.updater.status': IpcChannel<undefined, IpcResult<UpdaterStatusRes>>;
+  'app.updater.check': IpcChannel<undefined, IpcResult<UpdaterStatusRes>>;
+  'app.updater.install': IpcChannel<undefined, IpcResult<void>>;
   /** UX-01 AI retry. Returns `{ accepted: boolean, reason?: 'not_failed' | 'already_in_flight' }`.
    *  Main guarantees single-flight: concurrent retries return `accepted: false`
    *  with `reason: 'already_in_flight'`. State transitions are pushed via
@@ -682,6 +704,74 @@ export interface IpcRegistry {
       checkedAt: number;
     }>
   >;
+  /** REL-01 MVP-1 — create a hot-backup snapshot of the SQLite DB +
+   *  the durable file projections (todos/ + drawings/ + attachments/).
+   *  `destDir` is an absolute path to a directory the user picked via
+   *  a native folder picker; main writes the snapshot into a uniquely
+   *  named subfolder under it. DSH session logs are intentionally
+   *  excluded (regenerable + large + contain user prompts). Returns
+   *  the backup path and a redacted manifest. Restore + delete are
+   *  not in MVP-1 — the manifest is forward-compatible with both. */
+  'app.backup.create': IpcChannel<
+    { destDir: string },
+    IpcResult<BackupCreateRes>
+  >;
+  /** REL-01 MVP-1 — native folder picker for the backup destination.
+   *  Returns the absolute path on confirm, or `{ canceled: true }` on
+   *  dismiss. Separate from `settings.chooseDataDir` (which migrates
+   *  the live data dir + restarts) so the backup flow stays
+   *  side-effect-free. */
+  'app.backup.chooseDest': IpcChannel<
+    undefined,
+    IpcResult<{ canceled: boolean; path?: string }>
+  >;
+}
+
+export interface BackupCreateRes {
+  /** Absolute path to the backup directory (a freshly-created subfolder
+   *  under the user's chosen `destDir`). */
+  path: string;
+  /** Redacted manifest describing what was captured. Mirrors the on-disk
+   *  `manifest.json` byte-for-byte so the renderer can show a summary
+   *  without re-reading the file. */
+  manifest: BackupManifest;
+}
+
+export interface BackupManifest {
+  /** Schema version of the source database. Restore refuses to apply
+   *  a manifest whose schemaVersion is greater than the running app's
+   *  SCHEMA_VERSION (forward-incompat guard). */
+  schemaVersion: number;
+  /** ISO timestamp at which the backup finished writing. */
+  generatedAt: string;
+  /** App version that wrote the backup. Informational. */
+  appVersion: string;
+  /** Basename of the source data directory only — the full absolute path
+   *  is intentionally NOT included to avoid leaking the user's directory
+   *  layout when a manifest is shared. */
+  sourceDataDirName: string;
+  counts: {
+    todos: number;
+    conversations: number;
+    tags: number;
+    inboxAttachments: number;
+  };
+  /** Which top-level subdirectories were copied. Each entry is the
+   *  basename only (e.g. 'todos'), never an absolute path. */
+  sections: {
+    todos: boolean;
+    drawings: boolean;
+    attachments: boolean;
+    dshSessions: false;
+  };
+  /** Total bytes written per section. Sum = total backup size. */
+  sizes: {
+    db: number;
+    todos: number;
+    drawings: number;
+    attachments: number;
+    total: number;
+  };
 }
 
 export interface StartupSnapshot {
@@ -778,6 +868,19 @@ export interface StartupComponentState {
   statusAt: number;
   /** 人话错误,绝不包含原始堆栈 / 密钥 / 绝对路径。 */
   errorMessage?: string;
+}
+
+export interface UpdaterStatusRes {
+  /** Current installed app version (`app.getVersion()`). */
+  currentVersion: string;
+  /** Latest version advertised by the feed, or null if not yet checked. */
+  latestVersion: string | null;
+  /** True once a newer version has been fully downloaded. */
+  downloaded: boolean;
+  /** True while an in-flight check is running. */
+  checking: boolean;
+  /** True when running in dev mode (`!app.isPackaged`) — auto-updater is a no-op. */
+  devMode: boolean;
 }
 
 export interface AppFocus {

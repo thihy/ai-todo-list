@@ -17,6 +17,7 @@ import { pathToFileURL } from 'node:url';
 import { existsSync, readdirSync, rmSync, copyFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { basename } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import type { BootPhaseLog } from './boot-probe';
 import { logger } from '../logger';
 import type { ResolvedEndpoint } from './endpoints';
 import { resolveEndpoint, healthCheck } from './endpoints';
@@ -158,6 +159,13 @@ export interface DshRuntime {
 }
 
 let runtimePromise: Promise<DshRuntime | null> | null = null;
+// STARTUP-AI-ASYNC-002 — separate synchronous snapshot of the most
+// recently-resolved runtime. `peekDshRuntime()` reads this without
+// touching the Promise (Promises can't be inspected mid-flight
+// synchronously). Maintained alongside `runtimePromise`: null while
+// no boot has run yet, the resolved runtime once a boot succeeded,
+// or null after a boot failed / was reset.
+let resolvedRuntime: DshRuntime | null = null;
 
 /** `ensureAgent` 用的最小 agent handle 形状。agents.create / agents.resume
  *  都返回这个形状；测试不需要完整 Agent 接口。 */
@@ -600,13 +608,47 @@ function extractFirstUserText(events: ReadonlyArray<{ type: string; data?: unkno
 /** DSH 懒启动一次；失败返回 null（渲染端会显示"DSH unavailable"，无回退路径） */
 export function getDshRuntime(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
   if (!runtimePromise) {
-    runtimePromise = bootDsh(deps).catch((err) => {
-      logger.warn(`DSH boot failed; ai.ask will report dsh_unavailable: ${(err as Error).message}`);
-      runtimePromise = null;
-      return null;
-    });
+    runtimePromise = bootDsh(deps)
+      .then((rt) => {
+        // Sync the read-side snapshot for `peekDshRuntime()`. Done in
+        // `.then` so it captures the resolved value, not the in-flight
+        // promise — the snapshot is the durable signal we need.
+        resolvedRuntime = rt;
+        return rt;
+      })
+      .catch((err) => {
+        logger.warn(`DSH boot failed; ai.ask will report dsh_unavailable: ${(err as Error).message}`);
+        runtimePromise = null;
+        resolvedRuntime = null;
+        return null;
+      });
   }
   return runtimePromise;
+}
+
+/** STARTUP-AI-ASYNC-002 — read-only probe. Returns the live `DshRuntime`
+ *  if the boot has completed, or `null` if it hasn't started / is in
+ *  flight / has failed. Crucially this does NOT trigger a boot the way
+ *  `getDshRuntime()` does — it's a status check used by `ai-handlers`
+ *  to short-circuit runtime-dependent calls (`ai.ask`, `ai.cancel`,
+ *  `ai.conversation.history`) with `ai_not_ready` while the cold-boot
+ *  is still warming up behind the AIPane loading overlay.
+ *
+ *  `null` covers four distinct cases (pending / loading / failed /
+ *  never-cached); the caller doesn't need to distinguish — all four
+ *  mean "AI is not ready, refuse the call". */
+export function peekDshRuntime(): DshRuntime | null {
+  if (!runtimePromise) return null;
+  // The promise is module-scoped and resolved once; either it settled
+  // to a runtime, or it settled to null (previous boot failure). We
+  // inspect its resolved value synchronously — Promise cannot be
+  // inspected mid-flight without racing, so we check via the resolved
+  // status stored alongside the promise.
+  const cached = resolvedRuntime;
+  if (cached !== undefined) return cached;
+  // In-flight: treat as not-ready. The caller will get `ai_not_ready`
+  // and the user sees "AI 正在启动" in the panel.
+  return null;
 }
 
 /** Dispose any live DSH runtime (so its agent loop / tool registry / persistence
@@ -621,6 +663,7 @@ export function getDshRuntime(deps: DshRuntimeDeps): Promise<DshRuntime | null> 
 export async function resetDshRuntimeForRetry(): Promise<void> {
   const cached = runtimePromise;
   runtimePromise = null;
+  resolvedRuntime = null;
   if (!cached) return;
   try {
     const runtime = await cached;
@@ -678,9 +721,27 @@ export async function warmupDshRuntime(deps: DshRuntimeDeps): Promise<DshRuntime
 }
 
 async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
+  // STARTUP-AI-ASYNC-002 — start the event-loop probe BEFORE any
+  // work so the histogram captures the dynamic-import stall too.
+  // We use a local variable for the probe and a phases struct so
+  // a single `try/finally` stops the probe and logs the summary
+  // whether the boot succeeds, throws, or short-circuits on a
+  // missing cordis.yml.
+  const { startLoopProbe, stopLoopProbe, logBootDone } =
+    await import('./boot-probe');
+  const probe = startLoopProbe();
+  const tBootStart = Date.now();
+  const phases: BootPhaseLog = {
+    totalMs: 0,
+    dynamicImportMs: 0,
+    cordisBootMs: 0,
+    assemblyMs: 0,
+  };
   const cfg = resolveAppPath('resources/dsh/cordis.yml');
   if (!cfg || !existsSync(cfg)) {
     logger.warn('DSH cordis.yml not found; skipping boot');
+    phases.totalMs = Date.now() - tBootStart;
+    logBootDone(phases, stopLoopProbe(probe), 'skipped');
     return null;
   }
   // bareModuleBaseUrl 把裸 @deepseek-ai/dsh-* 锚到已装包树。dev 模式用项目根，
@@ -688,9 +749,26 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
   const appRoot = app.getAppPath();
   const bareBase = new URL('.', pathToFileURL(appRoot).href).href;
 
+  const tDyn = Date.now();
   const bootMod = await import('@deepseek-ai/dsh-app-boot');
   const { boot } = bootMod;
+  phases.dynamicImportMs = Date.now() - tDyn;
+
+  const tCordis = Date.now();
   const ctx = (await boot('todo-list', cfg, undefined, undefined, bareBase)) as DshContext;
+  phases.cordisBootMs = Date.now() - tCordis;
+
+  const tAssembly = Date.now();
+
+  // STARTUP-AI-ASYNC-002 — the boot body that follows builds the
+  // runtime object literal. We wrap the rest of the function in a
+  // try/catch so the event-loop probe is always stopped (and the
+  // phase breakdown is always logged) whether the assembly succeeds
+  // or throws midway through Cordis / adapter / tools / listener
+  // setup. The `ok` path closes over `phases` + `probe` and emits
+  // a single `logBootDone(...)` at the end of the literal; the
+  // `failed` path emits from the catch.
+  try {
 
   // 暴露持久化层：列出 <DSH_SESSIONS_ROOT> 下已有的会话，让用户从日志里看到
   // 历史会话保存情况。每次启动都跑一遍没事——list() 只走目录不读事件。
@@ -1166,7 +1244,26 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
       await ctx.fiber?.dispose?.();
     },
   };
+  // STARTUP-AI-ASYNC-002 — log the boot summary + event-loop
+  // latency sample at this point. We deliberately log AFTER the
+  // runtime object is built so a future failure path (a not-yet-
+  // implemented assert inside the literal) still produces a probe
+  // log via the catch branch below.
+  phases.assemblyMs = Date.now() - tAssembly;
+  phases.totalMs = Date.now() - tBootStart;
+  logBootDone(phases, stopLoopProbe(probe), 'ok');
   return runtime;
+  } catch (err) {
+    // STARTUP-AI-ASYNC-002 — log the partial phase breakdown +
+    // event-loop latency sample for the failure case so we can
+    // tell whether the boot crashed early (small totalMs) or late
+    // (large totalMs but no ready signal). Stop the probe first so
+    // the histogram doesn't leak.
+    phases.assemblyMs = Date.now() - tAssembly;
+    phases.totalMs = Date.now() - tBootStart;
+    logBootDone(phases, stopLoopProbe(probe), 'failed');
+    throw err;
+  }
 }
 
 /**

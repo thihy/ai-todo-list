@@ -115,7 +115,7 @@ function buildSubmenus(h: AppMenuHandlers): Record<MenuCategory, MenuItemConstru
       },
       {
         label: '检查更新',
-        click: () => send('app:update-available', { version: '' }),
+        click: () => send('app.action', { action: 'checkUpdate' }),
       },
     ],
   };
@@ -154,7 +154,7 @@ export async function showAbout(): Promise<void> {
     type: 'info',
     title: '关于 AI待办',
     message: 'AI待办',
-    detail: `版本 ${app.getVersion()}\nAI 原生 TODO 清单 · Markdown 进展 · Excalidraw 绘图\nCopyright © 2026 todo-list`,
+    detail: `版本 ${app.getVersion()}\nAI 待办 — 本地优先的 AI 辅助任务管理\nCopyright © 2026 todo-list`,
     buttons: ['确定'],
   });
 }

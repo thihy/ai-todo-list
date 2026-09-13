@@ -1,6 +1,7 @@
-// 启动状态 IPC handler —— 注册两个通道：
+// 启动状态 IPC handler —— 注册三个通道：
 //   - `app.startup.get`：快照查询，返回当前 core / ai 状态。
 //   - `app.startup.retry { component: 'ai' }`：会话内 AI 重试入口（UX-01）。
+//   - `app.renderer.ready`：渲染端首次绘制完成后通知 main（STARTUP-AI-ASYNC-002）。
 //
 // 实时更新通过 `app:startup` 事件推送（在 startup-state.ts 内部直接
 // 调用 BrowserWindow.webContents.send）。
@@ -9,13 +10,21 @@ import { okResult, failResult, register } from './router';
 import { startupState } from '../startup-state';
 import { logger } from '../logger';
 
-/** UX-01 retry contract — supplied by the caller (`src/main/index.ts`)
- *  because the closure needs access to the runtime deps. The handler
- *  dereferences `retry.retryAi` on every call so a later reassignment of
- *  `retry.retryAi` in `index.ts` takes effect immediately without needing
- *  to re-register the handler. */
+/** Hooks supplied by the caller (`src/main/index.ts`) — the closures
+ *  need access to the runtime deps and the boot orchestrator.
+ *
+ *  `retryAi` is dereferenced on every call so a later reassignment
+ *  in `index.ts` takes effect immediately without re-registering.
+ *
+ *  `onRendererReady` is invoked the first time `app.renderer.ready`
+ *  arrives. Subsequent calls (renderer reload, second window) are
+ *  silent no-ops — `bootAiAndDispatch` is single-flight via the
+ *  same `runtimePromise` that UX-01 retry shares. The returned
+ *  boolean is for observability; the IPC layer always resolves
+ *  with `accepted: true` so the renderer call site never retries. */
 export interface StartupRetryHooks {
   retryAi: () => boolean;
+  onRendererReady: () => boolean;
 }
 
 export interface AppStartupRetryRes {
@@ -59,5 +68,25 @@ export function registerStartupHandler(retry: StartupRetryHooks): void {
     }
     const res: AppStartupRetryRes = { accepted: true };
     return okResult(res);
+  });
+
+  // STARTUP-AI-ASYNC-002 — renderer signals first paint. Main kicks
+  // off the DSH warm-up at this point (NOT at `markCoreReady()`)
+  // so the splash can come down immediately on core.ready while the
+  // 22 s cold-boot happens in the background behind the AIPane
+  // loading overlay.
+  //
+  // Idempotent: the first call schedules `bootAiAndDispatch('boot')`;
+  // subsequent calls (renderer reload, second window, StrictMode
+  // double-effect) all return success because the runtimePromise is
+  // shared — but the boot itself never runs twice. The IPC promise
+  // ALWAYS resolves with `accepted: true` so the renderer call site
+  // doesn't have to retry on duplicate signals.
+  register('app.renderer.ready', () => {
+    const accepted = retry.onRendererReady();
+    if (!accepted) {
+      logger.info('app.renderer.ready: already booted / boot in flight (idempotent no-op)');
+    }
+    return Promise.resolve(okResult({ accepted: true }));
   });
 }

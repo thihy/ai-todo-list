@@ -4,10 +4,10 @@
 // + API key + streaming.
 
 import React, { useCallback, useEffect, useState } from 'react';
-import { useSettings, useSettingsPatchWithToast, useStartupAiState } from '../hooks/useTodoListApi';
+import { useSettings, useSettingsPatchWithToast, useStartupAiState, useAppEvent } from '../hooks/useTodoListApi';
 import { useDimTitleBar } from '../hooks/useDimTitleBar';
 import { useToastBus } from './Toast';
-import type { HealthIssue, HealthIssueKind, HealthSeverity, SettingsGetRes } from '../../shared/ipc-schema';
+import type { BackupManifest, HealthIssue, HealthIssueKind, HealthSeverity, SettingsGetRes } from '../../shared/ipc-schema';
 import type { SettingsPatchArgs } from '../../shared/todo-list-api';
 import {
   AI_PROVIDERS,
@@ -641,12 +641,59 @@ const DataPane: React.FC<PaneProps & { chooseDataDir: () => Promise<string | nul
 }) => {
   const [relocating, setRelocating] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  // REL-01 MVP-1 — backup state. `lastBackup` is shown below the
+  // button so the user can confirm a recent backup exists without
+  // opening the file manager; `busy` disables the button while the
+  // hot-backup is in flight (a large attachments dir can take
+  // seconds to copy).
+  const [backupBusy, setBackupBusy] = useState(false);
+  const [lastBackup, setLastBackup] = useState<{ path: string; manifest: BackupManifest } | null>(null);
 
   const onChangeDataDir = async (): Promise<void> => {
     setRelocating(true);
     const path = await chooseDataDir();
     setRelocating(false);
     if (path) setNotice(`数据目录已更改为 ${path}，应用即将重启…`);
+  };
+
+  // REL-01 MVP-1 — open the OS folder picker, then trigger the backup
+  // service. The flow is two IPC calls because the picker is modal
+  // and the backup itself is async (SQLite online backup + recursive
+  // copy); combining them into one would force the renderer to hold
+  // open a modal callback while the backup writes.
+  const onBackup = async (): Promise<void> => {
+    setBackupBusy(true);
+    setNotice(null);
+    try {
+      const pick = await window.todoList.app.backupChooseDest();
+      if (!pick.ok) {
+        setNotice(`选择目录失败：${pick.message ?? pick.code ?? '未知错误'}`);
+        return;
+      }
+      if (pick.data.canceled || !pick.data.path) {
+        // User dismissed the picker — silent no-op is the right UX.
+        return;
+      }
+      const res = await window.todoList.app.backupCreate(pick.data.path);
+      if (!res.ok) {
+        setNotice(`备份失败：${res.message ?? res.code ?? '未知错误'}`);
+        return;
+      }
+      setLastBackup({ path: res.data.path, manifest: res.data.manifest });
+      // Surface the location in the same notice slot as the data-dir
+      // change so the user has one consistent place to read the
+      // outcome. Sizes are kept unformatted for now (renderer formats
+      // would diverge across locales; the manifest stores raw bytes).
+      const m = res.data.manifest;
+      setNotice(
+        `备份完成：${res.data.path}（${m.sizes.total} 字节；` +
+          `${m.counts.todos} 任务，${m.counts.conversations} 对话）`,
+      );
+    } catch (err) {
+      setNotice(`备份失败：${(err as Error).message}`);
+    } finally {
+      setBackupBusy(false);
+    }
   };
 
   return (
@@ -665,6 +712,32 @@ const DataPane: React.FC<PaneProps & { chooseDataDir: () => Promise<string | nul
           >
             {relocating ? '选择中…' : '更改…'}
           </button>
+        </div>
+      </Field>
+      {/* REL-01 MVP-1 — backup action. The hint surfaces the DSH
+          session exclusion so users don't expect AI conversation
+          logs in the snapshot. Restore + delete are scoped for the
+          next iteration; for now the user must keep the dest folder
+          themselves. */}
+      <Field
+        label="数据备份"
+        hint="立即创建一份 SQLite + 任务 / 绘图 / 附件的快照到一个新文件夹。不包含 AI 会话日志（可在下次使用时重新生成）。恢复与删除将在下一版本提供。"
+      >
+        <div className="row">
+          <button
+            type="button"
+            className="btn-secondary"
+            disabled={backupBusy}
+            onClick={() => void onBackup()}
+            aria-label="立即备份"
+          >
+            {backupBusy ? '备份中…' : '立即备份…'}
+          </button>
+          {lastBackup && (
+            <span className="muted" style={{ fontSize: 'var(--font-xs)' }}>
+              上次：{lastBackup.path}
+            </span>
+          )}
         </div>
       </Field>
       {notice && <div className="notice">{notice}</div>}
@@ -1005,6 +1078,24 @@ const AboutPane: React.FC<PaneProps> = ({ data }) => {
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Auto-updater state (electron-updater → GitCode releases feed).
+  // Initial state comes from a one-shot `updaterStatus()` read; the
+  // two `app:update-*` events keep it in sync with main's
+  // background auto-check without a poll loop. The hook is local
+  // to this pane so other settings panes don't pay the cost.
+  const [updater, setUpdater] = useState<{
+    currentVersion: string;
+    latestVersion: string | null;
+    downloaded: boolean;
+    checking: boolean;
+    devMode: boolean;
+  }>({
+    currentVersion: '',
+    latestVersion: null,
+    downloaded: false,
+    checking: false,
+    devMode: false,
+  });
   const onExport = async (): Promise<void> => {
     setBusy(true);
     setError(null);
@@ -1034,11 +1125,115 @@ const AboutPane: React.FC<PaneProps> = ({ data }) => {
       setBusy(false);
     }
   };
+
+  // Auto-updater — fetch the latest known status once when the
+  // pane mounts, then keep the local copy in sync with the two
+  // `app:update-*` events main emits on the background
+  // auto-check. No polling — events are the source of truth.
+  useEffect(() => {
+    let alive = true;
+    void (async (): Promise<void> => {
+      const res = await window.todoList.app.updaterStatus();
+      if (!alive) return;
+      if (res.ok) setUpdater(res.data);
+    })();
+    return (): void => { alive = false; };
+  }, []);
+
+  useAppEvent('app:update-available', (p) => {
+    setUpdater((prev) => ({ ...prev, latestVersion: p.version, checking: false }));
+  });
+  useAppEvent('app:update-downloaded', (p) => {
+    setUpdater((prev) => ({
+      ...prev,
+      latestVersion: p.version,
+      downloaded: true,
+      checking: false,
+    }));
+  });
+
+  // User-initiated check. The auto-check is fire-and-forget; this
+  // path surfaces failure via `error` so the user knows the
+  // network round-trip failed.
+  const onCheckUpdate = async (): Promise<void> => {
+    setUpdater((prev) => ({ ...prev, checking: true }));
+    setError(null);
+    try {
+      const res = await window.todoList.app.updaterCheck();
+      if (!res.ok) {
+        setError(`检查更新失败：${res.message ?? res.code ?? '未知错误'}`);
+        setUpdater((prev) => ({ ...prev, checking: false }));
+        return;
+      }
+      setUpdater({ ...res.data, checking: false });
+    } catch (err) {
+      setError(`检查更新失败：${(err as Error).message}`);
+      setUpdater((prev) => ({ ...prev, checking: false }));
+    }
+  };
+
+  // Quit + install the already-downloaded update. The renderer's
+  // job ends here — main's quitAndInstall tears down the app
+  // and applies the binary on next launch.
+  const onInstallUpdate = (): void => {
+    void window.todoList.app.updaterInstall();
+  };
+
+  // Compose the update-status copy the user sees. Five discrete
+  // states instead of a generic blob so the user always knows
+  // whether an action is pending.
+  const updateLabel = updater.devMode
+    ? '开发模式下不可用'
+    : updater.checking
+      ? '正在检查更新…'
+      : updater.downloaded
+        ? `已下载版本 ${updater.latestVersion}，重启后生效`
+        : updater.latestVersion && updater.latestVersion !== updater.currentVersion
+          ? `发现新版本 ${updater.latestVersion}，下载中…`
+          : updater.latestVersion
+            ? `已是最新版本（${updater.latestVersion}）`
+            : '尚未检查';
   return (
     <div className="settings-pane">
       <p className="muted" style={{ lineHeight: 1.8 }}>
-        AI待办 — AI 原生 TODO 清单 · Markdown 进展 · Excalidraw 绘图
+        AI 待办 — 本地优先的 AI 辅助任务管理
       </p>
+      <Field label="当前版本">
+        <div className="muted mono">版本 {updater.currentVersion || '—'}</div>
+      </Field>
+      <Field
+        label="更新"
+        hint={
+          updater.devMode
+            ? '开发模式下自动更新不可用；请通过 pnpm dist:win / dist:mac / dist:linux 生成新版本。'
+            : '自动检查启动后约 5 秒进行一次；也可点击下方按钮手动检查。下载完成后重启应用即生效。'
+        }
+      >
+        <div className="row" style={{ alignItems: 'center', gap: 'var(--space-md)', flexWrap: 'wrap' }}>
+          <div className="muted" style={{ flex: '1 1 auto', minWidth: 0 }}>{updateLabel}</div>
+          {!updater.devMode && (
+            <>
+              <button
+                type="button"
+                className="btn-secondary"
+                disabled={updater.checking}
+                onClick={() => void onCheckUpdate()}
+              >
+                {updater.checking ? '检查中…' : '检查更新'}
+              </button>
+              {updater.downloaded && (
+                <button
+                  type="button"
+                  className="btn-primary"
+                  onClick={onInstallUpdate}
+                >
+                  立即重启更新
+                </button>
+              )}
+            </>
+          )}
+        </div>
+      </Field>
       <Field label="用量统计">
         <div className="muted mono">
           本月累计 ${data.monthlyCostUsd.toFixed(2)} · 心跳{' '}

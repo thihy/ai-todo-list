@@ -249,6 +249,15 @@ export const AIPane: React.FC<{
   // sees the live value and skips the override.
   const currentIdRef = useRef<string | null>(currentId);
   currentIdRef.current = currentId;
+  // STARTUP-AI-ASYNC-002 — startup state hook MUST be called before
+  // any effects that depend on `aiStartup.status`. React requires
+  // hooks to be invoked in a stable order on every render; calling
+  // this hook further down (where it used to live, after the
+  // conversation-list effect) caused TS2448 / TS2454 because the
+  // effect referenced `aiStartup` before its declaration. The hook
+  // itself just subscribes to `app:startup` events; its placement
+  // here is functionally equivalent to the previous location.
+  const { state: aiStartup, retry: retryAi } = useStartupAiState();
   // Scroll-tracked "current question": the id of the most recent user turn whose
   // bubble has scrolled fully under the sticky header (no longer visible).
   // The pinned banner shows THIS turn's question so the user always knows
@@ -272,7 +281,21 @@ export const AIPane: React.FC<{
   // recent as current. If empty, leave currentId=null and show the empty
   // state — the user starts typing, and submit() allocates the first
   // conversation when they press Enter.
+  //
+  // STARTUP-AI-ASYNC-002 — gate on `aiStartup.status === 'ready'`.
+  // The conversation list is a pure SQLite metadata scan and COULD
+  // run before DSH boots, but doing so would (a) misleadingly render
+  // existing conversations while the AI panel still shows "正在启动
+  // AI 助手…", and (b) require an additional dependency on
+  // `aiStartup.status` in every place that touches `conversations`.
+  // We instead align both effects on the same ready gate so the
+  // panel transitions atomically from loading → populated. The
+  // effect re-runs automatically when `aiStartup.status` flips to
+  // 'ready' (it's a dependency), so we don't need a separate
+  // post-load mechanism. Retry correctly re-triggers this effect
+  // because `aiStartup.status` goes `failed → loading → ready`.
   useEffect(() => {
+    if (aiStartup.status !== 'ready') return;
     let alive = true;
     (async () => {
       const res = await window.todoList.conversation.list({ includeArchived: showArchived });
@@ -289,7 +312,7 @@ export const AIPane: React.FC<{
       if (!currentIdRef.current && list.length > 0) setCurrentId(list[0]!.id);
     })();
     return () => { alive = false; };
-  }, [showArchived, convVersion]);
+  }, [showArchived, convVersion, aiStartup.status]);
 
   // Close popovers on outside click.
   useEffect(() => {
@@ -317,7 +340,17 @@ export const AIPane: React.FC<{
   }, [showHistory]);
 
   // When currentId changes, lazy-load history (only once per conversation).
+  // STARTUP-AI-ASYNC-002 — gate on `aiStartup.status === 'ready'`.
+  // `ai.conversation.history` is the runtime-dependent call that
+  // returns `ai_not_ready` while DSH is loading (see ai-handlers).
+  // We early-return here so the effect doesn't even fire the IPC —
+  // cheaper than the round-trip and keeps the `historyLoaded` set
+  // clean (a pre-ready call returning ai_not_ready would NOT add
+  // currentId to historyLoaded, so the post-ready re-run still
+  // works). The dependency array includes `aiStartup.status` so
+  // the ready flip automatically triggers the load.
   useEffect(() => {
+    if (aiStartup.status !== 'ready') return;
     if (!currentId) return;
     if (historyLoaded.has(currentId)) return;
     let alive = true;
@@ -331,7 +364,7 @@ export const AIPane: React.FC<{
       }
     })();
     return () => { alive = false; };
-  }, [currentId, historyLoaded]);
+  }, [currentId, historyLoaded, aiStartup.status]);
 
   // Re-derive the streaming turn through one pure adapter. Keeping the DSH
   // event projection outside this component makes live/history parity and
@@ -522,7 +555,9 @@ export const AIPane: React.FC<{
   // UX-01 — track the AI component of the startup state machine so we can
   // surface a retry banner when `ai.status === 'failed'`. Loading flips
   // back to failed on a retry failure via `app:startup` (no manual refresh).
-  const { state: aiStartup, retry: retryAi } = useStartupAiState();
+  // NOTE: `useStartupAiState()` is called earlier in this component
+  // (alongside the other top-of-file refs) so its result is in scope
+  // for the conversation-list / history effects below.
   const [aiRetryBusy, setAiRetryBusy] = useState(false);
   const onAiRetryClick = useCallback(async (): Promise<void> => {
     if (aiRetryBusy) return;
@@ -541,15 +576,33 @@ export const AIPane: React.FC<{
   }, [aiRetryBusy, retryAi]);
   const showAiRetryBanner = aiStartup.status === 'failed';
   // Use the official composer blocking vocabulary at the host boundary.
-  const composerBlock: ComposerBlock | undefined = awaitingAnswer
-    ? { reason: questionSubmitting ? '正在提交答案…' : '请先回答上方的问题…' }
-    : awaitingApproval
-      ? { reason: '请先处理上方的操作授权…' }
-      : busy
-        ? { reason: 'AI 正在回答，请等待或停止生成…' }
-        : needsAiSetup
-          ? { reason: '请先在设置中完成 AI 模型配置…' }
-          : undefined;
+  //
+  // STARTUP-AI-ASYNC-002 — DSH loading wins over every other composer
+  // block. The brief's required priority chain is:
+  //
+  //   DSH pending/loading → DSH failed → HITL question/approval →
+  //   current turn busy → provider not configured → normal
+  //
+  // We model that as a single nested ternary. `aiStartup.status` is
+  // 'pending' until the renderer's first `app.renderer.ready`
+  // handshake reaches main AND main schedules `bootAiAndDispatch`;
+  // it's 'loading' from then until DSH reaches a terminal state.
+  // Both states must fully block submit + new + history. 'failed'
+  // shows the retry banner (handled separately, NOT here — the
+  // composer must remain interactive so the user can still type /
+  // copy messages during the failure window).
+  const dshNotReady = aiStartup.status === 'pending' || aiStartup.status === 'loading';
+  const composerBlock: ComposerBlock | undefined = dshNotReady
+    ? { reason: '正在启动 AI 助手，任务列表和详情仍可正常使用…' }
+    : awaitingAnswer
+      ? { reason: questionSubmitting ? '正在提交答案…' : '请先回答上方的问题…' }
+      : awaitingApproval
+        ? { reason: '请先处理上方的操作授权…' }
+        : busy
+          ? { reason: 'AI 正在回答，请等待或停止生成…' }
+          : needsAiSetup
+            ? { reason: '请先在设置中完成 AI 模型配置…' }
+            : undefined;
   // The question currently pinned at the top of the message stream. This is
   // NOT "the latest user message" — it's the question whose bubble has
   // scrolled out of view under the sticky header (so its answer is what the
@@ -927,17 +980,39 @@ export const AIPane: React.FC<{
 
   // App queues AI-create requests while opening/lazy-loading this panel, so
   // submissions are not lost when the panel was collapsed at send time.
+  // App queues AI-create requests while opening/lazy-loading this panel, so
+  // submissions are not lost when the panel was collapsed at send time.
+  //
+  // STARTUP-AI-ASYNC-002 — during the DSH cold-boot window we
+  // additionally queue external submits in a local state slot so
+  // they're not silently consumed. See `pendingExternalSubmit`
+  // below.
+  const [pendingExternalSubmit, setPendingExternalSubmit] =
+    useState<ExternalAiSubmitDetail | null>(null);
   useEffect(() => {
+    // 1) Drain queued request first when ai becomes ready.
+    if (aiStartup.status === 'ready' && pendingExternalSubmit) {
+      const queued = pendingExternalSubmit;
+      setPendingExternalSubmit(null);
+      void runSubmit(queued);
+      return;
+    }
+    // 2) Otherwise pick up a fresh external submission from App.
     if (!externalSubmit) return;
     if (
       streamingTurnId !== null ||
       activeQuestion?.convId === currentId ||
       activeApproval?.convId === currentId
     ) return;
+    if (dshNotReady) {
+      setPendingExternalSubmit(externalSubmit);
+      onExternalSubmitConsumed?.();
+      return;
+    }
     onExternalSubmitConsumed?.();
     void runSubmit(externalSubmit);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [externalSubmit, streamingTurnId, activeQuestion, activeApproval, currentId]);
+  }, [externalSubmit, streamingTurnId, activeQuestion, activeApproval, currentId, dshNotReady, aiStartup.status, pendingExternalSubmit]);
 
   return (
     <div className="aipane">
@@ -995,8 +1070,13 @@ export const AIPane: React.FC<{
             <button
               type="button"
               className="icon-btn aipane__new-btn"
+              // STARTUP-AI-ASYNC-002: while DSH is loading, the
+              // new-conversation button is disabled per the brief's
+              // "pending/loading → 禁用新建会话" rule. The title
+              // attribute clarifies the state.
               onClick={() => void createConversation()}
-              title="新建对话"
+              disabled={dshNotReady}
+              title={dshNotReady ? 'AI 启动中，暂不可新建对话' : '新建对话'}
               aria-label="新建对话"
             >
               <IconPlusOutline16 />
@@ -1005,8 +1085,15 @@ export const AIPane: React.FC<{
               <button
                 type="button"
                 className="icon-btn aipane__history-btn"
+                // STARTUP-AI-ASYNC-002: history dropdown stays
+                // accessible (so the user can see the conversation
+                // count, not just a spinner) but every entry that
+                // would trigger a `conversation.history` round-trip
+                // is gated. Disabling the toggle would hide the list
+                // entirely; the user is better served by seeing the
+                // list with a loading hint.
                 onClick={() => setShowHistory((s) => !s)}
-                title="对话历史"
+                title={dshNotReady ? 'AI 启动中，对话历史只读' : '对话历史'}
                 aria-label="对话历史"
                 aria-haspopup="listbox"
                 aria-expanded={showHistory}
@@ -1225,22 +1312,45 @@ export const AIPane: React.FC<{
       <div className="aipane__body-shell">
         <div className="aipane__body" role="log" aria-live="polite" ref={scrollRef}>
           <div className="aipane__messages" ref={contentRef}>
+            {/* STARTUP-AI-ASYNC-002 — while DSH is still booting we
+                replace the entire message pane with a single,
+                unmistakable loading card. Per the brief: "正在启动
+                AI 助手…" + secondary copy "任务列表和详情仍可正常
+                使用" + spinner; no empty-state, no provider-notice,
+                no history, no retry. The card sits inside the
+                messages wrapper so it inherits the same flex / scroll
+                / padding contract as the real message list, and
+                disappears the moment `aiStartup.status` flips to
+                'ready' or 'failed' (no manual cleanup needed — the
+                effects above re-fetch conversations on the same flip). */}
+            {dshNotReady && (
+              <div className="aipane__boot" role="status" aria-live="polite" data-testid="aipane-boot">
+                <div className="aipane__boot-spinner" aria-hidden="true" />
+                <div className="aipane__boot-title">正在启动 AI 助手…</div>
+                <div className="aipane__boot-sub">任务列表和详情仍可正常使用。</div>
+              </div>
+            )}
             {bootError && (
               <div className="aipane__empty aipane__empty--error">
                 <IconWarningOutline16 size={14} /> 会话列表加载失败：{bootError}
               </div>
             )}
-            {!bootError && !current && conversations.length === 0 && (
+            {!bootError && !dshNotReady && !current && conversations.length === 0 && (
               <div className="aipane__empty">
                 <p>直接在下方输入问题，回车即创建第一条对话。</p>
               </div>
             )}
-            {!bootError && current && currentTurns.length === 0 && (
+            {!bootError && !dshNotReady && current && currentTurns.length === 0 && (
               <div className="aipane__empty">
                 <p>这条对话还没有消息。在下方输入问题开始：</p>
               </div>
             )}
-            {currentTurns.map((t) => <TurnView key={t.id} turn={t} />)}
+            {/* STARTUP-AI-ASYNC-002 — only render live turns once
+                DSH is ready; the list effect re-runs on the flip and
+                hydrates currentTurns. Rendering turns while loading
+                would be a no-op anyway (empty), but the explicit
+                gate keeps the contract clear. */}
+            {!dshNotReady && currentTurns.map((t) => <TurnView key={t.id} turn={t} />)}
           </div>
         </div>
         {showJumpToLatest && currentId && (

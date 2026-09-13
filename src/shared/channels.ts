@@ -117,6 +117,20 @@ const RUNTIME_CHANNEL_KEYS = [
   'app.diagnostics.saveToFile',
   // QUALITY-01 — deterministic task-health rule check.
   'app.health.check',
+  // REL-01 MVP-1 — hot-backup creation (SQLite + durable file projections).
+  'app.backup.create',
+  // REL-01 MVP-1 — native folder picker for backup destination
+  // (separate from settings.chooseDataDir which migrates the live dir).
+  'app.backup.chooseDest',
+  // STARTUP-AI-ASYNC-002 — renderer signals first paint so main can
+  // defer the 22 s DSH cold-boot until after the splash is gone.
+  'app.renderer.ready',
+  // Auto-updater (electron-updater → GitCode releases). Renderer
+  // can poll `status` for the latest feed state, `check` to force
+  // a feed hit, `install` to call quitAndInstall.
+  'app.updater.status',
+  'app.updater.check',
+  'app.updater.install',
 ] as const satisfies readonly IpcChannelName[];
 
 /** The compile-time guard. If the developer adds a key to

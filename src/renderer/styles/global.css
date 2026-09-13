@@ -1543,6 +1543,50 @@ a:hover {
   margin: var(--space-xs) 0;
 }
 
+/* STARTUP-AI-ASYNC-002 — DSH cold-boot card. Centered inside the
+   message pane while ai.status is pending/loading. Distinct from
+   `.aipane__empty` (no secondary-list style) and from
+   `.aipane__provider-notice` (no warning icon, no action button —
+   the user can't speed up the boot, so there's nothing to act on).
+   The spinner is a CSS-only double-rotation trick so we don't pull
+   an icon dependency for a one-shot loading state. */
+.aipane__boot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-sm);
+  padding: var(--space-xl) var(--space-md);
+  color: var(--fg-muted);
+  font-size: var(--font-sm);
+  line-height: 1.6;
+  text-align: center;
+  min-height: 200px;
+}
+.aipane__boot-spinner {
+  width: 22px;
+  height: 22px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: aipane-boot-spin 0.9s linear infinite;
+  margin-bottom: var(--space-xs);
+}
+@keyframes aipane-boot-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.aipane__boot-title {
+  color: var(--fg);
+  font-weight: 500;
+  font-size: var(--font-md);
+}
+.aipane__boot-sub {
+  color: var(--fg-muted);
+  font-size: var(--font-xs);
+}
+
 .aipane__thinking {
   align-self: flex-start;
   display: flex;

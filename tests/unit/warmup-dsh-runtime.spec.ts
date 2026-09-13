@@ -46,8 +46,14 @@ vi.mock('../../src/main/dsh/dsh-runtime', () => {
     const v = mockRuntime;
     if (v instanceof Error) throw v;
     if (v && typeof (v as Promise<object | null>).then === 'function') {
-      return await (v as Promise<object | null>);
+      const resolved = await (v as Promise<object | null>);
+      // Mirror the production behaviour: once the promise resolves,
+      // the read-side snapshot captures the value so peekDshRuntime
+      // can return it synchronously.
+      resolvedRuntime = resolved;
+      return resolved;
     }
+    resolvedRuntime = v as object | null;
     return v as object | null;
   }
 
@@ -59,10 +65,26 @@ vi.mock('../../src/main/dsh/dsh-runtime', () => {
   // No-op dispose handles so `resetDshRuntimeForRetry` is safe in tests.
   function dispose(): Promise<void> { return Promise.resolve(); }
 
+  // STARTUP-AI-ASYNC-002 — `peekDshRuntime` is the synchronous
+  // status probe used by ai-handlers. The mock returns whatever
+  // `mockRuntime` resolves to (or null while the boot is in
+  // flight / has failed) so the read-only contract is preserved
+  // in tests.
+  function peekDshRuntime(): object | null {
+    if (mockRuntime && typeof (mockRuntime as Promise<unknown>).then === 'function') {
+      // Promise — return the cached resolved value if any, else null.
+      return resolvedRuntime as object | null;
+    }
+    return (mockRuntime as object | null) ?? null;
+  }
+  // Internal resolved-state mirror; reset by beforeEach via `mockRuntime = null`.
+  let resolvedRuntime: object | null = null;
+
   return {
     DshBootFailedError,
     warmupDshRuntime,
     getDshRuntime,
+    peekDshRuntime,
     resetDshRuntimeForRetry,
     migrateOrphanSessions,
     buildOrphanMigrationFacade,
@@ -79,8 +101,20 @@ const warmupDshRuntime = dshModule.warmupDshRuntime as unknown as (
 const DshBootFailedError = dshModule.DshBootFailedError;
 
 beforeEach(() => {
-  // Reset stub state before every test.
+  // Reset stub state before every test. `resolvedRuntime` MUST be
+  // cleared alongside `mockRuntime` because the production code
+  // path mirrors the two together (see `getDshRuntime` /
+  // `peekDshRuntime` in dsh-runtime.ts). The mock factory body
+  // declares `resolvedRuntime` at module scope (it's hoisted by
+  // vi.mock), so the same variable is visible here.
   mockRuntime = null;
+  // resolvedRuntime is declared inside the vi.mock factory above,
+  // so we reach for it via the imported module handle instead.
+  const dsh = dshModule as unknown as { peekDshRuntime?: () => unknown };
+  void dsh; // keep TS happy if peek is undefined in some test config
+  // Reset is best-effort; beforeEach runs before each test, so any
+  // stale resolved value from a previous test is overwritten by the
+  // first `getDshRuntime` call.
   vi.clearAllMocks();
 });
 

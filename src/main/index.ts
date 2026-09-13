@@ -12,6 +12,8 @@ import { registerContentHandlers } from './ipc/content-handlers';
 import { registerDocumentHandlers } from './ipc/document-handlers';
 import { registerDiagnosticsHandlers } from './ipc/diagnostics-handler';
 import { registerHealthHandlers } from './ipc/health-handler';
+import { registerUpdaterHandlers } from './ipc/updater-handler';
+import { registerBackupHandlers } from './ipc/backup-handler';
 import { registerLinkHandlers } from './ipc/link-handlers';
 import { registerCapturePreviewHandler } from './ipc/capture-preview-handler';
 import { registerStartupHandler } from './ipc/startup-handler';
@@ -257,14 +259,25 @@ function bootstrap(): void {
     mark('file-stores-constructed');
 
     // UX-01 — the IPC handler receives an object so it can dereference
-    // `retryAi` on every call. We pre-bind the object with a placeholder
-    // closure, then mutate the field after `bootAiAndDispatch` is defined.
+    // `retryAi` on every call. We pre-bind the object with placeholder
+    // closures, then mutate the fields after `bootAiAndDispatch` is defined.
     // This is necessary because the IPC handler is registered before the
     // AI boot body is constructed (the handler must exist by the time the
-    // renderer mounts), and we want it to see the real closure without
+    // renderer mounts), and we want it to see the real closures without
     // having to re-register.
-    const retryHooks: { retryAi: () => boolean } = {
+    //
+    // STARTUP-AI-ASYNC-002 — `onRendererReady` is the second hook on the
+    // same object: the FIRST `app.renderer.ready` IPC arrival kicks off
+    // `bootAiAndDispatch('boot')`. Subsequent arrivals (renderer reload,
+    // second window, StrictMode double-effect) return immediately
+    // because the underlying `runtimePromise` is the same single-flight
+    // bootstrap that UX-01 retry also shares.
+    const retryHooks: {
+      retryAi: () => boolean;
+      onRendererReady: () => boolean;
+    } = {
       retryAi: () => false,
+      onRendererReady: () => false,
     };
     let bootAiAndDispatch: (reason: 'boot' | 'retry') => void = () => {
       /* replaced below once AI boot body is defined */
@@ -304,6 +317,19 @@ function bootstrap(): void {
     registerSettingsHandlers(settings, handle, rootDir);
     registerDiagnosticsHandlers(settings, handle.db);
     registerHealthHandlers(handle.db);
+    // Auto-updater (electron-updater → GitCode releases feed).
+    // The IPC handlers register here; the actual auto-check fires
+    // only after the renderer's `app.renderer.ready` handshake
+    // (see onRendererReady below) so the check never races with
+    // the splash or the STARTUP-AI-ASYNC-002 boot window.
+    registerUpdaterHandlers();
+    // REL-01 MVP-1: backup creation only (restore + delete are scoped
+    // for the next iteration). The handler is read-only w.r.t. the
+    // live data dir — it never mutates the source. Hot path cost is
+    // bounded by the size of `todos.db` + the durable file
+    // projections; the SQLite copy uses better-sqlite3's online
+    // backup API which handles WAL correctly.
+    registerBackupHandlers({ rootDir, db: handle.db });
     registerAppHandlers(() => main);
     registerCaptureHandlers(repo, md);
     registerCapturePreviewHandler();
@@ -427,11 +453,29 @@ function bootstrap(): void {
       })();
     };
 
-    bootAiAndDispatch('boot');
+    // STARTUP-AI-ASYNC-002 — DO NOT call `bootAiAndDispatch('boot')`
+    // here. Previously the splash gate was `core.ready AND ai.ready/
+    // failed`; under that gate, the renderer held the splash up until
+    // DSH finished booting (measured ~22 s on cold cache) and the
+    // heavy boot sometimes starved Electron's main-process event loop
+    // long enough for Windows to mark the BrowserWindow "未响应".
+    //
+    // The new gate is just `core.status === 'ready'`. We install the
+    // retry hook now and rely on `app.renderer.ready` (the first
+    // `requestAnimationFrame`-settled React paint) to trigger the
+    // actual DSH warm-up. The boot body is still the same single-
+    // flight `runtimePromise` that UX-01 retry uses, so a renderer
+    // reload mid-boot doesn't fork a second Cordis context.
+    //
+    // The renderer is expected to call `app.renderer.ready` after
+    // first paint; if it never does (e.g. a renderer crash), the AI
+    // panel simply stays in 'pending' forever — that is the same
+    // state the user sees at cold-start anyway, and the retry
+    // banner only appears once ai.status flips to 'failed'.
 
-    // Now that bootAiAndDispatch is defined, install the real retry closure
-    // on the hooks object. The IPC handler dereferences `retryHooks.retryAi`
-    // on every call, so this single mutation is visible immediately. We
+    // Now that bootAiAndDispatch is defined, install the real closures
+    // on the hooks object. The IPC handler dereferences these on
+    // every call, so this single mutation is visible immediately. We
     // snapshot ai once before and once after to detect the synchronous
     // transition done inside startupState.tryStartAiRetry(); if status was
     // not 'failed' to begin with, bootAiAndDispatch early-returns and
@@ -441,6 +485,60 @@ function bootstrap(): void {
       bootAiAndDispatch('retry');
       const afterStatus = startupState.snapshot().ai.status;
       return beforeStatus === 'failed' && afterStatus === 'loading';
+    };
+    // STARTUP-AI-ASYNC-002 — `onRendererReady` is invoked the first
+    // time `app.renderer.ready` arrives. We track the boolean
+    // ourselves so reloads / duplicate signals don't re-trigger
+    // `bootAiAndDispatch` (the underlying `runtimePromise` is
+    // single-flight so the boot itself wouldn't run twice, but we'd
+    // still log spurious "DSH handlers registered" lines). The
+    // hook returns `false` for every duplicate call so the IPC
+    // layer's info log can mention the idempotent path.
+    let rendererReadyFired = false;
+    retryHooks.onRendererReady = (): boolean => {
+      const aiSnap = startupState.snapshot().ai;
+      // If the AI component has already reached a terminal state
+      // (ready / failed) — for example a second window opened after
+      // the first window finished booting — there's nothing to do.
+      // Returning false here signals "already settled" to the hook
+      // consumer (startup-handler.ts) so it can log the no-op.
+      if (aiSnap.status === 'ready' || aiSnap.status === 'failed') {
+        return false;
+      }
+      if (rendererReadyFired) {
+        return false;
+      }
+      rendererReadyFired = true;
+      bootAiAndDispatch('boot');
+      // Auto-updater: kick off after the renderer has painted
+      // once. setUpAutoUpdater schedules the first feed check on
+      // a 5 s delay (internally); dev mode is a no-op so this is
+      // safe under `pnpm dev` too. We import lazily so the DSH
+      // boot path doesn't pay for electron-updater's transitive
+      // dependencies (lzma-native etc.).
+      void (async (): Promise<void> => {
+        try {
+          const { setUpAutoUpdater } = await import('./updates/updater');
+          // Forward electron-updater's two key events to all
+          // BrowserWindows so the renderer can keep its about /
+          // status UI in sync without polling.
+          setUpAutoUpdater({
+            onAvailable: (version) => {
+              for (const w of BrowserWindow.getAllWindows()) {
+                if (!w.isDestroyed()) w.webContents.send('app:update-available', { version });
+              }
+            },
+            onDownloaded: (version) => {
+              for (const w of BrowserWindow.getAllWindows()) {
+                if (!w.isDestroyed()) w.webContents.send('app:update-downloaded', { version });
+              }
+            },
+          });
+        } catch (err) {
+          logger.warn(`updater: failed to start: ${(err as Error).message}`);
+        }
+      })();
+      return true;
     };
 
     // v1 → v2 layout migration sweep. Deferred until after core-ready so a
@@ -1036,10 +1134,34 @@ function registerAppHandlers(getMainWindow: () => BrowserWindow | null): void {
       } else if (req.action === 'about') {
         await showAbout();
       } else if (req.action === 'checkUpdate') {
+        // The "检查更新" user-menu item: trigger a user-initiated
+        // feed check and broadcast the result back to the
+        // focused window so the renderer can update its about
+        // pane immediately. We don't await — the renderer also
+        // subscribes to `app:update-available` events for the
+        // auto-check path, so this just primes the result.
         const win = BrowserWindow.getFocusedWindow();
-        if (win && !win.isDestroyed()) {
-          win.webContents.send('app:update-available', { version: '' });
-        }
+        void (async (): Promise<void> => {
+          try {
+            const { checkNow } = await import('./updates/updater');
+            await checkNow();
+            const { getUpdaterStatus } = await import('./updates/updater');
+            const s = getUpdaterStatus();
+            if (s.latestVersion) {
+              if (win && !win.isDestroyed()) {
+                win.webContents.send('app:update-available', { version: s.latestVersion });
+              }
+            } else {
+              // No update found. We don't have a dedicated
+              // event for this; the renderer will see the
+              // status-quo UI. Logged here so the user has a
+              // breadcrumb if they file a bug.
+              logger.info('updater: user-initiated check — no update available');
+            }
+          } catch (err) {
+            logger.warn(`updater: user check failed: ${(err as Error).message}`);
+          }
+        })();
       }
       return okResult(undefined);
     } catch (err) {

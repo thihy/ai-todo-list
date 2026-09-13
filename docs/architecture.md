@@ -571,6 +571,176 @@ JSONL backend) + the actual model call.
   hint is the only signal. A future iteration could
   surface per-phase progress from `bootDsh()` itself.
 
+**Background DSH warm-up (STARTUP-AI-ASYNC-002).**
+
+STARTUP-DSH-001 was correct in spirit but still kept the splash
+up for the entire 22 s DSH cold-boot window on a cold Windows
+install. The brief measured `startup[ai]: DSH runtime warmed
+(boot) @ 22190ms` — long enough that Windows flagged the
+BrowserWindow as "未响应" while Cordis / dynamic imports
+starved the main-process event loop. STARTUP-AI-ASYNC-002
+decouples the splash from DSH entirely so the user lands in
+the task list immediately and the DSH warm-up happens in the
+background behind an AIPane loading overlay.
+
+The new gate is just:
+
+```text
+splash 退出条件 = core.status === 'ready'
+```
+
+The AI component's status is owned by the AIPane once the
+React tree mounts — pending / loading / ready / failed are all
+rendered inside the AI panel without ever blocking the splash.
+`ai.ready` retains its strict local-DSH-boot semantics from
+STARTUP-DSH-001 (cordis.yml resolved + dsh-app-boot imported
++ `boot('todo-list', ...)` completed + ctx.llm / tools /
+agents exist + adapter / tools / persistence registered +
+listeners installed + singleton DshRuntime exists); it does
+**not** mean provider reachable, API key valid, or a request
+will succeed.
+
+The implementation adds one IPC channel:
+
+```text
+app.renderer.ready  →  { accepted: boolean }
+```
+
+The renderer's `bootstrap()` mounts the App, then waits for
+**two** `requestAnimationFrame` ticks inside `mountApp()` so
+React's commit-and-paint cycle has flushed before signalling
+back to main. main's handler is idempotent — the first arrival
+schedules `bootAiAndDispatch('boot')`, subsequent arrivals
+(renderer reload, second window, StrictMode double-effect)
+return success without re-booting because the underlying
+`runtimePromise` is shared with the UX-01 retry path.
+
+Three additional defensive pieces keep the deferred boot from
+forking or racing:
+
+1. **`peekDshRuntime()` in `src/main/dsh/dsh-runtime.ts`** —
+   a SYNCHRONOUS, non-triggering read of the cached
+   `DshRuntime` (or `null` if no boot has finished yet). Used
+   by `ai.ask`, `ai.cancel`, and `ai.conversation.history` to
+   short-circuit with `ai_not_ready` while the warm-up is in
+   flight, so a stale StrictMode double-effect / external API
+   caller cannot accidentally kick off a second boot.
+   Implemented as a module-scoped `resolvedRuntime` snapshot
+   that's updated inside `getDshRuntime`'s `.then` handler and
+   cleared by `resetDshRuntimeForRetry`. The `runtimePromise`
+   Promise cannot be inspected mid-flight, hence the
+   side-channel.
+
+2. **AIPane effects gated on `aiStartup.status === 'ready'`**
+   — both `ai.conversation.list` and `ai.conversation.history`
+   effects explicitly early-return while the AI component is
+   pending / loading. When the status flips to `ready`, the
+   effects automatically re-run (each has `aiStartup.status`
+   in its dependency array), so no manual reload is needed.
+   `historyLoaded` is left untouched during the gate so a
+   post-ready run still finds the conversation cold-loaded.
+
+3. **External AI-create requests queue, not drop** — if the
+   `externalSubmit` event arrives while `aiStartup.status` is
+   not 'ready', it is copied into `pendingExternalSubmit` and
+   `onExternalSubmitConsumed` is called immediately so the
+   App-side state clears. A separate branch of the same
+   effect drains the queue the moment the status flips to
+   'ready'. Per the brief's regression-10.14 requirement: no
+   user-typed task-creation request is silently consumed.
+
+The AIPane priority chain for the composer block is now:
+
+```text
+DSH pending/loading → DSH failed → HITL question/approval
+  → current turn busy → provider not configured → normal
+```
+
+While DSH is pending or loading the AIPane body renders a
+single `.aipane__boot` card (centered spinner + "正在启动 AI
+助手…" + secondary copy "任务列表和详情仍可正常使用").
+The new-conversation button and history-dropdown trigger are
+both disabled, and `currentTurns` is gated so the existing
+"这条对话还没有消息" empty state cannot appear during
+boot. The provider-notice (rendered when settings haven't
+been completed) is suppressed in favor of the boot card —
+the user sees the boot state, not a configuration prompt that
+they can't act on yet.
+
+**DSH boot timing + event-loop latency.**
+
+The `src/main/dsh/boot-probe.ts` helper wraps the entire
+`bootDsh` body with a `node:perf_hooks.monitorEventLoopDelay`
+histogram (20 ms resolution). It records four sub-phase
+durations (dynamic import, Cordis `boot()`, post-Cordis
+assembly, total) AND five event-loop summary fields
+(`max`, `p99`, `p95`, `mean`, `samples`) and emits them in a
+single structured log line:
+
+```text
+startup[ai]: DSH boot ok total=22190ms dynImport=12000ms
+  cordis=9000ms assembly=1190ms | eventLoop:
+  samples=1109 max=12.3ms p99=8.5ms p95=5.0ms mean=2.1ms
+```
+
+A 22 s boot with `max=12 ms` and `p99=8 ms` is the
+"uncomfortable but acceptable" outcome — the main thread was
+responsive the whole time, but the user was staring at a
+loading spinner for 22 seconds. A 22 s boot with `max=8000ms`
+is the "blocking" outcome: even after STARTUP-AI-ASYNC-002
+the main thread spent 8 seconds at a time unable to dispatch
+IPC, which would still trigger Windows "未响应" warnings
+during the boot window. We have measured only the first
+scenario in our environments so far; the second scenario
+remains a follow-up that would require either:
+
+- moving the DSH cold-boot into an Electron
+  `utilityProcess` / Node Worker Thread (the long-term fix);
+- or accepting the splash-gate architecture entirely and
+  warning the user about a long first launch (the interim
+  fallback).
+
+The probe path is private to `bootDsh` — no leak into
+per-request paths, no allocation per `ai.ask`. The boot
+summary is logged exactly once per boot (ok / failed /
+skipped are mutually exclusive outcomes).
+
+**Things the splash does NOT wait for (deliberately, under
+STARTUP-AI-ASYNC-002).** Same list as under STARTUP-DSH-001,
+plus:
+
+- Local DSH Cordis boot (used to block under STARTUP-DSH-001)
+- LLM adapter registration
+- Domain tools registration
+- Session persistence handle acquisition
+- Session-title listener registration
+- User-question + approval listener registration
+- Singleton `DshRuntime` object construction
+
+**Known issues.**
+
+- Provider network is probed lazily on the first `ai.ask`.
+  A user who has completed settings but is offline sees
+  "ready" for a few seconds before their first message
+  returns a typed network error. That's acceptable — the
+  alternative (blocking ai.ready on a network probe) would
+  re-introduce the "splash waiting on provider" failure mode.
+- The `app.renderer.ready` handshake relies on the renderer
+  actually mounting and reaching the second RAF. A renderer
+  crash before that point leaves the AI panel stuck in
+  'pending' forever (no splash; no retry). The splash itself
+  has a chunk-load fatal banner that catches the most common
+  crash class; deeper React render errors still surface via
+  the static `window.onerror` hook in `index.html`. The next
+  iteration could add a "force-start AI" fallback in the
+  Settings → AI pane.
+- The boot probe adds a small CPU cost (one histogram
+  interval timer at 20 ms resolution). Negligible — the
+  histogram is `disable()`d at boot completion. We don't
+  enable it for retry boots (they reuse the same helper,
+  which currently opens a fresh histogram on every entry —
+  fine, retry boots are rare).
+
 **Target state.**
 
 - ARCH-03 / F / G in the roadmap — tighter AI / DSH boundary,
@@ -853,6 +1023,110 @@ catalog-insert failure cannot corrupt the task.
   threshold is a rough proxy for "has user-written content".
   A future iteration could look at `progress_log` for a
   more accurate "last user action" signal.
+
+## 10.3 Data backup (REL-01 MVP-1)
+
+**Current state.**
+
+- `src/main/backup/backup-service.ts → createBackup({ rootDir, db, destDir })`
+  produces a hot backup of the user's data directory:
+  - `<destDir>/<backupFolderName(now)>/todos.db`
+    — captured via better-sqlite3's `.backup(destPath)` which
+    wraps `sqlite3_backup_init/_step/_finish`. WAL handling is
+    correct (no torn writes, no half-applied tx), no blocking
+    of in-flight readers/writers.
+  - `todos/`, `drawings/`, `attachments/` — recursive copies
+    via `fs.cpSync` with timestamp preservation. Each is skipped
+    if the source dir doesn't exist (legitimate fresh-install
+    case for `attachments/`).
+  - `manifest.json` — redacted metadata: schema version, app
+    version, ISO timestamp, source basename (NOT absolute path),
+    row counts for todos / conversations / tags / inbox
+    attachments, sections-included flags, per-section byte
+    sizes.
+  - `dsh-sessions/` is **deliberately excluded** (regenerable
+    via re-running conversations, large on long installs, may
+    contain literal user prompts).
+- IPC channels (added to `RUNTIME_CHANNEL_KEYS`, type-checked
+  by ARCH-IPC-01's `_ExhaustiveCheck` guard):
+  - `app.backup.chooseDest` — opens the OS folder picker;
+    returns `{ canceled: true }` on dismiss, otherwise
+    `{ canceled: false, path: <abs> }`.
+  - `app.backup.create { destDir }` — runs the backup service,
+    returns `{ path, manifest }` (mirror in
+    `shared/ipc-schema.ts → BackupCreateRes`).
+- Settings → 数据 → 数据备份 field exposes a single "立即备份…"
+  button that calls `backupChooseDest()` then `backupCreate()`.
+  On success the user sees the backup path + todo/conversation
+  counts inline; on failure a localised message keyed off the
+  typed `BackupError.code` (`source_missing`, `dest_missing`,
+  `name_collision`, `copy_failed`, `backup_failed`,
+  `internal_error`).
+- `backupFolderName(now)` produces
+  `todo-list-backup-YYYYMMDD-HHMMSS-XXXXXX` (local time + 6
+  hex chars of `Math.random`). Stable for grep / sort, safe
+  on Windows + POSIX shells (no spaces / colons / slashes),
+  collision-resistant across milliseconds (16M-1 per second
+  per single backup run).
+- Manifest on disk is byte-equal to the IPC return value so
+  the renderer can show a summary without re-reading.
+
+**What REL-01 MVP-1 deliberately does NOT do.**
+
+- Restore. The manifest is forward-compatible with restore
+  (carries `schemaVersion`, `counts`, `sourceDataDirName`)
+  but no `app.backup.restore` channel exists yet. Users who
+  need to roll back must do it manually for now: quit the
+  app, move the new `<rootDir>` aside, copy the backup's
+  `todos.db` + `todos/` + `drawings/` + `attachments/`
+  into place, restart.
+- Delete. No `app.backup.delete`. Users rm -rf the backup
+  folder manually. Tracked under REL-01 MVP-2 in the backlog.
+- Auto-scheduled backup. The current build only ships a
+  manual button. Cron-style scheduling needs settings +
+  notification surface (PRODUCT-01 territory).
+- Compression / encryption. Out of scope; raw file copy.
+  Backups are user-readable and user-shareable.
+- Cross-version compatibility check. The manifest carries
+  `schemaVersion` but restore will need a guard that refuses
+  a newer-than-app manifest (future iteration).
+
+**Failure modes (typed `BackupError` codes).**
+
+| Code | Cause | UX |
+| --- | --- | --- |
+| `source_missing` | `<rootDir>` vanished (mid-recovery?) | 「源数据目录不存在」 |
+| `dest_missing` | user-picked folder was deleted between picker and click | 「目标目录不存在」 |
+| `name_collision` | `Math.random` collision (1 / 16M / second) | 「备份目录名冲突，请重试」 |
+| `copy_failed` | `cpSync` partial failure (permission / read-only volume) | rendered with the cause in main logs only |
+| `backup_failed` | `db.backup()` failed (disk full, sandbox restriction) | rendered with the cause in main logs only |
+| `internal_error` | anything else | rendered with the cause in main logs only |
+| `bad_request` | renderer passed empty `destDir` | 「请选择备份目录」 |
+| `pick_failed` | `dialog.showOpenDialog` threw | rendered with the cause in main logs only |
+
+On any failure the partial backup subfolder is best-effort
+`rmSync`'d so the user doesn't see a confusing half-written
+folder in the destination. A failed cleanup is itself
+logged at warn (the user can manually remove it).
+
+**Known issues.**
+
+- The backup includes the DB while writers are still
+  active. better-sqlite3's online backup handles WAL
+  consistency, but a backup taken mid-heavy-write may have
+  no free slots in its step budget. Default step is OK for
+  typical workloads; a future iteration could expose a
+  `--throttle` option for very-large-DB users.
+- `cpSync` for the file projections is synchronous and
+  blocks the main process for the duration of the copy.
+  A multi-gigabyte `attachments/` dir could freeze the
+  UI for seconds. A future iteration could stream it via
+  async `pipeline(source, dest)` chunks.
+- The manifest stores `appVersion` for diagnostics but
+  does NOT validate it on restore. A backup from a
+  future app version would be accepted by a future
+  restore path; MVP-1 doesn't ship restore at all so
+  this is a documented gap, not a current bug.
 
 ## 11. Cross-references
 

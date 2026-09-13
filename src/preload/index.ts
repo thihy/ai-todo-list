@@ -178,6 +178,31 @@ const api: TodoListApi = {
      *  expected to call this on boot, after `app:data-changed`,
      *  and when the user opens the 健康 pane. */
     healthCheck: () => invoke('app.health.check', undefined as never),
+    /** REL-01 MVP-1 — create a hot-backup snapshot of the data dir
+     *  (SQLite + todos/ + drawings/ + attachments/) into a fresh
+     *  subfolder under the user-chosen `destDir`. DSH session logs
+     *  are excluded; see docs/architecture.md §11 for the rationale.
+     *  Returns the backup path + redacted manifest. */
+    backupCreate: (destDir: string) =>
+      invoke('app.backup.create', { destDir }),
+    /** REL-01 MVP-1 — native folder picker for backup destination.
+     *  Returns `{ canceled: true }` on dismiss. */
+    backupChooseDest: () => invoke('app.backup.chooseDest', undefined as never),
+    /** STARTUP-AI-ASYNC-002 — renderer → main handshake signalling
+     *  first paint. Main uses it to defer the DSH cold-boot until
+     *  after the splash is gone. Idempotent on the main side. */
+    rendererReady: () => invoke('app.renderer.ready', undefined as never),
+    /** Auto-updater (electron-updater → GitCode releases feed).
+     *  `updaterStatus` reads the latest known feed state without
+     *  hitting the network (suitable for the about-pane mount
+     *  render); `updaterCheck` forces a network round-trip and
+     *  returns the post-check state; `updaterInstall` calls
+     *  quitAndInstall which restarts the app and applies the
+     *  downloaded update. dev mode returns a `devMode:true`
+     *  status so the renderer can disable the button. */
+    updaterStatus: () => invoke('app.updater.status', undefined as never),
+    updaterCheck: () => invoke('app.updater.check', undefined as never),
+    updaterInstall: () => invoke('app.updater.install', undefined as never),
   },
   capture: {
     submit: (args: CaptureSubmitArgs) => invoke('capture.submit', args),

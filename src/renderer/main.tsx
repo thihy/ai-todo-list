@@ -1,32 +1,50 @@
 // Renderer entry — drives the static splash (defined in index.html) until
-// the main process reports BOTH core-ready AND a terminal DSH state.
-// STARTUP-DSH-001: the splash previously came down as soon as core was
-// ready, which left the first AI interaction paying the full Cordis
-// cold-boot cost (1–3 s on warm cache, much more on cold Windows) and
-// could push the BrowserWindow into "未响应" while the dsh-runtime
-// was still resolving its dynamic imports. The new gate is:
+// the main process reports core-ready. STARTUP-AI-ASYNC-002 supersedes
+// STARTUP-DSH-001's gate of `core.ready AND ai.ready/failed`:
 //
-//   core.status === 'ready' AND ai.status IN ('ready', 'failed')
+//   splash 退出条件 = core.status === 'ready'
 //
-// `ai.failed` here is a LOCAL DSH boot failure only (cordis.yml missing,
-// plugin tree assembly failed, critical ctx service absent — see
-// src/main/startup-state.ts markAiFailed). It does NOT block the
-// splash from coming down: the AIPane renders its own "DSH 初始化失败"
-// state and the rest of the app is fully usable. Network / API-key /
-// provider errors are surfaced per-request inside `ai.ask` and never
-// reach the splash.
+// DSH bootstrap is deferred until AFTER the React App has rendered its
+// first frame. The renderer signals this back to main via a new IPC
+// (`app.renderer.ready`); main schedules the actual warm-up at that
+// point. The splash can come down immediately on core.ready alone,
+// while the 22 s DSH cold-boot happens in the background behind the
+// AIPane loading overlay.
+//
+// Why the deferral matters:
+//   1. The static splash can't show interactive feedback during the
+//      DSH warm-up — there's no UI to update, just a loading label.
+//      Removing it as soon as core is ready gets the user into their
+//      task list immediately, where they can keep working while DSH
+//      loads.
+//   2. The DSH warm-up runs dynamic imports + a Cordis boot + adapter
+//      / tools / persistence / listeners assembly. On a cold Windows
+//      cache, the dynamic imports alone can take 10–15 s; combined
+//      with Cordis context creation it's been measured at ~22 s.
+//      Running that work synchronously inside `markCoreReady()` used
+//      to starve Electron's main-process event loop long enough for
+//      Windows to mark the BrowserWindow "未响应".
+//   3. Provider health / API key / model availability is NOT a
+//      startup concern. `ai.ready` here means only that the local
+//      Cordis runtime + adapter + tools + persistence + listeners
+//      are wired up. Provider reachability is probed lazily on the
+//      first `ai.ask` and surfaces as a typed error there — never
+//      on the splash.
 //
 // Single-flight: a module-scoped `mountPromise` is assigned on first
 // entry. Subsequent transitions (snapshot + every app:startup event)
 // call `maybeMountApp` but only the first call performs the dynamic
 // import + React mount. This avoids the StrictMode / duplicate-event
-// race where two snapshots arrive back-to-back with `core.ready +
-// ai.ready` and each one would otherwise kick its own dynamic import.
+// race where two snapshots arrive back-to-back with `core.ready` and
+// each one would otherwise kick its own dynamic import.
 //
-// Once React has mounted, the splash fades out and the unhides the
-// #root container. The dynamic import keeps the splash chunk tiny —
-// the bulk of React + react-dom + the hook tree is paid for only
-// after we know core data is usable.
+// Once React has mounted, the splash fades out. We then wait for two
+// `requestAnimationFrame` ticks (a single RAF only guarantees the
+// layout was computed, not that React's commit-and-paint cycle has
+// finished flushing to the screen) and call `app.renderer.ready` to
+// hand control back to main for the DSH warm-up. We log the IPC
+// failure but never throw — a missing handshake just means the AI
+// panel stays in 'pending' (which the user can retry by reloading).
 //
 // If the App bundle fails to parse (chunk loading error, runtime
 // exception during eval) we surface the failure on the splash with a
@@ -75,24 +93,21 @@ async function bootstrap(): Promise<void> {
     return;
   }
 
-  // Paint the latest phase on the splash so the user sees progress even if
-  // we loaded the bundle while core was already on a later phase.
+  // Paint the latest core phase on the splash so the user sees
+  // progress even if we loaded the bundle while core was already on a
+  // later phase. We deliberately do NOT also paint the AI phase
+  // anymore — under STARTUP-AI-ASYNC-002 the AI component's state is
+  // independent of the splash gate; its UI lives in the AIPane once
+  // we mount. The `app:startup` subscription below also only paints
+  // the core phase.
   window.__splash.setPhase(snapshot.core.phase);
 
   // 2) Subscribe before doing anything async — events fired during step 3
   //    (e.g. ai-ready) must not be lost. The listener has to be typed as
   //    `(p: StartupSnapshot) => void` because the AppEvent union does not
-  //    yet encode the payload shape for `app:startup`. See todo-list-api
-  //    AppEventMap.
+  //    yet encode the payload shape for `app:startup`.
   bridge.on('app:startup', ((next: StartupSnapshot) => {
     window.__splash.setPhase(next.core.phase);
-    // STARTUP-DSH-001: surface the DSH loading phase on the splash
-    // too — when core is ready but the warm-up is still in flight the
-    // user should see "正在启动 DSH…" rather than the now-familiar
-    // "就绪" (which would falsely imply AI is ready).
-    if (next.core.status === 'ready') {
-      window.__splash.setPhase(next.ai.phase);
-    }
     void maybeMountApp(next);
   }) as Parameters<TodoListApi['on']>[1]);
 
@@ -100,7 +115,7 @@ async function bootstrap(): Promise<void> {
   void maybeMountApp(snapshot);
 }
 
-// STARTUP-DSH-001 — single-flight mount. The previous implementation
+// STARTUP-AI-ASYNC-002 — single-flight mount. The previous implementation
 // used a boolean `appMounted` guard, which is correct but doesn't
 // help with concurrent snapshots arriving in the same microtask: both
 // callers could observe `appMounted === false` before the first one
@@ -108,7 +123,16 @@ async function bootstrap(): Promise<void> {
 // it on every subsequent call) is strictly race-free — the React
 // mount sequence runs at most once per page load, even under
 // React StrictMode double-mount + duplicate startup events.
+//
+// A separate `rendererReadySent` flag tracks the `app.renderer.ready`
+// handshake. We track it locally rather than relying on `mountPromise`
+// because mountPromise only resolves when mountApp() finishes, but
+// the handshake has to fire AFTER the splash is removed (which
+// happens inside mountApp via RAF). Tracking it as a module-scoped
+// flag means reload → remount fires a fresh signal, while duplicate
+// `app:startup` events during one page-load don't.
 let mountPromise: Promise<void> | null = null;
+let rendererReadySent = false;
 
 async function maybeMountApp(snap: StartupSnapshot): Promise<void> {
   if (mountPromise) {
@@ -129,16 +153,11 @@ async function maybeMountApp(snap: StartupSnapshot): Promise<void> {
     lastPhaseAt = Date.now();
     return;
   }
-  // STARTUP-DSH-001: core is ready but the splash must remain up until
-  // the DSH bootstrap reaches a terminal state. `ai.loading` and
-  // `ai.pending` mean "still booting locally"; `ai.ready` and
-  // `ai.failed` are both acceptable triggers for mount.
-  if (snap.ai.status !== 'ready' && snap.ai.status !== 'failed') {
-    // Show the DSH loading phase on the splash so the user sees
-    // progress rather than a static "ready" label.
-    window.__splash.setPhase(snap.ai.phase);
-    return;
-  }
+  // STARTUP-AI-ASYNC-002: the splash gate is core.ready alone. DSH
+  // state (pending / loading / ready / failed) is owned by the AIPane
+  // once we mount — see AIPane's loading overlay / retry banner.
+  // Mounting now puts the user into their task list immediately;
+  // the DSH cold-boot runs in parallel behind a loading UI.
   mountPromise = mountApp(snap);
   try {
     await mountPromise;
@@ -175,21 +194,65 @@ async function mountApp(snap: StartupSnapshot): Promise<void> {
         ReactMod.default.createElement(App, null),
       ),
     );
-    // Only after React has mounted do we remove the splash. The renderer's
-    // first paint may still take a tick, but the splash covers that gap
-    // (already loaded, no extra network).
+
+    // STARTUP-AI-ASYNC-002 — hand control back to main for the DSH
+    // warm-up ONLY AFTER React's commit-and-paint cycle has flushed.
+    // Two RAFs is the canonical "first paint done" signal: the first
+    // schedules work for the next frame, the second runs after that
+    // frame has been painted. Without this, main could receive the
+    // handshake while React is still mid-commit and immediately start
+    // the heavy `import('@deepseek-ai/dsh-app-boot')` chain — that
+    // dynamic import competes with React's paint for the same main-
+    // process I/O budget on a cold cache.
+    //
+    // We remove the splash and signal the handshake in the same
+    // tick, so the user sees the AIPane "正在启动 AI 助手…" overlay
+    // appear immediately (the AI panel is part of the React tree we
+    // just mounted). The flag prevents a second signal on StrictMode
+    // remount or duplicate `app:startup` events.
     requestAnimationFrame(() => {
-      window.__splash.remove();
+      requestAnimationFrame(() => {
+        window.__splash.remove();
+        if (!rendererReadySent) {
+          rendererReadySent = true;
+          void signalRendererReady();
+        }
+      });
     });
     const dshNote = snap.ai.status === 'failed'
       ? `dsh=local-failed (${snap.ai.errorMessage ?? 'no-message'})`
-      : 'dsh=local-ready';
+      : snap.ai.status === 'ready'
+        ? 'dsh=local-ready'
+        : 'dsh=will-boot-in-background';
     logger.info(`renderer: app mounted after ${Date.now() - startupWatchStart}ms (${dshNote})`);
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
     showFatal(`加载主界面失败:${reason}`);
     // Reset so a future reload can try again.
     mountPromise = null;
+  }
+}
+
+// STARTUP-AI-ASYNC-002 — renderer → main handshake. Fire-and-forget;
+// the only failure mode is "main said no / IPC channel missing",
+// which leaves the AI panel in 'pending' forever. We log at warn
+// rather than escalating because the user-visible failure is just
+// "the AI panel keeps showing 正在启动 AI 助手…" — the rest of the
+// app is fully functional. A second call (reload + mount) is
+// guarded by `rendererReadySent`.
+async function signalRendererReady(): Promise<void> {
+  const bridge: TodoListApi | undefined = window.todoList;
+  if (!bridge?.app?.rendererReady) {
+    logger.info('app.renderer.ready: bridge missing (older build?) — AI boot stays pending');
+    return;
+  }
+  try {
+    const res = await bridge.app.rendererReady();
+    if (!res.ok) {
+      logger.info(`app.renderer.ready: main declined (${res.code ?? 'unknown'}) — AI boot stays pending`);
+    }
+  } catch (err) {
+    logger.info(`app.renderer.ready: IPC failed (${(err as Error).message}) — AI boot stays pending`);
   }
 }
 

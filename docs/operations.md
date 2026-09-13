@@ -156,16 +156,27 @@ See `startup[ai]` log lines and ADR-004.
 - DSH boot is best-effort: a failed boot surfaces as
   `ai.ask → dsh_unavailable` and is visible in the AI pane as a
   non-blocking banner. The rest of the app stays usable.
-- The splash waits for the LOCAL DSH bootstrap (Cordis boot +
-  adapter + tools + persistence + listeners) to reach a terminal
-  state before mounting the renderer (STARTUP-DSH-001). The
-  warm-up performs no network requests, no API-key checks, no
-  `/models` calls — those live in the `ai.ask` per-request
-  path. If the user sees the splash stuck on "准备 AI 助手…"
-  for more than ~3 s on a cold machine, that's the
-  `@deepseek-ai/dsh-app-boot` import + cordis.yml parse; the
-  `startup[ai]` log lines in `${userData}/todo-list.log` carry
-  the per-phase timing for diagnosis.
+- The splash no longer waits for the LOCAL DSH bootstrap
+  (STARTUP-AI-ASYNC-002 supersedes STARTUP-DSH-001's gate). The
+  new splash exit condition is `core.status === 'ready'` only;
+  the DSH cold-boot happens in the background behind the
+  AIPane "正在启动 AI 助手…" overlay. On a cold Windows
+  install the user lands in the task list within ~1 s of core
+  becoming ready while DSH continues to warm up — measured at
+  ~22 s before this change, of which the splash used to wait
+  for the entire duration. If the boot ever flags Windows
+  "未响应" again the relevant evidence is the
+  `startup[ai]: DSH boot …` log line in
+  `${userData}/todo-list.log`, which records both the
+  sub-phase timing AND the main-process event-loop latency
+  (max / p99 / p95 / mean / samples) collected via
+  `node:perf_hooks.monitorEventLoopDelay`. A `max > 5000ms`
+  in that line is the signal that the boot is blocking the
+  IPC handler queue for seconds at a time and needs the
+  utility-process / worker-thread isolation follow-up. The
+  warm-up itself still performs no network requests, no
+  API-key checks, no `/models` calls — those live in the
+  `ai.ask` per-request path.
 - Orphan-session migration runs synchronously inside the boot
   body AFTER `warmupDshRuntime` resolves, reusing the live
   runtime's persistence facade. There is no second Cordis
@@ -174,3 +185,49 @@ See `startup[ai]` log lines and ADR-004.
 - The renderer preload runs with `sandbox: false`. This is
   documented in `createMainWindow()` and is required by the inline
   splash script in `index.html`.
+- Manual backup creation lives in 设置 → 数据 → 数据备份
+  (REL-01 MVP-1). The button copies the live SQLite DB + the
+  durable file projections (todos/ + drawings/ + attachments/)
+  into a unique timestamped subfolder under a user-chosen
+  destination. DSH session logs are excluded (regenerable +
+  contain user prompts). Restore + delete + auto-scheduling
+  are scoped for the next iteration. The on-disk manifest
+  (`<backup>/manifest.json`) carries no absolute paths and no
+  API keys so it's safe to share when filing a bug report.
+- Auto-update is wired through `electron-updater` against the
+  GitCode releases feed declared in `package.json → build.publish`
+  (string-URL shorthand for the BYO-generic server, URL
+  `https://gitcode.com/ai-sea/ai-todo-list/releases/latest`).
+  The auto-check fires 5 s after the renderer's first paint so
+  it never races with the splash or the STARTUP-AI-ASYNC-002
+  boot window. dev mode (`!app.isPackaged`) short-circuits to
+  a no-op so `pnpm dev` doesn't accidentally overwrite the
+  developer's out/. Release flow (manual — GitCode releases are
+  not an S3-compatible store, so electron-builder's automatic
+  `--publish always` cannot upload assets there): build the
+  binary locally (`pnpm dist:win` — `publish` is a string URL
+  in v26 schema, so the validator accepts it; the build itself
+  defaults to `--publish never` and never tries to PUT); then
+  draft a GitCode release tagged `v<version>` (e.g.
+  `v1.0.0-rc3`); upload the asset `ai-todo-list-Setup-1.0.0-rc3.exe`
+  (asset name is governed by the `artifactName` template) plus
+  a hand-written `latest.yml` (electron-updater's diff
+  manifest format — `version`, `files[].url`, `sha512`,
+  `releaseDate`, `size`) at the same release's download root
+  so the autoUpdater can fetch it on next startup. To avoid
+  hand-writing the YAML, run `node
+  scripts/generate-latest-yml.mjs <path-to-installer-exe>`
+  after `pnpm dist:win` — it hashes the binary (SHA-512
+  base64), emits the right manifest filename (`latest.yml` /
+  `latest-mac.yml` / `latest-linux.yml` per platform), and
+  prints the upload instructions to stdout. The
+  renderer side lives in `SettingsModal → 关于 → 更新`: a
+  status line ("已是最新版本" / "发现新版本 X，下载中…" /
+  "已下载，重启后生效"), a "检查更新" button, and a
+  "立即重启更新" button that appears once the binary is
+  staged. Users on dev builds see "开发模式下不可用" instead of
+  an enabled button. The updater module
+  (`src/main/updates/updater.ts`) keeps internal state on a
+  per-process singleton; reload / second window reuse the
+  same runtime via the existing `app.renderer.ready`
+  handshake.
