@@ -50,6 +50,14 @@ pnpm dist:mac         # DMG (x64 + arm64)
 pnpm dist:linux       # AppImage + .deb
 ```
 
+After a Windows build, run `pnpm test:packaged-dsh` to boot the DSH plugin
+tree directly from `dist/win-unpacked/resources/app.asar` under Electron.
+It uses temporary session data and makes no model requests. To check another
+installation, pass its resources directory as an argument. A successful dev
+boot is insufficient: pnpm can supply automatically installed peer dependencies
+that the packager omits. Required DSH runtime peers must be declared in the
+app's production dependencies and included in `pnpm-lock.yaml`.
+
 ## Architecture
 
 ```
