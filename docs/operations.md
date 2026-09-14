@@ -209,7 +209,7 @@ See `startup[ai]` log lines and ADR-004.
   in v26 schema, so the validator accepts it; the build itself
   defaults to `--publish never` and never tries to PUT); then
   draft a GitCode release tagged `v<version>` (e.g.
-  `v1.0.0-rc3`); upload the asset `ai-todo-list-Setup-1.0.0-rc3.exe`
+  `v1.0.0-rc4`); upload the asset `ai-todo-list-Setup-1.0.0-rc4.exe`
   (asset name is governed by the `artifactName` template) plus
   a hand-written `latest.yml` (electron-updater's diff
   manifest format — `version`, `files[].url`, `sha512`,

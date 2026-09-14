@@ -1,7 +1,7 @@
 // App-wide constants. Mirrored in openspec spec files.
 
 export const APP_NAME = 'todo-list';
-export const APP_VERSION = '1.0.0-rc3';
+export const APP_VERSION = '1.0.0-rc4';
 export const APP_USER_AGENT = `${APP_NAME}/${APP_VERSION}`;
 
 // User-facing brand shown in the Windows taskbar right-click menu and the

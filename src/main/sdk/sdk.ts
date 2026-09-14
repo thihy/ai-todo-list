@@ -18,6 +18,7 @@ import type {
   TodoPatch,
   TodoStats,
 } from '../../shared/todo-types';
+import { APP_VERSION } from '../../shared/constants';
 
 export interface TodoListSdk {
   todo: {
@@ -77,6 +78,6 @@ export function createSdk(deps: {
       save: (todoId, scene, id, title) => deps.drawings.save(todoId, scene, id, title),
       delete: (id) => deps.drawings.delete(id),
     },
-    version: '1.0.0-rc3',
+    version: APP_VERSION,
   };
 }

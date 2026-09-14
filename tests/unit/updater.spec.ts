@@ -42,7 +42,7 @@ vi.mock('electron-updater', () => ({
 vi.mock('electron', () => ({
   app: {
     isPackaged: true,
-    getVersion: () => '1.0.0-rc3',
+    getVersion: () => '1.0.0-rc4',
   },
 }));
 
@@ -68,7 +68,7 @@ beforeEach(() => {
 describe('getUpdaterStatus', () => {
   it('returns the current app version from app.getVersion', () => {
     const s = getUpdaterStatus();
-    expect(s.currentVersion).toBe('1.0.0-rc3');
+    expect(s.currentVersion).toBe('1.0.0-rc4');
     expect(s.latestVersion).toBeNull();
     expect(s.downloaded).toBe(false);
     expect(s.checking).toBe(false);
