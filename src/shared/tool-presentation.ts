@@ -203,7 +203,137 @@ export function presentToolResult(
   }
 }
 
+/** One-line human-readable summary of a tool call for the collapsed row.
+ *  Prefers the resolved subject (e.g. the TODO title from the result) over a
+ *  raw id arg, so `todo.planForToday({id})` reads "晚上请客" once the result
+ *  arrives — not "01M2G6H1JP". For list/search/stats tools it returns a
+ *  count. Returns '' when nothing readable is available, in which case the
+ *  row shows just its title. */
+export function summarizeToolCall(
+  toolName: string,
+  args: unknown,
+  result: unknown,
+  ok: boolean,
+): string {
+  if (!ok) return '';
+  const a = typeof args === 'object' && args !== null
+    ? args as Record<string, unknown>
+    : undefined;
+  const resultTitle = (): string | undefined => stringField(result, 'title');
+  switch (toolName) {
+    case 'todo.create':
+    case 'todo.update': {
+      const t = stringField(a, 'title') ?? resultTitle();
+      return t ? truncate(t, 60) : '';
+    }
+    case 'todo.get':
+    case 'todo.planForToday':
+    case 'todo.unplan': {
+      const t = resultTitle();
+      return t ? truncate(t, 60) : '';
+    }
+    case 'todo.delete':
+    case 'todo.restore':
+    case 'conversation.archive':
+    case 'conversation.unarchive':
+    case 'conversation.delete':
+    case 'drawing.delete':
+    case 'content.restoreVersion':
+    case 'drawing.setThumb':
+      // result is {ok:true}; no subject to surface — the title alone suffices.
+      return '';
+    case 'todo.list':
+    case 'subtasks.list':
+    case 'content.history': {
+      const n = asArray(result).length;
+      if (n === 0) return '';
+      const unit = toolName === 'content.history' ? '个版本' : '项';
+      return `${n} ${unit}`;
+    }
+    case 'todo.batchUpdate': {
+      const ids = parseIdList(a?.['ids']);
+      const n = Array.isArray(result) ? result.length : ids.length;
+      return n > 0 ? `${n} 项` : '';
+    }
+    case 'conversation.list': {
+      const convs = result && typeof result === 'object'
+        ? asArray((result as Record<string, unknown>)['conversations'])
+        : [];
+      return convs.length > 0 ? `${convs.length} 个会话` : '';
+    }
+    case 'conversation.history': {
+      const n = asArray(result).length;
+      return n > 0 ? `${n} 轮` : '';
+    }
+    case 'todo.search':
+    case 'web_search':
+      return truncate(stringField(a, 'query') ?? '', 60);
+    case 'web_fetch':
+      return truncate(stringField(a, 'url') ?? '', 80);
+    case 'todo.stats': {
+      const w = numberField(a, 'windowDays');
+      return w != null ? `${w} 天` : '';
+    }
+    case 'content.readBody': {
+      const v = numberField(result, 'version');
+      return v != null ? `版本 ${v}` : '';
+    }
+    case 'content.writeBody': {
+      const md = stringField(a, 'markdown') ?? '';
+      const line = firstNonEmptyLine(md);
+      return line ? truncate(line, 60) : '';
+    }
+    case 'drawing.list': {
+      const n = asArray(result).length;
+      return n > 0 ? `${n} 张画板` : '';
+    }
+    case 'drawing.save':
+      return truncate(stringField(a, 'title') ?? stringField(result, 'title') ?? '', 60);
+    case 'inbox.attach':
+    case 'inbox.attachBlob':
+      return truncate(
+        stringField(a, 'filename') ?? stringField(result, 'filename') ?? '',
+        60,
+      );
+    case 'conversation.create': {
+      const conv = result && typeof result === 'object'
+        ? (result as Record<string, unknown>)['conversation']
+        : undefined;
+      return truncate(
+        stringField(a, 'title') ?? stringField(conv, 'title') ?? '',
+        60,
+      );
+    }
+    case 'conversation.rename':
+      return truncate(stringField(a, 'title') ?? '', 60);
+    default:
+      return '';
+  }
+}
+
 // ─── helpers ─────────────────────────────────────────────────────────────
+
+function truncate(s: string, max: number): string {
+  if (s.length <= max) return s;
+  return s.slice(0, max - 1) + '…';
+}
+
+function firstNonEmptyLine(s: string): string {
+  for (const line of s.split('\n')) {
+    const t = line.trim();
+    if (t) return t;
+  }
+  return '';
+}
+
+function parseIdList(v: unknown): string[] {
+  let raw = v;
+  if (typeof raw === 'string') {
+    try { raw = JSON.parse(raw); } catch { return []; }
+  }
+  if (!Array.isArray(raw)) return [];
+  return raw.filter((x): x is string => typeof x === 'string');
+}
 
 function kindFor(toolName: string): ToolCallKind {
   return (kindByTool as Record<string, ToolCallKind>)[toolName] ?? 'other';

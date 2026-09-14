@@ -38,7 +38,7 @@ import type { ToolRowState, ToolRowVariant } from './ui-tool/tool/models/tool-ca
 import { classifyTool } from './ui-tool/tool/models/tool-call-model'
 import { webCardModelFromMeta, type WebCardModelProps } from './ui-tool/tool/models/web-card-model'
 import { conversationT as t } from './conversation-locale'
-import { presentToolCall, presentToolResult } from '../tool-presentation'
+import { presentToolCall, presentToolResult, summarizeToolCall } from '../tool-presentation'
 
 /** Variant leading icons (figma table), verbatim from GenericToolCard — all
  *  glyphs render at 14 inside the 16px leading box. */
@@ -198,46 +198,6 @@ function toCardModels(
   }
 }
 
-/** One-line preview of the call's args for the collapsed summary. Never enters
- *  the body — pure first-line projection, no JSON pretty-print of the whole
- *  payload. Tailored to our domain: a `title` / `id` arg wins outright so
- *  `todo.create({title})` summarizes as the task title. */
-function summarizeArgs(args: unknown, fallback: string): string {
-  let raw: unknown = args
-  if (typeof raw === 'string') {
-    try {
-      raw = JSON.parse(raw)
-    } catch {
-      raw = args
-    }
-  }
-  if (typeof raw === 'string') return raw.split('\n')[0] ?? ''
-  if (Array.isArray(raw)) {
-    const texts = raw
-      .map((b) =>
-        typeof b === 'object' && b !== null && (b as { type?: string }).type === 'text'
-          ? String((b as { text?: string }).text ?? '')
-          : '',
-      )
-      .filter(Boolean)
-    if (texts.length > 0) return texts.join('').split('\n')[0] ?? ''
-  }
-  if (typeof raw === 'object' && raw !== null) {
-    const obj = raw as Record<string, unknown>
-    const title = typeof obj['title'] === 'string' ? obj['title'] : undefined
-    const id = typeof obj['id'] === 'string' ? obj['id'] : undefined
-    if (title) return title
-    if (id) return id
-    try {
-      const flat = JSON.stringify(raw)
-      return flat.length > 60 ? flat.slice(0, 60) + '…' : flat
-    } catch {
-      return fallback
-    }
-  }
-  return fallback
-}
-
 export const DomainToolRow: React.FC<{
   toolName: string
   args: unknown
@@ -314,19 +274,18 @@ export const DomainToolRow: React.FC<{
     [toolName, args, presentationMeta, ok],
   )
   const cards = useMemo(() => toCardModels(resultView, args, argsKnown, ok, web), [resultView, args, argsKnown, ok, web])
-  const summary = useMemo(() => summarizeArgs(args, toolName), [args, toolName])
-  // Tool IDENTITY is preserved here. The call title (`presentToolCall` →
-  // titleFor) carries the human-readable label ("读取正文"); toolName is the
-  // wire name ("content.readBody"). Combined: "读取正文 · content.readBody".
-  // resultView.title (e.g. "正文", "版本历史") is intentionally NOT used as
-  // identity — it describes the result, not the call. For missing-call
-  // rows (argsKnown=false), identity falls back to the explicit fallback.
+  const summary = useMemo(() => summarizeToolCall(toolName, args, result, ok), [toolName, args, result, ok])
+  // Tool IDENTITY: the visible title is the friendly call label ("安排到今天")
+  // from `presentToolCall` → titleFor. The raw wire name (`todo.planForToday`)
+  // is intentionally NOT shown to keep the row readable — it survives on the
+  // root `data-tool` attribute for debugging. resultView.title (e.g. "正文",
+  // "版本历史") is NOT used as identity — it describes the result, not the
+  // call. For missing-call rows (argsKnown=false), identity falls back to the
+  // explicit fallback.
   const callTitle = callView.title ?? '';
   const title = !argsKnown
     ? '工具调用信息缺失'
-    : (callTitle && toolName
-        ? `${callTitle} · ${toolName}`
-        : toolName || callTitle || '工具调用');
+    : callTitle || toolName || '工具调用';
   // The header input section renders ABOVE the body when EITHER a
   // structured card carries it (so the user sees the raw args above the
   // diff/read/search/web card) OR we have a missing-call fallback to
@@ -364,6 +323,7 @@ export const DomainToolRow: React.FC<{
       errorSummary={cards.errorSummary}
       showInputWithCard={showInputWithCard}
       missingInputHint={argsKnown ? undefined : '未记录输入'}
+      wireName={toolName}
     />
   )
 }

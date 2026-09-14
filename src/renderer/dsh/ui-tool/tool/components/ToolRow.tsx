@@ -102,6 +102,10 @@ export interface ToolRowProps {
    * over the expanded body. Absent = no affordance.
    */
   inspect?: (() => void) | undefined
+  /** Raw wire tool name (e.g. "todo.planForToday"), shown as a small muted
+   *  caption at the top of the expanded body so the friendly collapsed title
+   *  can stay clean without losing the identity for debugging. */
+  wireName?: string | undefined
 }
 
 function leadingFor(state: ToolRowState, icon: ReactNode): ReactNode {
@@ -152,6 +156,7 @@ export function ToolRow({
   filePathLine,
   onOpenFile,
   inspect,
+  wireName,
 }: ToolRowProps) {
   const [expanded, setExpanded] = useState(false)
   const terminalLabels = useMemo(() => terminalBlockLabels(t), [t])
@@ -266,6 +271,9 @@ export function ToolRow({
         )}
       >
         <div className={css.bodyWrap}>
+          {wireName && (
+            <div className={css.wireName}>{wireName}</div>
+          )}
           {/* Header input section — only when showInputWithCard is on AND a
               structured card is also being rendered. Rendered BEFORE the card
               so the card's own input section (in the IO card path) doesn't

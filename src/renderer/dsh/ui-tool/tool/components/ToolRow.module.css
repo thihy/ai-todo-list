@@ -161,6 +161,18 @@
   flex-direction: column;
 }
 
+/* Raw wire tool name shown at the top of the expanded body — the collapsed
+   title uses the friendly label, so the wire name lives here for debugging.
+   Caption tier, code font, same row indent as the cards below it. */
+.wireName {
+  margin: 4px 0 2px 4px;
+  font-family: var(--ds-font-family-code);
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--dsw-alias-label-caption);
+  word-break: break-all;
+}
+
 /* Hover-revealed jump to the trajectory record: a small pill in real flow
    under the expanded body's bottom-left corner (it reserves its line, so
    revealing never shifts layout); revealed by hovering anywhere on the tool
