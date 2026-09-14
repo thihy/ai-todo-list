@@ -138,6 +138,10 @@ export interface SettingsPatchArgs {
   snoozePlanGuideUntil?: number | null;
   /** 任务优先级配色。theme 模式不修改 colors；custom 模式传完整 colors。 */
   taskAppearance?: TaskAppearance;
+  /** Auto-updater master switch. Toggling this takes effect
+   *  immediately (cancels / schedules the post-startup background
+   *  check) and persists across restarts. */
+  autoUpdate?: boolean;
 }
 
 // --- TodoListApi ---

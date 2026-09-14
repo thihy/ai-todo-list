@@ -326,6 +326,10 @@ export interface SettingsSetReq {
   // 任务优先级配色 —— mode=theme 时跟随 CSS 主题；mode=custom 时 colors
   // 完整覆盖 4 个优先级的背景/前景。具体值由 Settings UI 编辑 / 选预设。
   taskAppearance?: TaskAppearance;
+  // AUTO-UPDATE toggle — when false the 5 s post-startup background
+  // check is skipped; the manual "检查更新" button is unaffected.
+  // Defaults to true (existing installs keep their behaviour).
+  autoUpdate?: boolean;
 }
 export interface SettingsGetRes extends AISettings {
   captureHotkey: string;
@@ -353,6 +357,8 @@ export interface SettingsGetRes extends AISettings {
     token: string | null;
     socketPath: string;
   };
+  /** Auto-updater master switch. See PersistedSettings#autoUpdate. */
+  autoUpdate: boolean;
 }
 export interface SettingsChooseDataDirRes {
   /** Chosen path, or null if the user cancelled the dialog. */

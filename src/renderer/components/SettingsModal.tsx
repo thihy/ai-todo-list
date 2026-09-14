@@ -1071,7 +1071,7 @@ function kindLabel(k: HealthIssueKind): string {
   }
 }
 
-const AboutPane: React.FC<PaneProps> = ({ data }) => {
+const AboutPane: React.FC<PaneProps> = ({ data, patch }) => {
   // OBS-01 — drive a Save-As dialog from the renderer. Two-step:
   // build the bundle (redacted in main), then ask main to write it.
   // The button is gated on `busy` to prevent double-clicks.
@@ -1200,6 +1200,24 @@ const AboutPane: React.FC<PaneProps> = ({ data }) => {
       </p>
       <Field label="当前版本">
         <div className="muted mono">版本 {updater.currentVersion || '—'}</div>
+      </Field>
+      <Field
+        label="自动更新"
+        hint={
+          updater.devMode
+            ? '开发模式下不可用'
+            : '启用后，应用启动约 5 秒会自动检查一次更新；下载完成后重启即生效。关闭后仍可手动「检查更新」获取版本。'
+        }
+      >
+        <label className="toggle">
+          <input
+            type="checkbox"
+            checked={data.autoUpdate}
+            disabled={updater.devMode}
+            onChange={(e) => { void patch({ autoUpdate: e.target.checked }); }}
+          />
+          <span>{data.autoUpdate ? '已启用' : '已禁用'}</span>
+        </label>
       </Field>
       <Field
         label="更新"

@@ -79,6 +79,23 @@ let status: UpdaterStatus = {
   checking: false,
 };
 let installed = false;
+// Auto-update master switch. When false the 5 s post-startup background
+// check is skipped; manual `checkNow` is unaffected. Read at boot by
+// `setUpAutoUpdater` (the boolean passed in via opts) and mirrored into
+// this module-level flag so the value observed by the async setup is the
+// authoritative one even if the user toggles mid-boot.
+let autoUpdateEnabled = true;
+// Handle on the in-flight scheduled auto-check, if any. We track it so a
+// runtime disable can cancel the timer before it fires (otherwise the user
+// would see one more unwanted check after toggling off).
+let scheduledCheckTimer: ReturnType<typeof setTimeout> | null = null;
+
+function cancelScheduledCheck(): void {
+  if (scheduledCheckTimer) {
+    clearTimeout(scheduledCheckTimer);
+    scheduledCheckTimer = null;
+  }
+}
 
 export function getUpdaterStatus(): UpdaterStatus {
   // Re-read current version each call: `app.getVersion()` doesn't
@@ -92,8 +109,14 @@ export function getUpdaterStatus(): UpdaterStatus {
 
 /** Set up the auto-updater. Idempotent — calling twice is a no-op.
  *  Returns true if setup actually ran; false if dev mode (or
- *  already started). */
-export function setUpAutoUpdater(cb?: UpdaterCallbacks): boolean {
+ *  already started).
+ *
+ *  `opts.autoUpdate` gates the 5 s background check: when false the
+ *  listener wiring still happens (so the renderer can call `checkNow`
+ *  / `quitAndInstall` and observe status) but the scheduled check is
+ *  skipped. Defaults to true to preserve existing behaviour for callers
+ *  that don't pass the option (e.g. unit tests). */
+export function setUpAutoUpdater(cb?: UpdaterCallbacks, opts?: { autoUpdate?: boolean }): boolean {
   if (started) return true;
   if (!app.isPackaged) {
     // Dev mode: skip. The renderer-side check UI still works
@@ -102,6 +125,7 @@ export function setUpAutoUpdater(cb?: UpdaterCallbacks): boolean {
     return false;
   }
   started = true;
+  autoUpdateEnabled = opts?.autoUpdate ?? true;
   status = {
     currentVersion: app.getVersion(),
     latestVersion: null,
@@ -115,6 +139,12 @@ export function setUpAutoUpdater(cb?: UpdaterCallbacks): boolean {
   void (async (): Promise<void> => {
     try {
       const { autoUpdater } = (await import('electron-updater')) as unknown as AutoUpdaterModule;
+      // autoDownload stays true unconditionally: the manual `checkNow`
+      // path (renderer's "检查更新" button) relies on the download firing
+      // automatically after `update-available`, and there is no separate
+      // "download" affordance in the UI. Gating auto-download on the
+      // toggle would break the manual flow. The autoUpdate toggle only
+      // suppresses the SCHEDULED background check.
       autoUpdater.autoDownload = true;
       autoUpdater.autoInstallOnAppQuit = true;
       autoUpdater.logger = null; // we own logging via on('error', ...)
@@ -153,8 +183,11 @@ export function setUpAutoUpdater(cb?: UpdaterCallbacks): boolean {
 
       // Schedule the first auto-check on a delay so it never
       // races with the splash or the STARTUP-AI-ASYNC-002 boot
-      // window.
-      setTimeout(() => {
+      // window. Skipped when the user has disabled auto-update.
+      if (!autoUpdateEnabled) return;
+      cancelScheduledCheck();
+      scheduledCheckTimer = setTimeout(() => {
+        scheduledCheckTimer = null;
         void autoUpdater.checkForUpdates().catch((err: Error) => {
           getLogger().warn(`updater: auto-check rejected: ${err.message}`);
         });
@@ -165,6 +198,46 @@ export function setUpAutoUpdater(cb?: UpdaterCallbacks): boolean {
   })();
 
   return true;
+}
+
+/** Runtime toggle for the auto-update master switch. Called from the
+ *  settings patch handler when the renderer flips the About → 更新
+ *  checkbox. Takes effect immediately:
+ *    - Disabling cancels any pending scheduled check.
+ *    - Re-enabling schedules a fresh check (matching the original
+ *      "5 s after the listener wiring completes" cadence) so the user
+ *      doesn't have to restart to pick up the new state.
+ *  No-op when setUpAutoUpdater hasn't run yet (e.g. dev mode) — the
+ *  boot-time path will read the latest value via opts.autoUpdate. */
+export function applyAutoUpdatePreference(enabled: boolean): void {
+  autoUpdateEnabled = enabled;
+  if (!started || !app.isPackaged) return;
+  // Cancel any in-flight scheduled check first so a disable never
+  // races with an about-to-fire timer.
+  cancelScheduledCheck();
+  if (!enabled) return;
+  void (async (): Promise<void> => {
+    try {
+      const { autoUpdater } = (await import('electron-updater')) as unknown as AutoUpdaterModule;
+      scheduledCheckTimer = setTimeout(() => {
+        scheduledCheckTimer = null;
+        void autoUpdater.checkForUpdates().catch((err: Error) => {
+          getLogger().warn(`updater: auto-check rejected: ${err.message}`);
+        });
+      }, AUTO_CHECK_DELAY_MS);
+    } catch (err) {
+      getLogger().warn(`updater: applyAutoUpdatePreference failed: ${(err as Error).message}`);
+    }
+  })();
+}
+
+/** Read the current effective auto-update preference. Mirrors the value
+ *  the boot path observed plus any runtime toggles via
+ *  `applyAutoUpdatePreference`. Exposed so the renderer can show a
+ *  consistent indicator if needed without re-querying the settings
+ *  store. */
+export function isAutoUpdateEnabled(): boolean {
+  return autoUpdateEnabled;
 }
 
 /** User-initiated check. Bypasses the auto-check delay and
@@ -211,6 +284,8 @@ export function __resetUpdaterForTests(): void {
     checking: false,
   };
   installed = false;
+  autoUpdateEnabled = true;
+  cancelScheduledCheck();
 }
 
 function getLogger(): { warn: (msg: string) => void; info: (msg: string) => void } {

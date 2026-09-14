@@ -71,6 +71,14 @@ export interface PersistedSettings {
      *  first enable (auto-generated on save). */
     token: string | null;
   };
+  /** Auto-updater master switch. When false, the 5 s post-startup
+   *  background check is skipped (no surprise manifest fetches on
+   *  launch). Manual "检查更新" still works — that path is the user's
+   *  explicit opt-in and is unaffected. Defaults to true so existing
+   *  installs keep their auto-update behaviour. Read by
+   *  `src/main/updates/updater.ts#setUpAutoUpdater` at boot and by
+   *  `applyAutoUpdatePreference` for runtime toggling. */
+  autoUpdate: boolean;
 }
 
 const DEFAULTS: PersistedSettings = {
@@ -92,6 +100,7 @@ const DEFAULTS: PersistedSettings = {
   snoozePlanGuideUntil: null,
   taskAppearance: { ...DEFAULT_TASK_APPEARANCE, colors: { ...DEFAULT_TASK_APPEARANCE.colors } },
   sdkBridge: { enabled: false, token: null },
+  autoUpdate: true,
 };
 
 /** Default data root when the user has not picked a directory. */
@@ -210,6 +219,7 @@ export class SettingsStore {
           ? '\\\\.\\pipe\\todo-list'
           : '/tmp/todo-list.sock',
       },
+      autoUpdate: v.autoUpdate,
     };
   }
 

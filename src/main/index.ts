@@ -521,19 +521,26 @@ function bootstrap(): void {
           const { setUpAutoUpdater } = await import('./updates/updater');
           // Forward electron-updater's two key events to all
           // BrowserWindows so the renderer can keep its about /
-          // status UI in sync without polling.
-          setUpAutoUpdater({
-            onAvailable: (version) => {
-              for (const w of BrowserWindow.getAllWindows()) {
-                if (!w.isDestroyed()) w.webContents.send('app:update-available', { version });
-              }
+          // status UI in sync without polling. The autoUpdate flag
+          // is read from the persisted settings store; when false
+          // the 5 s post-startup background check is skipped but
+          // the listener wiring still happens so manual checkNow /
+          // quitAndInstall calls work.
+          setUpAutoUpdater(
+            {
+              onAvailable: (version) => {
+                for (const w of BrowserWindow.getAllWindows()) {
+                  if (!w.isDestroyed()) w.webContents.send('app:update-available', { version });
+                }
+              },
+              onDownloaded: (version) => {
+                for (const w of BrowserWindow.getAllWindows()) {
+                  if (!w.isDestroyed()) w.webContents.send('app:update-downloaded', { version });
+                }
+              },
             },
-            onDownloaded: (version) => {
-              for (const w of BrowserWindow.getAllWindows()) {
-                if (!w.isDestroyed()) w.webContents.send('app:update-downloaded', { version });
-              }
-            },
-          });
+            { autoUpdate: settings.get().autoUpdate },
+          );
         } catch (err) {
           logger.warn(`updater: failed to start: ${(err as Error).message}`);
         }
@@ -873,7 +880,7 @@ function registerSettingsHandlers(
   oldRootDir: string,
 ): void {
   register('settings.get', () => Promise.resolve(okResult(store.publicView())));
-  register('settings.set', (_e, req) => {
+  register('settings.set', async (_e, req) => {
     // Settings writes hit the disk synchronously inside `store.patch` /
     // `mergeCustomProviders` (writeFileSync on userData/config.json). A full
     // disk, revoked write permission, or read-only volume throws — surface
@@ -902,9 +909,26 @@ function registerSettingsHandlers(
         ...(req.lastPlanGuideDate !== undefined ? { lastPlanGuideDate: req.lastPlanGuideDate } : {}),
         ...(req.snoozePlanGuideUntil !== undefined ? { snoozePlanGuideUntil: req.snoozePlanGuideUntil } : {}),
         ...(req.taskAppearance !== undefined ? { taskAppearance: req.taskAppearance } : {}),
+        ...(typeof req.autoUpdate === 'boolean' ? { autoUpdate: req.autoUpdate } : {}),
       });
       if (req.customProviders) {
         store.mergeCustomProviders(req.customProviders);
+      }
+      // If the autoUpdate flag was just changed, mirror it into the
+      // running updater so the effect is immediate: disabling cancels
+      // the pending 5 s scheduled check, re-enabling schedules a new
+      // one. Lazy-imported to avoid pulling electron-updater onto the
+      // settings write path when the patch is for unrelated fields.
+      if (typeof req.autoUpdate === 'boolean') {
+        try {
+          const { applyAutoUpdatePreference } = await import('./updates/updater');
+          applyAutoUpdatePreference(req.autoUpdate);
+        } catch (err) {
+          // Non-fatal: the value is persisted, so the next launch
+          // will pick it up. Logged at warn so it's visible.
+          const { logger } = await import('./logger');
+          logger.warn(`updater: applyAutoUpdatePreference failed: ${(err as Error).message}`);
+        }
       }
     } catch (err) {
       // Generic, payload-free reason. `err` is intentionally NOT included

@@ -76,25 +76,23 @@ describe('getUpdaterStatus', () => {
 });
 
 describe('setUpAutoUpdater', () => {
-  it('returns true and registers listeners when packaged', () => {
+  it('returns true and registers listeners when packaged', async () => {
     const result = setUpAutoUpdater();
     expect(result).toBe(true);
-    // The listener registration is async (dynamic import). We
-    // need a microtask to flush it.
-    return new Promise<void>((resolve) => {
-      setImmediate(() => {
-        expect(mockAutoUpdater.on).toHaveBeenCalledWith('checking-for-update', expect.any(Function));
-        expect(mockAutoUpdater.on).toHaveBeenCalledWith('update-available', expect.any(Function));
-        expect(mockAutoUpdater.on).toHaveBeenCalledWith('update-downloaded', expect.any(Function));
-        expect(mockAutoUpdater.on).toHaveBeenCalledWith('error', expect.any(Function));
-        resolve();
-      });
-    });
+    // The listener registration is async (dynamic import). Use
+    // `vi.waitFor` instead of a fixed number of setImmediate
+    // ticks — the mocked import can take a variable number of
+    // ticks to resolve, especially on slow CI hosts.
+    await vi.waitFor(() => expect(mockAutoUpdater.on).toHaveBeenCalled());
+    expect(mockAutoUpdater.on).toHaveBeenCalledWith('checking-for-update', expect.any(Function));
+    expect(mockAutoUpdater.on).toHaveBeenCalledWith('update-available', expect.any(Function));
+    expect(mockAutoUpdater.on).toHaveBeenCalledWith('update-downloaded', expect.any(Function));
+    expect(mockAutoUpdater.on).toHaveBeenCalledWith('error', expect.any(Function));
   });
 
   it('is idempotent — second call does not re-register listeners', async () => {
     setUpAutoUpdater();
-    await new Promise<void>((r) => setImmediate(r));
+    await vi.waitFor(() => expect(mockAutoUpdater.on).toHaveBeenCalled());
     const callsAfterFirst = mockAutoUpdater.on.mock.calls.length;
     setUpAutoUpdater();
     await new Promise<void>((r) => setImmediate(r));
@@ -126,7 +124,7 @@ describe('setUpAutoUpdater — dev mode short-circuit', () => {
 describe('updater state machine', () => {
   it('flips checking on "checking-for-update" and off on "update-available"', async () => {
     setUpAutoUpdater();
-    await new Promise<void>((r) => setImmediate(r));
+    await vi.waitFor(() => expect(mockAutoUpdater.on).toHaveBeenCalled());
     const checking = callbacks['checking-for-update']![0]!;
     const available = callbacks['update-available']![0]!;
     checking();
@@ -140,7 +138,7 @@ describe('updater state machine', () => {
 
   it('flips downloaded on "update-downloaded"', async () => {
     setUpAutoUpdater();
-    await new Promise<void>((r) => setImmediate(r));
+    await vi.waitFor(() => expect(mockAutoUpdater.on).toHaveBeenCalled());
     const downloaded = callbacks['update-downloaded']![0]!;
     downloaded({ version: '1.0.0-rc4' });
     const s = getUpdaterStatus();
@@ -151,7 +149,7 @@ describe('updater state machine', () => {
   it('logs at warn on "error" and clears checking', async () => {
     const { logger } = await import('../../src/main/logger');
     setUpAutoUpdater();
-    await new Promise<void>((r) => setImmediate(r));
+    await vi.waitFor(() => expect(mockAutoUpdater.on).toHaveBeenCalled());
     // Trigger checking first so we can verify it clears.
     callbacks['checking-for-update']![0]!();
     expect(getUpdaterStatus().checking).toBe(true);
@@ -164,7 +162,7 @@ describe('updater state machine', () => {
 describe('checkNow', () => {
   it('returns the latest status after the check resolves', async () => {
     setUpAutoUpdater();
-    await new Promise<void>((r) => setImmediate(r));
+    await vi.waitFor(() => expect(mockAutoUpdater.on).toHaveBeenCalled());
     mockAutoUpdater.checkForUpdates.mockResolvedValueOnce(undefined);
     callbacks['update-available']![0]!({ version: '1.0.0-rc4' });
     const s = await checkNow();
@@ -174,7 +172,7 @@ describe('checkNow', () => {
 
   it('propagates a rejected checkForUpdates so the IPC handler can surface a typed error', async () => {
     setUpAutoUpdater();
-    await new Promise<void>((r) => setImmediate(r));
+    await vi.waitFor(() => expect(mockAutoUpdater.on).toHaveBeenCalled());
     mockAutoUpdater.checkForUpdates.mockRejectedValueOnce(new Error('network down'));
     await expect(checkNow()).rejects.toThrow('network down');
   });
@@ -183,19 +181,16 @@ describe('checkNow', () => {
 describe('quitAndInstall', () => {
   it('calls autoUpdater.quitAndInstall once', async () => {
     setUpAutoUpdater();
-    await new Promise<void>((r) => setImmediate(r));
+    await vi.waitFor(() => expect(mockAutoUpdater.on).toHaveBeenCalled());
     quitAndInstall();
-    // The lazy import is async; wait a tick.
-    await new Promise<void>((r) => setImmediate(r));
-    expect(mockAutoUpdater.quitAndInstall).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(mockAutoUpdater.quitAndInstall).toHaveBeenCalledTimes(1));
   });
 
   it('is idempotent — second call does not double-quit', async () => {
     setUpAutoUpdater();
-    await new Promise<void>((r) => setImmediate(r));
+    await vi.waitFor(() => expect(mockAutoUpdater.on).toHaveBeenCalled());
     quitAndInstall();
     quitAndInstall();
-    await new Promise<void>((r) => setImmediate(r));
-    expect(mockAutoUpdater.quitAndInstall).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(mockAutoUpdater.quitAndInstall).toHaveBeenCalledTimes(1));
   });
 });
