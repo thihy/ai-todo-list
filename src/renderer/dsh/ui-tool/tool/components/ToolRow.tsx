@@ -1,9 +1,10 @@
 import { useMemo, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react'
 import clsx from 'clsx'
 import {
-  CodeBlock, DiffBlock, DisclosureRow, IconInspectOutline12, ReadBlock, SearchBlock, StateDot, TerminalBlock, WebBlock,
+  CodeBlock, DiffBlock, DisclosureRow, IconInspectOutline12, JsonTree, ReadBlock, SearchBlock, StateDot, TerminalBlock, WebBlock,
   diffTotals,
 } from '@deepseek-ai/dsh-client-ui-primitives'
+import type { JsonTreeLabels } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { PropsRenderSlots, TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 import type { OpenFileOptions } from '@deepseek-ai/dsh-client-ui-chat/client'
 import type { MessageImageLoader } from '@deepseek-ai/dsh-client-ui-conversation/client'
@@ -108,6 +109,69 @@ export interface ToolRowProps {
   wireName?: string | undefined
 }
 
+/** Best-effort JSON parse for the IO card's "JSON" view. Returns null for
+ *  non-JSON payloads (terminal output, error strings, multi-block joins) so
+ *  the section falls back to plain text instead of forcing a broken tree. */
+function tryParseJson(text: string): unknown | null {
+  const trimmed = text.trim()
+  if (!trimmed) return null
+  if (!/^[[{"]/.test(trimmed) && !/^(true|false|null|-?\d)/.test(trimmed)) return null
+  try { return JSON.parse(trimmed) } catch { return null }
+}
+
+/** Chinese copy labels for the JsonTree's copy menu. Hardcoded because the
+ *  `conversation` namespace has no JsonTree copy keys (the package is
+ *  cordis-free; copy arrives via props). Module-level for reference stability. */
+const JSON_TREE_LABELS: JsonTreeLabels = {
+  copyValue: '复制值',
+  copyJson: '复制 JSON',
+  copyPath: '复制路径',
+  copyPrettyJson: '复制格式化 JSON',
+  copyCompactJson: '复制紧凑 JSON',
+  copied: '已复制',
+  copyFailed: '复制失败',
+  collapseNode: '折叠',
+  expandNode: '展开',
+  copyButtonTitle: (action: string) => action,
+}
+
+/** Render one IO section (input or output). The gutter label ("输入"/"输出")
+ *  and the grid layout are CONSTANT across views — only the content cell
+ *  swaps: a structured JsonTree when the payload is parseable JSON + JSON view
+ *  is on, otherwise the plain text span. Keeping the label in place means
+ *  switching views doesn't move or restyle the input/output headers. */
+function IoPayload({
+  label,
+  text,
+  jsonView,
+  error,
+}: {
+  label: string
+  text: string
+  jsonView: boolean
+  error?: boolean
+}) {
+  const parsed = jsonView ? tryParseJson(text) : null
+  const useTree = parsed !== null && typeof parsed === 'object'
+  return (
+    <div className={css.ioSection}>
+      <span className={css.ioLabel}>{label}</span>
+      {useTree ? (
+        <div className={css.ioJson}>
+          <JsonTree
+            data={parsed as object}
+            label={label}
+            expandTopLevel
+            labels={JSON_TREE_LABELS}
+          />
+        </div>
+      ) : (
+        <span className={css.ioText} data-error={error || undefined}>{text}</span>
+      )}
+    </div>
+  )
+}
+
 function leadingFor(state: ToolRowState, icon: ReactNode): ReactNode {
   switch (state) {
     case 'error': return <StateDot state="error" />
@@ -159,6 +223,10 @@ export function ToolRow({
   wireName,
 }: ToolRowProps) {
   const [expanded, setExpanded] = useState(false)
+  // JSON tree vs plain-text view for the IO card's input/output payloads. JSON
+  // is the default (both sides are JSON for our domain tools); the user can
+  // drop to plain text when a payload isn't JSON or they want the raw string.
+  const [jsonView, setJsonView] = useState(true)
   const terminalLabels = useMemo(() => terminalBlockLabels(t), [t])
   const diffLabels = useMemo(() => diffBlockLabels(t), [t])
   const readLabels = useMemo(() => readBlockLabels(t), [t])
@@ -357,22 +425,37 @@ export function ToolRow({
                             )}
                             {(cardBody !== null || outputText !== null) && (
                               <div className={css.ioCard}>
+                                <div className={css.ioToolbar} role="group" aria-label="视图切换">
+                                  <button
+                                    type="button"
+                                    className={clsx(css.ioToggleBtn, jsonView && css.ioToggleBtnActive)}
+                                    onClick={() => setJsonView(true)}
+                                    aria-pressed={jsonView}
+                                  >JSON</button>
+                                  <button
+                                    type="button"
+                                    className={clsx(css.ioToggleBtn, !jsonView && css.ioToggleBtnActive)}
+                                    onClick={() => setJsonView(false)}
+                                    aria-pressed={!jsonView}
+                                  >纯文本</button>
+                                </div>
                                 {cardBody !== null && (
-                                  <div className={css.ioSection}>
-                                    <span className={css.ioLabel}>{t('row.input')}</span>
-                                    <span className={css.ioText}>{cardBody}</span>
-                                  </div>
+                                  <IoPayload
+                                    label={t('row.input')}
+                                    text={cardBody}
+                                    jsonView={jsonView}
+                                  />
                                 )}
                                 {cardBody !== null && outputText !== null && (
                                   <span className={css.ioDivider} aria-hidden />
                                 )}
                                 {outputText !== null && (
-                                  <div className={css.ioSection}>
-                                    <span className={css.ioLabel}>{t('row.output')}</span>
-                                    <span className={css.ioText} data-error={state === 'error' || undefined}>
-                                      {outputText}
-                                    </span>
-                                  </div>
+                                  <IoPayload
+                                    label={t('row.output')}
+                                    text={outputText}
+                                    jsonView={jsonView}
+                                    error={state === 'error'}
+                                  />
                                 )}
                               </div>
                             )}
