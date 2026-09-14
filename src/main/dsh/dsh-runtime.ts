@@ -737,7 +737,15 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
     cordisBootMs: 0,
     assemblyMs: 0,
   };
-  const cfg = resolveAppPath('resources/dsh/cordis.yml');
+  // cordis.yml is an extraResource (extraResources: { from: resources/dsh,
+  // to: dsh }), so it ships at <installPath>/resources/dsh/cordis.yml —
+  // OUTSIDE app.asar. app.getAppPath() points at app.asar in packaged mode,
+  // so joining "resources/dsh/cordis.yml" against it lands inside the asar
+  // where the file does not exist. Use process.resourcesPath (the parent of
+  // app.asar) in packaged mode; fall back to the project root in dev.
+  const cfg = app.isPackaged
+    ? join(process.resourcesPath, 'dsh', 'cordis.yml')
+    : resolveAppPath('resources/dsh/cordis.yml');
   if (!cfg || !existsSync(cfg)) {
     logger.warn('DSH cordis.yml not found; skipping boot');
     phases.totalMs = Date.now() - tBootStart;

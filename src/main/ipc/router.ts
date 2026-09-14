@@ -24,9 +24,10 @@ export function register<C extends IpcChannelName>(
   if (!isKnownChannel(channel)) {
     throw new Error(`register: unknown_channel ${channel}`);
   }
-  if (handlers.has(channel)) {
-    throw new Error(`register: duplicate_channel ${channel}`);
-  }
+  // Idempotent overwrite. The AI boot/retry path calls registerAiHandlers
+  // on both cold boot and every user-driven retry; throwing on re-register
+  // made retries crash with `duplicate_channel` before warmupDshRuntime
+  // ever ran. The isKnownChannel guard above still catches typos.
   handlers.set(channel, handler as unknown as Handler<IpcChannelName>);
 }
 
