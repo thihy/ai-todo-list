@@ -113,7 +113,7 @@ export const App: React.FC = () => {
   // its persisted value (no drag-resize); the previous 16px grip column on
   // its right edge was removed when the collapse affordance moved INTO the
   // panel header (see TodoListPane + AIPane).
-  const { listWidth, aiWidth, setAiWidth } = usePaneWidths();
+  const { listWidth, aiWidth, setListWidth, setAiWidth } = usePaneWidths();
   // —— 每日计划引导 ——
   // 启动时 + 通知点击都可能弹 PlanGuideModal。settings.dailyPlanReminderTime
   // 和 snoozePlanGuideUntil 都在 useSettings() 里读，patch() 写回。
@@ -396,6 +396,7 @@ export const App: React.FC = () => {
                     <IconChevronRight size={14} />
                   </button>
                 )}
+                {listOpen && <PaneDivider onDrag={(dx) => setListWidth(listWidth + dx)} />}
                 <TaskDetail
                   todoId={selectedId}
                   composing={composing}

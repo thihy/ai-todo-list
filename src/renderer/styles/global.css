@@ -1178,12 +1178,15 @@ a:hover {
   color: var(--fg-primary);
 }
 .aipane__menu--row {
-  /* Per-row dropdown anchored to the ⋯ button. Sits to the LEFT of the
-     row's button so it doesn't overflow the panel's right edge. */
-  right: auto;
-  left: 100%;
+  /* Per-row dropdown anchored to the ⋯ button. Opens to the LEFT so it
+     doesn't overflow the panel's right edge (the history dropdown is
+     itself anchored at the panel's right edge). The ⋯ button is 26px
+     wide and flush to the row's right edge, so right:26px seats the
+     menu's right edge against the button's left edge, with a 4px gap. */
+  left: auto;
+  right: 30px;
   top: 0;
-  margin-left: 4px;
+  margin-right: 0;
   min-width: 140px;
   max-width: 200px;
 }
@@ -1489,20 +1492,29 @@ a:hover {
      title above + composer below are pinned via flex: 0 0 auto) AND shrink
      below its content's intrinsic min-content height — without
      `min-height: 0`, a flex child with a long stream would refuse to shrink
-     and push the composer off-screen. `overflow: auto` then turns the
-     residual height into the scroll viewport. The contract: title pinned,
-     body scrolls, composer pinned. */
+     and push the composer off-screen. `overflow-y: scroll` keeps the
+     scrollbar always visible so the stream + composer never shift width
+     when a turn grows past the fold during streaming (the flicker
+     `scrollbar-gutter: stable` alone couldn't fully prevent in Electron).
+     The contract: title pinned, body scrolls, composer pinned. */
   flex: 1 1 0;
   min-height: 0;
-  overflow: auto;
-  /* Reserve the scrollbar gutter so the message stream + composer don't
-     shift when a long turn pushes the body past the fold. */
-  scrollbar-gutter: stable;
+  overflow-y: scroll;
   /* No top padding: the sticky header sits flush at the top of the body
      (right under the topbar). Side + bottom padding keep the message
      stream guttered. Previously padding-top created a blank strip above
      the sticky header that read as "transparent space above the title". */
   padding: 0 var(--space-lg) var(--space-lg);
+
+  /* DSH's markdown token ships at 16px/28px (gradient-shadow-text.css),
+     but AssistantMarkdown.module.css root already scales the body to
+     14px/24px (figma 16/28 × 0.875). The `.markdown` element re-asserts
+     16px via `font: var(--dsw-font-markdown-base)`, overriding the root.
+     Re-point the token to 14px/24px here so assistant prose matches the
+     surrounding 14px chat rhythm instead of reading one step larger. */
+  --dsw-font-markdown-base: 14px/24px var(--dsw-font-family);
+  --dsw-font-markdown-base-font-size: 14px;
+  --dsw-font-markdown-base-line-height: 24px;
 }
 
 /* Inner content wrapper inside the scroll viewport. Owns the message
@@ -1514,6 +1526,11 @@ a:hover {
   display: flex;
   flex-direction: column;
   gap: var(--space-md);
+  /* Stretch to fill the scroll viewport so the centered empty-composer
+     can vertically center via flex. Without this, the messages wrapper
+     collapses to content height and `flex: 1` on the empty-composer has
+     nothing to fill — the input sits at the top instead of the middle. */
+  min-height: 100%;
 }
 
 /* "Jump to latest" affordance — appears when the user has scrolled up
@@ -1541,6 +1558,42 @@ a:hover {
 }
 .aipane__empty li {
   margin: var(--space-xs) 0;
+}
+
+/* ChatGPT-style centered composer shown when there is no active
+   conversation (currentId === null — a fresh draft). Vertically centers
+   a greeting + AIComposer inside the scroll viewport; the bottom
+   composer is hidden in this state, so the input lives here only.
+   min-height: 100% + flex centering pins the block to the viewport
+   middle even when the content is short. */
+.aipane__empty-composer {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: var(--space-xl);
+  padding: var(--space-xl) 0;
+}
+.aipane__empty-composer-greet {
+  text-align: center;
+  color: var(--fg-primary);
+}
+.aipane__empty-composer-greet h2 {
+  margin: 0 0 var(--space-xs);
+  font-size: var(--font-lg);
+  font-weight: 600;
+}
+.aipane__empty-composer-greet p {
+  margin: 0;
+  color: var(--fg-muted);
+  font-size: var(--font-sm);
+}
+/* Constrain the composer width inside the empty state so the input
+   reads as a focused card rather than a full-bleed bottom bar. */
+.aipane__empty-composer .aipane__composer {
+  width: 100%;
+  max-width: 720px;
 }
 
 /* STARTUP-AI-ASYNC-002 — DSH cold-boot card. Centered inside the
@@ -1848,15 +1901,24 @@ a:hover {
   justify-content: center;
   width: 34px;
   height: 34px;
+  /* Override dsh Button .button's `padding: 0 14px` + content-box, which
+     otherwise stretch this into a wide ellipse instead of a round 34px
+     circle. */
+  padding: 0;
+  box-sizing: border-box;
   border-radius: 50%;
   border: 1px solid var(--border-default);
   background: var(--surface-muted, #F6F7F9);
   color: var(--fg-muted, #6B7280);
-  font-size: 18px;
+  font-size: 22px;
   font-weight: 500;
   line-height: 1;
   cursor: pointer;
   transition: background 0.12s ease, color 0.12s ease;
+}
+.aipane__composer-card .aipane__attach-btn svg {
+  width: 22px;
+  height: 22px;
 }
 .aipane__composer-card .aipane__attach-btn:hover {
   background: var(--bg-hover, #EEF0F3);

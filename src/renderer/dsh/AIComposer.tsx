@@ -93,7 +93,12 @@ export const AIComposer = forwardRef<HTMLTextAreaElement, AIComposerProps>(funct
             if (event.nativeEvent.isComposing || event.keyCode === 229) return;
             if (event.key === 'Enter' && !event.shiftKey) {
               event.preventDefault();
-              onSubmit();
+              // While a turn is streaming, Enter must not submit (and must
+              // not queue) — the user is drafting a follow-up that should
+              // wait in the textarea until the turn settles or they hit stop.
+              // preventDefault keeps the newline from being swallowed so the
+              // draft is preserved verbatim.
+              if (!busy) onSubmit();
               return;
             }
             if (event.key === 'Escape' && busy) {
@@ -103,9 +108,11 @@ export const AIComposer = forwardRef<HTMLTextAreaElement, AIComposerProps>(funct
           }}
           placeholder={block
             ? block.reason
-            : hasConversation
-              ? '输入问题，回车发送…（Shift+Enter 换行，Esc 停止）'
-              : '输入第一条问题，回车即创建对话…'}
+            : busy
+              ? 'AI 正在回答，可继续输入，停止后发送…（Esc 停止）'
+              : hasConversation
+                ? '输入问题，回车发送…（Shift+Enter 换行，Esc 停止）'
+                : '输入第一条问题，回车即创建对话…'}
           disabled={blocked}
           rows={1}
           className="aipane__input"
@@ -120,7 +127,7 @@ export const AIComposer = forwardRef<HTMLTextAreaElement, AIComposerProps>(funct
             title="选择文件"
             aria-label="选择文件"
           >
-            <IconPlusOutline16 size={18} />
+            <IconPlusOutline16 size={22} />
           </Button>
           {busy ? (
             <Button

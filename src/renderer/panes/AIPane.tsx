@@ -465,11 +465,13 @@ export const AIPane: React.FC<{
     if (!container) return;
     const head = stickyHeadRef.current;
     // T = bottom edge of the sticky header (the title). A user bubble becomes
-    // "active" the moment its TOP crosses under this line — i.e. as soon as
-    // it is the topmost question at/under the header. Switching on TOP (not
-    // the bottom) is what prevents the lag where the previous question's
-    // banner sat over the next answer: the banner updates the instant the
-    // next question reaches the top, not after it has fully scrolled past.
+    // "active" only once its BOTTOM has passed under T — i.e. the bubble is
+    // no longer visible at all, not merely partially scrolled. This is what
+    // keeps the pinned banner from duplicating a question still on screen:
+    // the first message never triggers the banner until the user has scrolled
+    // it fully out of view. The hand-off below (pinTranslateY) then slides the
+    // banner away as the NEXT question rises into view, so no visible bubble
+    // is ever covered by its own pin.
     const t = head ? head.getBoundingClientRect().bottom : container.getBoundingClientRect().top;
     // Banner height from the live overlay (0 while no banner is rendered).
     const overlay = container.querySelector<HTMLElement>('.aipane__currentq-overlay');
@@ -477,8 +479,8 @@ export const AIPane: React.FC<{
     const bubbles = Array.from(container.querySelectorAll<HTMLElement>('[data-user-q]'));
     let activeIdx = -1;
     for (let i = 0; i < bubbles.length; i++) {
-      if (bubbles[i]!.getBoundingClientRect().top <= t + 1) activeIdx = i;
-      else break; // conversation-ordered; first not-yet-at-top stops us
+      if (bubbles[i]!.getBoundingClientRect().bottom <= t) activeIdx = i;
+      else break; // conversation-ordered; first still-visible stops us
     }
     const next = activeIdx >= 0 ? (bubbles[activeIdx]!.dataset.turnId ?? null) : null;
     // Push-up driven by the NEXT user question rising toward the header, so
@@ -581,7 +583,12 @@ export const AIPane: React.FC<{
   // block. The brief's required priority chain is:
   //
   //   DSH pending/loading → DSH failed → HITL question/approval →
-  //   current turn busy → provider not configured → normal
+  //   provider not configured → normal
+  //
+  // NOTE: a streaming turn (`busy`) does NOT block the composer — the user
+  // can keep typing a follow-up while the AI answers. Enter is suppressed in
+  // AIComposer while `busy`, so the draft neither submits nor queues; it
+  // waits in the textarea until the turn settles or the user hits stop.
   //
   // We model that as a single nested ternary. `aiStartup.status` is
   // 'pending' until the renderer's first `app.renderer.ready`
@@ -598,11 +605,9 @@ export const AIPane: React.FC<{
       ? { reason: questionSubmitting ? '正在提交答案…' : '请先回答上方的问题…' }
       : awaitingApproval
         ? { reason: '请先处理上方的操作授权…' }
-        : busy
-          ? { reason: 'AI 正在回答，请等待或停止生成…' }
-          : needsAiSetup
-            ? { reason: '请先在设置中完成 AI 模型配置…' }
-            : undefined;
+        : needsAiSetup
+          ? { reason: '请先在设置中完成 AI 模型配置…' }
+          : undefined;
   // The question currently pinned at the top of the message stream. This is
   // NOT "the latest user message" — it's the question whose bubble has
   // scrolled out of view under the sticky header (so its answer is what the
@@ -628,17 +633,19 @@ export const AIPane: React.FC<{
     if (res.ok) setConversations(res.data.conversations);
   };
 
-  const createConversation = async (): Promise<void> => {
-    const r = await window.todoList.conversation.create();
-    if (!r.ok) return;
-    const conv = r.data.conversation;
-    setConversations((prev) => [conv, ...prev.filter((c) => c.id !== conv.id)]);
-    setTurnsByConv((prev) => ({ ...prev, [conv.id]: [] }));
-    setHistoryLoaded((prev) => new Set(prev).add(conv.id));
-    setCurrentId(conv.id);
+  // "新建对话" no longer pre-creates a conversation with a placeholder
+  // title ("新对话 {time}"). Instead it drops into a centered draft state
+  // (currentId = null) whose body shows a ChatGPT-style input box; the
+  // conversation is allocated only on submit (runSubmit), at which point
+  // DSH's session-title service generates the real title — so no
+  // placeholder row ever enters the history list.
+  const startNewDraft = useCallback((): void => {
+    setCurrentId(null);
+    setInput('');
+    setAttachments([]);
     setShowHistory(false);
     setRowMenuId(null);
-  };
+  }, []);
 
   // Open the native file picker (main does dialog.showOpenDialog, reads the
   // file as utf-8 up to a small limit) and append the result to the chip
@@ -1074,7 +1081,7 @@ export const AIPane: React.FC<{
               // new-conversation button is disabled per the brief's
               // "pending/loading → 禁用新建会话" rule. The title
               // attribute clarifies the state.
-              onClick={() => void createConversation()}
+              onClick={() => startNewDraft()}
               disabled={dshNotReady}
               title={dshNotReady ? 'AI 启动中，暂不可新建对话' : '新建对话'}
               aria-label="新建对话"
@@ -1335,9 +1342,25 @@ export const AIPane: React.FC<{
                 <IconWarningOutline16 size={14} /> 会话列表加载失败：{bootError}
               </div>
             )}
-            {!bootError && !dshNotReady && !current && conversations.length === 0 && (
-              <div className="aipane__empty">
-                <p>直接在下方输入问题，回车即创建第一条对话。</p>
+            {!bootError && !dshNotReady && !current && (
+              <div className="aipane__empty-composer">
+                <div className="aipane__empty-composer-greet">
+                  <h2>有什么可以帮你？</h2>
+                  <p>输入问题，回车即创建新对话。</p>
+                </div>
+                <AIComposer
+                  ref={textareaRef}
+                  value={input}
+                  onChange={setInput}
+                  attachments={attachments}
+                  onRemoveAttachment={removeAttachment}
+                  onPickAttachment={() => void pickAttachment()}
+                  onSubmit={() => void runSubmit()}
+                  onStop={() => void stop()}
+                  busy={busy}
+                  hasConversation={false}
+                  block={composerBlock}
+                />
               </div>
             )}
             {!bootError && !dshNotReady && current && currentTurns.length === 0 && (
@@ -1409,19 +1432,21 @@ export const AIPane: React.FC<{
           `min-height: 0` gives way when a long turn expands the stream.
           The AIComposer primitive owns its own internal layout (.composer-
           card / .composer-actions); the host only needs to position it. */}
-      <AIComposer
-        ref={textareaRef}
-        value={input}
-        onChange={setInput}
-        attachments={attachments}
-        onRemoveAttachment={removeAttachment}
-        onPickAttachment={() => void pickAttachment()}
-        onSubmit={() => void runSubmit()}
-        onStop={() => void stop()}
-        busy={busy}
-        hasConversation={current !== null}
-        block={composerBlock}
-      />
+      {current !== null && (
+        <AIComposer
+          ref={textareaRef}
+          value={input}
+          onChange={setInput}
+          attachments={attachments}
+          onRemoveAttachment={removeAttachment}
+          onPickAttachment={() => void pickAttachment()}
+          onSubmit={() => void runSubmit()}
+          onStop={() => void stop()}
+          busy={busy}
+          hasConversation={current !== null}
+          block={composerBlock}
+        />
+      )}
     </div>
   );
 

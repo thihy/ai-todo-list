@@ -9,6 +9,15 @@ import React, { useCallback, useEffect, useRef } from 'react';
 export const PaneDivider: React.FC<{ onDrag: (deltaX: number) => void }> = ({ onDrag }) => {
   const dragging = useRef(false);
   const lastX = useRef(0);
+  // Keep the latest onDrag in a ref so the move/up listeners bind ONCE. The
+  // parent passes a new arrow each render, so putting onDrag in the effect
+  // deps re-bound window listeners on every re-render — and the
+  // remove/addEventListener pair between renders dropped mousemove frames,
+  // so lastX fell behind the cursor and the next delta jumped (visibly
+  // stuttering + lagging the mouse). The ref closure always reads the
+  // freshest callback without touching the effect.
+  const onDragRef = useRef(onDrag);
+  onDragRef.current = onDrag;
 
   const onMouseDown = useCallback(
     (e: React.MouseEvent) => {
@@ -26,7 +35,7 @@ export const PaneDivider: React.FC<{ onDrag: (deltaX: number) => void }> = ({ on
       if (!dragging.current) return;
       const dx = e.clientX - lastX.current;
       lastX.current = e.clientX;
-      if (dx !== 0) onDrag(dx);
+      if (dx !== 0) onDragRef.current(dx);
     };
     const onUp = (): void => {
       if (!dragging.current) return;
@@ -40,7 +49,7 @@ export const PaneDivider: React.FC<{ onDrag: (deltaX: number) => void }> = ({ on
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
     };
-  }, [onDrag]);
+  }, []);
 
   return (
     <div
