@@ -1065,20 +1065,32 @@ a:hover {
    makes the intent explicit and avoids any future confusion about which
    region owns the banner's height/visibility. */
 .aipane__currentq-overlay {
-  flex: 0 0 auto;
+  /* Absolute over the body-shell top so the banner floats above the
+     scrolling content without entering the column flex. An in-flow
+     banner resized the scroll viewport the instant it appeared — the
+     content jumped by the banner's height, the just-scrolled-out bubble
+     popped back into view, activeIdx cleared, the banner unmounted, and
+     the cycle repeated: visible jitter at the stick boundary. Out of
+     flow, toggling the banner changes nothing the scroll math measures. */
+  position: absolute;
+  top: 0;
+  left: 0;
+  /* Inset the right edge by the body's scrollbar width so the banner's
+     content box aligns exactly with the message column (the scroll
+     viewport reserves its rightmost band for the always-on scrollbar).
+     Without this the pinned bubble sat ~8px right of the real user
+     bubbles and the overlay painted over the scrollbar track. */
+  right: var(--dsh-scrollbar-width, 8px);
+  z-index: 15;
   display: flex;
   justify-content: flex-end;
   align-items: flex-start;
   gap: var(--space-xs);
-  padding: var(--space-xs) var(--space-md) var(--space-sm);
+  /* Match .aipane__body's horizontal padding so the pinned bubble's right
+     edge lines up with the live user bubbles below. */
+  padding: var(--space-xs) var(--space-lg) var(--space-sm);
   background: var(--bg-surface);
   border-top: 1px solid var(--border-default);
-  /* Hand-off animation: as the next user question rises toward the
-     banner, translateY slides the banner up so it recedes toward where
-     the live bubble is coming from (same direction as the source
-     question). transform is composited — no layout/paint on each
-     scroll frame. */
-  transform: translateY(var(--pin-y, 0));
   pointer-events: none; /* the overlay itself never blocks scrolling; the
                             bubble below re-enables pointer events for its
                             status pill, but there's nothing to click */
@@ -1505,16 +1517,6 @@ a:hover {
      stream guttered. Previously padding-top created a blank strip above
      the sticky header that read as "transparent space above the title". */
   padding: 0 var(--space-lg) var(--space-lg);
-
-  /* DSH's markdown token ships at 16px/28px (gradient-shadow-text.css),
-     but AssistantMarkdown.module.css root already scales the body to
-     14px/24px (figma 16/28 × 0.875). The `.markdown` element re-asserts
-     16px via `font: var(--dsw-font-markdown-base)`, overriding the root.
-     Re-point the token to 14px/24px here so assistant prose matches the
-     surrounding 14px chat rhythm instead of reading one step larger. */
-  --dsw-font-markdown-base: 14px/24px var(--dsw-font-family);
-  --dsw-font-markdown-base-font-size: 14px;
-  --dsw-font-markdown-base-line-height: 24px;
 }
 
 /* Inner content wrapper inside the scroll viewport. Owns the message

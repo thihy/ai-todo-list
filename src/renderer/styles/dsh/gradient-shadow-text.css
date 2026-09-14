@@ -19,74 +19,74 @@ body[data-ds-dark-theme] {
 /* ---------- 字体 ---------- */
 /* 由 @deepseek-figma-plugin/custom-variable-name 插件导出 */
 body {
-  --dsw-font-markdown-h1: 700 24px/34px var(--dsw-font-family);
+  --dsw-font-markdown-h1: 700 14px/24px var(--dsw-font-family);
   --dsw-font-markdown-h1-font-family: var(--dsw-font-family);
   --dsw-font-markdown-h1-font-weight: 700;
-  --dsw-font-markdown-h1-line-height: 34px;
-  --dsw-font-markdown-h1-font-size: 24px;
+  --dsw-font-markdown-h1-line-height: 24px;
+  --dsw-font-markdown-h1-font-size: 14px;
   --dsw-font-markdown-h1-font-style: normal;
 
-  --dsw-font-markdown-h2: 700 22px/32px var(--dsw-font-family);
+  --dsw-font-markdown-h2: 700 14px/24px var(--dsw-font-family);
   --dsw-font-markdown-h2-font-family: var(--dsw-font-family);
   --dsw-font-markdown-h2-font-weight: 700;
-  --dsw-font-markdown-h2-line-height: 32px;
-  --dsw-font-markdown-h2-font-size: 22px;
+  --dsw-font-markdown-h2-line-height: 24px;
+  --dsw-font-markdown-h2-font-size: 14px;
   --dsw-font-markdown-h2-font-style: normal;
 
-  --dsw-font-markdown-h3: 700 20px/30px var(--dsw-font-family);
+  --dsw-font-markdown-h3: 700 14px/24px var(--dsw-font-family);
   --dsw-font-markdown-h3-font-family: var(--dsw-font-family);
   --dsw-font-markdown-h3-font-weight: 700;
-  --dsw-font-markdown-h3-line-height: 30px;
-  --dsw-font-markdown-h3-font-size: 20px;
+  --dsw-font-markdown-h3-line-height: 24px;
+  --dsw-font-markdown-h3-font-size: 14px;
   --dsw-font-markdown-h3-font-style: normal;
 
-  --dsw-font-markdown-h4: 600 16px/28px var(--dsw-font-family);
+  --dsw-font-markdown-h4: 600 14px/24px var(--dsw-font-family);
   --dsw-font-markdown-h4-font-family: var(--dsw-font-family);
   --dsw-font-markdown-h4-font-weight: 600;
-  --dsw-font-markdown-h4-line-height: 28px;
-  --dsw-font-markdown-h4-font-size: 16px;
+  --dsw-font-markdown-h4-line-height: 24px;
+  --dsw-font-markdown-h4-font-size: 14px;
   --dsw-font-markdown-h4-font-style: normal;
 
-  --dsw-font-markdown-base: 16px/28px var(--dsw-font-family);
+  --dsw-font-markdown-base: 14px/24px var(--dsw-font-family);
   --dsw-font-markdown-base-font-family: var(--dsw-font-family);
   --dsw-font-markdown-base-font-weight: 400;
-  --dsw-font-markdown-base-line-height: 28px;
-  --dsw-font-markdown-base-font-size: 16px;
+  --dsw-font-markdown-base-line-height: 24px;
+  --dsw-font-markdown-base-font-size: 14px;
   --dsw-font-markdown-base-font-style: normal;
 
-  --dsw-font-markdown-base-strong: 600 16px/28px var(--dsw-font-family);
+  --dsw-font-markdown-base-strong: 600 14px/24px var(--dsw-font-family);
   --dsw-font-markdown-base-strong-font-family: var(--dsw-font-family);
   --dsw-font-markdown-base-strong-font-weight: 600;
-  --dsw-font-markdown-base-strong-line-height: 28px;
-  --dsw-font-markdown-base-strong-font-size: 16px;
+  --dsw-font-markdown-base-strong-line-height: 24px;
+  --dsw-font-markdown-base-strong-font-size: 14px;
   --dsw-font-markdown-base-strong-font-style: normal;
 
-  --dsw-font-markdown-base-italic: italic 16px/28px var(--dsw-font-family);
+  --dsw-font-markdown-base-italic: italic 14px/24px var(--dsw-font-family);
   --dsw-font-markdown-base-italic-font-family: var(--dsw-font-family);
   --dsw-font-markdown-base-italic-font-weight: 400;
-  --dsw-font-markdown-base-italic-line-height: 28px;
-  --dsw-font-markdown-base-italic-font-size: 16px;
+  --dsw-font-markdown-base-italic-line-height: 24px;
+  --dsw-font-markdown-base-italic-font-size: 14px;
   --dsw-font-markdown-base-italic-font-style: italic;
 
-  --dsw-font-markdown-base-strong-italic: italic 600 16px/28px var(--dsw-font-family);
+  --dsw-font-markdown-base-strong-italic: italic 600 14px/24px var(--dsw-font-family);
   --dsw-font-markdown-base-strong-italic-font-family: var(--dsw-font-family);
   --dsw-font-markdown-base-strong-italic-font-weight: 600;
-  --dsw-font-markdown-base-strong-italic-line-height: 28px;
-  --dsw-font-markdown-base-strong-italic-font-size: 16px;
+  --dsw-font-markdown-base-strong-italic-line-height: 24px;
+  --dsw-font-markdown-base-strong-italic-font-size: 14px;
   --dsw-font-markdown-base-strong-italic-font-style: italic;
 
-  --dsw-font-markdown-table: 15px/25px var(--dsw-font-family);
+  --dsw-font-markdown-table: 14px/24px var(--dsw-font-family);
   --dsw-font-markdown-table-font-family: var(--dsw-font-family);
   --dsw-font-markdown-table-font-weight: 400;
-  --dsw-font-markdown-table-line-height: 25px;
-  --dsw-font-markdown-table-font-size: 15px;
+  --dsw-font-markdown-table-line-height: 24px;
+  --dsw-font-markdown-table-font-size: 14px;
   --dsw-font-markdown-table-font-style: normal;
 
-  --dsw-font-markdown-table-head: 500 15px/25px var(--dsw-font-family);
+  --dsw-font-markdown-table-head: 500 14px/24px var(--dsw-font-family);
   --dsw-font-markdown-table-head-font-family: var(--dsw-font-family);
   --dsw-font-markdown-table-head-font-weight: 500;
-  --dsw-font-markdown-table-head-line-height: 25px;
-  --dsw-font-markdown-table-head-font-size: 15px;
+  --dsw-font-markdown-table-head-line-height: 24px;
+  --dsw-font-markdown-table-head-font-size: 14px;
   --dsw-font-markdown-table-head-font-style: normal;
 
   --dsw-font-markdown-small: 14px/24px var(--dsw-font-family);

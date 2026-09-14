@@ -265,12 +265,6 @@ export const AIPane: React.FC<{
   // a question bubble that's still on screen. null when no user question has
   // scrolled out of view (e.g. at the top of the conversation).
   const [activeQuestionId, setActiveQuestionId] = useState<string | null>(null);
-  // Vertical push applied to the pinned banner so it hands off smoothly to its
-  // own visible bubble instead of stacking a duplicate: while the active
-  // bubble is still partially visible just under the header, translateY
-  // slides the banner up (negative); once the bubble has fully scrolled
-  // under the header it returns to 0 (banner at rest).
-  const [pinTranslateY, setPinTranslateY] = useState(0);
 
   // Files the user picked via the composer's + button. We read them as
   // text in main (app.pickFile), so each entry carries the inlined text
@@ -469,13 +463,10 @@ export const AIPane: React.FC<{
     // no longer visible at all, not merely partially scrolled. This is what
     // keeps the pinned banner from duplicating a question still on screen:
     // the first message never triggers the banner until the user has scrolled
-    // it fully out of view. The hand-off below (pinTranslateY) then slides the
-    // banner away as the NEXT question rises into view, so no visible bubble
-    // is ever covered by its own pin.
+    // it fully out of view. The hand-off is a content swap: when the NEXT
+    // question's bubble scrolls out under T, the banner updates to that
+    // question — no slide, so the banner never escapes over the title bar.
     const t = head ? head.getBoundingClientRect().bottom : container.getBoundingClientRect().top;
-    // Banner height from the live overlay (0 while no banner is rendered).
-    const overlay = container.querySelector<HTMLElement>('.aipane__currentq-overlay');
-    const bannerH = overlay ? overlay.getBoundingClientRect().height : 0;
     const bubbles = Array.from(container.querySelectorAll<HTMLElement>('[data-user-q]'));
     let activeIdx = -1;
     for (let i = 0; i < bubbles.length; i++) {
@@ -483,21 +474,16 @@ export const AIPane: React.FC<{
       else break; // conversation-ordered; first still-visible stops us
     }
     const next = activeIdx >= 0 ? (bubbles[activeIdx]!.dataset.turnId ?? null) : null;
-    // Push-up driven by the NEXT user question rising toward the header, so
-    // the pinned banner recedes UP — the SAME direction the source question
-    // is moving — instead of sliding down (which read as reversed).
-    // bannerBottom = title bottom + banner height (the banner's lower edge).
-    const bannerBottom = t + bannerH;
-    let pinY = 0;
-    if (activeIdx >= 0 && bannerH > 0) {
-      const nextBubble = activeIdx + 1 < bubbles.length ? bubbles[activeIdx + 1]! : null;
-      if (nextBubble) {
-        const nextTop = nextBubble.getBoundingClientRect().top;
-        pinY = Math.max(-bannerH, Math.min(nextTop - bannerBottom, 0));
-      }
-    }
+    // The banner stays pinned at the body's top — it does NOT slide up to
+    // recede as the next question rises. A negative translateY moved it
+    // above the body-shell and over the title bar, which the user read as
+    // the banner escaping its slot. Instead the hand-off is a content
+    // swap: the next user bubble rises behind the opaque banner (z-index
+    // 15 covers its top), and once that bubble's bottom passes under the
+    // header (activeIdx advances), the banner swaps to show THAT question.
+    // No slide, no header overlap, no duplication (pinned and rising
+    // bubbles always show different questions).
     setActiveQuestionId((prev) => (prev === next ? prev : next));
-    setPinTranslateY((prev) => (prev === pinY ? prev : pinY));
   }, []);
 
   // Recompute on scroll (rAF-throttled) and whenever the turn list / active
@@ -1276,39 +1262,6 @@ export const AIPane: React.FC<{
         </div>
       )}
 
-      {/* Scroll-tracked "current question" pin — INDEPENDENT flex sibling of
-          .aipane__title / .aipane__body / .aipane__composer. Sits as Region 1b
-          between title and body so it occupies its OWN box in the column
-          flex. The body (Region 2, flex: 1 1 0) shrinks to make room, and
-          the banner can NEVER overlap with the body's first user bubble
-          (which is what happened when this was absolute + inside the title
-          region — the banner and the live bubble stacked at the same y).
-          pointer-events:none keeps the overlay from blocking scroll or hit-
-          testing on the body. */}
-      {!bootError && activeQuestionTurn && (
-        <div
-          className="aipane__currentq-overlay"
-          aria-hidden="false"
-          // Hand-off animation lives in CSS via the --pin-y custom
-          // property. transform is composited (no layout/paint on scroll).
-          style={{ '--pin-y': `${pinTranslateY}px` } as React.CSSProperties}
-        >
-          <div className="aipane__currentq-pin bubble bubble--user" role="status" aria-label="当前问题">
-            <span className="aipane__currentq-text">
-              {activeQuestionTurn.user}
-              {activeQuestionTurn.attached && activeQuestionTurn.attached.length > 0 && (
-                <span className="aipane__currentq-attach">
-                  {' '}<IconPaperclipOutline16 size={11} /> {activeQuestionTurn.attached.length} 个附件
-                </span>
-              )}
-            </span>
-            {busy && activeQuestionTurn.id === streamingTurnId && (
-              <span className="aipane__currentq-status" aria-live="polite">生成中…</span>
-            )}
-          </div>
-        </div>
-      )}
-
       {/* ===== flex Region 2 (middle, flex: 1 1 0; min-height: 0): BODY SHELL =====
           Outer wrapper is a column flex; the actual scroll viewport is the
           inner .aipane__body, and the .aipane__messages div is its content
@@ -1317,6 +1270,35 @@ export const AIPane: React.FC<{
           scroll viewport without taking layout space — clicking it must NOT
           shift the message area's height. */}
       <div className="aipane__body-shell">
+        {/* Scroll-tracked "current question" pin. ABSOLUTE over the body
+            top so toggling it never resizes the scroll viewport. An in-flow
+            banner shifted the content by its height the instant it
+            appeared, pushing the just-scrolled-out bubble back into view,
+            toggling the banner off, and oscillating — visible jitter
+            exactly at the stick boundary. The banner renders only once the
+            first user bubble has scrolled under the header, so floating it
+            over the body top covers answer prose, not a live bubble.
+            pointer-events:none keeps it from blocking scroll/hit-testing. */}
+        {!bootError && activeQuestionTurn && (
+          <div
+            className="aipane__currentq-overlay"
+            aria-hidden="false"
+          >
+            <div className="aipane__currentq-pin bubble bubble--user" role="status" aria-label="当前问题">
+              <span className="aipane__currentq-text">
+                {activeQuestionTurn.user}
+                {activeQuestionTurn.attached && activeQuestionTurn.attached.length > 0 && (
+                  <span className="aipane__currentq-attach">
+                    {' '}<IconPaperclipOutline16 size={11} /> {activeQuestionTurn.attached.length} 个附件
+                  </span>
+                )}
+              </span>
+              {busy && activeQuestionTurn.id === streamingTurnId && (
+                <span className="aipane__currentq-status" aria-live="polite">生成中…</span>
+              )}
+            </div>
+          </div>
+        )}
         <div className="aipane__body" role="log" aria-live="polite" ref={scrollRef}>
           <div className="aipane__messages" ref={contentRef}>
             {/* STARTUP-AI-ASYNC-002 — while DSH is still booting we
