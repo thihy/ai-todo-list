@@ -333,6 +333,9 @@ importers:
       '@vitest/coverage-v8':
         specifier: ^2.1.6
         version: 2.1.9(supports-color@7.2.0)(vitest@2.1.9(@types/node@22.20.1)(happy-dom@15.11.7)(sass@1.51.0)(supports-color@7.2.0))
+      cross-env:
+        specifier: ^7.0.3
+        version: 7.0.3
       dmg-builder:
         specifier: ^26.16.0
         version: 26.16.1(electron-builder-squirrel-windows@26.16.1)(supports-color@7.2.0)
