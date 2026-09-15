@@ -63,20 +63,20 @@ src/
 │   ├── db/                     better-sqlite3 schema + repositories
 │   ├── files/                  Markdown + drawing storage
 │   ├── dsh/                    in-process DSH container + tools + skills
-│   ├── sdk/                    external ThihySdk + JSON-RPC bridge
+│   ├── sdk/                    external TodoListSdk + JSON-RPC bridge
 │   ├── settings/               config.json persistence
 │   ├── shortcuts/              global hotkey + capture window
 │   ├── tray/                   system tray menu
 │   ├── clipboard/              tray-triggered clipboard save
 │   └── updater/                electron-updater integration
 ├── preload/
-│   └── index.ts                contextBridge → window.thihy.*
+│   └── index.ts                contextBridge → window.todoList.*
 ├── renderer/                   React app
 │   ├── App.tsx                 shell + routing
 │   ├── panes/                  TODO list, editor, drawing, AI, inbox, settings, stats
 │   ├── components/             Markdown editor, tag input, drawing strip, …
 │   ├── layout/                 Sidebar, Topbar, Statusbar
-│   ├── hooks/                  typed window.thihy wrappers
+│   ├── hooks/                  typed window.todoList wrappers
 │   ├── styles/                 tokens + global.css
 │   ├── index.html              main entry
 │   └── capture.html            capture window entry
@@ -84,7 +84,7 @@ src/
     ├── todo-types.ts
     ├── ai-types.ts
     ├── ipc-schema.ts
-    ├── thihy-api.ts
+    ├── todo-list-api.ts
     ├── channels.ts
     └── constants.ts
 tests/
@@ -98,7 +98,7 @@ openspec/
 
 - **No `any`** outside generated code or `// eslint-disable-next-line` blocks.
 - All new IPC channels go through `src/shared/ipc-schema.ts` first.
-- Renderer never `require()`s Node modules — only `window.thihy.*`.
+- Renderer never `require()`s Node modules — only `window.todoList.*`.
 - Design tokens live in **one** place: `src/renderer/styles/global.css`. Mirror
   them in `tokens.ts` for TS-side computation; never hardcode colors in components.
 - Domain errors are surfaced as `IpcResult.fail(code, message)`; never throw
@@ -133,7 +133,7 @@ pnpm dist                       # native installer
 6. Click "🤖 问 AI" → AI pane opens → ask "今天我应该先做什么？" → stream tokens.
 7. Tray icon → right-click → menu shows.
 
-If any step fails, check `thihy.log` in your userData dir.
+If any step fails, check `todo-list.log` in your userData dir.
 
 ## Troubleshooting
 

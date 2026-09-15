@@ -5,7 +5,7 @@
 ## ADDED Requirements
 
 ### Requirement: Attach drawings to a TODO
-The system SHALL allow zero or more Excalidraw drawings to be attached to each TODO, with each drawing stored as a `.excalidraw` JSON file under `~/.thihy-todolist/drawings/<todo-id>/<drawing-id>.excalidraw`.
+The system SHALL allow zero or more Excalidraw drawings to be attached to each TODO, with each drawing stored as a `.excalidraw` JSON file under `~/.todo-list/drawings/<todo-id>/<drawing-id>.excalidraw`.
 
 #### Scenario: New drawing from TODO detail
 - **WHEN** the user clicks "Add drawing" on a TODO

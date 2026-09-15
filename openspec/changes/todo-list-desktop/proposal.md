@@ -4,7 +4,7 @@
 
 ## What Changes
 
-- 新增 Electron 桌面应用 `thihy-todolist`（含主进程、preload、渲染进程分层架构）。
+- 新增 Electron 桌面应用 `todo-list`（含主进程、preload、渲染进程分层架构）。
 - 新增全局快捷键 + 系统托盘的"快速捕获"通道，无干扰地收集 TODO 入收件箱。
 - 新增标签、项目、优先级、状态四维分类与多视图（列表 / 看板 / 日历）整理能力。
 - 为每个 TODO 关联一个 Markdown 文件作为富内容描述，支持实时预览、版本记录与全文检索。
@@ -33,6 +33,6 @@
 - **新增代码 / 目录**：`src/main/`、`src/preload/`、`src/renderer/`、`src/shared/`、`openspec/`、构建配置（electron-builder / vite）、测试（vitest + playwright）。
 - **新增依赖**：Electron、Vite + React、Excalidraw、better-sqlite3、gray-matter、DeepSeek Harness（DSH，作为 Cordis 容器内进程内库：`@deepseek-ai/dsh-base` + `dsh-agent` + `dsh-tools` + `dsh-skill` + `dsh-goal` + `dsh-permission` + `dsh-llm-deepseek`）。
 - **新增外部资源**：DeepSeek API Key（用户自填，仅用于 `https://api.deepseek.com/v1`）、系统托盘图标、Excalidraw 自托管资源。
-- **数据 / 存储**：用户文档目录下创建 `~/.thihy-todolist/` 包含 `db.sqlite`、`todos/*.md`、`drawings/*.excalidraw`。
+- **数据 / 存储**：用户文档目录下创建 `~/.todo-list/` 包含 `db.sqlite`、`todos/*.md`、`drawings/*.excalidraw`。
 - **安全模型**：渲染进程开启 `contextIsolation`，主进程通过受限 IPC 暴露能力；AI 请求走主进程代理，密钥不入渲染层；DSH 在同一主进程内以 Cordis 容器持有危险 tool 的权限策略。
 - **跨平台**：Windows / macOS / Linux 一套代码，差异点收敛在 `desktop-runtime`。

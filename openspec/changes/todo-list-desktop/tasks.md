@@ -14,7 +14,7 @@
 
 ## 3. 数据层与文件落盘
 
-- [ ] 3.1 实现 `src/main/db/schema.sql` 与迁移执行器,验证首次启动在 `~/.thihy-todolist/` 下生成 `db.sqlite` 并执行所有 DDL,FTS5 触发器可用 (`PRAGMA integrity_check` 返回 `ok`)。
+- [ ] 3.1 实现 `src/main/db/schema.sql` 与迁移执行器,验证首次启动在 `~/.todo-list/` 下生成 `db.sqlite` 并执行所有 DDL,FTS5 触发器可用 (`PRAGMA integrity_check` 返回 `ok`)。
 - [ ] 3.2 在 `src/main/db/todo-repo.ts` 实现 `TodoRepo.list/get/create/update/delete/batchUpdate/search`,验证单元测试覆盖排序、筛选、分页与 FTS 命中。
 - [ ] 3.3 实现 `src/main/files/markdown.ts` 提供 `readBody/writeBody/history/restoreVersion`,验证每次保存写入 `todos/<id>.md` 与 `content_versions` 一行,且版本上限 20 生效。
 - [ ] 3.4 实现 `src/main/files/drawings.ts` 提供 `saveDrawing/listDrawings/readDrawing`,验证落盘 `<todo-id>/<drawing-id>.excalidraw` 与 SQLite `drawings` 表一致。
@@ -31,8 +31,8 @@
 
 ## 5. Preload 桥与渲染层基础
 
-- [ ] 5.1 在 `src/preload/index.ts` 通过 `contextBridge.exposeInMainWorld('thihy', api)` 暴露与 schema 对应的方法,验证在渲染进程中 `window.thihy.todo.list` 可用且 `require` 不可用。
-- [ ] 5.2 在 `src/renderer/lib/ipc-client.ts` 封装 `window.thihy` 调用,统一错误处理 (toast + 上报),验证单元测试覆盖错误分支。
+- [ ] 5.1 在 `src/preload/index.ts` 通过 `contextBridge.exposeInMainWorld('todoList', api)` 暴露与 schema 对应的方法,验证在渲染进程中 `window.todoList.todo.list` 可用且 `require` 不可用。
+- [ ] 5.2 在 `src/renderer/lib/ipc-client.ts` 封装 `window.todoList` 调用,统一错误处理 (toast + 上报),验证单元测试覆盖错误分支。
 - [ ] 5.3 搭建 React 路由 (`/inbox` `/all` `/kanban` `/calendar` `/todo/:id` `/settings`) 与基础布局 (侧栏 + 内容 + AIPanel),验证冷启动 1s 内可交互。
 
 ## 6. TODO 视图与编辑器

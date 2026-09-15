@@ -126,7 +126,7 @@ A..I ──> J 文档与运行保障收尾
 
 - 文档中的文件路径、API 名称和安全设置都能在当前源码中找到。
 - “当前状态”和“目标状态”明确分开。
-- 删除或修正 `window.thihy`、旧 Sidebar、旧 flat-file 和旧 shim 等失效说明。
+- 删除或修正已失效的 preload 命名空间引用（现迁移至 `window.todoList`），并清理旧 Sidebar、旧 flat-file 和旧 shim 描述。
 
 ### ARCH-02 收敛主进程组合根
 

@@ -21,7 +21,7 @@ The system SHALL define an explicit IPC schema (channel name, request type, resp
 - **AND** the error is logged with the channel name
 
 ### Requirement: Local-first storage
-The system SHALL persist all user data (SQLite database, Markdown files, Excalidraw files, AI provider config) under `~/.thihy-todolist/` (or platform equivalent) and MUST operate fully offline excluding AI features.
+The system SHALL persist all user data (SQLite database, Markdown files, Excalidraw files, AI provider config) under `~/.todo-list/` (or platform equivalent) and MUST operate fully offline excluding AI features.
 
 #### Scenario: Offline launch
 - **WHEN** the app is launched with no network

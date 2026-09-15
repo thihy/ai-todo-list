@@ -5,7 +5,7 @@
 ## ADDED Requirements
 
 ### Requirement: Per-TODO markdown file
-The system SHALL associate each TODO with a Markdown file at `~/.thihy-todolist/todos/<todo-id>.md`, containing YAML front-matter with the canonical TODO fields and a Markdown body for notes/进展.
+The system SHALL associate each TODO with a Markdown file at `~/.todo-list/todos/<todo-id>.md`, containing YAML front-matter with the canonical TODO fields and a Markdown body for notes/进展.
 
 #### Scenario: Create TODO creates md file
 - **WHEN** a new TODO is created

@@ -25,7 +25,7 @@ The system SHALL provide a "save selection as TODO" command (from the tray menu 
 
 #### Scenario: Save clipboard image as TODO
 - **WHEN** the user triggers "save clipboard as TODO" and the clipboard contains an image
-- **THEN** the image is saved into `~/.thihy-todolist/inbox-attachments/` and attached to a new inbox TODO
+- **THEN** the image is saved into `~/.todo-list/inbox-attachments/` and attached to a new inbox TODO
 
 ### Requirement: AI parsed capture
 The system SHALL support capturing TODOs via natural-language input parsed by the AI assistant (see `ai-assistant` capability), producing structured TODO metadata.

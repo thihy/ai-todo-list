@@ -359,7 +359,7 @@ AIPanel 是 agent 表面,适用 **Craft Bar 的 4 行 agent 维度**。
 
 ```
 ┌──────────────────────────────┐
-│ ▣ thihy_todolist             │
+│ ▣ todo_list             │
 ├──────────────────────────────┤
 │ ▣ Quick capture   Ctrl+⇧+T  │
 │ ────────────────────────────│

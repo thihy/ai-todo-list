@@ -3,7 +3,7 @@
 项目刚刚初始化 (`openspec init --tools claude` 完成),目前仅有 `openspec/` 目录与配置,无任何运行代码。需要从零搭建一个 Electron 桌面应用,作为 AI 原生的 TODO 工具。
 
 约束:
-- 离线优先,数据全部落在用户本地 (`~/.thihy-todolist/`)。
+- 离线优先,数据全部落在用户本地 (`~/.todo-list/`)。
 - AI 仅作为可选云端能力,需可关闭、可降级、可在用户自托管/OpenAI/Anthropic 之间切换。
 - 渲染层不可接触 Node API,所有跨进程能力必须经由受控 IPC。
 - 跨 Windows / macOS / Linux 一套代码,差异点收敛在 `desktop-runtime`。
@@ -55,7 +55,7 @@ src/
 │   ├── shortcuts/              # globalShortcut 注册与 capture window 唤起
 │   └── tray/                   # 系统托盘菜单
 ├── preload/                    # contextBridge 桥
-│   └── index.ts                # 暴露 window.thihy.* 受限 API
+│   └── index.ts                # 暴露 window.todoList.* 受限 API
 ├── renderer/                   # 浏览器进程
 │   ├── views/                  # Inbox / List / Kanban / Calendar / Detail
 │   ├── components/             # 通用组件(Editor、DrawingPanel、AIPanel等)
@@ -105,7 +105,7 @@ CREATE TABLE todos (
   priority TEXT NOT NULL,              -- none|low|medium|high
   project TEXT,                        -- 单值,引用 projects.slug
   due_at INTEGER,                      -- unix ms
-  body_path TEXT NOT NULL,             -- 相对 ~/.thihy-todolist/todos/<id>.md
+  body_path TEXT NOT NULL,             -- 相对 ~/.todo-list/todos/<id>.md
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
   done_at INTEGER
@@ -125,7 +125,7 @@ CREATE TABLE drawings (
   id TEXT PRIMARY KEY,
   todo_id TEXT NOT NULL,
   title TEXT,
-  path TEXT NOT NULL,                  -- ~/.thihy-todolist/drawings/<todo_id>/<id>.excalidraw
+  path TEXT NOT NULL,                  -- ~/.todo-list/drawings/<todo_id>/<id>.excalidraw
   thumb_path TEXT,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
@@ -154,7 +154,7 @@ CREATE VIRTUAL TABLE todos_fts USING fts5(title, body, content='todos', content_
 ### 5. 文件落盘
 - **Markdown**:每次保存写入 `todos/<id>.md`,front-matter 与 DB 镜像(以 DB 为权威,文件由 DB 投影)。`content_versions` 保留最近 20 个版本 + 周期全量快照。
 - **Excalidraw**:每次保存直接写 `<drawing-id>.excalidraw`,缩略图用 `excalidraw` 包的导出能力生成 PNG(主进程 Node 端使用 `canvas` 或调渲染进程导出后通过 IPC 回传)。
-- **配置**:`~/.thihy-todolist/config.json`(AI provider、快捷键、主题)。
+- **配置**:`~/.todo-list/config.json`(AI provider、快捷键、主题)。
 
 ### 6. AI 代理链路(DSH 作为 Cordis 容器)
 - 单一 Cordis 容器在 `src/main/ai/container.ts` 创建,主进程持有。

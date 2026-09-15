@@ -58,9 +58,9 @@ After a Windows build, run `pnpm test:packaged-dsh` to boot the DSH plugin tree 
 ```
 ┌─────────────────────── Renderer (React 18 + TS) ───────────────────────┐
 │   Sidebar  │  TODO List  │  Editor (Markdown + Drawing)  │  AI Pane   │
-│                       ▲ window.app.* (contextBridge)                  │
+│                       ▲ window.todoList.* (contextBridge)             │
 └───────────────────────┼────────────────────────────────────────────────┘
-                        │ __app_router__ (validated IPC)
+                        │ validated IPC router (src/main/ipc/router.ts)
 ┌─────────────────────── Main Process ───────────────────────────────────┐
 │  ipc/router ─ todo/content/drawing/inbox/settings/ai handlers         │
 │       │                                                               │
@@ -113,7 +113,7 @@ Three permission tiers, from `src/main/dsh/tools.ts`:
 ### Security
 
 - `contextIsolation: true`, `sandbox: true`, `nodeIntegration: false` everywhere.
-- Preload exposes only the typed `window.app.*` facade; the raw `ipcRenderer` is never reachable from page code.
+- Preload exposes only the typed `window.todoList.*` facade; the raw `ipcRenderer` is never reachable from page code.
 - CSP set in both `index.html` and `capture.html`.
 - API key is persisted under the OS userData dir and never re-sent to the renderer in cleartext — `publicView()` returns only a redacted version.
 - JSON-RPC bridge is disabled by default and guarded with access protection.
@@ -193,9 +193,9 @@ Windows 构建后运行 `pnpm test:packaged-dsh`，直接从 `dist/win-unpacked/
 ```
 ┌─────────────────────── 渲染进程 (React 18 + TS) ───────────────────────┐
 │   侧边栏  │  待办列表  │  编辑器 (Markdown + 手绘)  │  AI 面板        │
-│                       ▲ window.app.* (contextBridge)                  │
+│                       ▲ window.todoList.* (contextBridge)             │
 └───────────────────────┼────────────────────────────────────────────────┘
-                        │ __app_router__ (受校验的 IPC)
+                        │ 受校验的 IPC router (src/main/ipc/router.ts)
 ┌─────────────────────── 主进程 ─────────────────────────────────────────┐
 │  ipc/router ─ todo/content/drawing/inbox/settings/ai 处理器          │
 │       │                                                               │
@@ -248,7 +248,7 @@ pnpm add @deepseek-ai/dsh-base@^0.1.0 @deepseek-ai/cordis@^4
 ### 安全
 
 - 全程 `contextIsolation: true`、`sandbox: true`、`nodeIntegration: false`。
-- preload 仅暴露类型化的 `window.app.*` 门面；页面代码无法触达原始 `ipcRenderer`。
+- preload 仅暴露类型化的 `window.todoList.*` 门面；页面代码无法触达原始 `ipcRenderer`。
 - `index.html` 与 `capture.html` 均设置 CSP。
 - API key 持久化在 OS userData 目录，绝不明文回传渲染进程——`publicView()` 只返回脱敏版本。
 - JSON-RPC 桥默认关闭并带访问保护。

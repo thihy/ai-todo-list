@@ -16,7 +16,7 @@ The system SHALL use DeepSeek (via `@deepseek-ai/dsh-llm-deepseek`) as the sole 
 The system SHALL store the DeepSeek API key in the main process only and MUST NOT expose it to the renderer process. All AI requests MUST be proxied through the main process via IPC.
 
 #### Scenario: Renderer cannot read the key
-- **WHEN** the renderer queries `window.thihy.settings.get({ key: 'deepseekApiKey' })`
+- **WHEN** the renderer queries `window.todoList.settings.get({ key: 'deepseekApiKey' })`
 - **THEN** the main process returns a redacted response
 - **AND** the API key never enters the renderer's JavaScript context
 

@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for your interest in thihy-todolist. This file is short because the
+Thanks for your interest in todo-list. This file is short because the
 project is young — most of the conventions live in
 [DEVELOPING.md](../DEVELOPING.md).
 
@@ -17,10 +17,10 @@ project is young — most of the conventions live in
 
 1. Add the channel name + request/response types to
    `src/shared/ipc-schema.ts`.
-2. Add a corresponding method to `src/shared/thihy-api.ts`.
+2. Add a corresponding method to `src/shared/todo-list-api.ts`.
 3. Register a handler in the relevant `src/main/ipc/<area>-handlers.ts`.
 4. Wrap the renderer call in a hook inside
-   `src/renderer/hooks/useThihyApi.ts`.
+   `src/renderer/hooks/useTodoListApi.ts`.
 5. Add a unit test for the handler logic where possible.
 
 ## Adding a new DSH tool
@@ -46,4 +46,4 @@ Include:
 - OS + version
 - Node + pnpm versions (`node -v && pnpm -v`)
 - Reproduction steps
-- Output of `${userData}/thihy.log` (last 200 lines is plenty)
+- Output of `${userData}/todo-list.log` (last 200 lines is plenty)
