@@ -55,7 +55,7 @@ function rowToDoc(row: DocRow): TaskDocument {
 
 const DEFAULT_TITLE: Record<DocumentKind, string> = {
   progress: '进展',
-  note_md: '笔记',
+  note_md: '文档',
   drawing: '绘图',
   attachment: '附件',
   link: '链接',
@@ -75,57 +75,111 @@ export class DocumentStore {
     return rows.map(rowToDoc);
   }
 
-  /** Ensure the task has at least its default progress doc, and surface any
-   *  legacy .md body (content_versions) as a note_md doc. Idempotent — the
-   *  v11 migration does this for pre-existing todos; this covers todos created
-   *  AFTER the migration (new tasks that still wrote via MarkdownStore) on
-   *  first open of the workspace. Safe to call on every list. */
+  /** Ensure the task has its default progress doc, bridge any legacy .md
+   *  body (content_versions) into it so the content is visible, and absorb
+   *  legacy '笔记' note_md docs (a v11-migration artifact) into the progress
+   *  doc. The user wants every task to surface only a 进展 doc — no 笔记.
+   *  Idempotent and safe to call on every list. */
   ensureDefaultDocs(todoId: ULID): void {
-    const hasProgress = this.db
-      .prepare('SELECT 1 FROM task_documents WHERE todo_id = ? AND kind = ?')
+    let progress = this.db
+      .prepare<[ULID, string], { id: string }>(
+        'SELECT id FROM task_documents WHERE todo_id = ? AND kind = ?',
+      )
       .get(todoId, 'progress');
-    if (!hasProgress) {
-      this.create(todoId, 'progress', '进展');
+    if (!progress) {
+      progress = { id: this.create(todoId, 'progress', '进展').id };
     }
-    // Bridge the legacy .md body into a note_md doc so existing notes are
-    // visible in the new workspace. Copies the full content_versions history
-    // into document_versions (same pattern as the v11 migration).
-    const hasNote = this.db
-      .prepare('SELECT 1 FROM task_documents WHERE todo_id = ? AND kind = ?')
-      .get(todoId, 'note_md');
-    if (!hasNote) {
+    // If the progress doc still has no versions, seed it from the legacy .md
+    // body (content_versions). Mirrors the v11 migration's `WHERE body != ''`
+    // guard: `todo.create` writes an empty content_versions row as part of
+    // initialization, and that empty row must NOT seed a blank doc.
+    const progCount = this.db
+      .prepare<[string], { c: number }>(
+        'SELECT COUNT(*) as c FROM document_versions WHERE document_id = ?',
+      )
+      .get(progress.id);
+    if (progCount && progCount.c === 0) {
       const legacy = this.db
         .prepare<[ULID], { c: number }>(
-          'SELECT COUNT(*) as c FROM content_versions WHERE todo_id = ?',
+          "SELECT COUNT(*) as c FROM content_versions WHERE todo_id = ? AND body != ''",
         )
         .get(todoId);
       if (legacy && legacy.c > 0) {
-        this.createNoteMdFromLegacy(todoId);
+        this.migrateLegacyBodyIntoDoc(progress.id, todoId);
       }
     }
+    // Absorb legacy '笔记' note_md docs (v11-migration artifact) so every
+    // task surfaces only 进展. User-added 文档 tabs (different title) and
+    // renamed notes are left alone. Content the progress doc hasn't already
+    // captured is appended first so nothing is lost.
+    this.absorbLegacyNoteMd(todoId, progress.id);
   }
 
-  /** Create a note_md doc for a todo and copy its legacy content_versions
-   *  history into document_versions (oldest→newest insertion order so the
-   *  latest content_versions row lands as the newest document_version). */
-  private createNoteMdFromLegacy(todoId: ULID): void {
-    const doc = this.create(todoId, 'note_md', '笔记');
+  /** Fold legacy '笔记' note_md docs into the progress doc, then drop them.
+   *  Only targets the v11-migration default title '笔记' — a user-added
+   *  文档 (titled '文档' or renamed) survives. Safe under repeated calls:
+   *  once no '笔记' note_md remains this is a no-op. */
+  private absorbLegacyNoteMd(todoId: ULID, progressId: string): void {
+    const notes = this.db
+      .prepare<[ULID, string, string], { id: string }>(
+        'SELECT id FROM task_documents WHERE todo_id = ? AND kind = ? AND title = ?',
+      )
+      .all(todoId, 'note_md', '笔记');
+    if (notes.length === 0) return;
+    const tx = this.db.transaction(() => {
+      for (const note of notes) {
+        const noteLatest = this.db
+          .prepare<[string], { content: string | null }>(
+            'SELECT content FROM document_versions WHERE document_id = ? ORDER BY id DESC LIMIT 1',
+          )
+          .get(note.id)?.content ?? null;
+        if (noteLatest) {
+          const progLatest = this.db
+            .prepare<[string], { content: string | null }>(
+              'SELECT content FROM document_versions WHERE document_id = ? ORDER BY id DESC LIMIT 1',
+            )
+            .get(progressId)?.content ?? null;
+          // Append only if the note carries content the progress doc hasn't
+          // already captured (avoids duplicating the bridge above).
+          if (noteLatest !== progLatest) {
+            this.db
+              .prepare(
+                'INSERT INTO document_versions (document_id, content, saved_at) VALUES (?, ?, ?)',
+              )
+              .run(progressId, noteLatest, Date.now());
+          }
+        }
+        // Drop the note_md row; document_versions cascade via FK.
+        this.db.prepare('DELETE FROM task_documents WHERE id = ?').run(note.id);
+      }
+      this.db
+        .prepare('UPDATE task_documents SET updated_at = ? WHERE id = ?')
+        .run(Date.now(), progressId);
+    });
+    tx();
+  }
+
+  /** Copy a todo's legacy content_versions history into a document's
+   *  document_versions (oldest→newest insertion order so the latest
+   *  content_versions row lands as the newest document_version), and stamp
+   *  the doc's updated_at to the latest saved_at. */
+  private migrateLegacyBodyIntoDoc(docId: ULID, todoId: ULID): void {
     const tx = this.db.transaction(() => {
       this.db
         .prepare(
           `INSERT INTO document_versions (document_id, content, saved_at)
            SELECT ?, body, saved_at FROM content_versions WHERE todo_id = ? ORDER BY id ASC`,
         )
-        .run(doc.id, todoId);
+        .run(docId, todoId);
       const latest = this.db
         .prepare<[string], { saved_at: number | null }>(
           'SELECT MAX(saved_at) as saved_at FROM document_versions WHERE document_id = ?',
         )
-        .get(doc.id);
+        .get(docId);
       if (latest?.saved_at) {
         this.db
           .prepare('UPDATE task_documents SET updated_at = ? WHERE id = ?')
-          .run(latest.saved_at, doc.id);
+          .run(latest.saved_at, docId);
       }
     });
     tx();
@@ -221,15 +275,16 @@ export class DocumentStore {
       this.db
         .prepare('UPDATE task_documents SET updated_at = ? WHERE id = ?')
         .run(now, id);
-      // For note_md docs, mirror the content onto todos.body so the FTS5
-      // external-content table stays in sync (search snippets read todos.body).
-      // The progress doc is HTML and intentionally not FTS-indexed. We look up
-      // the doc's todoId + kind in one statement to avoid an extra round-trip.
+      // The progress doc is the task's primary Markdown body — mirror its
+      // content onto todos.body so the FTS5 external-content table stays in
+      // sync (search snippets read todos.body). User-added note_md docs are
+      // secondary and intentionally not FTS-indexed. We look up the doc's
+      // todoId + kind in one statement to avoid an extra round-trip.
       this.db
         .prepare(
           `UPDATE todos SET body = ?, updated_at = ?
            WHERE id = (SELECT todo_id FROM task_documents WHERE id = ?)
-             AND EXISTS (SELECT 1 FROM task_documents WHERE id = ? AND kind = 'note_md')`,
+             AND EXISTS (SELECT 1 FROM task_documents WHERE id = ? AND kind = 'progress')`,
         )
         .run(content, now, id, id);
     });
@@ -293,7 +348,7 @@ export class DocumentStore {
   }
 
   /** Rename the on-disk file for a note_md doc when its title changes.
-   *  Progress docs are at a fixed path (progress.html) so this is a no-op for
+   *  Progress docs are at a fixed path (progress.md) so this is a no-op for
    *  kind === 'progress'. Best-effort. */
   renameFile(
     taskDir: string,

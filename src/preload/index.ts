@@ -91,6 +91,7 @@ const api: TodoListApi = {
     batchUpdate: (ids, patch) => invoke('todo.batchUpdate', { ids, patch }),
     search: (q, limit) => invoke('todo.search', { query: q, limit }),
     stats: (windowDays) => invoke('todo.stats', { windowDays }),
+    setSelectedDoc: (todoId, tabId) => invoke('todo.setSelectedDoc', { todoId, tabId }),
   },
   content: {
     readBody: (id) => invoke('content.readBody', { id }),
@@ -116,6 +117,8 @@ const api: TodoListApi = {
     remove: (id) => invoke('document.remove', { id }),
     history: (id) => invoke('document.history', { id }),
     restoreVersion: (id, versionId) => invoke('document.restoreVersion', { id, versionId: Number(versionId) }),
+    gitHistory: (id) => invoke('document.gitHistory', { id }),
+    gitRestore: (id, sha) => invoke('document.gitRestore', { id, sha }),
   },
   drawing: {
     list: (todoId) => invoke('drawing.list', { todoId }),

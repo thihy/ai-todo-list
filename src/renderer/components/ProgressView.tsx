@@ -69,8 +69,13 @@ export const ProgressInline: React.FC<{
   const [dragging, setDragging] = useState(false);
   // pendingEntryId = an entry just created by a drag, awaiting an optional note.
   // editingEntryId = an existing entry whose note the user clicked to edit.
+  // pendingDecrease = a drag DOWN landing, awaiting user confirm before we
+  //   commit. A missed drag can otherwise silently drop the bar; the
+  //   confirm step catches regressions. Once confirmed it logs like a
+  //   normal drag-up and chains into the note popover.
   const [pendingEntryId, setPendingEntryId] = useState<string | null>(null);
   const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
+  const [pendingDecrease, setPendingDecrease] = useState<{ to: number } | null>(null);
   const [noteDraft, setNoteDraft] = useState('');
 
   const trackRef = useRef<HTMLDivElement>(null);
@@ -81,7 +86,7 @@ export const ProgressInline: React.FC<{
   const latest = entries[0] ?? null;
   const latestNote = latest?.note?.trim() || '';
   const openEntryId = pendingEntryId ?? editingEntryId;
-  const popoverOpen = openEntryId !== null;
+  const popoverOpen = openEntryId !== null || pendingDecrease !== null;
 
   // Keep the local drag value honest with the canonical progress when not
   // actively dragging (e.g. another surface logged progress, or a reload).
@@ -100,12 +105,18 @@ export const ProgressInline: React.FC<{
     return Math.round(raw / 5) * 5;
   }, [percent]);
 
-  // Drag the bar to set progress. On release, if the value changed, commit it
-  // (progress saved immediately) and open the note popover for that entry.
+  // Drag the bar to set progress. On release:
+  //   - same value: no-op.
+  //   - higher value: commit immediately, open the note popover.
+  //   - lower value: hold the change in pendingDecrease and ASK first —
+  //     a missed drag can otherwise silently drop the bar. The confirm
+  //     step chains into the same log + note popover on accept; cancel
+  //     just discards and the bar snaps back via the !dragging sync.
   const onTrackPointerDown = (e: React.PointerEvent<HTMLDivElement>): void => {
     e.preventDefault();
     setDragging(true);
     setPendingEntryId(null);
+    setPendingDecrease(null);
     setNoteDraft('');
     const move = (ev: PointerEvent): void => setPercent(pctFromX(ev.clientX));
     const up = (ev: PointerEvent): void => {
@@ -113,14 +124,17 @@ export const ProgressInline: React.FC<{
       window.removeEventListener('pointerup', up);
       setDragging(false);
       const finalP = pctFromX(ev.clientX);
-      if (finalP !== progress) {
-        void log(finalP).then((entry) => {
-          if (entry) {
-            setPendingEntryId(entry.id);
-            setNoteDraft('');
-          }
-        });
+      if (finalP === progress) return;
+      if (finalP < progress) {
+        setPendingDecrease({ to: finalP });
+        return;
       }
+      void log(finalP).then((entry) => {
+        if (entry) {
+          setPendingEntryId(entry.id);
+          setNoteDraft('');
+        }
+      });
     };
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);
@@ -134,9 +148,35 @@ export const ProgressInline: React.FC<{
     // existing note to edit it makes the popover sticky to outside clicks,
     // which reads as "I can't dismiss it". Both modes share the popover, so
     // both must be cleared to actually close it.
+    // pendingDecrease is also cleared so idle/Escape revert a half-finished
+    // regression instead of committing it later.
     setPendingEntryId(null);
     setEditingEntryId(null);
+    setPendingDecrease(null);
     setNoteDraft('');
+  }, []);
+
+  const confirmDecrease = useCallback(async (): Promise<void> => {
+    if (!pendingDecrease) return;
+    const to = pendingDecrease.to;
+    // Log FIRST, then swap BOTH states together. Clearing pendingDecrease
+    // before the await would let popoverOpen briefly read false
+    // (pendingEntryId is still null until log returns), closing the
+    // popover for a frame and reading as "the description popover
+    // didn't open after confirm". Keeping pendingDecrease set until we
+    // have the new entry id, then swapping both in one batch, keeps
+    // popoverOpen true throughout the transition — so the note input
+    // appears immediately and never blanks out.
+    const entry = await log(to);
+    if (entry) {
+      setPendingDecrease(null);
+      setPendingEntryId(entry.id);
+      setNoteDraft('');
+    }
+  }, [pendingDecrease, log]);
+
+  const cancelDecrease = useCallback((): void => {
+    setPendingDecrease(null);
   }, []);
 
   const commitNote = useCallback(async (): Promise<void> => {
@@ -156,14 +196,18 @@ export const ProgressInline: React.FC<{
   }, [pendingEntryId, editingEntryId, noteDraft, updateNote, closePopover]);
 
   // Focus + select the note input when the popover opens, and run the idle
-  // auto-dismiss timer. The timer resets on each keystroke.
+  // auto-dismiss timer. The timer resets on each keystroke. The decrease-
+  // confirm view has no input to focus, but still gets the idle timer so a
+  // walked-away regression reverts instead of committing silently.
   useEffect(() => {
     if (!popoverOpen) {
       if (idleTimer.current) window.clearTimeout(idleTimer.current);
       return;
     }
-    noteInputRef.current?.focus();
-    noteInputRef.current?.select();
+    if (!pendingDecrease) {
+      noteInputRef.current?.focus();
+      noteInputRef.current?.select();
+    }
     const arm = (): void => {
       if (idleTimer.current) window.clearTimeout(idleTimer.current);
       idleTimer.current = window.setTimeout(closePopover, IDLE_DISMISS_MS);
@@ -172,7 +216,7 @@ export const ProgressInline: React.FC<{
     return () => {
       if (idleTimer.current) window.clearTimeout(idleTimer.current);
     };
-  }, [popoverOpen, pendingEntryId, closePopover]);
+  }, [popoverOpen, pendingDecrease, closePopover]);
 
   const resetIdle = useCallback((): void => {
     if (idleTimer.current) window.clearTimeout(idleTimer.current);
@@ -181,29 +225,42 @@ export const ProgressInline: React.FC<{
     }
   }, [popoverOpen, closePopover]);
 
-  // Outside-click SAVES + closes (not just discards). If the user typed
-  // something and clicked away, they almost certainly meant to keep the
-  // change — discarding it is the surprising behavior, not saving it.
-  // Escape still discards via the input's keydown handler.
+  // Outside-click: for the note popover, save + close; for the decrease
+  // confirm view, just cancel (do NOT auto-commit a regression). The
+  // pendingDecrease ref lets the handler see the latest state without
+  // re-binding on every keystroke.
+  const pendingDecreaseRef = useRef(pendingDecrease);
+  pendingDecreaseRef.current = pendingDecrease;
+  const commitNoteRef = useRef(commitNote);
+  commitNoteRef.current = commitNote;
   useEffect(() => {
     if (!popoverOpen) return;
     const onDown = (e: MouseEvent): void => {
       if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) {
-        void commitNote();
+        if (pendingDecreaseRef.current) cancelDecrease();
+        else void commitNoteRef.current();
       }
     };
     document.addEventListener('mousedown', onDown);
     return () => document.removeEventListener('mousedown', onDown);
-  }, [popoverOpen, commitNote]);
+  }, [popoverOpen, cancelDecrease]);
 
   const onEditLatest = (): void => {
     if (!latest) return;
     setPendingEntryId(null);
+    setPendingDecrease(null);
     setEditingEntryId(latest.id);
     setNoteDraft(latest.note ?? '');
   };
 
-  const shownPercent = dragging ? percent : progress;
+  // During a drag show the live pointer value; while awaiting a decrease
+  // confirm show the dragged-down value so the user sees what they're
+  // confirming; otherwise the canonical progress.
+  const shownPercent = dragging
+    ? percent
+    : pendingDecrease
+      ? pendingDecrease.to
+      : progress;
 
   return (
     <div className="progress-inline">
@@ -239,27 +296,57 @@ export const ProgressInline: React.FC<{
       </div>
 
       {/* Note popover — opens after a drag completes, for an optional note on
-          the just-logged entry. Auto-dismisses after 1 min idle or on
-          outside-click. */}
+          the just-logged entry. When the drag landed LOWER than the current
+          value, the popover instead opens in a confirm-decrease mode that
+          must be accepted before anything is logged. Auto-dismisses after
+          1 min idle or on outside-click (idle/outside both revert the
+          decrease). */}
       {popoverOpen && (
         <div className="progress-inline__note-popover" ref={popoverRef}>
-          <input
-            ref={noteInputRef}
-            type="text"
-            className="progress-view__note"
-            value={noteDraft}
-            placeholder="一句话描述本次进展（可选）"
-            aria-label="进展描述"
-            onChange={(e) => { setNoteDraft(e.target.value); resetIdle(); }}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') { e.preventDefault(); void commitNote(); }
-              else if (e.key === 'Escape') { e.preventDefault(); closePopover(); }
-            }}
-            onBlur={() => { /* keep open on blur; idle/outside-click handles dismiss */ }}
-          />
-          <div className="progress-inline__note-hint">
-            回车保存 · 空白处或 1 分钟后自动关闭
-          </div>
+          {pendingDecrease ? (
+            <>
+              <div className="progress-inline__decrease-warn" role="alert">
+                进度将从 <strong>{progress}%</strong> 降低到 <strong>{pendingDecrease.to}%</strong>，确认提交吗？
+              </div>
+              <div className="progress-inline__decrease-actions">
+                <button
+                  type="button"
+                  className="progress-inline__decrease-cancel"
+                  onClick={cancelDecrease}
+                >
+                  取消
+                </button>
+                <button
+                  type="button"
+                  className="progress-inline__decrease-confirm"
+                  onClick={() => void confirmDecrease()}
+                  autoFocus
+                >
+                  确认降低
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              <input
+                ref={noteInputRef}
+                type="text"
+                className="progress-view__note"
+                value={noteDraft}
+                placeholder="一句话描述本次进展（可选）"
+                aria-label="进展描述"
+                onChange={(e) => { setNoteDraft(e.target.value); resetIdle(); }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') { e.preventDefault(); void commitNote(); }
+                  else if (e.key === 'Escape') { e.preventDefault(); closePopover(); }
+                }}
+                onBlur={() => { /* keep open on blur; idle/outside-click handles dismiss */ }}
+              />
+              <div className="progress-inline__note-hint">
+                回车保存 · 空白处或 1 分钟后自动关闭
+              </div>
+            </>
+          )}
         </div>
       )}
     </div>

@@ -239,6 +239,16 @@ export const IconDivider: React.FC<IconProps> = (p) => (
   </Svg>
 );
 
+/** Image — framed photo with sun + mountain. Used by the WYSIWYG slash menu's
+ *  insert-image command (replaces an ad-hoc ⌗ glyph that broke icon rhythm). */
+export const IconImage: React.FC<IconProps> = (p) => (
+  <Svg {...p}>
+    <rect x="2" y="3" width="12" height="10" rx="1.4" />
+    <circle cx="6" cy="7" r="1.1" />
+    <path d="M3 12l3.2-3.2 2.2 2.2 2.6-2.6L13 12" />
+  </Svg>
+);
+
 /** Fullscreen — four corner brackets pointing outward (the convention for
  *  "expand to fullscreen"). Used by the DocumentsView tab bar's expand
  *  button and the FullscreenDoc exit control. */

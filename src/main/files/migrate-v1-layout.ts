@@ -10,7 +10,7 @@
 // v2 layout (post-refactor):
 //   {dataDir}/todos/{slug}/
 //     todo.json
-//     progress.html
+//     progress.md
 //     {docTitle}.md | {drawingTitle}.excalidraw
 //     thumbs/{drawingId}.thumb.png
 //     attachments/{uuid}-{name}
@@ -58,7 +58,7 @@ export async function migrateV1Layout(opts: MigrationOpts): Promise<MigrationRes
   const result: MigrationResult = { migrated: 0, skipped: 0, failed: 0, didWork: false };
   const gitMovedRelpaths: string[] = [];
 
-  // ---- Step 1: legacy {todosDir}/{ulid}.md → {todosDir}/{slug}/progress.html ----
+  // ---- Step 1: legacy {todosDir}/{ulid}.md → {todosDir}/{slug}/progress.md ----
   try {
     const legacyFiles = readdirSync(opts.todosDir).filter((f) => f.endsWith('.md'));
     for (const fname of legacyFiles) {
@@ -134,8 +134,8 @@ export async function migrateV1Layout(opts: MigrationOpts): Promise<MigrationRes
       );
       // git mv so history follows the file across the rename.
       try {
-        const moved = await gitHistory.mv(opts.todosDir, fname, join(basename(taskDir), 'progress.html'));
-        if (moved) gitMovedRelpaths.push(join(basename(taskDir), 'progress.html'));
+        const moved = await gitHistory.mv(opts.todosDir, fname, join(basename(taskDir), 'progress.md'));
+        if (moved) gitMovedRelpaths.push(join(basename(taskDir), 'progress.md'));
       } catch (err) {
         logger.warn(`migrateV1Layout: git mv failed for ${fname}: ${(err as Error).message}`);
       }

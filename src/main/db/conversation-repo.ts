@@ -27,6 +27,22 @@
 import type Database from 'better-sqlite3';
 import { newId } from './schema';
 
+/** AI 助手侧边栏的「对话列表」默认每页 10 条 —— 初次打开下拉只看到最近 10 条，
+ *  用户点「显示更多」再向后翻一页。 */
+export const DEFAULT_CONVERSATION_LIST_LIMIT = 10;
+/** 安全上限：渲染端即使传来 limit=999，main 也只给 50 条。
+ *  防止单次查询撑爆 IPC / 渲染端内存。 */
+export const MAX_CONVERSATION_LIST_LIMIT = 50;
+
+export interface ConversationListOpts {
+  includeArchived?: boolean;
+  /** 每页条数；缺省 {@link DEFAULT_CONVERSATION_LIST_LIMIT}，超过
+   *  {@link MAX_CONVERSATION_LIST_LIMIT} 时夹到上限。 */
+  limit?: number;
+  /** 从第几条开始；缺省 0。 */
+  offset?: number;
+}
+
 export interface Conversation {
   id: string;
   title: string;
@@ -53,15 +69,36 @@ function rowToConversation(r: Row): Conversation {
   };
 }
 
+/** 把渲染端传入的 limit 夹到合法区间。负数 / NaN / 0 一律回退到默认。 */
+function clampLimit(raw: number | undefined): number {
+  if (!Number.isFinite(raw) || (raw as number) <= 0) return DEFAULT_CONVERSATION_LIST_LIMIT;
+  return Math.min(Math.floor(raw as number), MAX_CONVERSATION_LIST_LIMIT);
+}
+
 export class ConversationRepo {
   constructor(private readonly db: Database.Database) {}
 
-  /** List conversations; archived rows excluded unless includeArchived. */
-  list(includeArchived = false): Conversation[] {
+  /** 命中行数；{@link ConversationListOpts.includeArchived} 与 `list()` 一致。 */
+  count(includeArchived = false): number {
     const sql = includeArchived
-      ? 'SELECT id, title, created_at, updated_at, archived FROM conversations ORDER BY updated_at DESC'
-      : 'SELECT id, title, created_at, updated_at, archived FROM conversations WHERE archived = 0 ORDER BY updated_at DESC';
-    const rows = this.db.prepare(sql).all() as Row[];
+      ? 'SELECT COUNT(*) as c FROM conversations'
+      : 'SELECT COUNT(*) as c FROM conversations WHERE archived = 0';
+    const row = this.db.prepare(sql).get() as { c: number };
+    return row.c;
+  }
+
+  /** 按 `updated_at DESC` 取一页对话。{@link ConversationListOpts.includeArchived}
+   *  默认 false（侧边栏隐藏归档）。limit/offset 均做了夹紧。 */
+  list(opts: ConversationListOpts = {}): Conversation[] {
+    const includeArchived = opts.includeArchived === true;
+    const limit = clampLimit(opts.limit);
+    const offset = Number.isFinite(opts.offset) && (opts.offset as number) >= 0
+      ? Math.floor(opts.offset as number)
+      : 0;
+    const sql = includeArchived
+      ? 'SELECT id, title, created_at, updated_at, archived FROM conversations ORDER BY updated_at DESC LIMIT ? OFFSET ?'
+      : 'SELECT id, title, created_at, updated_at, archived FROM conversations WHERE archived = 0 ORDER BY updated_at DESC LIMIT ? OFFSET ?';
+    const rows = this.db.prepare(sql).all(limit, offset) as Row[];
     return rows.map(rowToConversation);
   }
 

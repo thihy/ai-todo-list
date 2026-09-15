@@ -54,7 +54,7 @@ export interface DshRuntimeDeps {
   repo: TodoRepo;
   md: MarkdownStore;
   drawings: DrawingStore;
-  /** DocumentStore —— 给 `app.currentContext` 工具补齐 document 类焦点
+  /** DocumentStore —— 给 `app_currentContext` 工具补齐 document 类焦点
    *  对应的 task_documents 完整行 */
   docs: DocumentStore;
   /** 让 DSH session-title 服务能把 AI 生成的反向标题写回渲染端的会话列表 */
@@ -64,7 +64,7 @@ export interface DshRuntimeDeps {
   db: Database.Database;
   /** 附件 / 粘贴图片落盘的目录，首次使用自动 mkdir -p */
   attachmentsDir: string;
-  /** Settings store —— ai.health / ai.models 工具要看 provider/model/连接态 */
+  /** Settings store —— ai_health / ai_models 工具要看 provider/model/连接态 */
   settings: SettingsStore;
 }
 
@@ -631,7 +631,7 @@ export function getDshRuntime(deps: DshRuntimeDeps): Promise<DshRuntime | null> 
  *  flight / has failed. Crucially this does NOT trigger a boot the way
  *  `getDshRuntime()` does — it's a status check used by `ai-handlers`
  *  to short-circuit runtime-dependent calls (`ai.ask`, `ai.cancel`,
- *  `ai.conversation.history`) with `ai_not_ready` while the cold-boot
+ *  `ai.conversation_history`) with `ai_not_ready` while the cold-boot
  *  is still warming up behind the AIPane loading overlay.
  *
  *  `null` covers four distinct cases (pending / loading / failed /
@@ -807,6 +807,7 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
     getEndpoint: deps.getEndpoint,
     getCustomProviders: () => deps.settings.get().customProviders,
     getCustomProviderId: () => deps.settings.get().customProviderId,
+    getUserAgent: () => deps.settings.get().userAgent,
   });
   const disposeAdapter = llm.registerAdapter([...REAL_PROVIDER_ROUTES], llmAdapter);
   void REAL_PROVIDER_ROUTES;
@@ -1181,7 +1182,7 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
       const entry = conversations.get(conversationId);
       if (!entry) return;
       // L3-A 软取消：handle 留在缓存里，下次 followup() 走同 agent + 持久化
-      // session。硬销毁留给 disposeConversation（ai.conversation.delete 路径）。
+      // session。硬销毁留给 disposeConversation（ai.conversation_delete 路径）。
       //
       // - 轮次在跑：agent.cancel({kind:'user'}) 中断它，whenIdle() 快速
       //   resolve。在它前面的 text/tool 事件已经流过，会成为持久化日志的一部分，
@@ -1571,7 +1572,7 @@ function registerDomainTools(
   const reg = (def: unknown) => disposers.push(tools.register(def));
 
   // DSH 的 output.render(args, value) 决定工具结果中"模型看得到"的内容。
-  // 返回占位 token（如 '[todo.list]'）会把真实数据藏起来，模型就可能瞎编
+  // 返回占位 token（如 '[todo_list]'）会把真实数据藏起来，模型就可能瞎编
   // （说列表为空、捏造新建 todo 的 id）。这里直接 JSON.stringify 真实结果，
   // 让模型基于真实数据作答。
   //
@@ -1601,14 +1602,14 @@ function registerDomainTools(
 
   // ---------------------------------------------------------------------------
   // todo.* — 对 TODO 表的 CRUD。工具参数尽量覆盖 TodoCreate / TodoPatch 全字段，
-  // 让 AI 能按 tag / due date 归档，而不仅是 title + status。todo.list
+  // 让 AI 能按 tag / due date 归档，而不仅是 title + status。todo_list
   // 的过滤集也跟前端 TodoFilter 类型对齐，能直接回答"本周到期"之类的问题，
   // 不用把全表拉回来再二次过滤。
   // ---------------------------------------------------------------------------
 
   reg(defineTool({
-    name: 'todo.list',
-    ...wire('todo.list'),
+    name: 'todo_list',
+    ...wire('todo_list'),
     description: 'List TODO items, optionally filtered. Every field is optional; omit all of them to return every todo. The model may pass status/priority/tag as a single string or a JSON array. "all" / unknown values for status/priority mean no filter.',
     parameters: {
       status: { type: 'string', description: 'Filter by status: next | doing | done | cancelled | blocked (or comma-separated)' },
@@ -1652,8 +1653,8 @@ function registerDomainTools(
   }));
 
   reg(defineTool({
-    name: 'todo.get',
-    ...wire('todo.get'),
+    name: 'todo_get',
+    ...wire('todo_get'),
     description: 'Get a single TODO by id. Returns null if the id is unknown.',
     parameters: { id: { type: 'string', required: true, description: 'TODO id (ULID)' } },
     output: jsonOutput,
@@ -1661,16 +1662,16 @@ function registerDomainTools(
   }));
 
   reg(defineTool({
-    name: 'todo.create',
-    ...wire('todo.create'),
-    description: 'Create a real TODO and return it with its generated id. Use a concise actionable title. Defaults are status=next and priority=none; do not invent urgency, due dates, tags, or parent ids. parentId must come from an actual todo.list/todo.search result. Set plannedFor only when the user explicitly asks to do/add it today; a due date of today alone is not enough. Markdown body starts empty — use content.writeBody only when the user supplied meaningful notes.',
+    name: 'todo_create',
+    ...wire('todo_create'),
+    description: 'Create a real TODO and return it with its generated id. Use a concise actionable title. Defaults are status=next and priority=none; do not invent urgency, due dates, tags, or parent ids. parentId must come from an actual todo_list/todo_search result. Set plannedFor only when the user explicitly asks to do/add it today; a due date of today alone is not enough. Markdown body starts empty — use content_writeBody only when the user supplied meaningful notes.',
     parameters: {
       title: { type: 'string', required: true, description: 'TODO title (required)' },
       status: { type: 'string', description: 'next | doing | done | cancelled | blocked (default next)' },
       priority: { type: 'string', description: 'none | low | medium | high (default none)' },
       dueAt: { type: 'number', description: 'Due date as unix ms; null/omitted means no due date' },
       tags: { type: 'string', description: 'JSON array of Chinese tag strings (e.g. \'["紧急","设计"]\'); 留空或省略表示不打标签' },
-      parentId: { type: 'string', description: 'Parent TODO id to create as a subtask; null/omitted means top-level. Use subtasks.list on the parent to see existing children before adding more. Cycles are rejected — you cannot nest a task under one of its own descendants.' },
+      parentId: { type: 'string', description: 'Parent TODO id to create as a subtask; null/omitted means top-level. Use subtasks_list on the parent to see existing children before adding more. Cycles are rejected — you cannot nest a task under one of its own descendants.' },
       plannedFor: { type: 'string', description: 'Stamp the task for the today view. Pass today\'s local date as \'YYYY-MM-DD\' (e.g. compute via `new Date().toLocaleDateString(\'en-CA\')`). Omit/null to leave unplanned. Only set when the user explicitly asks for it.' },
     },
     output: jsonOutput,
@@ -1694,8 +1695,8 @@ function registerDomainTools(
   }));
 
   reg(defineTool({
-    name: 'todo.update',
-    ...wire('todo.update'),
+    name: 'todo_update',
+    ...wire('todo_update'),
     description: 'Update fields of an existing TODO. Pass only the fields you want to change — null clears the field (e.g. dueAt: null). Setting status="done" automatically stamps doneAt; any other status clears it. Pass parentId to reparent a task (make it a subtask of another); pass parentId=null to promote to top-level. Cycles are rejected. Pass archivedAt to archive (a unix-ms timestamp, e.g. Date.now()) or archivedAt=null to restore an archived task.',
     parameters: {
       id: { type: 'string', required: true, description: 'TODO id' },
@@ -1728,8 +1729,8 @@ function registerDomainTools(
   }));
 
   reg(defineTool({
-    name: 'subtasks.list',
-    ...wire('subtasks.list'),
+    name: 'subtasks_list',
+    ...wire('subtasks_list'),
     description: 'List the direct subtasks of a TODO (parentId == id). Returns [] if the task has no subtasks or does not exist. Use this to inspect a parent\'s children before reparenting or to summarise "the work broken out under this task".',
     parameters: { parentId: { type: 'string', required: true, description: 'Parent TODO id' } },
     output: jsonOutput,
@@ -1739,8 +1740,8 @@ function registerDomainTools(
   }));
 
   reg(defineTool({
-    name: 'todo.planForToday',
-    ...wire('todo.planForToday'),
+    name: 'todo_planForToday',
+    ...wire('todo_planForToday'),
     description: 'Stamp an existing TODO for the today view. Pass todayKey = today\'s local date as \'YYYY-MM-DD\' (e.g. compute via `new Date().toLocaleDateString(\'en-CA\')` — the same value the renderer reads back when matching the upper section). Yesterday\'s stamp naturally drops off tomorrow morning without any sweep. Only call when the user EXPLICITLY says "今天做 X" / "加到今天" / "把 X 加到今日"; do not bulk-stamp. Returns the updated TODO. No-op (returns the existing row) when the task is already planned for that day.',
     parameters: {
       id: { type: 'string', required: true, description: 'TODO id to stamp for today' },
@@ -1749,15 +1750,15 @@ function registerDomainTools(
     output: jsonOutput,
     async execute(args: { id: string; todayKey: string }) {
       if (typeof args.todayKey !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(args.todayKey)) {
-        throw new Error('todo.planForToday: todayKey must be a string \'YYYY-MM-DD\'');
+        throw new Error('todo_planForToday: todayKey must be a string \'YYYY-MM-DD\'');
       }
       return repo.update(args.id, { plannedFor: args.todayKey });
     },
   }));
 
   reg(defineTool({
-    name: 'todo.unplan',
-    ...wire('todo.unplan'),
+    name: 'todo_unplan',
+    ...wire('todo_unplan'),
     description: 'Remove an existing TODO from the today view (clears plannedFor). Idempotent: no-op when the task was not planned. Returns the updated TODO.',
     parameters: { id: { type: 'string', required: true, description: 'TODO id to remove from today\'s plan' } },
     output: jsonOutput,
@@ -1767,26 +1768,26 @@ function registerDomainTools(
   }));
 
   reg(defineTool({
-    name: 'todo.delete',
-    ...wire('todo.delete'),
-    description: 'Soft-delete a TODO and its entire subtree. This is a LOGICAL delete — the row, markdown body, and drawings survive so the action is always undoable via todo.restore. The task disappears from every active view (list, search, stats) and is only visible via todo.list with deletedOnly=true. No confirmation needed beyond the normal permission tier.',
+    name: 'todo_delete',
+    ...wire('todo_delete'),
+    description: 'Soft-delete a TODO and its entire subtree. This is a LOGICAL delete — the row, markdown body, and drawings survive so the action is always undoable via todo_restore. The task disappears from every active view (list, search, stats) and is only visible via todo_list with deletedOnly=true. No confirmation needed beyond the normal permission tier.',
     parameters: { id: { type: 'string', required: true, description: 'TODO id to soft-delete (cascades to its subtasks)' } },
     output: jsonOutput,
     async execute(args: { id: string }) { repo.delete(args.id as never); return { ok: true }; },
   }));
 
   reg(defineTool({
-    name: 'todo.restore',
-    ...wire('todo.restore'),
-    description: 'Restore a soft-deleted TODO and its entire subtree — the inverse of todo.delete. Clears deleted_at on the task + every descendant so the whole branch returns to the active list. Safe to call on an already-live task (no-op).',
+    name: 'todo_restore',
+    ...wire('todo_restore'),
+    description: 'Restore a soft-deleted TODO and its entire subtree — the inverse of todo_delete. Clears deleted_at on the task + every descendant so the whole branch returns to the active list. Safe to call on an already-live task (no-op).',
     parameters: { id: { type: 'string', required: true, description: 'TODO id to restore (clears deleted_at on its subtree)' } },
     output: jsonOutput,
     async execute(args: { id: string }) { repo.restore(args.id as never); return { ok: true }; },
   }));
 
   reg(defineTool({
-    name: 'todo.batchUpdate',
-    ...wire('todo.batchUpdate'),
+    name: 'todo_batchUpdate',
+    ...wire('todo_batchUpdate'),
     description: 'Apply the same patch to multiple TODOs in one transaction. Useful for "mark all 未完成 items as done" or "reparent every task under a new parent". Returns the updated rows.',
     parameters: {
       ids: { type: 'string', required: true, description: 'JSON array of TODO ids' },
@@ -1803,7 +1804,7 @@ function registerDomainTools(
         if (!Array.isArray(parsed)) throw new Error('ids must be a JSON array of strings');
         ids = parsed.filter((s): s is string => typeof s === 'string');
       } catch (err) {
-        throw new Error(`todo.batchUpdate: invalid ids — ${(err as Error).message}`);
+        throw new Error(`todo_batchUpdate: invalid ids — ${(err as Error).message}`);
       }
       const patch: TodoPatch = {};
       if (args.status && (TODO_STATUSES as readonly string[]).includes(args.status)) patch.status = args.status as TodoStatus;
@@ -1820,8 +1821,8 @@ function registerDomainTools(
   }));
 
   reg(defineTool({
-    name: 'todo.search',
-    ...wire('todo.search'),
+    name: 'todo_search',
+    ...wire('todo_search'),
     description: 'Full-text search across TODO titles and markdown bodies (FTS5-backed). Returns hits with a short snippet + score.',
     parameters: { query: { type: 'string', required: true, description: 'Search query' }, limit: { type: 'number', description: 'Max hits (default 20)' } },
     output: jsonOutput,
@@ -1829,8 +1830,8 @@ function registerDomainTools(
   }));
 
   reg(defineTool({
-    name: 'todo.stats',
-    ...wire('todo.stats'),
+    name: 'todo_stats',
+    ...wire('todo_stats'),
     description: 'Aggregate stats: counts by status, 7-day completion rate, average done latency. Useful as a preflight before summarising the user\'s workload.',
     parameters: { windowDays: { type: 'number', description: 'Window for completion stats (default 7)' } },
     output: jsonOutput,
@@ -1842,8 +1843,8 @@ function registerDomainTools(
   // ---------------------------------------------------------------------------
 
   reg(defineTool({
-    name: 'content.readBody',
-    ...wire('content.readBody'),
+    name: 'content_readBody',
+    ...wire('content_readBody'),
     description: 'Read the markdown body of a TODO (current version). Returns markdown text + the version number.',
     parameters: { id: { type: 'string', required: true, description: 'TODO id' } },
     output: jsonOutput,
@@ -1851,9 +1852,9 @@ function registerDomainTools(
   }));
 
   reg(defineTool({
-    name: 'content.writeBody',
-    ...wire('content.writeBody'),
-    description: 'Write/replace the markdown body of a TODO. Creates a new version (old version preserved for content.history). For long drafts, write the full body each time — partial updates are not supported.',
+    name: 'content_writeBody',
+    ...wire('content_writeBody'),
+    description: 'Write/replace the markdown body of a TODO. Creates a new version (old version preserved for content_history). For long drafts, write the full body each time — partial updates are not supported.',
     parameters: {
       id: { type: 'string', required: true, description: 'TODO id' },
       markdown: { type: 'string', required: true, description: 'New markdown content' },
@@ -1876,21 +1877,21 @@ function registerDomainTools(
   }));
 
   reg(defineTool({
-    name: 'content.history',
-    ...wire('content.history'),
-    description: 'List saved markdown versions for a TODO, oldest to newest. Each entry has an id (version number), savedAt, and the body. Use content.restoreVersion to roll back.',
+    name: 'content_history',
+    ...wire('content_history'),
+    description: 'List saved markdown versions for a TODO, oldest to newest. Each entry has an id (version number), savedAt, and the body. Use content_restoreVersion to roll back.',
     parameters: { id: { type: 'string', required: true, description: 'TODO id' } },
     output: jsonOutput,
     async execute(args: { id: string }) { return md.history(args.id as never); },
   }));
 
   reg(defineTool({
-    name: 'content.restoreVersion',
-    ...wire('content.restoreVersion'),
-    description: 'Restore a previous markdown version. The current version is preserved as a new version before the restore (so undo via content.history + restoreVersion is always possible). Destructive in the sense that it overwrites current body — confirm with the user first.',
+    name: 'content_restoreVersion',
+    ...wire('content_restoreVersion'),
+    description: 'Restore a previous markdown version. The current version is preserved as a new version before the restore (so undo via content_history + restoreVersion is always possible). Destructive in the sense that it overwrites current body — confirm with the user first.',
     parameters: {
       id: { type: 'string', required: true, description: 'TODO id' },
-      versionId: { type: 'number', required: true, description: 'Version number to restore (from content.history)' },
+      versionId: { type: 'number', required: true, description: 'Version number to restore (from content_history)' },
     },
     output: jsonOutput,
     async execute(args: { id: string; versionId: number }) { md.restoreVersion(args.id as never, args.versionId); return { ok: true }; },
@@ -1901,17 +1902,17 @@ function registerDomainTools(
   // ---------------------------------------------------------------------------
 
   reg(defineTool({
-    name: 'drawing.list',
-    ...wire('drawing.list'),
-    description: 'List Excalidraw drawings attached to a TODO. Returns metadata (id, title, thumb path, timestamps). Use drawing.read to get the scene JSON.',
+    name: 'drawing_list',
+    ...wire('drawing_list'),
+    description: 'List Excalidraw drawings attached to a TODO. Returns metadata (id, title, thumb path, timestamps). Use drawing_read to get the scene JSON.',
     parameters: { todoId: { type: 'string', required: true, description: 'TODO id' } },
     output: jsonOutput,
     async execute(args: { todoId: string }) { return drawings.list(args.todoId as never); },
   }));
 
   reg(defineTool({
-    name: 'drawing.read',
-    ...wire('drawing.read'),
+    name: 'drawing_read',
+    ...wire('drawing_read'),
     description: 'Read an Excalidraw drawing scene by id. Returns the full scene JSON (elements, appState). Throws if the id is unknown or the scene file is missing on disk.',
     parameters: { id: { type: 'string', required: true, description: 'Drawing id' } },
     output: jsonOutput,
@@ -1919,8 +1920,8 @@ function registerDomainTools(
   }));
 
   reg(defineTool({
-    name: 'drawing.save',
-    ...wire('drawing.save'),
+    name: 'drawing_save',
+    ...wire('drawing_save'),
     description: 'Save (create or update) an Excalidraw drawing for a TODO. Pass `id` to update an existing drawing; omit to create a new one. The `scene` is the full Excalidraw scene JSON.',
     parameters: {
       todoId: { type: 'string', required: true, description: 'TODO id this drawing belongs to' },
@@ -1935,8 +1936,8 @@ function registerDomainTools(
   }));
 
   reg(defineTool({
-    name: 'drawing.delete',
-    ...wire('drawing.delete'),
+    name: 'drawing_delete',
+    ...wire('drawing_delete'),
     description: 'Permanently delete a drawing. Destructive — confirm with the user first.',
     parameters: { id: { type: 'string', required: true, description: 'Drawing id' } },
     output: jsonOutput,
@@ -1944,8 +1945,8 @@ function registerDomainTools(
   }));
 
   reg(defineTool({
-    name: 'drawing.setThumb',
-    ...wire('drawing.setThumb'),
+    name: 'drawing_setThumb',
+    ...wire('drawing_setThumb'),
     description: 'Set the thumbnail image for a drawing (a data: URL, typically captured from the canvas). The renderer uses this to show a preview chip in the drawing list. Not destructive.',
     parameters: {
       id: { type: 'string', required: true, description: 'Drawing id' },
@@ -1957,14 +1958,14 @@ function registerDomainTools(
 
   // ---------------------------------------------------------------------------
   // inbox.* — 把磁盘文件（filePath）或粘贴图片（data: URL）挂到 TODO。
-  // 对应 main/index.ts 的 inbox.attach / inbox.attachBlob IPC。常用于
+  // 对应 main/index.ts 的 inbox_attach / inbox_attachBlob IPC。常用于
   // "把这个文件挂到这个 todo"、"把这张截图加到 bug"。文件通常已经在磁盘上
   // （截图 / 剪贴板图片保存路径），或者以 data: URL 的形式传来。
   // ---------------------------------------------------------------------------
 
   reg(defineTool({
-    name: 'inbox.attach',
-    ...wire('inbox.attach'),
+    name: 'inbox_attach',
+    ...wire('inbox_attach'),
     description: 'Attach a file from disk to a TODO. Copies the file into the app\'s attachments directory and records it in inbox_attachments. Returns the new attachment row.',
     parameters: {
       todoId: { type: 'string', required: true, description: 'Target TODO id' },
@@ -1987,8 +1988,8 @@ function registerDomainTools(
   }));
 
   reg(defineTool({
-    name: 'inbox.attachBlob',
-    ...wire('inbox.attachBlob'),
+    name: 'inbox_attachBlob',
+    ...wire('inbox_attachBlob'),
     description: 'Attach a pasted image (data: URL) to a TODO. Decodes the data URL, writes the bytes to disk, records the row. Use for screenshots / clipboard images the user said "add this picture to the todo".',
     parameters: {
       todoId: { type: 'string', required: true, description: 'Target TODO id' },
@@ -2028,17 +2029,22 @@ function registerDomainTools(
   // ---------------------------------------------------------------------------
 
   reg(defineTool({
-    name: 'conversation.list',
-    ...wire('conversation.list'),
-    description: 'List AI conversations. By default archived threads are hidden. Each row includes the title, timestamps, and an archived flag. Use conversation.history to load the turns of a specific conversation.',
+    name: 'conversation_list',
+    ...wire('conversation_list'),
+    description: 'List AI conversations. By default archived threads are hidden. Each row includes the title, timestamps, and an archived flag. Use conversation_history to load the turns of a specific conversation.',
     parameters: { includeArchived: { type: 'boolean', description: 'Include archived conversations (default false)' } },
     output: jsonOutput,
-    async execute(args: { includeArchived?: boolean }) { return { conversations: conversations.list(args.includeArchived ?? false) }; },
+    async execute(args: { includeArchived?: boolean }) {
+      const includeArchived = args.includeArchived ?? false;
+      const total = conversations.count(includeArchived);
+      const list = conversations.list({ includeArchived });
+      return { conversations: list, total };
+    },
   }));
 
   reg(defineTool({
-    name: 'conversation.create',
-    ...wire('conversation.create'),
+    name: 'conversation_create',
+    ...wire('conversation_create'),
     description: 'Create a new (empty) AI conversation. Returns the new conversation row (id, title, timestamps). The default title is "新对话 <timestamp>" — the DSH session-title service will replace it with an AI-generated title after the first turn, or the user can rename it via the UI.',
     parameters: { title: { type: 'string', description: 'Optional explicit title; omit to use the default new-conversation title' } },
     output: jsonOutput,
@@ -2046,8 +2052,8 @@ function registerDomainTools(
   }));
 
   reg(defineTool({
-    name: 'conversation.rename',
-    ...wire('conversation.rename'),
+    name: 'conversation_rename',
+    ...wire('conversation_rename'),
     description: 'Rename an AI conversation. Throws if the id is unknown or the title is empty.',
     parameters: {
       id: { type: 'string', required: true, description: 'Conversation id' },
@@ -2056,23 +2062,23 @@ function registerDomainTools(
     output: jsonOutput,
     async execute(args: { id: string; title: string }) {
       const ok = conversations.rename(args.id, args.title);
-      if (!ok) throw new Error(`conversation.rename: ${args.id} not found or archived`);
+      if (!ok) throw new Error(`conversation_rename: ${args.id} not found or archived`);
       return { ok: true };
     },
   }));
 
   reg(defineTool({
-    name: 'conversation.archive',
-    ...wire('conversation.archive'),
-    description: 'Archive an AI conversation (soft delete). Hidden from the default list. Reversible via conversation.unarchive. The on-disk JSONL log is NOT touched.',
+    name: 'conversation_archive',
+    ...wire('conversation_archive'),
+    description: 'Archive an AI conversation (soft delete). Hidden from the default list. Reversible via conversation_unarchive. The on-disk JSONL log is NOT touched.',
     parameters: { id: { type: 'string', required: true, description: 'Conversation id' } },
     output: jsonOutput,
     async execute(args: { id: string }) { return { ok: conversations.archive(args.id) }; },
   }));
 
   reg(defineTool({
-    name: 'conversation.unarchive',
-    ...wire('conversation.unarchive'),
+    name: 'conversation_unarchive',
+    ...wire('conversation_unarchive'),
     description: 'Restore an archived conversation so it shows in the default list again.',
     parameters: { id: { type: 'string', required: true, description: 'Conversation id' } },
     output: jsonOutput,
@@ -2080,17 +2086,17 @@ function registerDomainTools(
   }));
 
   reg(defineTool({
-    name: 'conversation.delete',
-    ...wire('conversation.delete'),
-    description: 'Hard delete the DB row of an AI conversation. The on-disk JSONL event log is NOT cleaned up by this (out of scope). Prefer conversation.archive for "I\'m done with this thread" semantics.',
+    name: 'conversation_delete',
+    ...wire('conversation_delete'),
+    description: 'Hard delete the DB row of an AI conversation. The on-disk JSONL event log is NOT cleaned up by this (out of scope). Prefer conversation_archive for "I\'m done with this thread" semantics.',
     parameters: { id: { type: 'string', required: true, description: 'Conversation id' } },
     output: jsonOutput,
     async execute(args: { id: string }) { return { ok: conversations.delete(args.id) }; },
   }));
 
   reg(defineTool({
-    name: 'conversation.history',
-    ...wire('conversation.history'),
+    name: 'conversation_history',
+    ...wire('conversation_history'),
     description: 'Load the persisted turn history of a conversation. Returns the same shape the AIPane uses: { type: "user" | "assistant" | "tool", text?, reasoning?, name?, args?, ok?, data?, error? }. Use this to "remember" what a past conversation discussed.',
     parameters: { id: { type: 'string', required: true, description: 'Conversation id' } },
     output: jsonOutput,
@@ -2103,7 +2109,7 @@ function registerDomainTools(
       void args.id;
       return {
         turns: [],
-        note: 'conversation.history at the tool layer is a stub; the AIPane UI loads the full history for the user when they switch threads. If you need to recall a past conversation, ask the user to open it.',
+        note: 'conversation_history at the tool layer is a stub; the AIPane UI loads the full history for the user when they switch threads. If you need to recall a past conversation, ask the user to open it.',
       };
     },
   }));
@@ -2113,8 +2119,8 @@ function registerDomainTools(
   // ---------------------------------------------------------------------------
 
   reg(defineTool({
-    name: 'ai.health',
-    ...wire('ai.health'),
+    name: 'ai_health',
+    ...wire('ai_health'),
     description: 'Check the AI provider connection. Returns { ok, mode, latencyMs?, error? }. "shim" mode means offline / no API key — model calls will echo pre-canned answers. Use this before declaring "the API is broken" — it might just be missing credentials.',
     parameters: {},
     output: jsonOutput,
@@ -2135,8 +2141,8 @@ function registerDomainTools(
   }));
 
   reg(defineTool({
-    name: 'ai.models',
-    ...wire('ai.models'),
+    name: 'ai_models',
+    ...wire('ai_models'),
     description: 'List the configured model(s) for the active provider. Returns the list of models the user has enabled (per-provider defaults from settings). Useful when the user asks "which model are you?".',
     parameters: {},
     output: jsonOutput,
@@ -2147,8 +2153,8 @@ function registerDomainTools(
   }));
 
   reg(defineTool({
-    name: 'ai.stats',
-    ...wire('ai.stats'),
+    name: 'ai_stats',
+    ...wire('ai_stats'),
     description: 'Read the cumulative AI cost from settings (sum of every successful turn\'s costUsd). Useful when the user asks "how much have you spent this month?"',
     parameters: {},
     output: jsonOutput,
@@ -2159,7 +2165,7 @@ function registerDomainTools(
   }));
 
   // ---------------------------------------------------------------------------
-  // app.currentContext — "用户现在看的是什么"。
+  // app_currentContext — "用户现在看的是什么"。
   //
   // renderer 通过 app.focus.set 把当前聚焦的实体（task / document / drawing）
   // 推到 main，这个工具读取那个指针并补全数据，让模型能基于真实信息作答——
@@ -2167,14 +2173,14 @@ function registerDomainTools(
   // 次性返回。
   //
   // 当没有聚焦时返回 null——别回退到"猜最近的任务"，那样会编造上下文、
-  // 把编辑偷偷张冠李戴。如果返回 null，让用户说想做什么，或调 todo.list
+  // 把编辑偷偷张冠李戴。如果返回 null，让用户说想做什么，或调 todo_list
   // 找候选。
   // ---------------------------------------------------------------------------
 
   reg(defineTool({
-    name: 'app.currentContext',
-    ...wire('app.currentContext'),
-    description: 'Read the user\'s current focus (what they have open right now — a task, document, or drawing). Returns the full row(s) so you can act on them with todo.update / content.writeBody / drawing.save etc. without a separate lookup. Returns null when nothing is focused — the user is on the list/stats view, in which case call todo.list to find a candidate.',
+    name: 'app_currentContext',
+    ...wire('app_currentContext'),
+    description: 'Read the user\'s current focus (what they have open right now — a task, document, or drawing). Returns the full row(s) so you can act on them with todo_update / content_writeBody / drawing_save etc. without a separate lookup. Returns null when nothing is focused — the user is on the list/stats view, in which case call todo_list to find a candidate.',
     parameters: {},
     output: jsonOutput,
     async execute() {

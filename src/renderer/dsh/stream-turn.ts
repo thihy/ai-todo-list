@@ -235,11 +235,11 @@ export function projectStreamTurn(
 
     // Harvest createdTodoId — used by AIPane to open the created todo's
     // detail panel on turn completion. Only the FIRST successful
-    // todo.create per turn counts.
+    // todo_create per turn counts.
     if (
       createdTodoId === null &&
       ok &&
-      entry.name === 'todo.create' &&
+      entry.name === 'todo_create' &&
       typeof result === 'object' &&
       result !== null
     ) {

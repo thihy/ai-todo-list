@@ -44,6 +44,7 @@ interface TodoRow {
   deleted_at: number | null;
   progress: number;
   planned_for: string | null;
+  selected_doc_tab: string | null;
 }
 
 function rowToTodo(row: TodoRow, tags: string[], drawingIds: string[], attachmentIds: string[]): Todo {
@@ -65,6 +66,7 @@ function rowToTodo(row: TodoRow, tags: string[], drawingIds: string[], attachmen
     deletedAt: row.deleted_at,
     progress: row.progress,
     plannedFor: row.planned_for,
+    selectedDocTab: row.selected_doc_tab,
   };
 }
 
@@ -159,7 +161,7 @@ export class TodoRepo {
       : null;
   }
 
-  create(input: TodoCreate, bodyPath = 'progress.html'): Todo {
+  create(input: TodoCreate, bodyPath = 'progress.md'): Todo {
     const id = newId();
     const now = Date.now();
     const status = input.status ?? 'next';
@@ -296,6 +298,17 @@ export class TodoRepo {
       try { this.onTagsAttached(patch.tags); } catch { /* ignore */ }
     }
     return this.get(id)!;
+  }
+
+  /** Persist the task's currently-selected document tab (the renderer's
+   *  composite `d:<docId>` / `g:<drawingId>` id). Deliberately a bare UPDATE
+   *  — does NOT touch updated_at, does NOT log progress, does NOT broadcast.
+   *  A tab click is ephemeral UI state and must not reorder the task list or
+   *  trigger the audit/broadcast side-effects of update(). */
+  setSelectedDocTab(todoId: ULID, tabId: string | null): void {
+    this.db
+      .prepare('UPDATE todos SET selected_doc_tab = ? WHERE id = ?')
+      .run(tabId, todoId);
   }
 
   /** Burst-merge a new progress write: if the most recent log row for this
@@ -529,6 +542,19 @@ export class TodoRepo {
     return row?.c ?? 0;
   }
 
+  /** 活跃任务总数（未删除、未归档）。给 plan-reminder 用：用户库里一个任务都
+   *  没有时，"今天安排些什么？"的提醒没有意义，直接抑制。 */
+  countActive(): number {
+    const row = this.db
+      .prepare<[], { c: number }>(
+        `SELECT COUNT(*) AS c FROM todos
+         WHERE deleted_at IS NULL
+           AND archived_at IS NULL`,
+      )
+      .get();
+    return row?.c ?? 0;
+  }
+
   batchUpdate(ids: ULID[], patch: TodoPatch): Todo[] {
     const tx = this.db.transaction(() => {
       for (const id of ids) this.update(id, patch);
@@ -562,6 +588,7 @@ export class TodoRepo {
       deleted_at: number | null;
       progress: number;
       planned_for: string | null;
+      selected_doc_tab: string | null;
       snippet: string;
       score: number;
     };

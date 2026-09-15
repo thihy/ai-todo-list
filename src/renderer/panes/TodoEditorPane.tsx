@@ -24,6 +24,7 @@
 // activity) has its own addressable region.
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useTodo, useDocuments, useAttachments } from '../hooks/useTodoListApi';
 import { useFocusSync } from '../hooks/useFocusSync';
 import { DocumentsView } from '../components/DocumentsView';
@@ -282,6 +283,8 @@ const AttachmentsView: React.FC<{ todoId: string }> = ({ todoId }) => {
     await refreshDocs();
   }, [todoId, refresh, refreshDocs]);
 
+  const [previewing, setPreviewing] = useState<InboxAttachment | null>(null);
+
   const removeAttachment = useCallback(async (att: InboxAttachment): Promise<void> => {
     // 用原始文件名（document.title）做提示，磁盘路径带 UUID 后缀不便读
     const doc = docByRef.get(att.id);
@@ -296,6 +299,24 @@ const AttachmentsView: React.FC<{ todoId: string }> = ({ todoId }) => {
     await refreshDocs();
   }, [docByRef, refresh, refreshDocs]);
 
+  // 附件名/预览链接原先用 <a href="attachment://<id>">，点击会让整个
+  // BrowserWindow 导航到该协议 URL——Chromium 以黑底渲染裸图片字节、且无
+  // 返回按钮。这里拦截点击，图片走 in-app lightbox，非图片触发下载。
+  const openAttachment = useCallback(async (att: InboxAttachment): Promise<void> => {
+    if (att.mime.startsWith('image/')) {
+      setPreviewing(att);
+      return;
+    }
+    const res = await window.todoList.inbox.read({ id: att.id });
+    if (res.ok) {
+      const a = document.createElement('a');
+      a.href = res.data.dataUrl;
+      a.download = docByRef.get(att.id)?.title
+        ?? att.filePath.split(/[\\/]/).pop() ?? '附件';
+      a.click();
+    }
+  }, [docByRef]);
+
   return (
     <div className="attachments-view">
       <ul className="attachments-view__list">
@@ -305,24 +326,27 @@ const AttachmentsView: React.FC<{ todoId: string }> = ({ todoId }) => {
           const isImage = a.mime.startsWith('image/');
           // title 属性挂详细数据：原始路径 + mime（hover 才展开，不挤占 UI）
           const detail = `${a.filePath}\n${a.mime}`;
+          const label = isImage ? '预览' : '下载';
           return (
             <li key={a.id} className="attachments-view__item" title={detail}>
               <IconAttach size={14} />
-              <a
+              <button
+                type="button"
                 className="attachments-view__name"
-                href={`attachment://${a.id}`}
                 title={title}
+                onClick={() => { void openAttachment(a); }}
               >
                 {title}
-              </a>
-              <a
+              </button>
+              <button
+                type="button"
                 className="attachments-view__open"
-                href={`attachment://${a.id}`}
-                title={isImage ? '预览' : '下载'}
-                aria-label={isImage ? '预览' : '下载'}
+                title={label}
+                aria-label={label}
+                onClick={() => { void openAttachment(a); }}
               >
-                {isImage ? '预览' : '下载'}
-              </a>
+                {label}
+              </button>
               <button
                 type="button"
                 className="attachments-view__remove"
@@ -352,7 +376,52 @@ const AttachmentsView: React.FC<{ todoId: string }> = ({ todoId }) => {
         style={{ display: 'none' }}
         onChange={(e) => { void pickFiles(e.target.files); e.target.value = ''; }}
       />
+      {previewing && (
+        <ImageLightbox attachment={previewing} onClose={() => setPreviewing(null)} />
+      )}
     </div>
+  );
+};
+
+/** 图片附件的 in-app 预览：全屏遮罩 + 居中图片，点击/Esc 关闭。
+ *  直接用 attachment://<id> 作为 <img src>（协议返回带 Content-Type 的字节，
+ *  内联渲染没问题——只有 <a href> 导航整个窗口才会黑屏）。 */
+const ImageLightbox: React.FC<{ attachment: InboxAttachment; onClose: () => void }> = ({ attachment, onClose }) => {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  return createPortal(
+    (
+      <div
+        className="image-lightbox"
+        role="dialog"
+        aria-modal="true"
+        aria-label="图片预览"
+        onClick={onClose}
+      >
+        <img
+          className="image-lightbox__img"
+          src={`attachment://${attachment.id}`}
+          alt=""
+          onClick={(e) => e.stopPropagation()}
+        />
+        <button
+          type="button"
+          className="image-lightbox__close"
+          title="关闭（Esc）"
+          aria-label="关闭"
+          onClick={onClose}
+        >
+          ×
+        </button>
+      </div>
+    ),
+    document.body,
   );
 };
 
@@ -493,7 +562,7 @@ export const TodoEditorPane: React.FC<{
             todoId={todo.id}
             taskTitle={todo.title}
             onFullscreen={onFullscreen}
-            selectedDocId={selectedDocId ?? null}
+            selectedDocId={selectedDocId ?? todo.selectedDocTab ?? null}
             onSelectDoc={onSelectDoc ?? null}
           />
         </section>

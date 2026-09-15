@@ -60,7 +60,8 @@ function normalizeReminderTime(s: string | undefined): string {
 }
 
 /** Should the current tick fire a notification? Combines snooze + daily
- *  window + already-planned guards. Pure function — exported for tests. */
+ *  window + already-planned + empty-store guards. Pure function — exported
+ *  for tests. */
 export function shouldFire(args: {
   /** Current local HH:MM. */
   now: string;
@@ -68,6 +69,9 @@ export function shouldFire(args: {
   target: string;
   /** Tasks planned for todayStart (active, non-deleted, non-archived). */
   plannedToday: number;
+  /** Total active (non-deleted, non-archived) tasks. 0 → suppress: 没有任何
+   *  任务可安排时弹"今天安排些什么？"没有意义。 */
+  activeTotal: number;
   /** epoch ms; snoozePlanGuideUntil > now → suppress. */
   snoozeUntil: number | null;
   /** epoch ms. */
@@ -75,6 +79,7 @@ export function shouldFire(args: {
 }): boolean {
   if (args.snoozeUntil != null && args.snoozeUntil > args.nowMs) return false;
   if (args.plannedToday > 0) return false;
+  if (args.activeTotal === 0) return false;
   return args.now === args.target;
 }
 
@@ -117,10 +122,12 @@ export function schedulePlanReminder(deps: PlanReminderDeps): PlanReminderHandle
       if (lastTarget === target && /* same minute */ hhmmNow === target) return;
 
       const planned = deps.repo.countPlannedFor(todayKey);
+      const activeTotal = deps.repo.countActive();
       const fire = shouldFire({
         now: hhmmNow,
         target,
         plannedToday: planned,
+        activeTotal,
         snoozeUntil: settings.snoozePlanGuideUntil,
         nowMs: now.getTime(),
       });
@@ -149,7 +156,7 @@ export function schedulePlanReminder(deps: PlanReminderDeps): PlanReminderHandle
         }
       });
       n.show();
-      logger.info(`plan-reminder: fired at ${hhmmNow} (target=${target}, plannedToday=${planned})`);
+      logger.info(`plan-reminder: fired at ${hhmmNow} (target=${target}, plannedToday=${planned}, activeTotal=${activeTotal})`);
     } catch (err) {
       logger.warn(`plan-reminder tick failed: ${(err as Error).message}`);
     }

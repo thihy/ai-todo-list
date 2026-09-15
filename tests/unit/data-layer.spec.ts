@@ -296,6 +296,21 @@ describe('TodoRepo + MarkdownStore', () => {
       expect(e.plannedFor).toBe(todayKey);
     });
 
+    it('countActive() returns live tasks, excluding soft-deleted and archived', () => {
+      // 库里一个活跃任务都没有时，plan-reminder 应抑制——countActive 是那个闸门。
+      expect(repo.countActive()).toBe(0);
+      const a = repo.create({ title: 'A' }, 'x');
+      const b = repo.create({ title: 'B' }, 'x');
+      expect(repo.countActive()).toBe(2);
+      repo.delete(a.id); // soft-deleted → excluded
+      expect(repo.countActive()).toBe(1);
+      repo.update(b.id, { archivedAt: Date.now() }); // archived → excluded
+      expect(repo.countActive()).toBe(0);
+      // 新建一条又活过来
+      repo.create({ title: 'C' }, 'x');
+      expect(repo.countActive()).toBe(1);
+    });
+
     it('update({plannedFor}) also writes the per-task todo.json snapshot', () => {
       // Mirror the production call site — IPC handlers always go through
       // the repo + writeTodoJson pair, so the JSON mirror has to include the
@@ -398,7 +413,7 @@ describe('TodoRepo + MarkdownStore', () => {
       const meta = migrated.db
         .prepare<[], { version: number }>('SELECT MAX(version) as version FROM schema_meta')
         .get();
-      expect(meta?.version).toBe(16);
+      expect(meta?.version).toBe(18);
 
       const repo14 = new TodoRepo(migrated.db);
       const all = repo14.list();

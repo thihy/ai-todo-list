@@ -27,7 +27,7 @@ import type { ProgressLogEntry } from './todo-types';
 import type { DocumentVersionEntry, TaskDocument } from './todo-types';
 import type { DrawingMeta, DrawingScene } from './todo-types';
 import type { TagDef } from './todo-types';
-import type { TaskAppearance } from './task-appearance';
+import type { TaskAppearance, TaskAppearanceCustomPreset } from './task-appearance';
 
 // --- App events pushed from main ---
 
@@ -127,6 +127,8 @@ export interface SettingsPatchArgs {
   dataDir?: string;
   customProviders?: CustomProviderInput[];
   customProviderId?: string | null;
+  /** User-Agent header for LLM provider requests. Empty = adapter default. */
+  userAgent?: string;
   archiveAfterDays?: number;
   tags?: TagDef[];
   /** Daily reminder time for the 「今日待办」 push, format `HH:MM` (24h). */
@@ -138,6 +140,8 @@ export interface SettingsPatchArgs {
   snoozePlanGuideUntil?: number | null;
   /** 任务优先级配色。theme 模式不修改 colors；custom 模式传完整 colors。 */
   taskAppearance?: TaskAppearance;
+  /** 用户在设置面板里创建的命名自定义配色预设。 */
+  taskAppearanceCustomPresets?: TaskAppearanceCustomPreset[];
   /** Auto-updater master switch. Toggling this takes effect
    *  immediately (cancels / schedules the post-startup background
    *  check) and persists across restarts. */
@@ -157,6 +161,10 @@ export interface TodoListApi {
     batchUpdate(ids: string[], patch: TodoPatch): Promise<IpcResponse<'todo.batchUpdate'>>;
     search(q: string, limit?: number): Promise<IpcResponse<'todo.search'>>;
     stats(windowDays?: number): Promise<IpcResponse<'todo.stats'>>;
+    /** Persist the task's currently-selected document tab so it survives
+     *  app restart. `tabId` is the renderer's composite id (`d:<docId>` /
+     *  `g:<drawingId>`); pass null to clear. Does NOT bump updated_at. */
+    setSelectedDoc(todoId: string, tabId: string | null): Promise<IpcResponse<'todo.setSelectedDoc'>>;
   };
   content: {
     readBody(id: string): Promise<IpcResponse<'content.readBody'>>;
@@ -204,6 +212,12 @@ export interface TodoListApi {
     remove(id: string): Promise<IpcResponse<'document.remove'>>;
     history(id: string): Promise<IpcResponse<'document.history'>>;
     restoreVersion(id: string, versionId: number): Promise<IpcResponse<'document.restoreVersion'>>;
+    /** Per-document git-backed save history. `available: false` means git
+     *  isn't on PATH — the editor hides the History button. */
+    gitHistory(id: string): Promise<IpcResponse<'document.gitHistory'>>;
+    /** Restore a document's content to a given git commit SHA by writing it
+     *  back as a new DB version (so the editor + FTS index stay in sync). */
+    gitRestore(id: string, sha: string): Promise<IpcResponse<'document.gitRestore'>>;
   };
   drawing: {
     list(todoId: string): Promise<IpcResponse<'drawing.list'>>;
@@ -384,7 +398,7 @@ export interface TodoListApi {
    * the AIPane to render prior turns when switching back to a thread.
    */
   conversation: {
-    list(opts?: { includeArchived?: boolean }): Promise<IpcResponse<'ai.conversation.list'>>;
+    list(opts?: { includeArchived?: boolean; limit?: number; offset?: number }): Promise<IpcResponse<'ai.conversation.list'>>;
     create(input?: { title?: string }): Promise<IpcResponse<'ai.conversation.create'>>;
     rename(id: string, title: string): Promise<IpcResponse<'ai.conversation.rename'>>;
     archive(id: string): Promise<IpcResponse<'ai.conversation.archive'>>;

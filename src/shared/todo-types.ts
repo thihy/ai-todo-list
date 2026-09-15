@@ -66,6 +66,13 @@ export interface Todo {
    *  Updated via todo.update({plannedFor}); the AI exposes it as
    *  todo.planForToday + todo.unplan tools. */
   plannedFor: string | null;
+  /** Currently selected document tab in this task's DocumentsView, in the
+   *  renderer's composite id form (`d:<docId>` / `g:<drawingId>`). Persisted
+   *  so the tab survives task switching AND app restart. null = never set;
+   *  the renderer auto-selects the first tab on open and writes it back via
+   *  the dedicated `todo.setSelectedDoc` channel (NOT todo.update — a tab
+   *  click must not bump updated_at and reorder the task list). */
+  selectedDocTab: string | null;
 }
 
 export interface TodoCreate {

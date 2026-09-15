@@ -239,7 +239,7 @@ core-ready -> ai-loading -> ai-ready
 
 **实施方向**
 
-- 定义统一 `ProjectionService`，管理 `todo.json`、`progress.html`、笔记、绘图和附件投影。
+- 定义统一 `ProjectionService`，管理 `todo.json`、`progress.md`、笔记、绘图和附件投影。
 - 文件采用临时文件加原子替换，避免进程中断留下半文件。
 - 投影失败有记录、重试和重建入口。
 - 启动迁移与正常读写不能并行操作同一文件集合。

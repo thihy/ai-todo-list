@@ -76,11 +76,11 @@ export class InboxStore {
     return this.todosDir;
   }
 
-  /** List a task's attachments, newest first. */
+  /** List a task's attachments in upload order (oldest first). */
   list(todoId: ULID): InboxAttachment[] {
     return this.db
       .prepare<[ULID], AttachRow>(
-        'SELECT id, todo_id, file_path, mime, created_at FROM inbox_attachments WHERE todo_id = ? ORDER BY created_at DESC',
+        'SELECT id, todo_id, file_path, mime, created_at FROM inbox_attachments WHERE todo_id = ? ORDER BY created_at ASC, id ASC',
       )
       .all(todoId)
       .map(rowToAttach);

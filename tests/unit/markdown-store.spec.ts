@@ -1,5 +1,5 @@
 // Markdown store: writeBody / history / restoreVersion trimming at MAX_BODY_VERSIONS.
-// Post-refactor: writes to {todosDir}/{slug}/progress.html.
+// Post-refactor: writes to {todosDir}/{slug}/progress.md.
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, existsSync, readdirSync } from 'node:fs';
@@ -47,7 +47,7 @@ afterEach(() => {
 });
 
 describe('MarkdownStore', () => {
-  it('writes a body to {slug}/progress.html and reads it back', () => {
+  it('writes a body to {slug}/progress.md and reads it back', () => {
     seedTodo('todo1', 'hello');
     const res = md.writeBody('todo1', '# Hello', undefined);
     expect(res.version).toBe(1);
@@ -56,7 +56,7 @@ describe('MarkdownStore', () => {
     // path even when the underlying uniqueTodoDir would otherwise append a
     // collision suffix on a second resolveTaskDir call.
     const taskDir = md.filePathFor('todo1' as never);
-    expect(existsSync(join(taskDir, 'progress.html'))).toBe(true);
+    expect(existsSync(join(taskDir, 'progress.md'))).toBe(true);
   });
 
   it('history grows on each write and trims at MAX_BODY_VERSIONS', () => {

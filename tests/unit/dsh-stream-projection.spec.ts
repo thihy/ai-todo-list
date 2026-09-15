@@ -42,7 +42,7 @@ describe('projectStreamTurn', () => {
         invocationId: 'run',
         event: {
           type: 'tool/call',
-          data: { callId: 'tool-0', name: 'todo.create', arguments: JSON.stringify({ title: '新任务' }) },
+          data: { callId: 'tool-0', name: 'todo_create', arguments: JSON.stringify({ title: '新任务' }) },
         },
         ts: 12,
       },
@@ -73,7 +73,7 @@ describe('projectStreamTurn', () => {
         {
           kind: 'tool-call',
           callId: 'tool-0',
-          name: 'todo.create',
+          name: 'todo_create',
           args: { title: '新任务' },
           argsKnown: true,
           result: { id: 'todo-1' },

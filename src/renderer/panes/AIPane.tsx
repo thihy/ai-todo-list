@@ -211,6 +211,11 @@ export const AIPane: React.FC<{
   const [input, setInput] = useState('');
   // L3-H: search/filter for the history dropdown. Cleared on dropdown close.
   const [switcherQuery, setSwitcherQuery] = useState('');
+  // 「显示更多」分页：listTotal 是后端返回的命中行数；listRemaining 是
+  // 当前页之后还剩多少条可加载；loadingMore 防连点。
+  const [listTotal, setListTotal] = useState(0);
+  const [listRemaining, setListRemaining] = useState(0);
+  const [loadingMore, setLoadingMore] = useState(false);
   // Per-row actions menu in the history dropdown.
   const [rowMenuId, setRowMenuId] = useState<string | null>(null);
 
@@ -226,6 +231,14 @@ export const AIPane: React.FC<{
   const [questionError, setQuestionError] = useState<string | null>(null);
   const questionSubmitLock = useRef(false);
   const openedCreatedTodoIdRef = useRef<string | null>(null);
+  // 「显示更多」append 模式用 —— 拿到的是「点按钮那一刻」的最新 conversations，
+  // 避免 useCallback 闭包捕获过期 state（setter 批处理下 setter 里读到的
+  // prev 也可能比真正想要的更早；ref 是最稳的同步快照）。
+  const conversationsRef = useRef<ConversationRow[]>([]);
+  // conversations 一变就同步到 ref —— 让 refreshList('append') 读得到当前长度。
+  useEffect(() => {
+    conversationsRef.current = conversations;
+  }, [conversations]);
 
   const historyRef = useRef<HTMLDivElement>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
@@ -300,6 +313,8 @@ export const AIPane: React.FC<{
       }
       const list = res.data.conversations;
       setConversations(list);
+      setListTotal(res.data.total);
+      setListRemaining(res.data.remaining);
       // Stale-closure-safe: read the LIVE currentId via the ref, not the
       // captured value. If runSubmit already allocated a conversation (or the
       // user already picked one), do not clobber it with list[0].
@@ -614,9 +629,35 @@ export const AIPane: React.FC<{
     ? conversations.filter((c) => c.title.toLowerCase().includes(switcherQuery.toLowerCase()))
     : conversations;
 
-  const refreshList = async (): Promise<void> => {
-    const res = await window.todoList.conversation.list({ includeArchived: showArchived });
-    if (res.ok) setConversations(res.data.conversations);
+  const refreshList = async (mode: 'replace' | 'append' = 'replace'): Promise<void> => {
+    if (mode === 'append' && loadingMore) return;
+    if (mode === 'append') setLoadingMore(true);
+    try {
+      const offset = mode === 'append' ? conversationsRef.current.length : 0;
+      const res = await window.todoList.conversation.list({
+        includeArchived: showArchived,
+        offset,
+      });
+      if (!res.ok) return;
+      // Stale-closure-safe：append 用 ref 读最新长度，避免依赖 conversations
+      // state（react 批处理下 setter 拿到的是过期值）。
+      if (mode === 'replace') {
+        setConversations(res.data.conversations);
+      } else {
+        const seen = new Set(conversationsRef.current.map((c) => c.id));
+        const fresh = res.data.conversations.filter((c) => !seen.has(c.id));
+        if (fresh.length === 0) {
+          // 后端没有返回新条目 —— 把 remaining 归零，按钮自然变 "已显示全部"。
+          setListRemaining(0);
+          return;
+        }
+        setConversations((prev) => [...prev, ...fresh]);
+      }
+      setListTotal(res.data.total);
+      setListRemaining(res.data.remaining);
+    } finally {
+      if (mode === 'append') setLoadingMore(false);
+    }
   };
 
   // "新建对话" no longer pre-creates a conversation with a placeholder
@@ -1134,8 +1175,9 @@ export const AIPane: React.FC<{
                       {filteredConversations.length} / {conversations.length} 个匹配
                     </div>
                   )}
-                  {filteredConversations.map((c) => (
-                    <div key={c.id} className="aipane__menu-row">
+                  <div className="aipane__menu-list">
+                    {filteredConversations.map((c) => (
+                      <div key={c.id} className="aipane__menu-row">
                       <button
                         type="button"
                         role="option"
@@ -1188,6 +1230,21 @@ export const AIPane: React.FC<{
                       )}
                     </div>
                   ))}
+                  </div>
+                  {/* 「显示更多」分页按钮 —— 在滚动容器下方；剩余 0 时禁用并改文案。
+                      搜索过滤后没有命中时隐藏按钮（避免「还有 N 条」与「没有匹配…」同时出现）。 */}
+                  {conversations.length > 0 && filteredConversations.length > 0 && (
+                    <button
+                      type="button"
+                      className="aipane__menu-list-more"
+                      onClick={() => void refreshList('append')}
+                      disabled={loadingMore || listRemaining === 0}
+                    >
+                      {listRemaining > 0
+                        ? `还有 ${listRemaining} 条 · 显示更多`
+                        : `已显示全部 ${listTotal} 条`}
+                    </button>
+                  )}
                   <div className="aipane__menu-divider" />
                   <button
                     type="button"

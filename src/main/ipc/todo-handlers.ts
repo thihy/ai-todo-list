@@ -188,6 +188,18 @@ export function registerTodoHandlers(
     }
   });
 
+  register('todo.setSelectedDoc', (_e, req) => {
+    try {
+      repo.setSelectedDocTab(req.todoId, req.tabId);
+      // No broadcast: the renderer already holds the value optimistically
+      // (it just set it via onSelectDoc). Broadcasting 'todos' would only
+      // make every useTodo consumer refetch for a no-op tab change.
+      return Promise.resolve(okResult(undefined));
+    } catch (err) {
+      return Promise.resolve(failResult('set_selected_doc_failed', (err as Error).message));
+    }
+  });
+
   register('progress.log', (_e, req) => {
     try {
       const result = repo.logProgress(req.todoId, req.percent, req.note);

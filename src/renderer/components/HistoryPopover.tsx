@@ -17,13 +17,13 @@ import { IconHistory } from './icons';
 import type { GitHistoryEntry } from '../../shared/todo-types';
 
 export const HistoryPopover: React.FC<{
-  todoId: string;
+  docId: string;
   /** Called after a successful restore so the editor can re-read its body
    *  and reset its `dirty` flag. */
   onRestored?: () => void;
-}> = ({ todoId, onRestored }) => {
+}> = ({ docId, onRestored }) => {
   const [open, setOpen] = useState(false);
-  const { available, entries, refresh, restore } = useGitHistory(todoId);
+  const { available, entries, refresh, restore } = useGitHistory(docId);
   const [busy, setBusy] = useState<string | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
 
@@ -70,9 +70,6 @@ export const HistoryPopover: React.FC<{
         title="修改历史 (Git)"
         aria-label="修改历史"
         aria-expanded={open}
-        // Hide the button entirely when git isn't on PATH — the user's
-        // machine doesn't have git installed, the feature is unavailable.
-        style={available ? undefined : { display: 'none' }}
       >
         <IconHistory size={14} />
       </button>

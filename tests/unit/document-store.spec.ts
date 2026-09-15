@@ -1,7 +1,8 @@
 // DocumentStore + schema v11 migration tests. Locks the multi-document
-// workspace model: every task gets a default progress doc; the legacy .md
-// body migrates into a note_md doc with its full version history preserved;
-// create/read/write/rename/remove + version trim behave like MarkdownStore.
+// workspace model: every task gets a default progress doc (Markdown); the
+// legacy .md body migrates into the progress doc with its full version
+// history preserved; create/read/write/rename/remove + version trim behave
+// like MarkdownStore.
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { existsSync, readFileSync, mkdtempSync, rmSync } from 'node:fs';
@@ -46,23 +47,56 @@ describe('DocumentStore + v11 migration', () => {
     expect(list[0]!.ord).toBe(0);
   });
 
-  it('surfaces a legacy .md body as a note_md doc with history', () => {
+  it('surfaces a legacy .md body in the progress doc with history', () => {
     // A todo created AFTER the v11 migration still wrote its body via
     // MarkdownStore (content_versions). ensureDefaultDocs must bridge that
-    // legacy body into a note_md doc so it's visible in the workspace.
+    // legacy body into the progress doc so it's visible in the workspace.
     const t = repo.create({ title: 'Has Notes' }, 'x');
     md.writeBody(t.id, '# v1\nfirst');
     md.writeBody(t.id, '# v2\nsecond');
 
     docs.ensureDefaultDocs(t.id);
     const list = docs.list(t.id);
-    const note = list.find((d) => d.kind === 'note_md');
-    expect(note).toBeTruthy();
+    const prog = list.find((d) => d.kind === 'progress')!;
+    expect(prog).toBeTruthy();
     // The latest content is the last-written body.
-    const read = docs.read(note!.id);
+    const read = docs.read(prog.id);
     expect(read.content).toBe('# v2\nsecond');
     // Full history preserved (2 versions).
-    expect(docs.history(note!.id)).toHaveLength(2);
+    expect(docs.history(prog.id)).toHaveLength(2);
+  });
+
+  it('absorbs a legacy 笔记 note_md doc into the progress doc', () => {
+    // The v11 migration created a note_md doc titled '笔记' (from the legacy
+    // .md body). ensureDefaultDocs must fold it into the progress doc and
+    // drop the note_md so every task surfaces only 进展.
+    const t = repo.create({ title: 'T' }, 'x');
+    const note = docs.create(t.id, 'note_md', '笔记');
+    docs.write(note.id, '笔记内容', 0);
+
+    docs.ensureDefaultDocs(t.id);
+    const list = docs.list(t.id);
+    // Only the progress doc remains.
+    expect(list).toHaveLength(1);
+    expect(list[0]!.kind).toBe('progress');
+    // The note content was folded into the progress doc.
+    expect(docs.read(list[0]!.id).content).toBe('笔记内容');
+    // The note_md row is gone.
+    expect(docs.get(note.id)).toBeNull();
+  });
+
+  it('leaves user-added 文档 note_md docs alone', () => {
+    // A note_md the user created via "+" (titled '文档', not '笔记') must
+    // survive ensureDefaultDocs — only the legacy '笔记' default is absorbed.
+    const t = repo.create({ title: 'T' }, 'x');
+    docs.ensureDefaultDocs(t.id);
+    const doc = docs.create(t.id, 'note_md', '文档');
+    docs.write(doc.id, 'hello', 0);
+
+    docs.ensureDefaultDocs(t.id);
+    const list = docs.list(t.id);
+    expect(list).toHaveLength(2);
+    expect(list.find((d) => d.title === '文档')).toBeTruthy();
   });
 
   it('write appends a version and trims to MAX_BODY_VERSIONS', () => {
@@ -117,15 +151,15 @@ describe('DocumentStore file mirrors (per-task layout)', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it('writeToFile mirrors progress doc to {taskDir}/progress.html', () => {
+  it('writeToFile mirrors progress doc to {taskDir}/progress.md', () => {
     const t = repo.create({ title: 'T' }, 'x');
     docs.ensureDefaultDocs(t.id);
     const prog = docs.list(t.id).find((d) => d.kind === 'progress')!;
     const taskDir = paths.todoDir(todosDir, t.title, t.id);
-    docs.writeToFile(taskDir, 'progress', prog.title!, '<p>hi</p>');
+    docs.writeToFile(taskDir, 'progress', prog.title!, '# hi');
     const path = paths.progressFile(taskDir);
     expect(existsSync(path)).toBe(true);
-    expect(readFileSync(path, 'utf8')).toBe('<p>hi</p>');
+    expect(readFileSync(path, 'utf8')).toBe('# hi');
   });
 
   it('writeToFile mirrors note_md doc to {taskDir}/{slug}.md', () => {

@@ -16,7 +16,7 @@ import type { SettingsGetRes, TagCatalogRow, TagCatalogEntry, StartupComponentSt
 import { useDataVersion } from '../data-bus';
 import { compactAiStreamEvents } from '../dsh/stream-buffer';
 import { deriveProviderStatus, type ProviderStatus } from '../dsh/provider-status';
-import { normalizeTaskAppearance } from '../../shared/task-appearance';
+import { normalizeCustomPresets, normalizeTaskAppearance } from '../../shared/task-appearance';
 import { useToastBus } from '../components/Toast';
 
 declare global {
@@ -256,10 +256,11 @@ export function useAttachments(todoId: string | null): {
 
 // ----- Multi-document workspace (schema v11) -----
 
-/** Git-backed save history for the task's markdown body. `available: false`
+/** Git-backed save history for a single document (progress / note_md).
+ *  Keyed by document id so each doc has its own log. `available: false`
  *  means git isn't on PATH — the History button then hides itself. The
  *  caller can `refresh()` after a save to pull the new commit. */
-export function useGitHistory(todoId: string | null): {
+export function useGitHistory(docId: string | null): {
   available: boolean;
   entries: GitHistoryEntry[];
   refresh: () => Promise<void>;
@@ -268,12 +269,12 @@ export function useGitHistory(todoId: string | null): {
   const [available, setAvailable] = useState(false);
   const [entries, setEntries] = useState<GitHistoryEntry[]>([]);
   const refresh = useCallback(async () => {
-    if (!todoId) {
+    if (!docId) {
       setAvailable(false);
       setEntries([]);
       return;
     }
-    const res = await window.todoList.content.gitHistory(todoId);
+    const res = await window.todoList.document.gitHistory(docId);
     if (res.ok) {
       setAvailable(res.data.available);
       setEntries(res.data.entries);
@@ -281,7 +282,7 @@ export function useGitHistory(todoId: string | null): {
       setAvailable(false);
       setEntries([]);
     }
-  }, [todoId]);
+  }, [docId]);
 
   useEffect(() => {
     void refresh();
@@ -289,11 +290,11 @@ export function useGitHistory(todoId: string | null): {
 
   const restore = useCallback(
     async (sha: string): Promise<boolean> => {
-      if (!todoId) return false;
-      const res = await window.todoList.content.gitRestore(todoId, sha);
+      if (!docId) return false;
+      const res = await window.todoList.document.gitRestore(docId, sha);
       return res.ok;
     },
-    [todoId],
+    [docId],
   );
 
   return { available, entries, refresh, restore };
@@ -385,14 +386,17 @@ export function useDrawing(id: string | null): { scene: DrawingScene | null } {
   return { scene };
 }
 
-/** 在设置读取边界统一归一化——只覆盖 taskAppearance 字段，其他字段原样
- *  保留。这样响应里缺 / null / 旧格式的 taskAppearance 都不会让 TaskAppearancePane
- *  在 `value.mode` 上炸掉。SettingsGetRes 的 taskAppearance 类型是必填，但跨
- *  版本主进程（更老的二进制没下发这个字段）仍是现实情况，必须在边界做兜底。 */
+/** 在设置读取边界统一归一化——只覆盖 taskAppearance / 命名自定义预设，
+ *  其他字段原样保留。这样响应里缺 / null / 旧格式都不会让
+ *  TaskAppearancePane 在 `value.mode` 上炸掉，也保证面板上能看到用户的
+ *  命名自定义预设（即使老的主进程没下发也走默认 []）。SettingsGetRes
+ *  类型声明里这两个字段是必填，但跨版本主进程（更老的二进制没下发）仍是
+ *  现实情况，必须在边界做兜底。 */
 function normalizeSettingsResponse(settings: SettingsGetRes): SettingsGetRes {
   return {
     ...settings,
     taskAppearance: normalizeTaskAppearance(settings.taskAppearance),
+    taskAppearanceCustomPresets: normalizeCustomPresets(settings.taskAppearanceCustomPresets),
   };
 }
 

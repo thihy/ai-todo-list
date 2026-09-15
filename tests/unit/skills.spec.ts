@@ -21,9 +21,9 @@ describe('Skills', () => {
 
   it('enabledToolsFor unions tools across selected skills', () => {
     const tools = enabledToolsFor(['todo-ops', 'content-ops']);
-    expect(tools).toContain('todo.list');
-    expect(tools).toContain('content.writeBody');
-    expect(tools).not.toContain('drawing.save');
+    expect(tools).toContain('todo_list');
+    expect(tools).toContain('content_writeBody');
+    expect(tools).not.toContain('drawing_save');
   });
 
   it('composeSystemPrompt concatenates enabled fragments', () => {

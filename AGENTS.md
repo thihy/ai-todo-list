@@ -10,7 +10,7 @@ or on-disk storage. Detailed contracts live in
 - **Task / Todo**: the user-owned work item stored in `todos`.
 - **Subtask**: a normal task whose `parentId` points to another real task.
 - **Today**: `plannedFor === local YYYY-MM-DD`; it is independent of `dueAt`.
-- **Progress document**: rich HTML content stored as `progress.html`. Do not
+- **Progress document**: Markdown content stored as `progress.md`. Do not
   confuse it with numeric `todos.progress` or `progress_log` timeline entries.
 - **Note**: a Markdown task document (`note_md`).
 - **Drawing**: an Excalidraw JSON document.
@@ -45,7 +45,7 @@ or on-disk storage. Detailed contracts live in
   todos/
     {storage_dir}/
       todo.json
-      progress.html
+      progress.md
       {noteSlug}.md
       {drawingSlug}.excalidraw
       thumbs/{drawingId}.thumb.png

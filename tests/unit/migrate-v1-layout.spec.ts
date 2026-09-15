@@ -2,7 +2,7 @@
 //
 // The sweep runs once per process and is gated by a marker file, so these
 // tests exercise the function directly with hand-built v1 fixtures and assert:
-//   1. flat {todosDir}/{ulid}.md bodies land in {todosDir}/{slug}/progress.html
+//   1. flat {todosDir}/{ulid}.md bodies land in {todosDir}/{slug}/progress.md
 //   2. todo.json snapshots are written from the DB row
 //   3. drawings/{todoId}/{drawingId}.excalidraw + thumbs move into per-task dirs
 //   4. inbox_attachments flat files move + DB file_path rows update
@@ -65,7 +65,7 @@ describe('migrateV1Layout', () => {
     rmSync(f.rootDir, { recursive: true, force: true });
   });
 
-  it('migrates flat {todosDir}/{ulid}.md → {todosDir}/{ulid6-slug}/progress.html', async () => {
+  it('migrates flat {todosDir}/{ulid}.md → {todosDir}/{ulid6-slug}/progress.md', async () => {
     // v1 fixture: a task with a body file written as `{ulid}.md`.
     const todo = f.repo.create({ title: '工作笔记' }, 'x');
     const legacyBodyPath = join(f.todosDir, `${todo.id}.md`);
@@ -82,8 +82,8 @@ describe('migrateV1Layout', () => {
     expect(result.migrated).toBeGreaterThanOrEqual(1);
     expect(existsSync(legacyBodyPath)).toBe(false);
     const newDir = paths.todoDir(f.todosDir, '工作笔记', todo.id);
-    expect(existsSync(join(newDir, 'progress.html'))).toBe(true);
-    expect(readFileSync(join(newDir, 'progress.html'), 'utf8')).toBe('<p>hello v1</p>');
+    expect(existsSync(join(newDir, 'progress.md'))).toBe(true);
+    expect(readFileSync(join(newDir, 'progress.md'), 'utf8')).toBe('<p>hello v1</p>');
   });
 
   it('writes todo.json from the DB row', async () => {

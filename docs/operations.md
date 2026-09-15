@@ -54,7 +54,7 @@ Inside the data directory:
 ├── todos/
 │   └── {storage_dir}/
 │       ├── todo.json
-│       ├── progress.html
+│       ├── progress.md
 │       ├── {noteSlug}.md
 │       ├── {drawingSlug}.excalidraw
 │       ├── thumbs/{drawingId}.thumb.png

@@ -11,10 +11,16 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomBytes } from 'node:crypto';
-import { DEFAULT_CAPTURE_HOTKEY, ROOT_DIR_NAME, CONFIG_FILENAME, DEFAULT_PROVIDER } from '../../shared/constants';
+import { DEFAULT_CAPTURE_HOTKEY, ROOT_DIR_NAME, CONFIG_FILENAME, DEFAULT_PROVIDER, DEFAULT_AI_USER_AGENT } from '../../shared/constants';
 import type { AIModel, AIProvider, CustomProviderConfig, CustomProviderInput } from '../../shared/ai-types';
 import type { TagDef } from '../../shared/todo-types';
-import { DEFAULT_TASK_APPEARANCE, type TaskAppearance, normalizeTaskAppearance } from '../../shared/task-appearance';
+import {
+  DEFAULT_TASK_APPEARANCE,
+  type TaskAppearance,
+  type TaskAppearanceCustomPreset,
+  normalizeCustomPresets,
+  normalizeTaskAppearance,
+} from '../../shared/task-appearance';
 
 export interface PersistedSettings {
   provider: AIProvider;
@@ -31,6 +37,11 @@ export interface PersistedSettings {
   customProviders: CustomProviderConfig[];
   /** Active custom instance id when provider==='custom'; null = none. */
   customProviderId: string | null;
+  /** User-Agent header value sent on LLM provider requests. The DSH adapter
+   *  hard-codes its own attribution and strips `user-agent` from profile
+   *  headers, so override happens via a custom `fetch` in llm-adapter.ts.
+   *  Empty string = use the adapter default (deepseek-harness/…). */
+  userAgent: string;
   /** Auto-archive: a `done` task is archived once its done_at is older than
    *  this many days. 0 = never auto-archive (manual archive only). The boot
    *  sweep + hourly interval in index.ts read this. */
@@ -59,6 +70,11 @@ export interface PersistedSettings {
    *  injects the user-chosen values as CSS custom properties. Normalised on
    *  load so any partial / corrupted JSON falls back to defaults. */
   taskAppearance: TaskAppearance;
+  /** 用户在设置面板里创建的命名自定义配色预设。可删除、可重选；
+   *  presetIdOf() 在 custom-mode 下按"用户优先、内建其次"的顺序匹配颜色。
+   *  Normalised on load —— 损坏条目（id/label 缺失、颜色非法、超过上限）
+   *  会被过滤掉，确保面板不会被打坏。 */
+  taskAppearanceCustomPresets: TaskAppearanceCustomPreset[];
   /** SEC-01 — JSON-RPC bridge settings. The bridge is OFF by default;
    *  users opt in via Settings → 数据 → 外部访问. The capability token is
    *  generated on first enable and rotated on demand. The token is
@@ -93,12 +109,14 @@ const DEFAULTS: PersistedSettings = {
   dataDir: null,
   customProviders: [],
   customProviderId: null,
+  userAgent: DEFAULT_AI_USER_AGENT,
   archiveAfterDays: 1,
   tags: [],
   dailyPlanReminderTime: '09:00',
   lastPlanGuideDate: null,
   snoozePlanGuideUntil: null,
   taskAppearance: { ...DEFAULT_TASK_APPEARANCE, colors: { ...DEFAULT_TASK_APPEARANCE.colors } },
+  taskAppearanceCustomPresets: [],
   sdkBridge: { enabled: false, token: null },
   autoUpdate: true,
 };
@@ -135,15 +153,27 @@ export class SettingsStore {
   }
 
   private load(): PersistedSettings {
-    if (!existsSync(this.path)) return { ...DEFAULTS, taskAppearance: { ...DEFAULT_TASK_APPEARANCE, colors: { ...DEFAULT_TASK_APPEARANCE.colors } } };
+    if (!existsSync(this.path)) {
+      return {
+        ...DEFAULTS,
+        taskAppearance: { ...DEFAULT_TASK_APPEARANCE, colors: { ...DEFAULT_TASK_APPEARANCE.colors } },
+        taskAppearanceCustomPresets: [],
+      };
+    }
     try {
       const raw = JSON.parse(readFileSync(this.path, 'utf8'));
       // 旧 config.json 没有 taskAppearance 字段：归一化成默认值而不是整对象 spread 覆盖。
       const merged = { ...DEFAULTS, ...raw };
       merged.taskAppearance = normalizeTaskAppearance(raw.taskAppearance);
+      // 用户自定义预设：缺字段 / 损坏值时归一化成 []。
+      merged.taskAppearanceCustomPresets = normalizeCustomPresets(raw.taskAppearanceCustomPresets);
       return merged;
     } catch {
-      return { ...DEFAULTS, taskAppearance: { ...DEFAULT_TASK_APPEARANCE, colors: { ...DEFAULT_TASK_APPEARANCE.colors } } };
+      return {
+        ...DEFAULTS,
+        taskAppearance: { ...DEFAULT_TASK_APPEARANCE, colors: { ...DEFAULT_TASK_APPEARANCE.colors } },
+        taskAppearanceCustomPresets: [],
+      };
     }
   }
 
@@ -202,12 +232,14 @@ export class SettingsStore {
         model: c.model,
       })),
       customProviderId: v.customProviderId,
+      userAgent: v.userAgent,
       archiveAfterDays: v.archiveAfterDays,
       tags: v.tags,
       dailyPlanReminderTime: v.dailyPlanReminderTime,
       lastPlanGuideDate: v.lastPlanGuideDate,
       snoozePlanGuideUntil: v.snoozePlanGuideUntil,
       taskAppearance: v.taskAppearance,
+      taskAppearanceCustomPresets: v.taskAppearanceCustomPresets,
       // SEC-01 — always return the full state (enabled + token) so the
       // renderer can show "regenerate / copy" affordances even when the
       // bridge is currently disabled. The token is NOT an API key — its

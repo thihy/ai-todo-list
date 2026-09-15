@@ -287,8 +287,19 @@ export function registerAiHandlers(dsh: DshHandle): void {
       // optional; until they're re-introduced via a dedicated per-row
       // hydration endpoint, they're simply absent. The history menu
       // already hides both when either is missing.
-      const list = deps.conversations.list(req?.includeArchived === true);
-      return Promise.resolve(okResult({ conversations: list }));
+      //
+      // 「显示更多」分页：limit/offset 由 ConversationRepo 内部夹紧；返回
+      // total + remaining 让渲染端判断是否还有可加载页。
+      const includeArchived = req?.includeArchived === true;
+      const offset = req?.offset ?? 0;
+      const total = deps.conversations.count(includeArchived);
+      const conversations = deps.conversations.list({
+        includeArchived,
+        limit: req?.limit,
+        offset,
+      });
+      const remaining = Math.max(0, total - offset - conversations.length);
+      return Promise.resolve(okResult({ conversations, total, remaining }));
     } catch (err) {
       return Promise.resolve(failResult('list_failed', (err as Error).message));
     }

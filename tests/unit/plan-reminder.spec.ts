@@ -8,6 +8,7 @@ const base = {
   now: '09:00',
   target: '09:00',
   plannedToday: 0,
+  activeTotal: 3,
   snoozeUntil: null as number | null,
   nowMs: 1_700_000_000_000,
 };
@@ -37,6 +38,11 @@ describe('plan-reminder.shouldFire', () => {
   it('snoozeUntil === nowMs counts as expired (boundary)', () => {
     // Strict > means exactly equal to now is no longer suppressed.
     expect(shouldFire({ ...base, snoozeUntil: base.nowMs })).toBe(true);
+  });
+
+  it('suppresses when there are no active tasks at all', () => {
+    // 没有任何任务可安排时，"今天安排些什么？"没意义，不弹。
+    expect(shouldFire({ ...base, activeTotal: 0 })).toBe(false);
   });
 });
 

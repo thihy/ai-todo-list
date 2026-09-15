@@ -26,6 +26,15 @@ export const DEFAULT_CAPTURE_HOTKEY = 'CommandOrControl+Shift+T';
 export const DEFAULT_THEME = 'system' as const;
 export const DEFAULT_PROVIDER = 'deepseek' as const;
 
+/**
+ * User-Agent token sent on every LLM provider request. The DSH `dsh-llm`
+ * adapter hard-codes its own `deepseek-harness/…` attribution and strips
+ * `user-agent` from profile headers, so we can't override it via headers —
+ * we inject a custom `fetch` (see llm-adapter.ts) that rewrites the header
+ * on the wire. Defaults to `TodoList`; the user can change it in 设置 → 模型.
+ * Empty string falls back to the adapter default (`deepseek-harness/…`). */
+export const DEFAULT_AI_USER_AGENT = 'TodoList';
+
 export const ROOT_DIR_NAME = '.todo-list';
 export const DB_FILENAME = 'db.sqlite';
 export const CONFIG_FILENAME = 'config.json';
@@ -51,7 +60,7 @@ export const SKILL_DRAFT_PROGRESS = 'draftProgress';
 export const SKILL_SUMMARIZE = 'summarize';
 export const SKILL_DATA_ANALYSIS = 'dataAnalysis';
 
-// AI tool permission tiers live in ./permission-tiers.ts (dotted tool names
+// AI tool permission tiers live in ./permission-tiers.ts (underscored tool names
 // matching the registry in src/main/dsh/dsh-runtime.ts). The snake_case
 // names that used to live here drifted from the registry; they were never
 // imported by any production code.

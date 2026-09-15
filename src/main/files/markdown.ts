@@ -1,6 +1,6 @@
 // Progress doc file storage. Per-task layout (post-refactor):
 //
-//   {dataDir}/todos/{slug}/progress.html      ← raw HTML (no front-matter)
+//   {dataDir}/todos/{slug}/progress.md      ← Markdown (no front-matter)
 //
 // DB is still the authority: `todos.body` (mirror for FTS5 snippets) and
 // `content_versions.body` (version history). The file is a write-through
@@ -9,9 +9,9 @@
 
 import type Database from 'better-sqlite3';
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
 import type { ContentVersionEntry, ULID } from '../../shared/todo-types';
 import { MAX_BODY_VERSIONS } from '../../shared/constants';
+import { progressFile } from './paths';
 
 export class MarkdownStore {
   constructor(
@@ -46,7 +46,7 @@ export class MarkdownStore {
   }
 
   readBody(id: ULID): { markdown: string; version: number } {
-    const path = join(this.taskDirFor(id), 'progress.html');
+    const path = progressFile(this.taskDirFor(id));
     let body = '';
     if (existsSync(path)) {
       body = readFileSync(path, 'utf8');
@@ -83,7 +83,7 @@ export class MarkdownStore {
     const now = Date.now();
     const taskDir = this.taskDirFor(id);
     mkdirSync(taskDir, { recursive: true });
-    writeFileSync(join(taskDir, 'progress.html'), html, 'utf8');
+    writeFileSync(progressFile(taskDir), html, 'utf8');
 
     const tx = this.db.transaction(() => {
       this.db

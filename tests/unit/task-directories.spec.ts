@@ -39,11 +39,11 @@ describe('TaskDirectoryStore', () => {
   it('updates the association only when a directory rename succeeds', () => {
     const todo = repo.create({ title: 'Old' }, 'x');
     const oldDir = dirs.resolve(todo.id);
-    writeFileSync(join(oldDir, 'progress.html'), '<p>saved</p>');
+    writeFileSync(join(oldDir, 'progress.md'), '<p>saved</p>');
     const moved = dirs.rename(todo.id, 'New');
     expect(moved.dirRenamed).toBe(true);
     expect(dirs.resolve(todo.id)).toBe(moved.newDir);
-    expect(existsSync(join(moved.newDir, 'progress.html'))).toBe(true);
+    expect(existsSync(join(moved.newDir, 'progress.md'))).toBe(true);
 
     // Occupied target makes the rename fail; association remains on New.
     const blockedTarget = join(root, 'todos', `${todo.id.slice(0, 6)}-Blocked`);

@@ -1,15 +1,20 @@
 // 任务优先级配色 —— 用户按优先级（none / low / medium / high）配置背景色
-// 与前景色。提供多套预设 + 自定义模式，CSS 通过自定义属性
+// 与前景色。提供多套预设 + 用户自定义命名预设，CSS 通过自定义属性
 //   --task-prio-<priority>-bg / --task-prio-<priority>-fg
 // 在 TodoListPane 顶层注入，.task-row[data-priority="..."] 选择器命中。
 //
 // 设计要点：
 // - mode 只有两种：
-//     theme  = 跟随主题（应用主题默认样式，taskListStyle 不注入颜色）。
-//     custom = 显式配色（包括白底黑字 / 柔和彩色 / 深色预设以及手动配色），
-//              taskListStyle 把 colors 注入 CSS 自定义属性。
+//     theme  = 跟随主题（DEFAULT_TASK_APPEARANCE 颜色，taskListStyle 始终
+//              注入该默认色的 CSS 变量，所以主题模式也有可见的优先级底色）。
+//     custom = 显式配色（内建自定义预设「白底黑字 / 柔和彩色」或用户命名
+//              自定义预设或手动配色），taskListStyle 把 colors 注入 CSS
+//              自定义属性。
 // - 持久化只存 mode + 完整 colors 映射（不存"当前选哪个预设"）。
 //   "当前是否匹配某个预设"由 presetIdOf() 派生，方便任意一侧演进。
+// - 用户自定义命名预设单独存为 taskAppearanceCustomPresets: [{id,label,
+//   colors}]; 在 presetIdOf 里按"用户优先、内建其次"的顺序匹配颜色，让
+//   用户命名预设的归属稳定。
 // - 旧数据归一化：mode 缺省 / 非法 → 'theme'；colors 等于 DEFAULT_TASK_APPEARANCE
 //   默认值时保留 theme；否则迁为 custom 但保留颜色，避免重置用户设置。
 // - 颜色仅作 CSS 字符串接受 #RGB / #RRGGBB / 简单校验，不做语义判断（不
@@ -84,6 +89,50 @@ export const TASK_APPEARANCE_PRESETS: { id: string; label: string; value: TaskAp
   { id: 'soft',    label: '柔和彩色',         value: PRESET_SOFT_COLORS },
 ];
 
+/** 用户在设置面板里创建的命名自定义预设。id 由 crypto.randomUUID() 生成，
+ *  在删除 / 重排时不复用 —— UI 顺序由 customPresets 数组顺序决定。 */
+export interface TaskAppearanceCustomPreset {
+  id: string;
+  label: string;
+  colors: PriorityColorMap;
+}
+
+/** 用户自定义预设上限。损坏的 settings.json 可能塞入大量条目；截断防止
+ *  渲染时撑爆面板。32 远高于正常用量（一般 < 5）。 */
+export const MAX_CUSTOM_PRESETS = 32;
+
+/** 把任意输入归一化成有效的 TaskAppearanceCustomPreset[]。
+ *  - 非数组 → []。
+ *  - 每项需 id 非空字符串、label 非空字符串、4 个优先级颜色均为合法 hex；
+ *    否则丢弃该条（不抛错，避免损坏文件导致面板打不开）。
+ *  - 按 id 去重（首次出现胜出），保留用户命名意图。
+ *  - 超过 MAX_CUSTOM_PRESETS 时截断尾部。
+ *  - 不做大小写归一化、不合并同色。 */
+export function normalizeCustomPresets(raw: unknown): TaskAppearanceCustomPreset[] {
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set<string>();
+  const out: TaskAppearanceCustomPreset[] = [];
+  for (const item of raw) {
+    if (out.length >= MAX_CUSTOM_PRESETS) break;
+    if (!item || typeof item !== 'object') continue;
+    const obj = item as Partial<TaskAppearanceCustomPreset>;
+    if (typeof obj.id !== 'string' || obj.id.length === 0) continue;
+    if (seen.has(obj.id)) continue;
+    if (typeof obj.label !== 'string' || obj.label.trim().length === 0) continue;
+    const colors = obj.colors;
+    if (!colors || typeof colors !== 'object') continue;
+    const merged: PriorityColorMap = {
+      none:   mergeColor(colors.none,   DEFAULT_TASK_APPEARANCE.colors.none),
+      low:    mergeColor(colors.low,    DEFAULT_TASK_APPEARANCE.colors.low),
+      medium: mergeColor(colors.medium, DEFAULT_TASK_APPEARANCE.colors.medium),
+      high:   mergeColor(colors.high,   DEFAULT_TASK_APPEARANCE.colors.high),
+    };
+    seen.add(obj.id);
+    out.push({ id: obj.id, label: obj.label.trim(), colors: merged });
+  }
+  return out;
+}
+
 /** 简单 CSS 颜色校验 —— 接受 #RGB / #RRGGBB，不接受 rgb() / 命名色。
  *  Settings UI 编辑框使用，焦点离开 / 保存时都过这一道。失败时调用方
  *  决定回退到上一个有效值或显示红框——本函数只判定合法性。 */
@@ -134,31 +183,56 @@ function mergeColor(input: Partial<TaskColorPair> | undefined, fallback: TaskCol
   };
 }
 
-/** 给定当前 appearance，找到第一个匹配它的预设 id；返回 'custom' 表示
- *  当前为自定义配色（颜色与任何 custom 预设都不一致）。
+/** 给定当前 appearance 与用户自定义预设列表，找到第一个匹配它的预设
+ *  id；返回 'custom' 表示当前为手动配色（颜色与任何预设都不一致）。
  *  - mode='theme'  + 颜色 = DEFAULT_TASK_APPEARANCE → 'theme'（跟随主题）。
- *  - mode='custom' + 颜色匹配某个 custom 预设 → 那个预设的 id（保持
- *    custom 模式，但下拉能识别为某个预设，方便用户回看 / 改回）。
+ *  - mode='custom' + 颜色匹配某个用户自定义预设 → 该用户预设 id（用户
+ *    预设优先于内建，让用户命名预设的归属稳定）。
+ *  - mode='custom' + 颜色匹配某个内建 custom 预设 → 该内建 id。
  *  - mode='custom' + 颜色匹配 DEFAULT 但 mode 不是 'theme' → 仍然
  *    'custom'（重要：用户显式选了 custom，只是恰好把颜色设成了默认。
  *    不能因为颜色相同就标成 theme —— 那会让下拉回弹到「跟随主题」，
- *    用户的「自定义」意图被悄悄吞掉）。
+ *    用户的「自定义」意图被悄悄吞掉）。注意：theme-mode 分支严格隔离，
+ *    即使用户预设颜色 = DEFAULT，只要 mode='custom' 也只走下面的循环。
  *  - 任何其它情况 → 'custom'（手动配色）。 */
-export function presetIdOf(appearance: TaskAppearance): string | null {
+export function presetIdOf(
+  appearance: TaskAppearance,
+  customPresets: readonly TaskAppearanceCustomPreset[] = [],
+): string {
   // 已归一化为 theme：颜色等于 DEFAULT 才算 theme；否则视为 custom
   // （理论上 normalizeTaskAppearance 不会让 theme+非默认色走出来，但保
   // 守起见仍按颜色判定，避免 UI 误弹「跟随主题」）。
   if (appearance.mode === 'theme') {
     return sameColors(appearance.colors, DEFAULT_TASK_APPEARANCE.colors) ? 'theme' : 'custom';
   }
-  // mode === 'custom'：只在 custom 预设里匹配颜色，theme 预设不参与
-  // 比对。否则用户手动把颜色调成 DEFAULT 颜色会被误标为 theme。
+  // mode === 'custom'：先匹配用户自定义预设（用户命名优先），再匹配内建
+  // custom 预设。theme 预设不参与比对，避免用户把颜色调成 DEFAULT 被误标
+  // 为 theme。
+  for (const cp of customPresets) {
+    if (sameColors(cp.colors, appearance.colors)) return cp.id;
+  }
   for (const preset of TASK_APPEARANCE_PRESETS) {
     if (preset.value.mode !== 'custom') continue;
     if (sameColors(preset.value.colors, appearance.colors)) return preset.id;
   }
-  // 颜色与任何 custom 预设都不一致 ——「自定义」选项。
+  // 颜色与任何预设都不一致 ——「自定义」。
   return 'custom';
+}
+
+/** 把内建预设与用户自定义预设合并为一个 UI 渲染顺序的列表（内建在前、
+ *  用户在后）。返回项的形状与 TASK_APPEARANCE_PRESETS 一致，便于面板
+ *  复用同一份渲染 / 应用逻辑。用户预设的 value.mode 一律为 'custom'。 */
+export function getAllPresets(
+  customPresets: readonly TaskAppearanceCustomPreset[] = [],
+): { id: string; label: string; value: TaskAppearance; builtin: boolean }[] {
+  const builtins = TASK_APPEARANCE_PRESETS.map((p) => ({ id: p.id, label: p.label, value: p.value, builtin: true }));
+  const users = customPresets.map((cp) => ({
+    id: cp.id,
+    label: cp.label,
+    value: { mode: 'custom' as const, colors: cp.colors },
+    builtin: false,
+  }));
+  return [...builtins, ...users];
 }
 
 function sameColors(a: PriorityColorMap, b: PriorityColorMap): boolean {

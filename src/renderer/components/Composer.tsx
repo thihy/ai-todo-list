@@ -13,7 +13,7 @@
 // - AI mode handles extraction, ambiguity and existing-task relationships.
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { IconClose, IconSend, IconSparkle } from './icons';
+import { IconClose, IconSend } from './icons';
 import type { Priority, TodoStatus } from '../../shared/todo-types';
 
 interface PastedImage {
@@ -208,10 +208,7 @@ export const Composer: React.FC<{
       onDragOver={(e) => e.preventDefault()}
     >
       <header className="composer__head">
-        <h2 className="composer__title">
-          <IconSparkle size={16} className="composer__title-glyph" />
-          新建任务
-        </h2>
+        <h2 className="composer__title">新建任务</h2>
         <button
           type="button"
           className="icon-btn composer__close"

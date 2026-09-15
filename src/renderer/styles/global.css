@@ -1341,6 +1341,32 @@ a:hover {
 .aipane__menu--right {
   right: 0;
 }
+/* 历史列表的可滚动容器：默认只装下 10 条左右；超出窗口时滚动。
+   max-height 用 min(70vh, 560px)：小窗口（≤800h）按 70vh，
+   大窗口封顶 560px 防止列表占满屏幕、遮挡下方内容。 */
+.aipane__menu-list {
+  max-height: min(70vh, 560px);
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+.aipane__menu-list-more {
+  padding: var(--space-xs) var(--space-sm);
+  font-size: var(--font-sm);
+  color: var(--accent-primary);
+  text-align: center;
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  width: 100%;
+  border-top: 1px solid var(--border-subtle);
+}
+.aipane__menu-list-more:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+.aipane__menu-list-more:disabled {
+  color: var(--fg-muted);
+  cursor: default;
+}
 .aipane__menu-empty {
   padding: var(--space-sm) var(--space-md);
   font-size: var(--font-sm);
@@ -2698,44 +2724,50 @@ a:hover {
   background: color-mix(in srgb, var(--accent-danger) 12%, var(--bg-active));
 }
 
-/* ---- task-row priority colours (custom mode only) ---- */
-/* When settings.taskAppearance.mode === 'custom', TodoListPane 注入 class
- *   .task-list--custom
- * 到顶层 <section>，并向内注入 8 个 CSS 自定义属性（--task-prio-<p>-bg / -fg）。
- * 下面所有颜色规则都用 `.task-list--custom` 作作用域，避免污染 theme 模式下
- * 的默认行外观。theme 模式下用户走应用主题，.task-row 保持原浅色 token
- * 样式，不被这套规则触碰。
+/* ---- task-row priority colours ---- */
+/* TodoListPane 的 taskListStyle() 始终把 8 个 CSS 自定义属性
+ *   --task-prio-<p>-bg / -fg
+ * 注入到顶层 <section>（mode=theme 时是 DEFAULT 的浅色，mode=custom 时是
+ * 用户在面板里选的任意色）。下面这套背景 + title 颜色规则挂在
+ * .task-list .task-row[data-priority=...] 上，没有 `.task-list--custom`
+ * 守卫，因此 theme 模式也能拿到按优先级的浅色底色，"跟随主题" 名副其实。
  *
- * 自定义模式下 hover / active 不再用 18% 前景色混合覆盖背景 —— 白底黑字
- * 选中后背景仍然是白，避免破坏配色一致性；hover / active 提示改成左边框
- * 颜色 + 选中时叠加 outline。 */
-.task-list--custom .task-row[data-priority="none"] {
+ * State classes（.is-done / .is-cancelled 的删除线 + 透明度 /
+ * .is-blocked 的红边）由上文已有的 .task-row.is-* 规则处理；这里只
+ * 给 priority bg / title 兜底。 */
+.task-list .task-row[data-priority="none"] {
   background: var(--task-prio-none-bg, var(--bg-base));
   color: var(--task-prio-none-fg, var(--fg-primary));
 }
-.task-list--custom .task-row[data-priority="low"] {
+.task-list .task-row[data-priority="low"] {
   background: var(--task-prio-low-bg, var(--bg-base));
   color: var(--task-prio-low-fg, var(--fg-primary));
 }
-.task-list--custom .task-row[data-priority="medium"] {
+.task-list .task-row[data-priority="medium"] {
   background: var(--task-prio-medium-bg, var(--bg-base));
   color: var(--task-prio-medium-fg, var(--fg-primary));
 }
-.task-list--custom .task-row[data-priority="high"] {
+.task-list .task-row[data-priority="high"] {
   background: var(--task-prio-high-bg, var(--bg-base));
   color: var(--task-prio-high-fg, var(--fg-primary));
 }
-/* Title inside a tinted row picks up the row's fg as the default, but
-   state classes (.is-done / .is-cancelled) still strike-through + fade
-   with --fg-muted as before. We only override the FALLBACK colour. */
-.task-list--custom .task-row[data-priority="none"] .task-row__title,
-.task-list--custom .task-row[data-priority="low"] .task-row__title,
-.task-list--custom .task-row[data-priority="medium"] .task-row__title,
-.task-list--custom .task-row[data-priority="high"] .task-row__title {
+/* Title inherits the row's fg as default; state classes (.is-done /
+   .is-cancelled) still strike-through + fade via the global rules above
+   that target `.task-row__title` with --fg-muted. */
+.task-list .task-row[data-priority="none"] .task-row__title,
+.task-list .task-row[data-priority="low"] .task-row__title,
+.task-list .task-row[data-priority="medium"] .task-row__title,
+.task-list .task-row[data-priority="high"] .task-row__title {
   color: inherit;
 }
-/* 自定义模式下 hover：不改背景，只把左边框换成当前行的 fg，让颜色变化可见
-   但白底黑字仍然是白底黑字。覆盖默认 .task-row:hover { background: --bg-hover }。 */
+
+/* ---- custom-mode state overrides ---- */
+/* mode='custom' 时 TodoListPane 额外附加 .task-list--custom className。
+ * 下面这套覆盖规则只在 custom 模式下生效；theme 模式仍走默认 hover / active
+ * 行为（hover 用 --bg-hover，active 用 --bg-active + accent-primary 左
+ * 边框）。白底黑字 / 柔和彩色这种「干净配色」如果被默认 hover 的
+ * --bg-hover 染色或 active 用 --bg-active 覆盖会破坏配色一致性，所以
+ * 这里清掉 hover / active 的默认背景、把状态指示改成左边框 + outline。 */
 .task-list--custom .task-row:hover {
   background: inherit;
 }
@@ -2779,14 +2811,12 @@ a:hover {
   outline: 2px solid var(--task-prio-high-fg, var(--fg-primary));
   outline-offset: -2px;
 }
-/* Done / cancelled rows fade as before; the priority bg stays so a
-   completed high-priority task still shows it once hit. .is-cancelled
-   uses opacity to fade the whole row (incl. priority tint). */
+/* Done 行：保留 priority bg，只把 title 文字变成 fg 60% 透明，避免硬黑
+   切到浅色背景上刺眼。is-cancelled 用 opacity 整体淡化。 */
 .task-list--custom .task-row[data-priority="none"].is-done,
 .task-list--custom .task-row[data-priority="low"].is-done,
 .task-list--custom .task-row[data-priority="medium"].is-done,
 .task-list--custom .task-row[data-priority="high"].is-done {
-  /* Keep the priority bg; only the title text strikes through. */
   color: color-mix(in srgb, var(--task-prio-none-fg, var(--fg-primary)) 60%, transparent);
 }
 .task-list--custom .task-row[data-priority="none"].is-cancelled,
@@ -2795,8 +2825,8 @@ a:hover {
 .task-list--custom .task-row[data-priority="high"].is-cancelled {
   opacity: 0.6;
 }
-/* Blocked wins on top of any priority tint (the danger rail must always
-   be visible regardless of the bg colour). */
+/* Blocked 覆盖在 priority tint 之上（红边 / 红染必须始终可见，不被用户
+   自定义配色淹没）。 */
 .task-list--custom .task-row[data-priority="none"].is-blocked,
 .task-list--custom .task-row[data-priority="low"].is-blocked,
 .task-list--custom .task-row[data-priority="medium"].is-blocked,
@@ -3207,6 +3237,16 @@ a:hover {
   min-height: 0;
   padding: var(--space-md);
   overflow: auto;
+  display: flex;
+  flex-direction: column;
+}
+/* In fullscreen the workspace fills the body instead of sitting at its
+   min-height (420px) inside a scrolling section like in normal mode.
+   flex:1 + min-height:0 lets the grid's 1fr editor row get a real height,
+   so the MarkdownEditor (height:100%) fills the viewport. */
+.fullscreen-doc__body > .docs-workspace {
+  flex: 1;
+  min-height: 0;
 }
 
 /* Section header with an inline action button next to the title
@@ -3745,9 +3785,9 @@ a:hover {
   background: var(--bg-canvas);
 }
 .composer {
-  max-width: 760px;
-  margin: 0 auto;
-  padding: var(--space-xl) var(--space-xl) var(--space-lg);
+  width: 100%;
+  margin: 0;
+  padding: var(--space-md);
   display: flex;
   flex-direction: column;
   gap: var(--space-md);
@@ -4006,6 +4046,12 @@ a:hover {
   gap: var(--space-sm);
   padding: var(--space-md) 0;
   border-bottom: 1px solid var(--border-default);
+  /* min-height:0 lets the docs-workspace child shrink to its content's
+     actual size when the scroll body is shorter than its min-height:420
+     default — without this, the embedded Excalidraw host (which has its
+     own min-height:520) can grow the section past the scroll viewport
+     on small/fullscreen layouts and re-introduce the unbounded canvas. */
+  min-height: 0;
 }
 .editor-pane__section:last-child {
   border-bottom: 0;
@@ -4165,6 +4211,113 @@ a:hover {
   outline: none;
   border-color: var(--accent-primary);
 }
+
+/* --- 附件列表 + 图片预览 lightbox ---
+   附件行的 name/open 原本是 <a href="attachment://<id>">，点击会让整个窗口
+   导航到裸图片字节（黑屏、无返回）。现改为 <button>，图片走 in-app lightbox。 */
+.attachments-view__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.attachments-view__item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: 2px 6px;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 320px;
+  border: 1px solid var(--border-default);
+  border-radius: 999px;
+  background: var(--bg-surface);
+}
+.attachments-view__name,
+.attachments-view__open,
+.attachments-view__remove {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  color: var(--fg-primary);
+  font: inherit;
+}
+.attachments-view__name {
+  flex: 1;
+  text-align: left;
+  text-decoration: underline;
+  color: var(--accent-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.attachments-view__open,
+.attachments-view__remove {
+  color: var(--fg-secondary);
+}
+.attachments-view__open:hover,
+.attachments-view__remove:hover,
+.attachments-view__name:hover {
+  color: var(--accent-primary);
+}
+.attachments-view__add {
+  background: none;
+  border: 1px dashed var(--border-default);
+  border-radius: var(--radius-sm);
+  padding: var(--space-xs) var(--space-sm);
+  cursor: pointer;
+  color: var(--fg-secondary);
+}
+.attachments-view__add:hover {
+  color: var(--accent-primary);
+  border-color: var(--accent-primary);
+}
+
+.image-lightbox {
+  position: fixed;
+  /* 留出顶部标题栏：右上角是原生 min/max/close 按钮（titleBarOverlay），
+     网页层盖不住，整屏遮罩会截断它们、很难看。从 topbar 下沿开始遮罩，
+     标题栏与窗口按钮保持可见，视觉更干净。 */
+  top: var(--topbar-h);
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 1100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, #000 82%, transparent);
+}
+.image-lightbox__img {
+  max-width: 90vw;
+  max-height: 90vh;
+  object-fit: contain;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+}
+.image-lightbox__close {
+  position: absolute;
+  top: var(--space-md);
+  right: var(--space-md);
+  width: 36px;
+  height: 36px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.15);
+  color: #fff;
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.image-lightbox__close:hover {
+  background: rgba(255, 255, 255, 0.28);
+}
 .prompt-dialog__actions {
   display: flex;
   justify-content: flex-end;
@@ -4211,18 +4364,25 @@ a:hover {
   margin: 0;
   padding: 0;
   display: flex;
-  flex-direction: column;
-  gap: 2px;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: 6px;
 }
 .links-view__item {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  padding: 4px 6px;
-  border-radius: var(--radius-sm);
+  padding: 4px 8px;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 360px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
   color: var(--fg-secondary);
+  background: var(--bg-surface);
 }
 .links-view__item:hover {
+  border-color: var(--border-strong);
   background: var(--bg-hover);
 }
 .links-view__main {
@@ -5622,11 +5782,14 @@ a:hover {
 .progress-inline__history-toggle.is-open {
   transform: rotate(180deg);
 }
-/* Note popover (drag-end / click-to-edit). Sits below the bar. */
+/* Note popover (drag-end / click-to-edit). Anchored below the bar so it
+   never covers the progress bar itself (was top:0/left:0 absolute, which
+   overlapped the bar). Sits under the left edge of the row at a 4px gap. */
 .progress-inline__note-popover {
   position: absolute;
   z-index: var(--z-popover, 30);
-  margin-top: 4px;
+  top: calc(100% + 4px);
+  left: 0;
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -5636,6 +5799,49 @@ a:hover {
   border: 1px solid var(--border-default);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-md);
+}
+/* Decrease-confirm view inside the same popover shell. Triggered when a
+   drag lands below the current value — explicit Yes/No before we log. */
+.progress-inline__decrease-warn {
+  font-size: var(--font-sm);
+  color: var(--fg-primary);
+  line-height: 1.45;
+  padding: var(--space-xs) 0;
+}
+.progress-inline__decrease-warn strong {
+  color: var(--accent-warn);
+  font-variant-numeric: tabular-nums;
+}
+.progress-inline__decrease-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-xs);
+  margin-top: var(--space-xs);
+}
+.progress-inline__decrease-cancel,
+.progress-inline__decrease-confirm {
+  appearance: none;
+  border: 1px solid var(--border-default);
+  background: var(--bg-surface);
+  color: var(--fg-primary);
+  font-size: var(--font-sm);
+  padding: 4px 12px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out);
+}
+.progress-inline__decrease-cancel:hover {
+  background: var(--bg-hover);
+}
+.progress-inline__decrease-confirm {
+  background: var(--accent-warn);
+  border-color: var(--accent-warn);
+  color: #fff;
+}
+.progress-inline__decrease-confirm:hover {
+  background: var(--accent-danger, #DC2626);
+  border-color: var(--accent-danger, #DC2626);
 }
 .progress-inline__note-hint {
   font-size: var(--font-xs);
@@ -5850,7 +6056,17 @@ a:hover {
   grid-template-columns: 1fr;
   grid-template-rows: auto 1fr;
   gap: 0;
-  min-height: 420px;
+  /* Definite height so the `1fr` editor row resolves to a real pixel value,
+     which lets both the Markdown editor (.md-editor height:100%) and the
+     drawing host (.docs-workspace__excalidraw height:100%) fill the same
+     row. Previously this was min-height:420px (content-driven, indefinite),
+     which forced the drawing to a fixed 600px and let Markdown sit at its
+     content height — so switching tabs between a 600px drawing and a ~360px
+     Markdown doc jumped vertically. A fixed 600px here makes both tabs fill
+     the same 568px editor row. In fullscreen the `.fullscreen-doc__body >
+     .docs-workspace { flex:1; min-height:0 }` override takes over and fills
+     the viewport instead. */
+  height: 600px;
   /* Keep the card on --bg-surface so the tab bar (--bg-canvas) and the
      editor body (also --bg-canvas, see .docs-workspace__editor below) read
      as distinct surfaces inside it. The card itself is now bordered with
@@ -5949,17 +6165,59 @@ a:hover {
   flex-direction: column;
   gap: var(--space-sm);
   padding: 0;
+  /* Fill the editor row so the Excalidraw host (height:100%) has a bounded
+     parent. Without flex-grow the drawing sits at content height, the host's
+     flex:1 has no free space to fill, and the canvas collapses to 0 — which
+     is exactly the fullscreen height:0 bug. */
+  flex: 1 1 auto;
+  min-height: 0;
 }
-/* Excalidraw needs a real height to size its canvas. The docs workspace
-   inside the editor-pane__scroll has no intrinsic height, so we pin a
-   sensible min-height here. Excalidraw itself adapts to the container
-   once the user resizes / opens fullscreen. */
+/* Excalidraw's README is explicit: "Excalidraw takes 100% of width and
+   height of the containing block so make sure the container in which you
+   render Excalidraw has non zero dimensions."
+
+   Our previous integration violated this — the host relied on
+   `min-height: 520px` + a chain of `auto`-height flex/grid parents, so the
+   container's height was *undefined* rather than zero. Per CSS spec, a
+   `height: 100%` child of an undefined-height parent resolves to `auto`,
+   i.e. content height. The content is Excalidraw's `<canvas>` whose
+   inline `style.height` is set from `state.height` (initialised by the
+   previous mount via the on-disk scene, then re-read by
+   updateDOMRect). The result was a feedback loop: any non-trivial
+   `state.height` pushed the host to that height on first paint, which
+   updateDOMRect measured back and solidified. A stale 19M-px value
+   ballooned the canvas to 33M buffer pixels (×1.75 DPR) and the toolbar
+   icons rendered at the same scale.
+
+   The standard fix is to give the host an explicit, bounded height. The
+   host now fills its parent (height:100%), which is bounded because
+   .docs-workspace has a definite 600px height (or flex:1 in fullscreen),
+   .docs-workspace__drawing is flex:1, and the editor row is a definite
+   1fr track — so updateDOMRect reads a real pixel value, not content
+   height. */
 .docs-workspace__excalidraw {
   width: 100%;
-  min-height: 520px;
+  height: 100%;
+  min-height: 0;
   background: var(--bg-canvas);
   border-radius: var(--radius-md);
   overflow: hidden;
+}
+/* In fullscreen, the docs-workspace fills the viewport via its own
+   `flex: 1; min-height: 0` rule; height:100% above already fills that, so
+   no fullscreen-specific override is needed for the host. The drawing
+   body's flex:1 (on .docs-workspace__drawing above) completes the chain
+   in both layouts. */
+/* Override the vendor `.excalidraw { min-height: 100vh; height: 100% }`
+   rules from @excalidraw/excalidraw/index.css. Those rules are written
+   for the standalone-app layout (fullscreen editor under body) and the
+   `min-height: 100vh` fights our embedded layout by forcing the inner
+   host to the viewport height even when the wrapper above is shorter.
+   With the host now having an explicit height (above), `height: 100%`
+   works correctly, but `min-height: 100vh` still overrides it, so we
+   force it back down. */
+.docs-workspace__excalidraw > .excalidraw {
+  min-height: 0 !important;
 }
 .docs-workspace__drawing-thumb {
   max-width: 100%;
@@ -6091,6 +6349,12 @@ a:hover {
   overflow: auto;
   display: flex;
   flex-direction: column;
+  /* min-height:0 lets the drawing tab's flex child shrink to the available
+     row height instead of forcing the .docs-workspace grid taller — which
+     would propagate all the way back to .editor-pane__scroll and, on a
+     fullscreen layout, would let the Excalidraw canvas's first-paint
+     style.height get measured back into state.height unboundedly. */
+  min-height: 0;
 }
 .docs-workspace__empty {
   display: flex;
@@ -6126,168 +6390,6 @@ a:hover {
   text-decoration: underline;
 }
 
-/* --- WYSIWYG editor (Tiptap) toolbar etc --- */
-
-.wysiwyg {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  min-height: 360px;
-  /* No own border/shadow — the parent .docs-workspace__editor card already
-     provides the card chrome, and matching .md-editor (which has none) keeps
-     both editors reading as one continuous surface inside the workspace.
-     The shadow/border used to live here, which produced a visible "double
-     card" — the inner WYSIWYG border inside the outer docs-workspace border. */
-  overflow: hidden;
-}
-
-.wysiwyg__toolbar {
-  display: flex;
-  align-items: center;
-  gap: var(--space-xxs, 2px);
-  /* No left/right/top padding — the toolbar sits edge-to-edge inside the
-     .wysiwyg card so it reads as a solid chrome bar, not a floating strip.
-     A small bottom padding keeps the button row from kissing the editor
-     body's top border. Buttons own their own horizontal padding. */
-  padding: 0 0 var(--space-xs) 0;
-  border-bottom: 1px solid var(--border-default);
-  /* Slightly darker than the .wysiwyg card so the toolbar pops as a
-     distinct chrome row. Same shade as the MD editor's topbar so the two
-     editors share a consistent visual rhythm — see .md-editor__topbar. */
-  background: var(--bg-surface-elev, #ECEEF1);
-  flex-wrap: wrap;
-  /* Match .md-editor__topbar height so both editors' chrome rows sit at the
-     same vertical line. */
-  min-height: 36px;
-}
-
-.wysiwyg__btn {
-  min-width: 28px;
-  height: 28px;
-  padding: 0 var(--space-xs);
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--fg-secondary);
-  font-size: var(--font-sm);
-  cursor: pointer;
-  transition: background 0.12s, color 0.12s;
-}
-.wysiwyg__btn:hover { background: var(--bg-hover); color: var(--fg-primary); }
-.wysiwyg__btn:focus-visible {
-  /* Match .md-editor__tb-btn focus-visible so the focus ring reads the same
-     across both editors when navigating via keyboard. */
-  outline: 2px solid var(--accent-primary);
-  outline-offset: -1px;
-}
-.wysiwyg__btn.is-active {
-  background: color-mix(in srgb, var(--accent-primary) 14%, transparent);
-  color: var(--accent-primary);
-  border-color: color-mix(in srgb, var(--accent-primary) 30%, transparent);
-}
-
-.wysiwyg__spacer { flex: 1; }
-
-.wysiwyg__status { font-size: var(--font-xs); color: var(--fg-muted); }
-.wysiwyg__status--error { color: var(--accent-danger); }
-
-.wysiwyg__save {
-  /* Mirrors .md-editor__save — same height, padding, border, radius, and
-     dirty-state treatment so the two editors share one save affordance. */
-  height: 28px;
-  padding: 0 var(--space-md);
-  background: var(--accent-primary);
-  color: var(--fg-on-accent, #fff);
-  border: 1px solid var(--accent-primary);
-  border-radius: var(--radius-sm);
-  font-size: var(--font-sm);
-  font-weight: 600;
-  cursor: pointer;
-}
-.wysiwyg__save:disabled {
-  background: var(--bg-surface-elev, var(--bg-hover));
-  color: var(--fg-muted);
-  border-color: var(--border-default);
-  cursor: default;
-}
-/* Icon-only variant for the "save icon at the start of the toolbar" form.
-   Same visual language as md-editor__save--icon below; both editors share
-   the floppy glyph so the affordance reads as "save" in either mode. */
-.wysiwyg__save--icon {
-  width: 28px;
-  padding: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-.wysiwyg__save--icon.is-dirty {
-  /* Distinct color when there's unsaved work — visually different from the
-     muted "已保存" state so the user knows action is needed. Border matches
-     the warning fill so the disabled ghost border doesn't peek through. */
-  background: var(--accent-warning, #d97706);
-  border-color: var(--accent-warning, #d97706);
-  color: var(--fg-on-accent, #fff);
-}
-
-.wysiwyg__content {
-  flex: 1 1 auto;
-  min-height: 320px;
-  padding: var(--space-md);
-  outline: none;
-  font-size: var(--font-md);
-  line-height: 1.7;
-  color: var(--fg-primary);
-  /* Match the MD editor body so the user reads one "page" surface across
-     both editors (no discontinuity when switching tabs). */
-  background: var(--bg-canvas);
-  overflow: auto;
-}
-.wysiwyg__content:focus { outline: none; }
-.wysiwyg__content:empty::before {
-  content: attr(data-placeholder);
-  color: var(--fg-muted);
-  pointer-events: none;
-}
-/* ProseMirror content styling — headings, lists, code, images, links. */
-.wysiwyg__content h1 { font-size: 1.5em; font-weight: 700; margin: 0.6em 0 0.3em; }
-.wysiwyg__content h2 { font-size: 1.25em; font-weight: 700; margin: 0.6em 0 0.3em; }
-.wysiwyg__content p { margin: 0.4em 0; }
-.wysiwyg__content ul,
-.wysiwyg__content ol { margin: 0.4em 0; padding-left: 1.5em; }
-.wysiwyg__content ul { list-style: disc; }
-.wysiwyg__content ol { list-style: decimal; }
-.wysiwyg__content blockquote {
-  border-left: 3px solid var(--border-strong);
-  margin: 0.5em 0;
-  padding: 0.2em 0 0.2em var(--space-sm);
-  color: var(--fg-secondary);
-}
-.wysiwyg__content a { color: var(--accent-primary); text-decoration: underline; }
-.wysiwyg__content code {
-  font-family: var(--font-mono);
-  font-size: 0.9em;
-  background: var(--bg-hover);
-  padding: 0.1em 0.3em;
-  border-radius: var(--radius-sm);
-}
-.wysiwyg__content pre {
-  background: var(--bg-hover);
-  padding: var(--space-sm);
-  border-radius: var(--radius-md);
-  overflow-x: auto;
-}
-.wysiwyg__content pre code { background: none; padding: 0; }
-.wysiwyg__content img {
-  max-width: 100%;
-  height: auto;
-  border-radius: var(--radius-sm);
-  margin: var(--space-xs) 0;
-}
-.wysiwyg__content .ProseMirror-selectednode img {
-  outline: 2px solid var(--accent-primary);
-  outline-offset: 2px;
-}
-
 /* --- markdown editor + preview --- */
 
 .md-editor {
@@ -6314,7 +6416,6 @@ a:hover {
   padding: 0 0 var(--space-xs) 0;
   border-bottom: 1px solid var(--border-default);
   background: var(--bg-surface-elev, #ECEEF1);
-  /* Match .wysiwyg__toolbar height so both editors' chrome rows align. */
   min-height: 36px;
 }
 .md-editor__topbar .md-editor__toolbar {
@@ -6359,8 +6460,6 @@ a:hover {
 .md-editor__status { font-size: var(--font-xs); color: var(--fg-muted); }
 .md-editor__status--error { color: var(--accent-danger); }
 .md-editor__save {
-  /* Mirrors .wysiwyg__save — identical height, padding, border, and radius
-     so the two editors share one save affordance. */
   height: 28px;
   padding: 0 var(--space-md);
   border: 1px solid var(--accent-primary);
@@ -6409,8 +6508,6 @@ a:hover {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  /* Match .wysiwyg__btn (28px tall, padding 0 var(--space-xs)) so the
-     RICH + MD editors share a consistent toolbar button rhythm. */
   min-width: 28px;
   height: 28px;
   padding: 0 var(--space-xs);
@@ -6430,8 +6527,6 @@ a:hover {
   outline-offset: -1px;
 }
 .md-editor__tb-btn.is-active {
-  /* Same active treatment as .wysiwyg__btn.is-active so format toggles
-     (bold/italic/heading) look the same in both editors. */
   background: color-mix(in srgb, var(--accent-primary) 14%, transparent);
   color: var(--accent-primary);
   border-color: color-mix(in srgb, var(--accent-primary) 30%, transparent);

@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import type { ULID } from '../../shared/todo-types';
 import { logger } from '../logger';
-import { slugify, todoJsonPath, UNTITLED_SLUG } from './paths';
+import { progressFile, slugify, todoJsonPath, UNTITLED_SLUG } from './paths';
 
 interface TodoStorageRow {
   title: string;
@@ -30,7 +30,23 @@ export class TaskDirectoryStore {
     }
     const dir = join(this.todosDir, basename(dirName));
     mkdirSync(dir, { recursive: true });
+    this.migrateProgressExtension(dir);
     return dir;
+  }
+
+  /** One-time-per-task rename of the legacy `progress.html` projection to
+   *  `progress.md`. Idempotent: two existence checks make it a no-op once the
+   *  new name is in place. Best-effort — a failure leaves the old file and is
+   *  logged, never thrown (DB is the source of truth, not the file). */
+  private migrateProgressExtension(taskDir: string): void {
+    const md = progressFile(taskDir);
+    const html = join(taskDir, 'progress.html');
+    if (!existsSync(html) || existsSync(md)) return;
+    try {
+      renameSync(html, md);
+    } catch (err) {
+      logger.warn(`TaskDirectoryStore: rename progress.html→progress.md failed in ${taskDir}: ${(err as Error).message}`);
+    }
   }
 
   /** Best-effort rename. The DB association changes only after the directory

@@ -182,7 +182,7 @@ All task-owned artifacts share the associated directory:
 ```text
 {dataDir}/todos/{storage_dir}/
   todo.json
-  progress.html
+  progress.md
   {noteSlug}.md
   {drawingSlug}.excalidraw
   thumbs/{drawingId}.thumb.png
@@ -194,11 +194,11 @@ All task-owned artifacts share the associated directory:
 A best-effort metadata snapshot for file browsing, backup, and Git history.
 The database remains authoritative.
 
-### `progress.html`
+### `progress.md`
 
-The rich-text progress document uses a fixed filename. `document.write` writes
-the version to SQLite and mirrors the latest HTML through `DocumentStore` into
-the associated directory.
+The Markdown progress document uses a fixed filename. `document.write` writes
+the version to SQLite and mirrors the latest Markdown through `DocumentStore`
+into the associated directory.
 
 Do not confuse this document with:
 
@@ -266,7 +266,7 @@ For storage:
 - failed rename preserves the old association and creates no replacement;
 - progress, note, drawing, thumbnail, and attachment operations resolve through
   the same directory;
-- `progress.html` is updated by rich progress-document edits;
+- `progress.md` is updated by progress-document edits;
 - attachment absolute paths are rewritten only after a successful move.
 
 ## 8. Known documentation caveat

@@ -315,7 +315,7 @@ app currently creates; it shares the same preload script and the same
   - `ConversationRepo` — wraps `ai_conversations` (DSH session
     history) and `ai_messages`.
 - File projections live in `src/main/files/`:
-  - `MarkdownStore` — owns `progress.html` and per-task `note_md`
+  - `MarkdownStore` — owns `progress.md` and per-task `note_md`
     bodies; writes are wrapped in a transaction with `todos.body`
     and `content_versions`.
   - `DrawingStore` — owns `{drawingId}.excalidraw` JSON scenes
@@ -334,7 +334,7 @@ app currently creates; it shares the same preload script and the same
   (`ROOT_DIR_NAME`, `DB_FILENAME`, `TODOS_SUBDIR`, etc.) plus
   `src/main/files/paths.ts` for slug rules.
 - The `git-history.ts` module manages a per-task `.git` repo for
-  `progress.html` history when Git is available on `PATH`; failures
+  `progress.md` history when Git is available on `PATH`; failures
   degrade silently and the DB content_versions table remains the
   source of truth.
 
@@ -898,7 +898,7 @@ user action to on-disk projection — runs through:
      `tag_catalog` (reviving retired ones).
 6. The handler calls `md.writeBody(todo.id, '')` →
    `src/main/files/markdown.ts` to write the initial
-   `progress.html`.
+   `progress.md`.
 7. The handler calls `writeTodoJson(resolveTaskDir(todo.id), …)` to
    drop `todo.json` into the per-task directory. The directory was
    resolved through `TaskDirectoryStore.resolve(todo.id)` which

@@ -32,7 +32,7 @@ import type {
   UserApprovalAnswer,
 } from './ai-types';
 
-import type { TaskAppearance } from './task-appearance';
+import type { TaskAppearance, TaskAppearanceCustomPreset } from './task-appearance';
 
 // ----- Generic envelope -----
 
@@ -57,6 +57,7 @@ export interface TodoRestoreReq { id: ULID }
 export interface TodoBatchUpdateReq { ids: ULID[]; patch: TodoPatch }
 export interface TodoSearchReq { query: string; limit?: number }
 export interface TodoStatsReq { windowDays?: number }
+export interface TodoSetSelectedDocReq { todoId: ULID; tabId: string | null }
 
 // ----- progress.* -----
 //
@@ -97,6 +98,15 @@ export interface DocumentRenameReq { id: ULID; title: string }
 export interface DocumentRemoveReq { id: ULID }
 export interface DocumentHistoryReq { id: ULID }
 export interface DocumentRestoreVersionReq { id: ULID; versionId: number }
+/** Per-document git-backed save history (mirrors content.gitHistory but
+ *  keyed by document id so each progress / note_md doc has its own log).
+ *  `available: false` means git isn't on PATH. */
+export interface DocumentGitHistoryReq { id: ULID }
+export interface DocumentGitHistoryRes {
+  available: boolean;
+  entries: GitHistoryEntry[];
+}
+export interface DocumentGitRestoreReq { id: ULID; sha: string }
 
 // ----- link.* -----
 //
@@ -237,8 +247,20 @@ export interface AIConversation {
   messageCount?: number;
 }
 
-export interface AIConversationListReq { includeArchived?: boolean }
-export interface AIConversationListRes { conversations: AIConversation[] }
+export interface AIConversationListReq {
+  includeArchived?: boolean;
+  /** 每页条数；缺省 10，上限 50（main 夹紧）。 */
+  limit?: number;
+  /** 从第几条开始；缺省 0。配合 limit 做「显示更多」分页。 */
+  offset?: number;
+}
+export interface AIConversationListRes {
+  conversations: AIConversation[];
+  /** 命中总数（含 offset 之前的所有行），方便 UI 展示「共 N 条」。 */
+  total: number;
+  /** 当前页之后还剩多少条未加载。`remaining > 0` ⇒ 还有可加载的页。 */
+  remaining: number;
+}
 
 export interface AIConversationCreateReq { title?: string }
 export interface AIConversationCreateRes { conversation: AIConversation }
@@ -308,6 +330,10 @@ export interface SettingsSetReq {
   customProviders?: CustomProviderInput[];
   // Select which custom instance is active when provider==='custom'.
   customProviderId?: string | null;
+  // User-Agent header sent on LLM provider requests. Empty = adapter default
+  // (deepseek-harness/…). See llm-adapter.ts — override is via a custom
+  // `fetch`, not profile headers (the adapter strips/reserves `user-agent`).
+  userAgent?: string;
   // Auto-archive: archive done tasks older than N days. 0 = never.
   archiveAfterDays?: number;
   // Tag registry (name + colour). DEPRECATED: the v17 migration hoists
@@ -326,6 +352,9 @@ export interface SettingsSetReq {
   // 任务优先级配色 —— mode=theme 时跟随 CSS 主题；mode=custom 时 colors
   // 完整覆盖 4 个优先级的背景/前景。具体值由 Settings UI 编辑 / 选预设。
   taskAppearance?: TaskAppearance;
+  // 用户在设置面板里创建的命名自定义配色预设；空数组表示没有用户预设。
+  // 持久化在 userData/config.json，损坏值由 SettingsStore.load() 归一化为 []。
+  taskAppearanceCustomPresets?: TaskAppearanceCustomPreset[];
   // AUTO-UPDATE toggle — when false the 5 s post-startup background
   // check is skipped; the manual "检查更新" button is unaffected.
   // Defaults to true (existing installs keep their behaviour).
@@ -346,6 +375,8 @@ export interface SettingsGetRes extends AISettings {
   lastPlanGuideDate: string | null;
   snoozePlanGuideUntil: number | null;
   taskAppearance: TaskAppearance;
+  // 用户在设置面板里创建的命名自定义配色预设；空数组表示没有。
+  taskAppearanceCustomPresets: TaskAppearanceCustomPreset[];
   /** SEC-01 — current bridge state. `enabled` reflects persistence;
    *  `token` is the live capability token (returned once on rotation
    *  / enable so the user can copy it). When `enabled: false`, `token`
@@ -445,6 +476,7 @@ export interface IpcRegistry {
   'todo.batchUpdate': IpcChannel<TodoBatchUpdateReq, IpcResult<Todo[]>>;
   'todo.search': IpcChannel<TodoSearchReq, IpcResult<SearchHit[]>>;
   'todo.stats': IpcChannel<TodoStatsReq, IpcResult<TodoStats>>;
+  'todo.setSelectedDoc': IpcChannel<TodoSetSelectedDocReq, IpcResult<void>>;
 
   'progress.log': IpcChannel<ProgressLogReq, IpcResult<ProgressLogRes>>;
   'progress.list': IpcChannel<ProgressListReq, IpcResult<ProgressLogEntry[]>>;
@@ -458,6 +490,8 @@ export interface IpcRegistry {
   'document.remove': IpcChannel<DocumentRemoveReq, IpcResult<void>>;
   'document.history': IpcChannel<DocumentHistoryReq, IpcResult<DocumentVersionEntry[]>>;
   'document.restoreVersion': IpcChannel<DocumentRestoreVersionReq, IpcResult<void>>;
+  'document.gitHistory': IpcChannel<DocumentGitHistoryReq, IpcResult<DocumentGitHistoryRes>>;
+  'document.gitRestore': IpcChannel<DocumentGitRestoreReq, IpcResult<void>>;
 
   'link.fetchMeta': IpcChannel<LinkFetchMetaReq, IpcResult<LinkFetchMetaRes>>;
 

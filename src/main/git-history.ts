@@ -103,7 +103,7 @@ async function ensureLocalIdentity(todosDir: string): Promise<void> {
  *  failed.
  *
  *  `relPath` is the path of the file relative to `todosDir` (the repo root),
- *  e.g. `{slug}/progress.html` after the per-task refactor. `todoTitle` +
+ *  e.g. `{slug}/progress.md` after the per-task refactor. `todoTitle` +
  *  `version` only shape the commit message — they don't locate the file. */
 export async function commitOnSave(
   todosDir: string,
@@ -155,7 +155,7 @@ export async function commitOnSave(
 /** Read the commit log for a single file, newest-first. Uses `--follow` so
  *  renames stay linked across the v1→v2 layout migration (the bridge commit
  *  recorded via git-history.mv keeps `--follow` working when the file moved
- *  from `{ulid}.md` to `{slug}/progress.html`). `limit` defaults to 100. */
+ *  from `{ulid}.md` to `{slug}/progress.md`). `limit` defaults to 100. */
 export async function getFileLog(
   todosDir: string,
   relPath: string,
@@ -214,7 +214,7 @@ export async function getFileAtSha(
  *  the file directly (we DON'T checkout — that would touch the whole
  *  working tree). Used by the history popover's "恢复此版本" action.
  *
- *  Post-refactor the file is raw HTML (progress.html) with no front-matter,
+ *  Post-refactor the file is raw Markdown (progress.md) with no front-matter,
  *  so the restored bytes are written verbatim. */
 export async function restoreFileAtSha(
   todosDir: string,

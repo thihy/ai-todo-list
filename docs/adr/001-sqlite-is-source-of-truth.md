@@ -22,7 +22,7 @@ to maintain across files.
 - The single source of truth for *business* state is the SQLite
   database at `${dataDir}/db.sqlite` (WAL mode, foreign keys on
   after migrations).
-- Per-task files (`progress.html`, `note_md` notes,
+- Per-task files (`progress.md`, `note_md` notes,
   `*.excalidraw` drawings, attachment bytes, `todo.json`)
   are *projections* derived from the DB. They can be regenerated
   by walking `TaskDirectoryStore`.

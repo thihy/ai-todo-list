@@ -63,6 +63,10 @@ export interface CreateAdaptersDeps {
   getCustomProviders(): readonly CustomProviderConfig[];
   /** Active custom provider instance id (or null). */
   getCustomProviderId(): string | null;
+  /** User-Agent header value for LLM provider requests. Empty string = use
+   *  the adapter default (deepseek-harness/…). Read per operation so a
+   *  settings change reaches the next request without restart. */
+  getUserAgent(): string;
 }
 
 /** Resolve the route key for `agentOptions.provider` from the user's
@@ -315,6 +319,44 @@ const noopAuthContext: AuthContext = {
 
 // ===== Profile map builder =====
 
+/** A fetch that stamps the configured `User-Agent` on every outgoing request.
+ *  pi-ai's createClient honors `options.fetch`; the DSH adapter's
+ *  `attributionHeaders()` hard-codes `deepseek-harness/…` and strips
+ *  `user-agent` from profile headers, so the wire-level fetch is the only
+ *  override seam. `new Headers(init.headers)` copies whatever shape the
+ *  SDK used (plain object / Headers / array of pairs) and `set()` overrides
+ *  case-insensitively. `HeadersInit` is DOM-typed and not in the node tsconfig
+ *  lib, so the param is left permissive here. */
+function makeUserAgentFetch(ua: string): typeof globalThis.fetch {
+  const base = globalThis.fetch;
+  // Build a fresh Headers from whatever the SDK passed and stamp the UA.
+  // `init.headers` may be a plain object, Headers, or array of pairs — the
+  // Headers constructor accepts all of them; we go through `any` only to
+  // sidestep the DOM-typed HeadersInit that isn't in the node tsconfig lib.
+  const stamp = (headers: unknown): Headers => {
+    const h = new Headers((headers as any) ?? undefined);
+    h.set('user-agent', ua);
+    return h;
+  };
+  return (input, init) =>
+    base(input, { ...(init ?? {}), headers: stamp(init?.headers) });
+}
+
+/** Override each provider's stream/streamSimple so the request runs through a
+ *  fetch that stamps the configured User-Agent. Mutates the provider in place
+ *  (its `stream`/`streamSimple` are not readonly) — the original methods are
+ *  bound back to the same instance so any closure/`this` state is preserved. */
+function applyUserAgent(p: Provider, ua: string): void {
+  if (!ua) return;
+  const fetch = makeUserAgentFetch(ua);
+  const origStream = p.stream.bind(p) as typeof p.stream;
+  const origSimple = p.streamSimple.bind(p) as typeof p.streamSimple;
+  p.stream = ((model: Parameters<typeof p.stream>[0], context: Parameters<typeof p.stream>[1], options?: Parameters<typeof p.stream>[2]) =>
+    origStream(model, context, { ...(options ?? {}), fetch })) as typeof p.stream;
+  p.streamSimple = ((model: Parameters<typeof p.streamSimple>[0], context: Parameters<typeof p.streamSimple>[1], options?: Parameters<typeof p.streamSimple>[2]) =>
+    origSimple(model, context, { ...(options ?? {}), fetch })) as typeof p.streamSimple;
+}
+
 function buildProfiles(deps: CreateAdaptersDeps): ReadonlyMap<string, ResolvedPiAiProviderProfile> {
   const catalog = builtinProviders();
   const profiles: Array<[string, ResolvedPiAiProviderProfile]> = [
@@ -327,6 +369,10 @@ function buildProfiles(deps: CreateAdaptersDeps): ReadonlyMap<string, ResolvedPi
   const activeId = deps.getCustomProviderId();
   const inst = list.find((c) => c.id === activeId) ?? list[0];
   profiles.push(['custom', buildCustomProfile(inst)]);
+  // User-Agent override — read per operation so a settings change reaches the
+  // next request without restart (same invariant as endpoint/customProviders).
+  const ua = deps.getUserAgent();
+  if (ua) for (const [, profile] of profiles) if (profile.piProvider) applyUserAgent(profile.piProvider, ua);
   return new Map(profiles);
 }
 

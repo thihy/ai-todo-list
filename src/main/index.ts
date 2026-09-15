@@ -291,7 +291,7 @@ function bootstrap(): void {
     registerStartupHandler(retryHooks);
     registerTodoHandlers(repo, md, handle.db, todosDir, resolveTaskDir, taskDirectories);
     registerContentHandlers(md, drawings, repo);
-    registerDocumentHandlers(docs, resolveTaskDir);
+    registerDocumentHandlers(docs, resolveTaskDir, todosDir);
     registerLinkHandlers();
     registerInboxHandlers(inbox);
     registerTagHandlers(tagRepo);
@@ -899,6 +899,7 @@ function registerSettingsHandlers(
         ...(typeof req.apiKey === 'string' ? { apiKey: req.apiKey } : {}),
         ...(typeof req.dataDir === 'string' ? { dataDir: req.dataDir } : {}),
         ...(req.customProviderId !== undefined ? { customProviderId: req.customProviderId } : {}),
+        ...(typeof req.userAgent === 'string' ? { userAgent: req.userAgent } : {}),
         ...(req.archiveAfterDays !== undefined ? { archiveAfterDays: req.archiveAfterDays } : {}),
         // NOTE: `tags` is intentionally NOT written here. The v17
         // catalog migration hoisted the tag directory into the DB;
@@ -909,6 +910,7 @@ function registerSettingsHandlers(
         ...(req.lastPlanGuideDate !== undefined ? { lastPlanGuideDate: req.lastPlanGuideDate } : {}),
         ...(req.snoozePlanGuideUntil !== undefined ? { snoozePlanGuideUntil: req.snoozePlanGuideUntil } : {}),
         ...(req.taskAppearance !== undefined ? { taskAppearance: req.taskAppearance } : {}),
+        ...(req.taskAppearanceCustomPresets !== undefined ? { taskAppearanceCustomPresets: req.taskAppearanceCustomPresets } : {}),
         ...(typeof req.autoUpdate === 'boolean' ? { autoUpdate: req.autoUpdate } : {}),
       });
       if (req.customProviders) {

@@ -36,7 +36,7 @@ describe('renameTaskDir', () => {
   it('moves the per-task directory when the slug changes', () => {
     const t = repo.create({ title: 'Old' }, 'x');
     const oldDir = paths.todoDir(todosDir, 'Old', t.id);
-    writeFileSync(join(oldDir, 'progress.html'), '<p>x</p>', 'utf8');
+    writeFileSync(join(oldDir, 'progress.md'), '<p>x</p>', 'utf8');
     expect(existsSync(oldDir)).toBe(true);
 
     const result = renameTaskDir({
@@ -52,7 +52,7 @@ describe('renameTaskDir', () => {
     // The task id prefix keeps same-title directories collision-free.
     const expectedNewDir = join(todosDir, `${t.id.slice(0, 6)}-New`);
     expect(existsSync(expectedNewDir)).toBe(true);
-    expect(existsSync(join(expectedNewDir, 'progress.html'))).toBe(true);
+    expect(existsSync(join(expectedNewDir, 'progress.md'))).toBe(true);
     expect(existsSync(oldDir)).toBe(false);
   });
 
@@ -88,7 +88,7 @@ describe('renameTaskDir', () => {
   it('is a no-op when the slug does not change', () => {
     const t = repo.create({ title: 'Same' }, 'x');
     const dir = paths.todoDir(todosDir, 'Same', t.id);
-    writeFileSync(join(dir, 'progress.html'), '<p>x</p>', 'utf8');
+    writeFileSync(join(dir, 'progress.md'), '<p>x</p>', 'utf8');
     const result = renameTaskDir({
       db: handle.db,
       todosDir,
@@ -98,7 +98,7 @@ describe('renameTaskDir', () => {
     });
     expect(result.dirRenamed).toBe(false);
     expect(result.pathsUpdated).toBe(0);
-    expect(existsSync(join(dir, 'progress.html'))).toBe(true);
+    expect(existsSync(join(dir, 'progress.md'))).toBe(true);
   });
 
   it('never throws on a missing old dir', () => {

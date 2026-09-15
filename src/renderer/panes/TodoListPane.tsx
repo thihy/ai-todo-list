@@ -28,7 +28,7 @@ import { UserMenu } from '../components/UserMenu';
 import { StatusSelect } from '../components/StatusSelect';
 import { IconCalendar, IconCollapseBar, IconDrawing, IconInboxEmpty, IconTrash } from '../components/icons';
 import { todayDateKey } from '../components/PlanGuideModal';
-import type { TaskAppearance } from '../../shared/task-appearance';
+import { DEFAULT_TASK_APPEARANCE, type TaskAppearance } from '../../shared/task-appearance';
 
 export const TodoListPane: React.FC<{
   width: number;
@@ -1335,20 +1335,21 @@ function filterToRepoFilter(f: ListFilter): Parameters<typeof window.todoList.to
 }
 
 /** 把 taskAppearance 转换为顶层 <section> 的 style。
- *  - mode === 'custom'：把 colors 注入 8 个 CSS 自定义属性
- *    （--task-prio-<p>-bg / -fg），让 .task-list--custom 作用域下的规则接管行底色。
- *  - mode === 'theme'：只返回基础布局样式（width），不注入颜色变量 —— 让
- *    CSS 主题默认规则（.task-row 的默认浅色）生效，"跟随主题" 名副其实。
- *  appearance 还没加载时（首次渲染）同样不注入，避免闪一帧预设颜色。 */
+ *  - 始终注入 8 个 CSS 自定义属性（--task-prio-<p>-bg / -fg），包括
+ *    mode='theme' 与首次未加载的情况（用 DEFAULT_TASK_APPEARANCE 兜底）。
+ *    CSS 端的行背景规则挂在 `.task-list .task-row[data-priority=...]`
+ *    上（始终生效），所以 theme 模式也能拿到按优先级的浅色底色。
+ *  - mode === 'custom' 时另外附加 `task-list--custom` className，让覆盖
+ *    规则（hover / active / done / cancelled / blocked 的 fg 边框与
+ *    outline）只作用于 custom 模式；theme 模式仍走 hover 用 --bg-hover、
+ *    active 用 --bg-active + accent 左边框的默认行为。 */
 function taskListStyle(
   appearance: TaskAppearance | undefined,
   width: number,
 ): React.CSSProperties {
-  const base: React.CSSProperties = { width };
-  if (!appearance || appearance.mode !== 'custom') return base;
-  const c = appearance.colors;
+  const c = appearance?.colors ?? DEFAULT_TASK_APPEARANCE.colors;
   return {
-    ...base,
+    width,
     // CSS 自定义属性键在 React 里用 camelCase，对应 CSS 里的 kebab-case；
     // 我们在 CSS 里直接写 kebab-case 字符串键（TS 在 cast 里允许任意键）。
     ['--task-prio-none-bg' as never]: c.none.background,

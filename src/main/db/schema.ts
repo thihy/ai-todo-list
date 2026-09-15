@@ -708,6 +708,25 @@ const MIGRATIONS: ReadonlyArray<{ version: number; sql: string }> = [
       SELECT DISTINCT tag, '#6B7280', NULL FROM tags;
     `,
   },
+  {
+    version: 18,
+    // Per-task "currently selected document tab" — the renderer-side tab id
+    // from DocumentsView (`d:<docId>` for documents, `g:<drawingId>` for
+    // drawings). Persisted so switching tasks or restarting the app lands the
+    // user back on the tab they last opened, instead of snapping to the
+    // default progress tab every time. null = never set; DocumentsView's
+    // auto-select effect picks the first tab and writes it back via
+    // todo.setSelectedDoc. This is UI state, NOT a content mutation: the
+    // dedicated repo method / IPC channel skip the usual updated_at bump +
+    // todos broadcast so a tab click never reorders the task list.
+    //
+    // A nullable ADD COLUMN is safe — no FTS / trigger references todos for
+    // this column, and all existing rows default to NULL (current behaviour:
+    // first-open auto-select).
+    sql: `
+      ALTER TABLE todos ADD COLUMN selected_doc_tab TEXT;
+    `,
+  },
 ];
 
 export interface DbHandle {

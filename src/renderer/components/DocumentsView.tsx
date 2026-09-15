@@ -2,15 +2,15 @@
 // 选中文档的编辑器填满下方空间：
 //
 //   ┌──────────────────────────────────────────────────────────────┐
-//   │ [进展] [笔记] [绘图]                              [+]      │  ← tab 栏
+//   │ [进展] [文档] [绘图]                              [+]      │  ← tab 栏
 //   ├──────────────────────────────────────────────────────────────┤
 //   │  按 kind 渲染对应编辑器：                                    │
-//   │   progress → WysiwygEditor                                  │
+//   │   progress → MarkdownEditor                                │
 //   │   note_md   → MarkdownEditor                                │
 //   │   drawing   → Excalidraw 编辑器                              │
 //   └──────────────────────────────────────────────────────────────┘
 //
-// 默认 progress 文档（WYSIWYG）ord 为 0，首次打开自动选中。绘图以 tab 形式
+// 默认 progress 文档（Markdown）ord 为 0，首次打开自动选中。绘图以 tab 形式
 // 展示（合并自原来的 新绘图 独立入口）—— 选中绘图 tab 直接挂载 Excalidraw
 // 编辑器；+ 菜单里的 绘图 项用于新建。
 //
@@ -22,7 +22,6 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useDocuments, useDocument, useDrawings } from '../hooks/useTodoListApi';
 import { usePrompt } from '../hooks/usePrompt';
 import { useFocusSync } from '../hooks/useFocusSync';
-import { WysiwygEditor } from './WysiwygEditor';
 import { MarkdownEditor } from './MarkdownEditor';
 import { ExcalidrawEditor } from './ExcalidrawEditor';
 import {
@@ -49,7 +48,7 @@ const KIND_ICON: Record<DocumentKind, React.FC<{ size?: number }>> = {
 
 const KIND_LABEL: Record<DocumentKind, string> = {
   progress: '进展',
-  note_md: '笔记',
+  note_md: '文档',
   drawing: '绘图',
   // 同上，被过滤；保留以让 Record 完整
   attachment: '附件',
@@ -83,25 +82,15 @@ function removeTab(tab: Tab, after: () => void): void {
   void window.todoList.drawing.delete(tab.id).then(after);
 }
 
-const DocEditor: React.FC<{ doc: TaskDocument; todoId: string }> = ({ doc, todoId }) => {
+const DocEditor: React.FC<{ doc: TaskDocument }> = ({ doc }) => {
   const { content, version, save, saving, error } = useDocument(doc.id);
 
   switch (doc.kind) {
     case 'progress':
-      return (
-        <WysiwygEditor
-          todoId={todoId}
-          value={content}
-          version={version}
-          onSave={save}
-          saving={saving}
-          error={error}
-        />
-      );
     case 'note_md':
       return (
         <MarkdownEditor
-          todoId={todoId}
+          docId={doc.id}
           value={content}
           version={version}
           onSave={save}
@@ -303,7 +292,7 @@ export const DocumentsView: React.FC<{
   }, []);
 
   const addNote = useCallback(async (): Promise<void> => {
-    const res = await window.todoList.document.create({ todoId, kind: 'note_md', title: '笔记' });
+    const res = await window.todoList.document.create({ todoId, kind: 'note_md', title: '文档' });
     if (res.ok) {
       await refresh();
       setSelected(`d:${res.data.id}`);
@@ -451,7 +440,7 @@ export const DocumentsView: React.FC<{
           {addOpen && (
             <div className="docs-workspace__add-menu">
               <button type="button" onClick={addNote}>
-                <IconDoc size={14} /> 笔记 (Markdown)
+                <IconDoc size={14} /> Markdown文档
               </button>
               <button type="button" onClick={addDrawing}>
                 <IconDrawing size={14} /> 绘图
@@ -464,7 +453,7 @@ export const DocumentsView: React.FC<{
       <div className="docs-workspace__editor">
         {selected ? (
           selected.kind === 'document' ? (
-            <DocEditor key={selected.doc.id} doc={selected.doc} todoId={todoId} />
+            <DocEditor key={selected.doc.id} doc={selected.doc} />
           ) : (
             <DrawingView key={selected.id} todoId={todoId} drawingId={selected.id} />
           )

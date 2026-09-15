@@ -103,7 +103,7 @@ export interface ToolRowProps {
    * over the expanded body. Absent = no affordance.
    */
   inspect?: (() => void) | undefined
-  /** Raw wire tool name (e.g. "todo.planForToday"), shown as a small muted
+  /** Raw wire tool name (e.g. "todo_planForToday"), shown as a small muted
    *  caption at the top of the expanded body so the friendly collapsed title
    *  can stay clean without losing the identity for debugging. */
   wireName?: string | undefined

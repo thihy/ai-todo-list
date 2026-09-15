@@ -3,7 +3,7 @@
 // 重构后所有 store / handler 都从 todo / 文档 / 绘图标题算出在磁盘上的位置：
 //   {dataDir}/todos/{slug}/
 //     todo.json
-//     progress.html
+//     progress.md
 //     {docName}.md
 //     {docName}.excalidraw
 //     thumbs/{drawingId}.thumb.png
@@ -96,13 +96,14 @@ export function todoDir(todosDir: string, title: string, ulid: string): string {
   return dir;
 }
 
-/** 进展文档固定路径。progress.html 在每个 task 目录里只有一个，所以
- *  标题不参与命名——这是和 note_md / drawing 的最大区别。 */
+/** 进展文档固定路径。progress.md 在每个 task 目录里只有一个，所以
+ *  标题不参与命名——这是和 note_md / drawing 的最大区别。
+ *  内容为 Markdown，磁盘投影仅作 git 历史/文件管理器之用，DB 才是权威。 */
 export function progressFile(taskDir: string): string {
-  return join(taskDir, 'progress.html');
+  return join(taskDir, 'progress.md');
 }
 
-/** 笔记（kind=note_md）文档路径：按文档标题的 slug 加 .md。 */
+/** 文档（kind=note_md）路径：按文档标题的 slug 加 .md。 */
 export function noteFile(taskDir: string, docTitle: string): string {
   return join(taskDir, `${slugify(docTitle)}.md`);
 }

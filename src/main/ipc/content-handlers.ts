@@ -28,12 +28,12 @@ export function registerContentHandlers(
 
   // Resolve the git relPath (path of the progress doc relative to the
   // todosDir repo root) for a given todo. Post-refactor the file lives at
-  // {todosDir}/{slug}/progress.html, so relPath = {slug}/progress.html.
+  // {todosDir}/{slug}/progress.md, so relPath = {slug}/progress.md.
   // We read it from the task dir MarkdownStore already resolves, so the
   // path tracks renames + collision suffixes without re-deriving the slug.
   const progressRelPath = (todoId: ULID): string => {
     const taskDir = md.filePathFor(todoId);
-    // relative(todosDir, …/progress.html) → `{slug}/progress.html` with OS
+    // relative(todosDir, …/progress.md) → `{slug}/progress.md` with OS
     // separators; git wants forward slashes.
     return relative(todosDir, paths.progressFile(taskDir)).split(sep).join('/');
   };

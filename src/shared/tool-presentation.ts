@@ -72,78 +72,78 @@ export function parseToolArgs(raw: unknown): unknown {
 }
 
 export type ToolName =
-  | 'todo.list'
-  | 'todo.get'
-  | 'todo.create'
-  | 'todo.update'
-  | 'subtasks.list'
-  | 'todo.planForToday'
-  | 'todo.unplan'
-  | 'todo.delete'
-  | 'todo.restore'
-  | 'todo.batchUpdate'
-  | 'todo.search'
-  | 'todo.stats'
-  | 'content.readBody'
-  | 'content.writeBody'
-  | 'content.history'
-  | 'content.restoreVersion'
-  | 'drawing.list'
-  | 'drawing.read'
-  | 'drawing.save'
-  | 'drawing.delete'
-  | 'drawing.setThumb'
-  | 'inbox.attach'
-  | 'inbox.attachBlob'
-  | 'conversation.list'
-  | 'conversation.create'
-  | 'conversation.rename'
-  | 'conversation.archive'
-  | 'conversation.unarchive'
-  | 'conversation.delete'
-  | 'conversation.history'
-  | 'ai.health'
-  | 'ai.models'
-  | 'ai.stats'
-  | 'app.currentContext'
+  | 'todo_list'
+  | 'todo_get'
+  | 'todo_create'
+  | 'todo_update'
+  | 'subtasks_list'
+  | 'todo_planForToday'
+  | 'todo_unplan'
+  | 'todo_delete'
+  | 'todo_restore'
+  | 'todo_batchUpdate'
+  | 'todo_search'
+  | 'todo_stats'
+  | 'content_readBody'
+  | 'content_writeBody'
+  | 'content_history'
+  | 'content_restoreVersion'
+  | 'drawing_list'
+  | 'drawing_read'
+  | 'drawing_save'
+  | 'drawing_delete'
+  | 'drawing_setThumb'
+  | 'inbox_attach'
+  | 'inbox_attachBlob'
+  | 'conversation_list'
+  | 'conversation_create'
+  | 'conversation_rename'
+  | 'conversation_archive'
+  | 'conversation_unarchive'
+  | 'conversation_delete'
+  | 'conversation_history'
+  | 'ai_health'
+  | 'ai_models'
+  | 'ai_stats'
+  | 'app_currentContext'
   | 'web_search'
   | 'web_fetch';
 
 const kindByTool: Record<ToolName, ToolCallKind> = {
-  'todo.list': 'search',
-  'todo.get': 'read',
-  'todo.create': 'edit',
-  'todo.update': 'edit',
-  'subtasks.list': 'search',
-  'todo.planForToday': 'edit',
-  'todo.unplan': 'edit',
-  'todo.delete': 'delete',
-  'todo.restore': 'edit',
-  'todo.batchUpdate': 'edit',
-  'todo.search': 'search',
-  'todo.stats': 'other',
-  'content.readBody': 'read',
-  'content.writeBody': 'edit',
-  'content.history': 'read',
-  'content.restoreVersion': 'edit',
-  'drawing.list': 'read',
-  'drawing.read': 'read',
-  'drawing.save': 'edit',
-  'drawing.delete': 'delete',
-  'drawing.setThumb': 'edit',
-  'inbox.attach': 'edit',
-  'inbox.attachBlob': 'edit',
-  'conversation.list': 'read',
-  'conversation.create': 'edit',
-  'conversation.rename': 'edit',
-  'conversation.archive': 'delete',
-  'conversation.unarchive': 'edit',
-  'conversation.delete': 'delete',
-  'conversation.history': 'read',
-  'ai.health': 'other',
-  'ai.models': 'other',
-  'ai.stats': 'other',
-  'app.currentContext': 'read',
+  'todo_list': 'search',
+  'todo_get': 'read',
+  'todo_create': 'edit',
+  'todo_update': 'edit',
+  'subtasks_list': 'search',
+  'todo_planForToday': 'edit',
+  'todo_unplan': 'edit',
+  'todo_delete': 'delete',
+  'todo_restore': 'edit',
+  'todo_batchUpdate': 'edit',
+  'todo_search': 'search',
+  'todo_stats': 'other',
+  'content_readBody': 'read',
+  'content_writeBody': 'edit',
+  'content_history': 'read',
+  'content_restoreVersion': 'edit',
+  'drawing_list': 'read',
+  'drawing_read': 'read',
+  'drawing_save': 'edit',
+  'drawing_delete': 'delete',
+  'drawing_setThumb': 'edit',
+  'inbox_attach': 'edit',
+  'inbox_attachBlob': 'edit',
+  'conversation_list': 'read',
+  'conversation_create': 'edit',
+  'conversation_rename': 'edit',
+  'conversation_archive': 'delete',
+  'conversation_unarchive': 'edit',
+  'conversation_delete': 'delete',
+  'conversation_history': 'read',
+  'ai_health': 'other',
+  'ai_models': 'other',
+  'ai_stats': 'other',
+  'app_currentContext': 'read',
   'web_search': 'search',
   'web_fetch': 'fetch',
 };
@@ -164,8 +164,8 @@ export function presentToolCall(
 }
 
 /** Completed-call card. Each tool routes to the most natural render target:
- *  - read* / draw* / content.readBody → `card: 'read'` (ReadBlock)
- *  - content.writeBody              → `card: 'diff'` (DiffBlock)
+ *  - read* / draw* / content_readBody → `card: 'read'` (ReadBlock)
+ *  - content_writeBody              → `card: 'diff'` (DiffBlock)
  *  - *list / *search                → `card: 'search'` (SearchBlock, matches shape)
  *  - everything else                → `card: 'generic'` (JsonTree / JsonBlock)
  *
@@ -181,22 +181,22 @@ export function presentToolResult(
     return errorResult(toolName, result);
   }
   switch (toolName) {
-    case 'todo.list':
-    case 'subtasks.list':
+    case 'todo_list':
+    case 'subtasks_list':
       return todosListToSearch(toolName, result);
-    case 'todo.search':
+    case 'todo_search':
       return ftsHitsToSearch(result);
-    case 'todo.get':
+    case 'todo_get':
       return todoToRead(args, result);
-    case 'content.readBody':
+    case 'content_readBody':
       return markdownToRead(args, result);
-    case 'content.history':
+    case 'content_history':
       return contentHistoryToRead(result);
-    case 'drawing.read':
+    case 'drawing_read':
       return drawingToRead(args, result);
-    case 'drawing.list':
+    case 'drawing_list':
       return drawingListToGeneric(result);
-    case 'content.writeBody':
+    case 'content_writeBody':
       return writeBodyToDiff(args, result);
     default:
       return genericResult(toolName, result);
@@ -205,7 +205,7 @@ export function presentToolResult(
 
 /** One-line human-readable summary of a tool call for the collapsed row.
  *  Prefers the resolved subject (e.g. the TODO title from the result) over a
- *  raw id arg, so `todo.planForToday({id})` reads "晚上请客" once the result
+ *  raw id arg, so `todo_planForToday({id})` reads "晚上请客" once the result
  *  arrives — not "01M2G6H1JP". For list/search/stats tools it returns a
  *  count. Returns '' when nothing readable is available, in which case the
  *  row shows just its title. */
@@ -221,81 +221,81 @@ export function summarizeToolCall(
     : undefined;
   const resultTitle = (): string | undefined => stringField(result, 'title');
   switch (toolName) {
-    case 'todo.create':
-    case 'todo.update': {
+    case 'todo_create':
+    case 'todo_update': {
       const t = stringField(a, 'title') ?? resultTitle();
       return t ? truncate(t, 60) : '';
     }
-    case 'todo.get':
-    case 'todo.planForToday':
-    case 'todo.unplan': {
+    case 'todo_get':
+    case 'todo_planForToday':
+    case 'todo_unplan': {
       const t = resultTitle();
       return t ? truncate(t, 60) : '';
     }
-    case 'todo.delete':
-    case 'todo.restore':
-    case 'conversation.archive':
-    case 'conversation.unarchive':
-    case 'conversation.delete':
-    case 'drawing.delete':
-    case 'content.restoreVersion':
-    case 'drawing.setThumb':
+    case 'todo_delete':
+    case 'todo_restore':
+    case 'conversation_archive':
+    case 'conversation_unarchive':
+    case 'conversation_delete':
+    case 'drawing_delete':
+    case 'content_restoreVersion':
+    case 'drawing_setThumb':
       // result is {ok:true}; no subject to surface — the title alone suffices.
       return '';
-    case 'todo.list':
-    case 'subtasks.list':
-    case 'content.history': {
+    case 'todo_list':
+    case 'subtasks_list':
+    case 'content_history': {
       const n = asArray(result).length;
       if (n === 0) return '';
-      const unit = toolName === 'content.history' ? '个版本' : '项';
+      const unit = toolName === 'content_history' ? '个版本' : '项';
       return `${n} ${unit}`;
     }
-    case 'todo.batchUpdate': {
+    case 'todo_batchUpdate': {
       const ids = parseIdList(a?.['ids']);
       const n = Array.isArray(result) ? result.length : ids.length;
       return n > 0 ? `${n} 项` : '';
     }
-    case 'conversation.list': {
+    case 'conversation_list': {
       const convs = result && typeof result === 'object'
         ? asArray((result as Record<string, unknown>)['conversations'])
         : [];
       return convs.length > 0 ? `${convs.length} 个会话` : '';
     }
-    case 'conversation.history': {
+    case 'conversation_history': {
       const n = asArray(result).length;
       return n > 0 ? `${n} 轮` : '';
     }
-    case 'todo.search':
+    case 'todo_search':
     case 'web_search':
       return truncate(stringField(a, 'query') ?? '', 60);
     case 'web_fetch':
       return truncate(stringField(a, 'url') ?? '', 80);
-    case 'todo.stats': {
+    case 'todo_stats': {
       const w = numberField(a, 'windowDays');
       return w != null ? `${w} 天` : '';
     }
-    case 'content.readBody': {
+    case 'content_readBody': {
       const v = numberField(result, 'version');
       return v != null ? `版本 ${v}` : '';
     }
-    case 'content.writeBody': {
+    case 'content_writeBody': {
       const md = stringField(a, 'markdown') ?? '';
       const line = firstNonEmptyLine(md);
       return line ? truncate(line, 60) : '';
     }
-    case 'drawing.list': {
+    case 'drawing_list': {
       const n = asArray(result).length;
       return n > 0 ? `${n} 张画板` : '';
     }
-    case 'drawing.save':
+    case 'drawing_save':
       return truncate(stringField(a, 'title') ?? stringField(result, 'title') ?? '', 60);
-    case 'inbox.attach':
-    case 'inbox.attachBlob':
+    case 'inbox_attach':
+    case 'inbox_attachBlob':
       return truncate(
         stringField(a, 'filename') ?? stringField(result, 'filename') ?? '',
         60,
       );
-    case 'conversation.create': {
+    case 'conversation_create': {
       const conv = result && typeof result === 'object'
         ? (result as Record<string, unknown>)['conversation']
         : undefined;
@@ -304,7 +304,7 @@ export function summarizeToolCall(
         60,
       );
     }
-    case 'conversation.rename':
+    case 'conversation_rename':
       return truncate(stringField(a, 'title') ?? '', 60);
     default:
       return '';
@@ -342,40 +342,40 @@ function kindFor(toolName: string): ToolCallKind {
 function titleFor(toolName: string): string {
   // Friendly Chinese label for the card title; falls back to the raw toolName.
   const map: Record<string, string> = {
-    'todo.list': '查询 TODO',
-    'todo.get': '查看 TODO',
-    'todo.create': '新建 TODO',
-    'todo.update': '更新 TODO',
-    'subtasks.list': '查询子任务',
-    'todo.planForToday': '安排到今天',
-    'todo.unplan': '移出今日',
-    'todo.delete': '删除 TODO',
-    'todo.restore': '恢复 TODO',
-    'todo.batchUpdate': '批量更新',
-    'todo.search': '搜索 TODO',
-    'todo.stats': '统计',
-    'content.readBody': '读取正文',
-    'content.writeBody': '写入正文',
-    'content.history': '版本历史',
-    'content.restoreVersion': '恢复版本',
-    'drawing.list': '查看画板',
-    'drawing.read': '读取画板',
-    'drawing.save': '保存画板',
-    'drawing.delete': '删除画板',
-    'drawing.setThumb': '更新缩略图',
-    'inbox.attach': '添加附件',
-    'inbox.attachBlob': '添加附件',
-    'conversation.list': '列出会话',
-    'conversation.create': '新建会话',
-    'conversation.rename': '重命名会话',
-    'conversation.archive': '归档会话',
-    'conversation.unarchive': '取消归档',
-    'conversation.delete': '删除会话',
-    'conversation.history': '会话历史',
-    'ai.health': '检查 AI',
-    'ai.models': 'AI 模型',
-    'ai.stats': 'AI 统计',
-    'app.currentContext': '当前焦点',
+    'todo_list': '查询 TODO',
+    'todo_get': '查看 TODO',
+    'todo_create': '新建 TODO',
+    'todo_update': '更新 TODO',
+    'subtasks_list': '查询子任务',
+    'todo_planForToday': '安排到今天',
+    'todo_unplan': '移出今日',
+    'todo_delete': '删除 TODO',
+    'todo_restore': '恢复 TODO',
+    'todo_batchUpdate': '批量更新',
+    'todo_search': '搜索 TODO',
+    'todo_stats': '统计',
+    'content_readBody': '读取正文',
+    'content_writeBody': '写入正文',
+    'content_history': '版本历史',
+    'content_restoreVersion': '恢复版本',
+    'drawing_list': '查看画板',
+    'drawing_read': '读取画板',
+    'drawing_save': '保存画板',
+    'drawing_delete': '删除画板',
+    'drawing_setThumb': '更新缩略图',
+    'inbox_attach': '添加附件',
+    'inbox_attachBlob': '添加附件',
+    'conversation_list': '列出会话',
+    'conversation_create': '新建会话',
+    'conversation_rename': '重命名会话',
+    'conversation_archive': '归档会话',
+    'conversation_unarchive': '取消归档',
+    'conversation_delete': '删除会话',
+    'conversation_history': '会话历史',
+    'ai_health': '检查 AI',
+    'ai_models': 'AI 模型',
+    'ai_stats': 'AI 统计',
+    'app_currentContext': '当前焦点',
     'web_search': '搜索网页',
     'web_fetch': '读取网页',
   };
@@ -411,7 +411,7 @@ function errorResult(toolName: string, result: unknown): ToolResultView {
   };
 }
 
-// ─── todo.* / subtasks.list → SearchMatchesResultView ────────────────────
+// ─── todo.* / subtasks_list → SearchMatchesResultView ────────────────────
 
 function todosListToSearch(
   toolName: string,
@@ -468,7 +468,7 @@ function ftsHitsToSearch(result: unknown): ToolResultView {
   };
 }
 
-// ─── todo.get / content.readBody / drawing.read → ReadResultView ────────
+// ─── todo_get / content_readBody / drawing_read → ReadResultView ────────
 
 function todoToRead(_args: unknown, result: unknown): ToolResultView {
   const title = stringField(result, 'title') ?? '(无标题)';
@@ -549,13 +549,13 @@ function drawingToRead(_args: unknown, result: unknown): ToolResultView {
 }
 
 function drawingListToGeneric(result: unknown): ToolResultView {
-  return genericResult('drawing.list', result);
+  return genericResult('drawing_list', result);
 }
 
-// ─── content.writeBody → DiffResultView ─────────────────────────────────
+// ─── content_writeBody → DiffResultView ─────────────────────────────────
 
 function writeBodyToDiff(args: unknown, result: unknown): ToolResultView {
-  // L5-A: dsh-runtime's content.writeBody.execute snapshots the previous
+  // L5-A: dsh-runtime's content_writeBody.execute snapshots the previous
   // body via md.readBody() and attaches it as __oldText on the result before
   // presentationMeta pass-through. Read it here so DiffBlock renders a real
   // red/green diff (instead of an all-additions "覆盖" view when oldText

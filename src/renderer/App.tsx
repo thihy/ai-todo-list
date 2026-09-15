@@ -154,8 +154,17 @@ export const App: React.FC = () => {
         });
         return;
       }
+      // 没有任何活跃任务时不弹——"今天安排些什么？"对空库没意义。仍写
+      // lastPlanGuideDate 避免当天反复判定同一段空状态。
+      const active = all.filter((t) => !t.archivedAt && !t.deletedAt);
+      if (active.length === 0) {
+        settings.patch({ lastPlanGuideDate: todayKey }).catch(() => {
+          /* 空库引导抑制失败不影响主流程，静默 */
+        });
+        return;
+      }
       // 全集作为候选 —— modal 自己排序 + 截前 12。
-      setPlanCandidates(all.filter((t) => !t.archivedAt && !t.deletedAt));
+      setPlanCandidates(active);
       setPlanGuideOpen(true);
     });
     // effect 只在 settings.data 首次就绪 + 今日日期变更时跑。
@@ -279,6 +288,24 @@ export const App: React.FC = () => {
   const selectedId = route.name === 'todo' ? route.id : null;
   const showFullscreen = view === 'list' && fullscreenTodoId !== null && selectedId === fullscreenTodoId;
 
+  // Per-task selected-doc tab: in-memory map wins (session override). The
+  // persisted fallback (todo.selectedDocTab) is merged in the CHILD that
+  // owns the todo (TodoEditorPane / FullscreenDoc), because they gate
+  // DocumentsView on `todo` loaded — so the persisted value is available
+  // synchronously at mount, avoiding a race where DocumentsView's auto-
+  // select effect fires before the persisted tab is known and clobbers it.
+  const selectedDocId = selectedId ? (selectedDocByTodo[selectedId] ?? null) : null;
+  const onSelectDoc = useCallback(
+    (tabId: string) => {
+      if (!selectedId) return;
+      setSelectedDocByTodo((m) => ({ ...m, [selectedId]: tabId }));
+      // fire-and-forget: persist to task metadata so the tab survives
+      // restart. Does not bump updated_at, so no list reorder.
+      void window.todoList.todo.setSelectedDoc(selectedId, tabId);
+    },
+    [selectedId],
+  );
+
   const closeSettings = useCallback(() => {
     setSettingsOpen(false);
     if (location.hash.startsWith('#/settings')) location.hash = '#/';
@@ -346,8 +373,8 @@ export const App: React.FC = () => {
               <FullscreenDoc
                 todoId={selectedId}
                 onExit={() => setFullscreenTodoId(null)}
-                selectedDocId={selectedDocByTodo[selectedId] ?? null}
-                onSelectDoc={(tabId) => setSelectedDocByTodo((m) => ({ ...m, [selectedId]: tabId }))}
+                selectedDocId={selectedDocId}
+                onSelectDoc={onSelectDoc}
               />
             )}
             {view === 'list' && !showFullscreen && (
@@ -407,11 +434,8 @@ export const App: React.FC = () => {
                   }}
                   navigate={navigate}
                   onFullscreen={(todoId) => setFullscreenTodoId(todoId)}
-                  selectedDocId={selectedId ? selectedDocByTodo[selectedId] ?? null : null}
-                  onSelectDoc={(tabId) => {
-                    if (!selectedId) return;
-                    setSelectedDocByTodo((m) => ({ ...m, [selectedId]: tabId }));
-                  }}
+                  selectedDocId={selectedDocId}
+                  onSelectDoc={onSelectDoc}
                 />
               </div>
             )}
@@ -527,7 +551,7 @@ const FullscreenDoc: React.FC<{
               todoId={todoId}
               taskTitle={taskTitle}
               onFullscreen={onExit}
-              selectedDocId={selectedDocId}
+              selectedDocId={selectedDocId ?? todo?.selectedDocTab ?? null}
               onSelectDoc={onSelectDoc}
             />
           </Suspense>

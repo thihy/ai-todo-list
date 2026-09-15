@@ -112,7 +112,13 @@ export const SettingsModal: React.FC<{ open: boolean; onClose: () => void }> = (
             ) : cat === 'appearance' ? (
               <TaskAppearancePane
                 value={data.taskAppearance}
-                onSave={async (next) => { await patch({ taskAppearance: next }); }}
+                customPresets={data.taskAppearanceCustomPresets ?? []}
+                onSave={async (next, nextCustomPresets) => {
+                  await patch({
+                    taskAppearance: next,
+                    taskAppearanceCustomPresets: nextCustomPresets,
+                  });
+                }}
               />
             ) : cat === 'hotkeys' ? (
               <HotkeysPane data={data} patch={patchWithToast} />
@@ -170,6 +176,10 @@ const ModelPane: React.FC<PaneProps> = ({ data, patch }) => {
   // Key draft intact AND visibly tell them so they can decide whether to
   // retry — Key contents are not echoed in the toast (we never log them).
   const [keyError, setKeyError] = useState<string | null>(null);
+  // Local draft for the User-Agent field. Synced from persisted settings so a
+  // change broadcast (e.g. another pane triggering a re-fetch) doesn't clobber
+  // an in-flight edit; patched on blur so typing isn't a request storm.
+  const [userAgent, setUserAgent] = useState(data.userAgent);
 
   // UX-01 — when the AI component is in 'failed' state, a successful
   // settings save should automatically schedule a retry so the user
@@ -182,6 +192,7 @@ const ModelPane: React.FC<PaneProps> = ({ data, patch }) => {
   useEffect(() => {
     setApiKey('');
     setKeyError(null);
+    setUserAgent(data.userAgent);
   }, [data]);
 
   const isCustom = data.provider === 'custom';
@@ -243,6 +254,21 @@ const ModelPane: React.FC<PaneProps> = ({ data, patch }) => {
     } catch (err) {
       const reason = err instanceof Error && err.message ? err.message : '未知错误';
       toast.push({ kind: 'error', message: `更新流式设置失败：${reason}`, ttl: 3000 });
+    }
+  };
+
+  // User-Agent 在 blur 时 patch。空字符串回退到适配器默认
+  // (deepseek-harness/…);非空才覆盖。失败 toast,草稿保留。
+  const onUserAgentBlur = async (): Promise<void> => {
+    const next = userAgent.trim();
+    if (next === data.userAgent) return;
+    try {
+      await patch({ userAgent: next });
+      maybeAutoRetryAi();
+    } catch (err) {
+      const reason = err instanceof Error && err.message ? err.message : '未知错误';
+      toast.push({ kind: 'error', message: `更新 User-Agent 失败：${reason}`, ttl: 3000 });
+      setUserAgent(data.userAgent);
     }
   };
 
@@ -344,6 +370,21 @@ const ModelPane: React.FC<PaneProps> = ({ data, patch }) => {
           />
           <span>启用流式输出</span>
         </label>
+      </Field>
+
+      <Field
+        label="User-Agent"
+        hint="发送给 LLM 提供商的 User-Agent 请求头。默认 TodoList；留空回退到适配器内置值 (deepseek-harness/…)。"
+      >
+        <input
+          type="text"
+          className="input mono"
+          value={userAgent}
+          onChange={(e) => setUserAgent(e.target.value)}
+          onBlur={() => void onUserAgentBlur()}
+          placeholder="TodoList"
+          autoComplete="off"
+        />
       </Field>
     </div>
   );

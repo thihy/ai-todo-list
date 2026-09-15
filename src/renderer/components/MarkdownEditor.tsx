@@ -175,13 +175,13 @@ function continuationMarker(line: string): { insert: string; exit: boolean } | n
 }
 
 export const MarkdownEditor: React.FC<{
-  todoId: string;
+  docId: string;
   value: string;
   version: number | null;
   onSave: (markdown: string) => Promise<void>;
   saving: boolean;
   error: string | null;
-}> = ({ todoId, value, version, onSave, saving, error }) => {
+}> = ({ docId, value, version, onSave, saving, error }) => {
   const [md, setMd] = useState(value);
   const [view, setView] = useState<'write' | 'preview' | 'split'>('write');
   const [lastSavedAt, setLastSavedAt] = useState<number | null>(null);
@@ -368,7 +368,7 @@ export const MarkdownEditor: React.FC<{
         >
           <IconSave size={14} />
         </button>
-        <HistoryPopover todoId={todoId} onRestored={() => undefined} />
+        <HistoryPopover docId={docId} onRestored={() => undefined} />
         {view !== 'preview' && (
           <div className="md-editor__toolbar" role="toolbar" aria-label="格式">
               <ToolbarBtn label="H1" title="一级标题 (Ctrl+Alt+1)" onClick={() => doLine('# ')}>
@@ -455,7 +455,7 @@ export const MarkdownEditor: React.FC<{
   );
 };
 
-/** Bottom status bar shared by MarkdownEditor and WysiwygEditor. Shows
+/** Bottom status bar for MarkdownEditor. Shows
  *  word count, char count, and "已保存 HH:MM:SS" (or "保存中…" / "未保存" /
  *  "Xs 前已保存"). Re-renders once a second so the relative timestamp
  *  stays current. The MarkdownEditor also passes `view` / `onViewChange`

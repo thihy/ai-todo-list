@@ -110,14 +110,14 @@ describe('foldHistory', () => {
   it('pairs tool/call with tool/result by callId and emits one tool turn', () => {
     const events = [
       userMsg('查找'),
-      toolCall('c1', 'todo.list', '{"status":"next"}'),
+      toolCall('c1', 'todo_list', '{"status":"next"}'),
       toolResult('c1', true, [{ type: 'text', text: '[]' }]),
       stepEnd(),
     ];
     const turns = foldHistory(events);
     const tools = turns.filter((t) => t.type === 'tool');
     expect(tools).toHaveLength(1);
-    expect(tools[0]).toMatchObject({ type: 'tool', name: 'todo.list', ok: true });
+    expect(tools[0]).toMatchObject({ type: 'tool', name: 'todo_list', ok: true });
     expect((tools[0] as { args?: string }).args).toBe('{"status":"next"}');
   });
 
@@ -140,7 +140,7 @@ describe('foldHistory', () => {
   it('emits a tool turn with ok=false when no result follows', () => {
     const events = [
       userMsg('查找'),
-      toolCall('c1', 'todo.list'),
+      toolCall('c1', 'todo_list'),
       stepEnd(),
     ];
     const turns = foldHistory(events);
@@ -152,7 +152,7 @@ describe('foldHistory', () => {
     // state field, not a fake error.
     expect(tools[0]).toMatchObject({
       type: 'tool',
-      name: 'todo.list',
+      name: 'todo_list',
       ok: false,
       state: 'missing-result',
       error: undefined,
@@ -162,7 +162,7 @@ describe('foldHistory', () => {
   it('emits a tool turn with ok=false and error content on error result', () => {
     const events = [
       userMsg('查找'),
-      toolCall('c1', 'todo.get'),
+      toolCall('c1', 'todo_get'),
       toolResult('c1', false, [{ type: 'text', text: 'not found' }]),
       stepEnd(),
     ];
@@ -180,7 +180,7 @@ describe('foldHistory', () => {
     const events = [
       userMsg('复杂任务'),
       textDelta('先列一下'),
-      toolCall('c1', 'todo.list'),
+      toolCall('c1', 'todo_list'),
       toolResult('c1', true, [{ type: 'text', text: '[]' }]),
       textDelta(' 然后继续'),
       stepEnd(),

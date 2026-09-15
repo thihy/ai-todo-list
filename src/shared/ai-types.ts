@@ -283,4 +283,6 @@ export interface AISettings {
   customProviders: CustomProviderView[];
   /** Active custom instance id when provider==='custom'; null = none selected. */
   customProviderId: string | null;
+  /** User-Agent header sent on LLM provider requests. */
+  userAgent: string;
 }

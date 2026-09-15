@@ -34,18 +34,18 @@ describe('Permission tiers', () => {
   });
 
   it('delete is destructive', () => {
-    expect(tierFor('todo.delete')).toBe('block');
-    expect(tierFor('drawing.delete')).toBe('block');
-    expect(tierFor('content.restoreVersion')).toBe('block');
+    expect(tierFor('todo_delete')).toBe('block');
+    expect(tierFor('drawing_delete')).toBe('block');
+    expect(tierFor('content_restoreVersion')).toBe('block');
   });
 
   it('restore is safe (undo of a delete)', () => {
-    expect(tierFor('todo.restore')).toBe('auto');
+    expect(tierFor('todo_restore')).toBe('auto');
   });
 
   it('list/read are safe', () => {
-    expect(tierFor('todo.list')).toBe('auto');
-    expect(tierFor('todo.get')).toBe('auto');
-    expect(tierFor('drawing.read')).toBe('auto');
+    expect(tierFor('todo_list')).toBe('auto');
+    expect(tierFor('todo_get')).toBe('auto');
+    expect(tierFor('drawing_read')).toBe('auto');
   });
 });
