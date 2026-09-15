@@ -7,7 +7,7 @@
 //   alpha   字母顺序 (default) — A→Z, Chinese-aware localeCompare with numeric ordering
 //   created 创建日期           — newest first
 //   due     截止日期           — soonest first, no-due last
-//   priority 优先级           — high → medium → low → none
+//   priority 优先级           — very-high → very-low
 //
 // The comparator itself lives in TodoListPane (it owns the tree), so this
 // popover is purely a picker over SORT_KEYS.

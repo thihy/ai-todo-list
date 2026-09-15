@@ -1,11 +1,11 @@
-// PriorityPicker — a compact pill trigger that opens a 4-item popover.
+// PriorityPicker — a compact pill trigger that opens a 5-item popover.
 //
 // Mirrors StatusSelect's menu aesthetic so the detail meta row reads as one
 // family: neutral menu rows where colour is carried by a small dot only
 // (the previous version bordered every option in its own colour, which read
 // as a noisy rainbow). The selected option gets a check mark, not a fill.
 //
-// Semantic colouring: 高=danger / 中=warn / 低=info / 无=muted.
+// Semantic colouring: 极高/高=danger / 中=warn / 低=info / 极低=muted.
 
 import React, { useEffect, useRef, useState } from 'react';
 import { IconCheck, IconFlag } from './icons';
@@ -17,15 +17,19 @@ interface Option {
   color: string;
 }
 
+// 5 档优先级（从高到低排列 —— 视觉上"重要"的选项靠前，方便快速定位）。
+// 极高和高共用同一 danger 色 —— 它们之间靠 emoji / 文字区分，不靠颜色；
+// 这样最危险的色（红）不会被稀释，又能保留 5 档区分。
 const OPTIONS: Option[] = [
-  { value: 'high', label: '高', color: 'var(--accent-danger)' },
-  { value: 'medium', label: '中', color: 'var(--accent-warn)' },
-  { value: 'low', label: '低', color: 'var(--accent-info)' },
-  { value: 'none', label: '无', color: 'var(--fg-muted)' },
+  { value: 'very-high', label: '极高', color: '#991B1B' },
+  { value: 'high',      label: '高',   color: 'var(--accent-danger)' },
+  { value: 'medium',    label: '中',   color: 'var(--accent-warn)' },
+  { value: 'low',       label: '低',   color: 'var(--accent-info)' },
+  { value: 'very-low',  label: '极低', color: 'var(--fg-muted)' },
 ];
 
 function find(value: Priority): Option {
-  return OPTIONS.find((o) => o.value === value) ?? OPTIONS[3]!;
+  return OPTIONS.find((o) => o.value === value) ?? OPTIONS[4]!;
 }
 
 export const PriorityPicker: React.FC<{

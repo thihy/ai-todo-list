@@ -7,16 +7,19 @@
 // id IS the SessionId.
 //
 // Operations:
-//   list(includeArchived=false) → rows sorted by updated_at DESC
+//   list({includeArchived, limit, offset}) → rows sorted by updated_at DESC
+//   count(includeArchived=false) → total matching rows
 //   get(id) → row or undefined
 //   create({title?}) → new row with auto-generated title default
 //   rename(id, title) → updates title + bumps updated_at
 //   touch(id) → bumps updated_at (called after each AI turn)
 //   archive(id) → soft delete (archived = 1); JSONL is NOT touched
 //   unarchive(id) → restore an archived conversation
-//   delete(id) → hard delete the DB row; caller is responsible for the
-//                JSONL (or leave it as a "ghost" — list() filters archived
-//                but the on-disk log remains so the user can inspect).
+//   delete(id) → hard delete one DB row; caller responsible for JSONL
+//   deleteMany(ids) → hard delete many DB rows; caller responsible for JSONL
+//   sweep(maxCount) → when active count > max, hard delete the oldest
+//                     unarchived rows down to the cap. Caller responsible
+//                     for any leaked JSONL (sweep is a pure DB op).
 //
 // Notes:
 // - updated_at is bumped on every state mutation so the sidebar can sort
@@ -24,6 +27,12 @@
 // - archived ≠ deleted: the JSONL is preserved across archive, and the
 //   conversation can still be loaded by id (e.g. via `unarchive`). The
 //   sidebar hides archived rows by default.
+// - delete / deleteMany / sweep are all "DB-only" — the on-disk JSONL is
+//   not touched. The single `ai.conversation.delete` handler runs the
+//   JSONL cleanup pass; for batch + sweep the renderer is expected to
+//   accept that leaked JSONL will be picked up by the next backup pass
+//   or by `Settings → 数据 → 数据备份` snapshots. Keeping the sweep path
+//   pure-DB avoids a runtime-boot dependency on the create handler.
 import type Database from 'better-sqlite3';
 import { newId } from './schema';
 
@@ -169,5 +178,49 @@ export class ConversationRepo {
   delete(id: string): boolean {
     const res = this.db.prepare('DELETE FROM conversations WHERE id = ?').run(id);
     return res.changes > 0;
+  }
+
+  /**
+   * Hard delete many DB rows in one statement. Empty array / unknown ids
+   * are no-ops. Returns the number of rows actually removed (always ≤
+   * `ids.length`). Does NOT touch the on-disk JSONL — caller is responsible.
+   */
+  deleteMany(ids: string[]): number {
+    if (!Array.isArray(ids) || ids.length === 0) return 0;
+    // 占位符动态拼装 —— 仍然走 prepare + 参数绑定，不走字符串拼接值
+    // （值是 ?，不是直接拼 id，避免任何注入风险）。
+    const placeholders = ids.map(() => '?').join(',');
+    const res = this.db
+      .prepare(`DELETE FROM conversations WHERE id IN (${placeholders})`)
+      .run(...ids);
+    return res.changes;
+  }
+
+  /**
+   * Cap enforcement: when the active (unarchived) count exceeds `maxCount`,
+   * hard-delete the oldest rows by `updated_at ASC` until we're back under
+   * the cap. `maxCount <= 0` means "unlimited" → no-op. Archived rows are
+   * never swept — they're "kept but hidden" by the user. Pure DB op; the
+   * on-disk JSONL of swept rows is left as a ghost (the renderer accepts
+   * this trade-off to keep `ai.conversation.create` free of a runtime-boot
+   * dependency).
+   */
+  sweep(maxCount: number): number {
+    if (!Number.isFinite(maxCount) || maxCount <= 0) return 0;
+    const current = this.count(false); // 仅未归档
+    if (current <= maxCount) return 0;
+    const overflow = current - maxCount;
+    const res = this.db
+      .prepare(
+        `DELETE FROM conversations
+         WHERE id IN (
+           SELECT id FROM conversations
+           WHERE archived = 0
+           ORDER BY updated_at ASC
+           LIMIT ?
+         )`,
+      )
+      .run(overflow);
+    return res.changes;
   }
 }

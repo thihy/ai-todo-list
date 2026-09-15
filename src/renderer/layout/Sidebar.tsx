@@ -10,8 +10,8 @@ export const Sidebar: React.FC<{
 }> = ({ onNavigate }) => {
   const isActive = (target: string): boolean => location.hash === target;
 
-  const priorities = ['high', 'medium', 'low', 'none'];
-  const prioLabel: Record<string, string> = { high: '高', medium: '中', low: '低', none: '无' };
+  const priorities = ['very-high', 'high', 'medium', 'low', 'very-low'];
+  const prioLabel: Record<string, string> = { 'very-high': '极高', high: '高', medium: '中', low: '低', 'very-low': '极低' };
 
   return (
     <nav className="sidebar" aria-label="主导航">
@@ -50,10 +50,11 @@ const ICONS: Record<string, string> = {
   archive: 'M2.5 3H13.5L14 6H2L2.5 3Z M3.5 6V13H12.5V6 M6.5 8H9.5',
   trash: 'M3 4.5H13 M6.5 4.5V3.2A.5.5 0 01 7 2.7H9A.5.5 0 019.5 3.2V4.5 M5 4.5L5.6 12.5A.5.5 0 006.1 13H9.9A.5.5 0 0010.4 12.5L11 4.5',
   chart: 'M3 13H13 M5 13V9 M8 13V6 M11 13V3',
+  'prio-very-high': 'M8 2L14 14H2L8 2Z M8 6V10 M8 11.6V12',
   'prio-high': 'M8 2L14 14H2L8 2Z',
   'prio-medium': 'M3 3H13V13H3V3Z',
   'prio-low': 'M8 4L12 12H4L8 4Z',
-  'prio-none': 'M3 8H13',
+  'prio-very-low': 'M3 8H13',
   gear: 'M8 5.5a2.5 2.5 0 100 5 2.5 2.5 0 000-5Z M8 1V3 M8 13V15 M1 8H3 M13 8H15 M3 3L4.5 4.5 M11.5 11.5L13 13 M3 13L4.5 11.5 M11.5 4.5L13 3',
 };
 

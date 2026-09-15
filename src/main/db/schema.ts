@@ -7,7 +7,7 @@ const { ulid } = ulidPkg;
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 
-export const SCHEMA_VERSION = 17;
+export const SCHEMA_VERSION = 19;
 
 const MIGRATIONS: ReadonlyArray<{ version: number; sql: string }> = [
   {
@@ -725,6 +725,91 @@ const MIGRATIONS: ReadonlyArray<{ version: number; sql: string }> = [
     // first-open auto-select).
     sql: `
       ALTER TABLE todos ADD COLUMN selected_doc_tab TEXT;
+    `,
+  },
+  {
+    version: 19,
+    // 5 档优先级体系 (very-low / low / medium / high / very-high) 取代旧的
+    // 4 档 (none / low / medium / high)。"无优先级"这个状态被移除 —— 用户
+    // 必须给每条任务分配一档优先级。
+    //
+    // 历史数据迁移：
+    //   - 旧 'none' 行 → 新 'low'（"低优先级"是 5 档里最弱的一档，最贴近
+    //     旧版 "没标优先级 = 不重要" 的语义）。
+    //   - 其他档位（low / medium / high）原样保留。
+    //   - 排序权重变了：5 档顺序很-低 / 低 / 中 / 高 / 很高；todo 列表
+    //     默认"高优先在上"的渲染逻辑由 TodoListPane 端处理，跟 DB 无关。
+    //
+    // SQLite 不能 ALTER CHECK 约束 —— 沿用 v8 / v14 的"重建表"模式：
+    //   1. CREATE todos_new 带新的 priority CHECK；
+    //   2. INSERT INTO todos_new SELECT FROM todos，CASE WHEN 把 'none'
+    //      → 'low' 一次完成（避免分两步走 + 中间态）；
+    //   3. DROP FTS triggers（避免 DROP TABLE 时它们继续 fire，参考 v8
+    //      / v14 的注释）；
+    //   4. DROP TABLE todos；
+    //   5. ALTER TABLE todos_new RENAME TO todos；
+    //   6. 重建同名 indexes（被 DROP 一起带走了）；
+    //   7. 重建 FTS triggers —— 跟 v14 一样不跑 'rebuild'，避免大库上
+    //      首启动 hang 住窗口（v14 注释解释）。
+    sql: `
+      CREATE TABLE todos_new (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('next','doing','blocked','done','cancelled')),
+        priority TEXT NOT NULL CHECK (priority IN ('very-low','low','medium','high','very-high')),
+        due_at INTEGER,
+        body_path TEXT NOT NULL,
+        body TEXT NOT NULL DEFAULT '',
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        done_at INTEGER,
+        parent_id TEXT,
+        archived_at INTEGER,
+        deleted_at INTEGER,
+        progress INTEGER NOT NULL DEFAULT 0,
+        planned_for TEXT,
+        storage_dir TEXT,
+        selected_doc_tab TEXT,
+        FOREIGN KEY (parent_id) REFERENCES todos(id) ON DELETE SET NULL
+      );
+
+      INSERT INTO todos_new (id, title, status, priority, due_at, body_path, body,
+                             created_at, updated_at, done_at, parent_id, archived_at,
+                             deleted_at, progress, planned_for, storage_dir, selected_doc_tab)
+      SELECT id, title, status,
+             CASE priority WHEN 'none' THEN 'low' ELSE priority END,
+             due_at, body_path, body,
+             created_at, updated_at, done_at, parent_id, archived_at, deleted_at,
+             progress, planned_for, storage_dir, selected_doc_tab
+      FROM todos;
+
+      DROP TRIGGER IF EXISTS todos_fts_insert;
+      DROP TRIGGER IF EXISTS todos_fts_delete;
+      DROP TRIGGER IF EXISTS todos_fts_update;
+
+      DROP TABLE todos;
+      ALTER TABLE todos_new RENAME TO todos;
+
+      CREATE INDEX idx_todos_status ON todos(status);
+      CREATE INDEX idx_todos_due_at ON todos(due_at);
+      CREATE INDEX idx_todos_updated_at ON todos(updated_at DESC);
+      CREATE INDEX idx_todos_parent ON todos(parent_id);
+      CREATE INDEX idx_todos_archived ON todos(archived_at);
+      CREATE INDEX idx_todos_deleted ON todos(deleted_at);
+      CREATE INDEX idx_todos_planned_for ON todos(planned_for);
+      CREATE UNIQUE INDEX idx_todos_storage_dir ON todos(storage_dir)
+        WHERE storage_dir IS NOT NULL;
+
+      CREATE TRIGGER todos_fts_insert AFTER INSERT ON todos BEGIN
+        INSERT INTO todos_fts(rowid, title, body) VALUES (new.rowid, new.title, new.body);
+      END;
+      CREATE TRIGGER todos_fts_delete AFTER DELETE ON todos BEGIN
+        INSERT INTO todos_fts(todos_fts, rowid, title, body) VALUES('delete', old.rowid, old.title, old.body);
+      END;
+      CREATE TRIGGER todos_fts_update AFTER UPDATE ON todos BEGIN
+        INSERT INTO todos_fts(todos_fts, rowid, title, body) VALUES('delete', old.rowid, old.title, old.body);
+        INSERT INTO todos_fts(rowid, title, body) VALUES (new.rowid, new.title, new.body);
+      END;
     `,
   },
 ];

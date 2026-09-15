@@ -131,7 +131,7 @@ describe('writeTodoJson', () => {
       id: '01ABC',
       title: 'T',
       status: 'next',
-      priority: 'none',
+      priority: 'low',
       tags: [],
       dueAt: null,
       createdAt: 1,

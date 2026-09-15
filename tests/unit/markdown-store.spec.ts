@@ -21,7 +21,7 @@ let resolveTaskDir: (id: string) => string;
 function seedTodo(id: string, title = 'test'): void {
   db.prepare(
     `INSERT INTO todos (id, title, status, priority, due_at, body_path, created_at, updated_at, done_at)
-     VALUES (?, ?, 'next', 'none', NULL, ?, ?, ?, NULL)`,
+     VALUES (?, ?, 'next', 'low', NULL, ?, ?, ?, NULL)`,
   ).run(id, title, `${id}.md`, Date.now(), Date.now());
 }
 

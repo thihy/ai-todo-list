@@ -678,6 +678,7 @@ function toInputs(
 
 const DataPane: React.FC<PaneProps & { chooseDataDir: () => Promise<string | null> }> = ({
   data,
+  patch,
   chooseDataDir,
 }) => {
   const [relocating, setRelocating] = useState(false);
@@ -780,6 +781,30 @@ const DataPane: React.FC<PaneProps & { chooseDataDir: () => Promise<string | nul
             </span>
           )}
         </div>
+      </Field>
+      {/* AI 对话保留上限 —— 只对未归档对话生效。0 = 不限；超过 N 时新建
+          后会自动物理删最老的（按 updated_at ASC），归档对话不会被清。
+          在 onChange 里做夹紧（负数 / NaN / 非整数全部丢弃），不让脏值
+          落到 store。 */}
+      <Field
+        label="AI 对话保留数量"
+        hint="单个工作区最多保留多少条未归档 AI 对话（0 = 不限）。新建对话后若超过此数，最老的会被自动物理删除。归档里的对话不受此限制。默认 100。"
+      >
+        <input
+          className="input mono"
+          type="number"
+          min={0}
+          max={10000}
+          step={10}
+          value={data.maxConversations}
+          onChange={(e) => {
+            const n = Number(e.target.value);
+            if (!Number.isFinite(n) || n < 0) return;
+            const intN = Math.floor(n);
+            if (intN > 10000) return;
+            void patch({ maxConversations: intN });
+          }}
+        />
       </Field>
       {notice && <div className="notice">{notice}</div>}
     </div>

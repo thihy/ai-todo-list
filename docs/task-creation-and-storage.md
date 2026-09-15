@@ -14,7 +14,7 @@ A task is a row in `todos`. The relevant user-facing fields are:
 | --- | --- | --- |
 | `title` | Actionable task title | Required |
 | `status` | `next`, `doing`, `blocked`, `done`, `cancelled` | `next` |
-| `priority` | `none`, `low`, `medium`, `high` | `none` |
+| `priority` | `very-low`, `low`, `medium`, `high`, `very-high` (required) | `low` |
 | `dueAt` | Deadline as Unix milliseconds | Only when explicitly supplied |
 | `tags` | User categories | Empty unless explicit or safely reused |
 | `parentId` | Real parent task ID | `null`; never guessed |
@@ -105,7 +105,7 @@ The model must:
 1. Treat a `create-task` turn as an instruction to create real task rows.
 2. Call `todo.create` when the description is sufficient.
 3. Produce concise, actionable titles without envelope content.
-4. Default to `next` and `none`.
+4. Default to `next` and `low`.
 5. Change status or priority only when supported by the description.
 6. Avoid invented deadlines and subjective tags.
 7. Use the envelope’s `localDate` for explicit Today requests.

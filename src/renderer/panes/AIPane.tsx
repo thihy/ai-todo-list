@@ -218,6 +218,13 @@ export const AIPane: React.FC<{
   const [loadingMore, setLoadingMore] = useState(false);
   // Per-row actions menu in the history dropdown.
   const [rowMenuId, setRowMenuId] = useState<string | null>(null);
+  // 批量删除的勾选集。范围 = 当前已加载到 UI 的全部 conversations；
+  // 搜索过滤不影响勾选集（被搜索隐藏的项仍然在 selectedIds 里，UI 在
+  // 底部 batchbar 给出"当前显示 N / 共选 M"的提示）。当 conversations
+  // 变化（refreshList / 单条删 / sweep 后）通过下面的 useEffect 剪掉
+  // 不存在的 id。
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [batchDeleting, setBatchDeleting] = useState(false);
 
   // HITL state — the latest unanswered request of each kind. We keep only
   // the most recent because answering replaces the on-screen card; older
@@ -629,6 +636,20 @@ export const AIPane: React.FC<{
     ? conversations.filter((c) => c.title.toLowerCase().includes(switcherQuery.toLowerCase()))
     : conversations;
 
+  // 批量删除勾选集的派生值。
+  // - 「全选」的范围是当前已加载到 UI 的全部 conversations；搜索过滤不会收窄
+  //   集合 —— 被搜索隐藏的项仍然在 selectedIds 里（用户搜索时勾选几条、取消
+  //   搜索后这些勾选还在）。batchbar 用 "当前显示 N / 共选 M" 给出提示。
+  // - loadedIds 在 conversations 变化时变，触发下面的 prune effect 剪掉
+  //   selectedIds 里已被删除的 id。
+  const loadedIds = useMemo(() => conversations.map((c) => c.id), [conversations]);
+  const allLoadedSelected =
+    loadedIds.length > 0 && loadedIds.every((id) => selectedIds.has(id));
+  const visibleSelectedCount = filteredConversations.filter((c) =>
+    selectedIds.has(c.id),
+  ).length;
+  const totalSelectedCount = selectedIds.size;
+
   const refreshList = async (mode: 'replace' | 'append' = 'replace'): Promise<void> => {
     if (mode === 'append' && loadingMore) return;
     if (mode === 'append') setLoadingMore(true);
@@ -758,6 +779,98 @@ export const AIPane: React.FC<{
     const remaining = conversations.filter((c) => c.id !== id);
     setConversations(remaining);
     if (id === currentId) setCurrentId(remaining[0]?.id ?? null);
+  };
+
+  // 批量删除的勾选切换：单行；call O(1) 在原 set 上 add/delete 再 clone。
+  const toggleOne = useCallback((id: string): void => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+  // 全选 / 取消全已加载的对话 —— 范围 = loadedIds，不受搜索过滤影响。
+  const toggleAllLoaded = useCallback((): void => {
+    setSelectedIds((prev) => {
+      if (loadedIds.length === 0) return prev;
+      // 当前是否「全部已选」？以 loadedIds 算（不是 prev 自身）——prev 可能
+      // 含有已不存在的 id，那些 id 不能用来判断「全选」状态。
+      const allSelected = loadedIds.every((id) => prev.has(id));
+      if (allSelected) {
+        // 取消时只清掉仍在 loadedIds 里的那些（保留 prev 里偶尔残留的
+        // 过期 id —— 它们会在下面的 prune effect 里被自然清理）。
+        const next = new Set(prev);
+        for (const id of loadedIds) next.delete(id);
+        return next;
+      }
+      // 全选：以 loadedIds 为准 union 进 prev，丢掉 prev 里可能残留的过期 id。
+      return new Set(loadedIds);
+    });
+  }, [loadedIds]);
+  // 当 conversations 变化（refreshList / 单条删 / sweep）时，剪掉
+  // selectedIds 里已不存在的 id。empty 短路避免无谓 clone。
+  useEffect(() => {
+    setSelectedIds((prev) => {
+      if (prev.size === 0) return prev;
+      const live = new Set(loadedIds);
+      let changed = false;
+      for (const id of prev) {
+        if (!live.has(id)) {
+          prev.delete(id);
+          changed = true;
+        }
+      }
+      return changed ? new Set(prev) : prev;
+    });
+  }, [loadedIds]);
+
+  // 批量删除执行：confirm（main 弹主题化对话框）→ IPC 删 → 通知 + 收尾。
+  // main 会广播 `app:data-changed { scope: 'conversations' }`，本组件挂在
+  // convVersion 上的 effect 会自动重新拉列表并尝试重选 currentId；唯一
+  // 需要主动清的是「currentId 正好在被删的集合里」的情况 —— 那时用
+  // currentIdRef 做 stale-closure-safe 检测。
+  const onBatchDelete = async (): Promise<void> => {
+    if (selectedIds.size === 0 || batchDeleting) return;
+    const ids = Array.from(selectedIds);
+    const titles = ids
+      .map((id) => conversations.find((c) => c.id === id)?.title ?? '')
+      .filter((t) => t.length > 0);
+    const confirmRes = await window.todoList.conversation.confirmDeleteMany(
+      ids.length,
+      titles,
+    );
+    if (!confirmRes.ok || !confirmRes.data.confirmed) return;
+    setBatchDeleting(true);
+    const deletedCurrent = currentIdRef.current !== null && ids.includes(currentIdRef.current);
+    try {
+      const res = await window.todoList.conversation.deleteMany(ids);
+      if (res.ok) {
+        // 收尾：清空勾选集；切走 currentId（如有）；本地 turns / historyLoaded
+        // 一并清掉（data-changed 会重拉 conversations，但内存中的 turns
+        // cache 是 renderer 本地，不清的话会出现「DB 没了但内存里还有」。
+        // data-changed → refreshList('replace') 不主动清 turns，因为
+        // 单条删除路径也是这里手清的 —— 行为保持一致）。
+        setSelectedIds(new Set());
+        if (deletedCurrent) setCurrentId(null); // refreshList 之后 useEffect 会兜底 list[0]
+        // 清掉已删对话的内存 turns 与 historyLoaded（不留 zombie）
+        setTurnsByConv((prev) => {
+          const next = { ...prev };
+          for (const id of ids) delete next[id];
+          return next;
+        });
+        setHistoryLoaded((prev) => {
+          const next = new Set(prev);
+          for (const id of ids) next.delete(id);
+          return next;
+        });
+        await refreshList('replace');
+      } else {
+        window.alert(`删除失败：${res.message ?? res.code ?? '未知错误'}`);
+      }
+    } finally {
+      setBatchDeleting(false);
+    }
   };
 
   // L3-B: stop the in-flight turn. Soft-cancel the conversation's agent via
@@ -1138,6 +1251,17 @@ export const AIPane: React.FC<{
                 <div className="aipane__menu aipane__menu--right" role="listbox">
                   <div className="aipane__menu-head">
                     <span className="aipane__menu-head-title">对话历史</span>
+                    {loadedIds.length > 0 && (
+                      <button
+                        type="button"
+                        className="aipane__menu-head-action"
+                        onClick={toggleAllLoaded}
+                        aria-label={allLoadedSelected ? '取消全选' : '全选已加载的对话'}
+                        title={allLoadedSelected ? '取消全选' : '全选'}
+                      >
+                        {allLoadedSelected ? '取消全选' : '全选'}
+                      </button>
+                    )}
                   </div>
                   <div className="aipane__search">
                     <input
@@ -1177,7 +1301,22 @@ export const AIPane: React.FC<{
                   )}
                   <div className="aipane__menu-list">
                     {filteredConversations.map((c) => (
-                      <div key={c.id} className="aipane__menu-row">
+                      <div
+                        key={c.id}
+                        className={`aipane__menu-row${selectedIds.has(c.id) ? ' aipane__menu-row--selected' : ''}`}
+                      >
+                      <label
+                        className={`aipane__menu-check${selectedIds.has(c.id) ? ' aipane__menu-check--on' : ''}`}
+                        onClick={(e) => e.stopPropagation()}
+                        title={selectedIds.has(c.id) ? '取消选择' : '选择此对话'}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.has(c.id)}
+                          onChange={() => toggleOne(c.id)}
+                          aria-label={`选择 "${c.title}"`}
+                        />
+                      </label>
                       <button
                         type="button"
                         role="option"
@@ -1231,6 +1370,38 @@ export const AIPane: React.FC<{
                     </div>
                   ))}
                   </div>
+                  {/* 批量操作条 —— 仅在有勾选时出现；位置在列表（滚动容器）
+                      下方、「显示更多」分页按钮上方，不会随列表一起滚动。
+                      显示 N / 共选 M 的提示在搜索过滤导致可见 ≠ 选中全集
+                      时给出，让用户知道被搜索隐藏的那部分还在勾选里。 */}
+                  {totalSelectedCount > 0 && (
+                    <div className="aipane__menu-batchbar" role="toolbar" aria-label="批量操作">
+                      <span className="aipane__menu-batchbar-text">
+                        已选 {totalSelectedCount} 条
+                        {visibleSelectedCount < totalSelectedCount && (
+                          <span className="aipane__menu-batchbar-hint">
+                            （当前显示 {visibleSelectedCount} 条）
+                          </span>
+                        )}
+                      </span>
+                      <button
+                        type="button"
+                        className="aipane__menu-batchbar-btn"
+                        onClick={() => setSelectedIds(new Set())}
+                        disabled={batchDeleting}
+                      >
+                        取消
+                      </button>
+                      <button
+                        type="button"
+                        className="aipane__menu-batchbar-btn aipane__menu-batchbar-btn--danger"
+                        onClick={() => void onBatchDelete()}
+                        disabled={batchDeleting}
+                      >
+                        {batchDeleting ? '删除中…' : '删除选中'}
+                      </button>
+                    </div>
+                  )}
                   {/* 「显示更多」分页按钮 —— 在滚动容器下方；剩余 0 时禁用并改文案。
                       搜索过滤后没有命中时隐藏按钮（避免「还有 N 条」与「没有匹配…」同时出现）。 */}
                   {conversations.length > 0 && filteredConversations.length > 0 && (

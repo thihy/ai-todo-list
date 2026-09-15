@@ -20,16 +20,18 @@ import type { Todo } from '../../shared/todo-types';
 import { useDimTitleBar } from '../hooks/useDimTitleBar';
 
 const PRIORITY_WEIGHT: Record<NonNullable<Todo['priority']>, number> = {
+  'very-high': 5,
   high: 4,
   medium: 3,
   low: 2,
-  none: 1,
+  'very-low': 1,
 };
 const PRIORITY_LABEL: Record<NonNullable<Todo['priority']>, string> = {
+  'very-high': '极高',
   high: '高',
   medium: '中',
   low: '低',
-  none: '无',
+  'very-low': '极低',
 };
 
 const CANDIDATE_LIMIT = 12;
@@ -39,7 +41,7 @@ function sortCandidates(todos: Todo[]): Todo[] {
   // 高优先级 → 截止日期最近（无 due 推到队尾）→ 字母顺序。
   // 注意是候选排序，不影响 TodoListPane 既有 sortKey。
   return todos.slice().sort((a, b) => {
-    const pw = PRIORITY_WEIGHT[b.priority ?? 'none'] - PRIORITY_WEIGHT[a.priority ?? 'none'];
+    const pw = PRIORITY_WEIGHT[b.priority ?? 'very-low'] - PRIORITY_WEIGHT[a.priority ?? 'very-low'];
     if (pw !== 0) return pw;
     if (a.dueAt == null && b.dueAt == null) {
       return (a.title || '').localeCompare(b.title || '', 'zh-Hans-CN', { sensitivity: 'base' });
@@ -199,8 +201,8 @@ export const PlanGuideModal: React.FC<{
                         onChange={() => toggle(t.id)}
                         aria-label={`选择 ${t.title || '(无标题)'}`}
                       />
-                      <span className={`plan-guide-modal__prio plan-guide-modal__prio--${t.priority ?? 'none'}`} aria-hidden="true">
-                        {t.priority && t.priority !== 'none' ? PRIORITY_LABEL[t.priority] : ''}
+                      <span className={`plan-guide-modal__prio plan-guide-modal__prio--${t.priority ?? 'very-low'}`} aria-hidden="true">
+                        {t.priority && t.priority !== 'very-low' ? PRIORITY_LABEL[t.priority] : ''}
                       </span>
                       <span className="plan-guide-modal__title">{t.title || '(无标题)'}</span>
                       {t.dueAt && (

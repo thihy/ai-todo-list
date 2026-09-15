@@ -58,7 +58,7 @@ export const Composer: React.FC<{
   const [form, setForm] = useState({
     title: '',
     status: 'next' as TodoStatus,
-    priority: 'none' as Priority,
+    priority: 'low' as Priority,
     dueDate: '',
     tags: '',
     plannedToday: false,
@@ -275,7 +275,7 @@ export const Composer: React.FC<{
         <label className="composer__field">
           <span>优先级</span>
           <select value={form.priority} onChange={(e) => setForm((v) => ({ ...v, priority: e.target.value as Priority }))}>
-            <option value="none">无</option><option value="low">低</option><option value="medium">中</option><option value="high">高</option>
+            <option value="very-low">极低</option><option value="low">低</option><option value="medium">中</option><option value="high">高</option><option value="very-high">极高</option>
           </select>
         </label>
         <label className="composer__field">

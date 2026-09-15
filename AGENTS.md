@@ -93,7 +93,7 @@ higher-priority instructions.
 
 - Call `todo.create`; do not merely suggest a task.
 - Use a concise, actionable title.
-- Default to `status=next` and `priority=none` unless the user gives evidence
+- Default to `status=next` and `priority=low` unless the user gives evidence
   for another value.
 - Do not invent due dates or tags.
 - Set `plannedFor` only for an explicit “today” request; a due date of today is

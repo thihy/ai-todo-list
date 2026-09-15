@@ -15,10 +15,11 @@ import {
 } from '../../src/shared/task-appearance';
 
 const customColor = (bg: string, fg = '#000000'): PriorityColorMap => ({
-  none:   { background: bg, foreground: fg },
-  low:    { background: bg, foreground: fg },
-  medium: { background: bg, foreground: fg },
-  high:   { background: bg, foreground: fg },
+  'very-low': { background: bg, foreground: fg },
+  'low':      { background: bg, foreground: fg },
+  'medium':   { background: bg, foreground: fg },
+  'high':     { background: bg, foreground: fg },
+  'very-high':{ background: bg, foreground: fg },
 });
 
 describe('normalizeTaskAppearance', () => {
@@ -35,10 +36,10 @@ describe('normalizeTaskAppearance', () => {
   it('migrates theme mode + non-default colors to custom', () => {
     const result = normalizeTaskAppearance({
       mode: 'theme',
-      colors: { none: { background: '#ABCDEF', foreground: '#000000' } },
+      colors: { 'very-low': { background: '#ABCDEF', foreground: '#000000' } },
     });
     expect(result.mode).toBe('custom');
-    expect(result.colors.none.background).toBe('#ABCDEF');
+    expect(result.colors['very-low'].background).toBe('#ABCDEF');
   });
 
   it('preserves explicit custom mode', () => {
@@ -58,9 +59,9 @@ describe('normalizeTaskAppearance', () => {
   it('drops invalid colors back to DEFAULT slot', () => {
     const result = normalizeTaskAppearance({
       mode: 'custom',
-      colors: { none: { background: 'not-a-color', foreground: 'also-bad' } },
+      colors: { 'very-low': { background: 'not-a-color', foreground: 'also-bad' } },
     });
-    expect(result.colors.none).toEqual(DEFAULT_TASK_APPEARANCE.colors.none);
+    expect(result.colors['very-low']).toEqual(DEFAULT_TASK_APPEARANCE.colors['very-low']);
   });
 });
 
@@ -91,10 +92,10 @@ describe('normalizeCustomPresets', () => {
 
   it('drops entries with invalid colors and falls back per-slot to DEFAULT', () => {
     const result = normalizeCustomPresets([
-      { id: 'x', label: 'broken', colors: { none: { background: 'rgb()', foreground: 'nope' } } },
+      { id: 'x', label: 'broken', colors: { 'very-low': { background: 'rgb()', foreground: 'nope' } } },
     ]);
     expect(result).toHaveLength(1);
-    expect(result[0].colors.none).toEqual(DEFAULT_TASK_APPEARANCE.colors.none);
+    expect(result[0].colors['very-low']).toEqual(DEFAULT_TASK_APPEARANCE.colors['very-low']);
     expect(result[0].colors.low).toEqual(DEFAULT_TASK_APPEARANCE.colors.low);
   });
 
@@ -105,7 +106,7 @@ describe('normalizeCustomPresets', () => {
     ]);
     expect(result).toHaveLength(1);
     expect(result[0].label).toBe('first');
-    expect(result[0].colors.none.background).toBe('#111111');
+    expect(result[0].colors['very-low'].background).toBe('#111111');
   });
 
   it(`caps at ${MAX_CUSTOM_PRESETS} entries`, () => {
@@ -237,13 +238,27 @@ describe('presetIdOf', () => {
 });
 
 describe('built-in preset invariants', () => {
-  // 无优先级与低优先级共用同一组色 —— 让优先级升档的视觉对比更清晰，
-  // 避免 4 个色阶都太接近。任意内置预设改了 none/low 都会破坏这一不变量。
+  // 内置预设必须覆盖 5 档优先级（very-low/low/medium/high/very-high），每档
+  // 都有合法的 hex bg + fg。DEFAULT 与 SOFT_COLORS 视觉一致；WHITE_ON_BLACK
+  // 走极简风（全黑/全白）。任意内置预设改了任一档颜色都会破坏这一不变量。
+  const FIVE_PRIORITIES = ['very-low', 'low', 'medium', 'high', 'very-high'] as const;
+  const HEX_RE = /^#[0-9A-Fa-f]{6}$/;
+
   it.each([
     ['DEFAULT_TASK_APPEARANCE', DEFAULT_TASK_APPEARANCE.colors],
     ['PRESET_WHITE_ON_BLACK', PRESET_WHITE_ON_BLACK.colors],
     ['PRESET_SOFT_COLORS', PRESET_SOFT_COLORS.colors],
-  ])('%s: none === low', (_name, colors) => {
-    expect(colors.none).toEqual(colors.low);
+  ])('%s: 5 priorities with valid hex colors', (_name, colors) => {
+    for (const p of FIVE_PRIORITIES) {
+      expect(colors[p].background, `${p} bg`).toMatch(HEX_RE);
+      expect(colors[p].foreground, `${p} fg`).toMatch(HEX_RE);
+    }
+  });
+
+  it('DEFAULT colors match SOFT_COLORS (5-color palette is shared)', () => {
+    // Both presets are intentionally identical now that SOFT_COLORS exists
+    // as the "gentle" non-theme option. If you change one, change the other
+    // (or split them deliberately).
+    expect(PRESET_SOFT_COLORS.colors).toEqual(DEFAULT_TASK_APPEARANCE.colors);
   });
 });

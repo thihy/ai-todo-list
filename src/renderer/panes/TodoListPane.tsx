@@ -487,9 +487,9 @@ function countDescendants(all: Todo[], rootId: ULID): number {
 // Chinese-aware (localeCompare with numeric ordering so "task2" < "task10")
 // and case-insensitive; the other keys order by the natural direction for
 // each: 创建日期 newest-first, 截止日期 soonest-first (no-due last), 优先级
-// high→none. The comparator is stable-ish (no tiebreak beyond the key), which
-// is fine — siblings of equal key keep their fetched (updated_at DESC) order.
-const PRIORITY_WEIGHT: Record<Todo['priority'], number> = { high: 4, medium: 3, low: 2, none: 1 };
+// very-high→very-low. The comparator is stable-ish (no tiebreak beyond the key),
+// which is fine — siblings of equal key keep their fetched (updated_at DESC) order.
+const PRIORITY_WEIGHT: Record<Todo['priority'], number> = { 'very-high': 5, high: 4, medium: 3, low: 2, 'very-low': 1 };
 
 function sortTodos(todos: Todo[], sort: SortKey): Todo[] {
   // Slice first so we never mutate the hook's cached array.
@@ -901,7 +901,7 @@ const TaskRow: React.FC<{
       role="button"
       tabIndex={0}
       className={`task-row${active ? ' is-active' : ''}${statusCls}${creatingCls}${plannedCls}`}
-      data-priority={todo.priority || 'none'}
+      data-priority={todo.priority || 'very-low'}
       style={
         {
           '--row-depth': depth,
@@ -1130,8 +1130,13 @@ const SubtaskCreateRow: React.FC<{
 const Subtitle: React.FC<{ todo: Todo; subtaskCount: number; subtaskDoneCount: number }> = ({ todo, subtaskCount, subtaskDoneCount }) => {
   const bits: React.ReactNode[] = [];
   // Priority is rendered as a small colored chip next to the other metadata.
-  // "none" priority is suppressed (it's the default — would just add noise).
-  if (todo.priority && todo.priority !== 'none') {
+  // We render all 5 tiers — including very-low — so an explicit user choice
+  // is always visible. The earlier "default ⇒ suppress" logic was for the old
+  // "none" priority (which had no chip and was suppressed). The new default
+  // is `low`, which still shows a chip; suppressing `very-low` would hide
+  // the user's deliberate "this is unimportant" selection and made them
+  // think the change didn't persist.
+  if (todo.priority) {
     bits.push(
       <span key="p" className={`task-row__prio task-row__prio--${todo.priority}`} title={`优先级：${PRIORITY_LABEL[todo.priority]}`}>
         <span className="task-row__prio-dot" aria-hidden="true" />
@@ -1187,10 +1192,11 @@ const Subtitle: React.FC<{ todo: Todo; subtaskCount: number; subtaskDoneCount: n
 };
 
 const PRIORITY_LABEL: Record<NonNullable<Todo['priority']>, string> = {
+  'very-high': '极高',
   high: '高',
   medium: '中',
   low: '低',
-  none: '无',
+  'very-low': '极低',
 };
 
 // ----- Glyphs -----
@@ -1315,7 +1321,7 @@ const DeletedRow: React.FC<{
       role="button"
       tabIndex={0}
       className={`task-row${active ? ' is-active' : ''}`}
-      data-priority={todo.priority || 'none'}
+      data-priority={todo.priority || 'very-low'}
       onClick={() => onSelect(todo.id)}
       onKeyDown={(e) => {
         if (e.key === 'Enter') onSelect(todo.id);
@@ -1384,14 +1390,16 @@ function taskListStyle(
     width,
     // CSS 自定义属性键在 React 里用 camelCase，对应 CSS 里的 kebab-case；
     // 我们在 CSS 里直接写 kebab-case 字符串键（TS 在 cast 里允许任意键）。
-    ['--task-prio-none-bg' as never]: c.none.background,
-    ['--task-prio-none-fg' as never]: c.none.foreground,
+    ['--task-prio-very-low-bg' as never]: c['very-low'].background,
+    ['--task-prio-very-low-fg' as never]: c['very-low'].foreground,
     ['--task-prio-low-bg' as never]: c.low.background,
     ['--task-prio-low-fg' as never]: c.low.foreground,
     ['--task-prio-medium-bg' as never]: c.medium.background,
     ['--task-prio-medium-fg' as never]: c.medium.foreground,
     ['--task-prio-high-bg' as never]: c.high.background,
     ['--task-prio-high-fg' as never]: c.high.foreground,
+    ['--task-prio-very-high-bg' as never]: c['very-high'].background,
+    ['--task-prio-very-high-fg' as never]: c['very-high'].foreground,
   };
 }
 

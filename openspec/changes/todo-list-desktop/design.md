@@ -102,7 +102,7 @@ CREATE TABLE todos (
   id TEXT PRIMARY KEY,                 -- ULID
   title TEXT NOT NULL,
   status TEXT NOT NULL,                -- inbox|next|doing|blocked|done
-  priority TEXT NOT NULL,              -- none|low|medium|high
+  priority TEXT NOT NULL,              -- very-low|low|medium|high|very-high
   project TEXT,                        -- 单值,引用 projects.slug
   due_at INTEGER,                      -- unix ms
   body_path TEXT NOT NULL,             -- 相对 ~/.todo-list/todos/<id>.md

@@ -53,7 +53,7 @@ export const FilterButton: React.FC<{
             <FilterItem active={filter.kind === 'deleted'} label="已删除" onClick={() => choose({ kind: 'deleted' })} />
           </FilterSection>
           <FilterSection title="优先级">
-            {(['high', 'medium', 'low', 'none'] as const).map((p) => (
+            {(['very-high', 'high', 'medium', 'low', 'very-low'] as const).map((p) => (
               <FilterItem
                 key={p}
                 active={filter.kind === 'priority' && filter.priority === p}
@@ -73,7 +73,7 @@ export const FilterButton: React.FC<{
   }
 };
 
-const PRIO_LABEL: Record<string, string> = { high: '高', medium: '中', low: '低', none: '无' };
+const PRIO_LABEL: Record<string, string> = { 'very-high': '极高', high: '高', medium: '中', low: '低', 'very-low': '极低' };
 
 const FilterSection: React.FC<{ title: string; children: React.ReactNode }> = ({ title, children }) => (
   <div className="filter-popover__section">

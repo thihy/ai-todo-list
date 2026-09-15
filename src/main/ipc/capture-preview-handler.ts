@@ -26,7 +26,7 @@ export function registerCapturePreviewHandler(): void {
 interface ParseResult {
   title: string;
   dueAt: number | null;
-  priority: 'none' | 'low' | 'medium' | 'high';
+  priority: 'very-low' | 'low' | 'medium' | 'high' | 'very-high';
   tags: string[];
   cleaned: string;
 }
@@ -41,13 +41,16 @@ function parse(input: string): ParseResult {
     return ' ';
   });
 
-  // Priority: !high / !med / !low / !高 / !中 / !低
-  let priority: ParseResult['priority'] = 'none';
+  // Priority: !vh / !高 / !medium / !m / !med / !低 / !vl / !极低 ... 5 档
+  // 显式命中才算优先级；用户没写 !mark 时落到默认档 low（与 todo_create
+  // 默认行为一致 —— 不再像旧版那样默认成 "无 / none"）。
+  let priority: ParseResult['priority'] = 'low';
   const prioMap: Record<string, ParseResult['priority']> = {
+    'very-high': 'very-high', vh: 'very-high', '极高': 'very-high', '很高': 'very-high',
     high: 'high', h: 'high', '高': 'high',
     medium: 'medium', med: 'medium', m: 'medium', '中': 'medium',
     low: 'low', l: 'low', '低': 'low',
-    none: 'none', n: 'none',
+    'very-low': 'very-low', vl: 'very-low', '极低': 'very-low', '很低': 'very-low',
   };
   text = text.replace(/(?:^|\s)!([a-zA-Z一-龥]{1,4})/g, (_m, p) => {
     const key = String(p).toLowerCase();

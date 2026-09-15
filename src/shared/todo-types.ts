@@ -9,7 +9,11 @@ export type ULID = string;
 // dependency. There is no "inbox" state — the old 收件箱 concept collapsed
 // into 未完成.
 export type TodoStatus = 'next' | 'doing' | 'done' | 'cancelled' | 'blocked';
-export type Priority = 'none' | 'low' | 'medium' | 'high';
+// 5 档优先级（必选；不再有 "无 / none" 选项）。从低到高：very-low / low /
+// medium / high / very-high。low 是新任务的默认档 —— 旧版本默认是 "无优先
+// 级"，最自然的迁移目标就是新体系里最低的一档。DB schema v18 把历史 'none'
+// 行迁移为 'low'；持久化层、AI 工具描述、UI 选项全部对齐。
+export type Priority = 'very-low' | 'low' | 'medium' | 'high' | 'very-high';
 
 /** A tag registry entry. Tags on a todo are plain strings (Todo.tags); this
  *  registry holds the user-chosen colour for each name, managed in Settings
@@ -21,7 +25,9 @@ export interface TagDef {
 }
 
 export const TODO_STATUSES: readonly TodoStatus[] = ['next', 'doing', 'done', 'cancelled', 'blocked'];
-export const PRIORITIES: readonly Priority[] = ['none', 'low', 'medium', 'high'];
+// 从低到高，UI 选项 / 排序权重 / CSS 选择器 / AI 校验都引用同一份数组。
+// 越靠前优先级越低。todo-list 的默认排序：高 → 低，所以会反向遍历。
+export const PRIORITIES: readonly Priority[] = ['very-low', 'low', 'medium', 'high', 'very-high'];
 
 export interface Todo {
   id: ULID;

@@ -83,6 +83,8 @@ const RUNTIME_CHANNEL_KEYS = [
   'ai.conversation.unarchive',
   'ai.conversation.delete',
   'ai.conversation.confirmDelete',
+  'ai.conversation.deleteMany',
+  'ai.conversation.confirmDeleteMany',
   'ai.conversation.history',
   'permission.prompt',
   'permission.respond',

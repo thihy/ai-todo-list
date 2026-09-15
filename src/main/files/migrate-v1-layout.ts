@@ -118,7 +118,7 @@ export async function migrateV1Layout(opts: MigrationOpts): Promise<MigrationRes
             id: ulid,
             title,
             status: row?.status ?? 'next',
-            priority: row?.priority ?? 'none',
+            priority: row?.priority ?? 'low',
             tags: [],
             dueAt: row?.due_at ?? null,
             createdAt: row?.created_at ?? Date.now(),

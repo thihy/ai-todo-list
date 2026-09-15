@@ -65,7 +65,7 @@ export interface PersistedSettings {
    *  this time passes, neither the boot-time guide nor the scheduled
    *  reminder re-prompts. Cleared by the next launch that finds it expired. */
   snoozePlanGuideUntil: number | null;
-  /** Per-priority row background/foreground colours (none/low/medium/high).
+  /** Per-priority row background/foreground colours (very-low/low/medium/high/very-high).
    *  Theme mode lets the renderer fall back to CSS defaults; custom mode
    *  injects the user-chosen values as CSS custom properties. Normalised on
    *  load so any partial / corrupted JSON falls back to defaults. */
@@ -95,6 +95,11 @@ export interface PersistedSettings {
    *  `src/main/updates/updater.ts#setUpAutoUpdater` at boot and by
    *  `applyAutoUpdatePreference` for runtime toggling. */
   autoUpdate: boolean;
+  /** AI 助手「对话列表」容量上限：未归档对话超过此数时，新建会自动物理
+   *  删除最老的（按 updated_at ASC）。0 = 不限。默认 100。
+   *  ai.conversation.create handler 在每次 create 后跑 sweep；归档对话
+   *  不计入也不被 sweep。设置 UI 在 Settings → 数据 → AI 对话保留数量。 */
+  maxConversations: number;
 }
 
 const DEFAULTS: PersistedSettings = {
@@ -119,6 +124,7 @@ const DEFAULTS: PersistedSettings = {
   taskAppearanceCustomPresets: [],
   sdkBridge: { enabled: false, token: null },
   autoUpdate: true,
+  maxConversations: 100,
 };
 
 /** Default data root when the user has not picked a directory. */
@@ -252,6 +258,7 @@ export class SettingsStore {
           : '/tmp/todo-list.sock',
       },
       autoUpdate: v.autoUpdate,
+      maxConversations: v.maxConversations,
     };
   }
 

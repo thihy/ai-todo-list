@@ -230,6 +230,8 @@ const api: TodoListApi = {
     unarchive: (id) => invoke('ai.conversation.unarchive', { id }),
     delete: (id) => invoke('ai.conversation.delete', { id }),
     confirmDelete: (id, title) => invoke('ai.conversation.confirmDelete', { id, title }),
+    deleteMany: (ids) => invoke('ai.conversation.deleteMany', { ids }),
+    confirmDeleteMany: (count, titles) => invoke('ai.conversation.confirmDeleteMany', { count, titles: titles ?? [] }),
     history: (id) => invoke('ai.conversation.history', { id }),
   },
   // L4-G: human-in-the-loop answerer. The pending waterfall promise

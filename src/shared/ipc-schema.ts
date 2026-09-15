@@ -281,6 +281,20 @@ export interface AIConversationDeleteRes { /** True if the row existed and was d
 export interface AIConversationConfirmDeleteReq { id: string; title: string }
 export interface AIConversationConfirmDeleteRes { confirmed: boolean }
 
+/** 批量硬删除多行 + JSONL 清理。ids 长度上限 200（main 端夹紧）。 */
+export interface AIConversationDeleteManyReq { ids: string[] }
+export interface AIConversationDeleteManyRes {
+  /** 实际删除的 DB 行数（≤ ids.length，因为有 id 可能不存在）。 */
+  deleted: number;
+}
+
+/** 批量删除的主题化 confirm —— 复用 L3-F 的 dialog.showMessageBox 模式，
+ *  把"删除 N 条"做成一个原生警告弹窗而非连续 N 次。titles 可选，前 3 个
+ *  会拼到 detail 里作为示例（"删除选中的 5 条对话？（含："foo"、"bar"…"）"。
+ *  UI 在 Settings → 数据 → AI 对话保留 旁边。 */
+export interface AIConversationConfirmDeleteManyReq { count: number; titles?: string[] }
+export interface AIConversationConfirmDeleteManyRes { confirmed: boolean }
+
 export interface AIConversationHistoryReq { id: string }
 /** Mirrors DshRuntime.HistoryTurn — see src/main/dsh/dsh-runtime.ts.
  *  The `intent` field on user turns is preserved through foldHistory so the
@@ -359,6 +373,9 @@ export interface SettingsSetReq {
   // check is skipped; the manual "检查更新" button is unaffected.
   // Defaults to true (existing installs keep their behaviour).
   autoUpdate?: boolean;
+  // AI 助手「对话列表」容量上限：未归档对话超过此数时，ai.conversation.create
+  // 会自动物理删除最老的。0 = 不限。默认 100。
+  maxConversations?: number;
 }
 export interface SettingsGetRes extends AISettings {
   captureHotkey: string;
@@ -390,6 +407,9 @@ export interface SettingsGetRes extends AISettings {
   };
   /** Auto-updater master switch. See PersistedSettings#autoUpdate. */
   autoUpdate: boolean;
+  /** AI 助手「对话列表」容量上限。0 = 不限。默认 100。
+   *  See PersistedSettings#maxConversations. */
+  maxConversations: number;
 }
 export interface SettingsChooseDataDirRes {
   /** Chosen path, or null if the user cancelled the dialog. */
@@ -546,6 +566,8 @@ export interface IpcRegistry {
   'ai.conversation.unarchive': IpcChannel<AIConversationUnarchiveReq, IpcResult<{ ok: boolean }>>;
   'ai.conversation.delete': IpcChannel<AIConversationDeleteReq, IpcResult<AIConversationDeleteRes>>;
   'ai.conversation.confirmDelete': IpcChannel<AIConversationConfirmDeleteReq, IpcResult<AIConversationConfirmDeleteRes>>;
+  'ai.conversation.deleteMany': IpcChannel<AIConversationDeleteManyReq, IpcResult<AIConversationDeleteManyRes>>;
+  'ai.conversation.confirmDeleteMany': IpcChannel<AIConversationConfirmDeleteManyReq, IpcResult<AIConversationConfirmDeleteManyRes>>;
   'ai.conversation.history': IpcChannel<AIConversationHistoryReq, IpcResult<AIConversationHistoryRes>>;
 
   'permission.prompt': IpcChannel<PermissionPromptReq, IpcResult<void>>;

@@ -44,43 +44,45 @@ export interface TaskAppearance {
 /** 默认配色 —— 主题预设（"系统"），由 CSS 在 theme 模式下生效，不需要
  *  在 renderer 注入自定义属性。所有优先级都用项目浅色 token 的浅色版，
  *  与现有 .task-row 视觉保持一致；用户切到 custom 才接管具体颜色。
- *  无优先级与低优先级共用同一组色（视觉上"未标优先级的任务"和"低优先
- *  级任务"在主题模式下不再区分），让优先级升档的视觉对比更清晰。 */
+ *  5 档优先级对应 5 阶渐变：极浅灰 → 浅灰 → 浅蓝 → 浅黄 → 浅红，让优先
+ *  级升档的视觉对比逐步加强。 */
 export const DEFAULT_TASK_APPEARANCE: TaskAppearance = {
   mode: 'theme',
   colors: {
-    none:   { background: '#F3F4F6', foreground: '#111827' },
-    low:    { background: '#F3F4F6', foreground: '#111827' },
-    medium: { background: '#EFF6FF', foreground: '#1E3A8A' },
-    high:   { background: '#FFFBEB', foreground: '#78350F' },
+    'very-low': { background: '#F9FAFB', foreground: '#6B7280' },
+    'low':      { background: '#F3F4F6', foreground: '#111827' },
+    'medium':   { background: '#EFF6FF', foreground: '#1E3A8A' },
+    'high':     { background: '#FFFBEB', foreground: '#78350F' },
+    'very-high':{ background: '#FEF2F2', foreground: '#7F1D1D' },
   },
 };
 
-/** 预设 1：白底黑字 —— 全优先级统一 #FFFFFF / #000000。
- *  mode = custom：CSS 注入颜色变量，行直接上白底黑字，不再走主题默认。
- *  无优先级与低优先级同色（同套白底黑字，无视觉差异）。 */
+/** 预设 1：白底黑字 —— 全 5 档优先级统一 #FFFFFF / #000000。
+ *  mode = custom：CSS 注入颜色变量，行直接上白底黑字，不再走主题默认。 */
 export const PRESET_WHITE_ON_BLACK: TaskAppearance = {
   mode: 'custom',
   colors: {
-    none:   { background: '#FFFFFF', foreground: '#000000' },
-    low:    { background: '#FFFFFF', foreground: '#000000' },
-    medium: { background: '#FFFFFF', foreground: '#000000' },
-    high:   { background: '#FFFFFF', foreground: '#000000' },
+    'very-low': { background: '#FFFFFF', foreground: '#000000' },
+    'low':      { background: '#FFFFFF', foreground: '#000000' },
+    'medium':   { background: '#FFFFFF', foreground: '#000000' },
+    'high':     { background: '#FFFFFF', foreground: '#000000' },
+    'very-high':{ background: '#FFFFFF', foreground: '#000000' },
   },
 };
 
-/** 预设 2：柔和彩色 —— 3 个有效优先级分别淡色 bg + 深色 fg，对应 task-row
- *  历史默认行为（无/低优先级 浅蓝，中优先级 浅黄，高优先级 浅红）。
- *  无优先级与低优先级共用同一组色（柔和彩色预设只有 3 个可见色阶，
- *  low/none 合并；让中等与高优先级之间的对比更突出）。
+/** 预设 2：柔和彩色 —— 与 DEFAULT_TASK_APPEARANCE 相同的 5 阶渐变（极浅
+ *  灰 / 浅灰 / 浅蓝 / 浅黄 / 浅红），让"跟随主题"和"柔和彩色"在视觉上一
+ *  致；区别只在于 mode —— DEFAULT 走 CSS 主题规则（用户可被自己其它设置
+ *  覆盖），SOFT_COLORS 强制注入具体颜色。
  *  mode = custom：CSS 注入颜色变量。 */
 export const PRESET_SOFT_COLORS: TaskAppearance = {
   mode: 'custom',
   colors: {
-    none:   { background: '#EFF6FF', foreground: '#1E3A8A' },
-    low:    { background: '#EFF6FF', foreground: '#1E3A8A' },
-    medium: { background: '#FFFBEB', foreground: '#78350F' },
-    high:   { background: '#FEF2F2', foreground: '#7F1D1D' },
+    'very-low': { background: '#F9FAFB', foreground: '#6B7280' },
+    'low':      { background: '#F3F4F6', foreground: '#111827' },
+    'medium':   { background: '#EFF6FF', foreground: '#1E3A8A' },
+    'high':     { background: '#FFFBEB', foreground: '#78350F' },
+    'very-high':{ background: '#FEF2F2', foreground: '#7F1D1D' },
   },
 };
 
@@ -108,8 +110,9 @@ export const MAX_CUSTOM_PRESETS = 32;
 
 /** 把任意输入归一化成有效的 TaskAppearanceCustomPreset[]。
  *  - 非数组 → []。
- *  - 每项需 id 非空字符串、label 非空字符串、4 个优先级颜色均为合法 hex；
- *    否则丢弃该条（不抛错，避免损坏文件导致面板打不开）。
+ *  - 每项需 id 非空字符串、label 非空字符串、5 个优先级颜色均为合法 hex；
+ *    否则丢弃该条（不抛错，避免损坏文件导致面板打不开）。缺字段用
+ *    DEFAULT_TASK_APPEARANCE 的对应项补齐。
  *  - 按 id 去重（首次出现胜出），保留用户命名意图。
  *  - 超过 MAX_CUSTOM_PRESETS 时截断尾部。
  *  - 不做大小写归一化、不合并同色。 */
@@ -127,10 +130,11 @@ export function normalizeCustomPresets(raw: unknown): TaskAppearanceCustomPreset
     const colors = obj.colors;
     if (!colors || typeof colors !== 'object') continue;
     const merged: PriorityColorMap = {
-      none:   mergeColor(colors.none,   DEFAULT_TASK_APPEARANCE.colors.none),
-      low:    mergeColor(colors.low,    DEFAULT_TASK_APPEARANCE.colors.low),
-      medium: mergeColor(colors.medium, DEFAULT_TASK_APPEARANCE.colors.medium),
-      high:   mergeColor(colors.high,   DEFAULT_TASK_APPEARANCE.colors.high),
+      'very-low': mergeColor(colors['very-low'], DEFAULT_TASK_APPEARANCE.colors['very-low']),
+      'low':      mergeColor(colors.low,         DEFAULT_TASK_APPEARANCE.colors.low),
+      'medium':   mergeColor(colors.medium,      DEFAULT_TASK_APPEARANCE.colors.medium),
+      'high':     mergeColor(colors.high,        DEFAULT_TASK_APPEARANCE.colors.high),
+      'very-high':mergeColor(colors['very-high'],DEFAULT_TASK_APPEARANCE.colors['very-high']),
     };
     seen.add(obj.id);
     out.push({ id: obj.id, label: obj.label.trim(), colors: merged });
@@ -157,10 +161,11 @@ export function normalizeTaskAppearance(raw: unknown): TaskAppearance {
   if (raw === null || typeof raw !== 'object') return base;
   const obj = raw as Partial<TaskAppearance> & { colors?: Partial<PriorityColorMap> };
   const normalizedColors: PriorityColorMap = {
-    none:   mergeColor(obj.colors?.none,   base.colors.none),
-    low:    mergeColor(obj.colors?.low,    base.colors.low),
-    medium: mergeColor(obj.colors?.medium, base.colors.medium),
-    high:   mergeColor(obj.colors?.high,   base.colors.high),
+    'very-low': mergeColor(obj.colors?.['very-low'], base.colors['very-low']),
+    'low':      mergeColor(obj.colors?.low,         base.colors.low),
+    'medium':   mergeColor(obj.colors?.medium,      base.colors.medium),
+    'high':     mergeColor(obj.colors?.high,        base.colors.high),
+    'very-high':mergeColor(obj.colors?.['very-high'],base.colors['very-high']),
   };
   // 旧 config 兼容：
   //   - mode 显式 'custom'        → 'custom'（保留用户主动编辑的意图）。

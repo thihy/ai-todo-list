@@ -17,7 +17,7 @@ The system SHALL allow every TODO to carry zero or more tags and to belong to ze
 - **AND** the active filter is reflected in the URL/state and survives a restart
 
 ### Requirement: Priority and status
-The system SHALL support four priority levels (none, low, medium, high) and at least five statuses (`inbox`, `next`, `doing`, `blocked`, `done`).
+The system SHALL support five priority levels (`very-low`, `low`, `medium`, `high`, `very-high`) and at least five statuses (`inbox`, `next`, `doing`, `blocked`, `done`).
 
 #### Scenario: Status transition
 - **WHEN** the user moves a TODO from `next` to `doing`

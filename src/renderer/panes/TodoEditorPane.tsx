@@ -437,10 +437,10 @@ export const TodoEditorPane: React.FC<{
   selectedDocId?: string | null;
   onSelectDoc?: (tabId: string) => void;
 }> = ({ todoId, onFullscreen, selectedDocId, onSelectDoc }) => {
-  const { todo, loading } = useTodo(todoId);
+  const { todo } = useTodo(todoId);
 
   const [tagDraft, setTagDraft] = useState<string[]>([]);
-  const [priority, setPriority] = useState<Priority>('none');
+  const [priority, setPriority] = useState<Priority>('low');
   const [dueAt, setDueAt] = useState<number | null>(null);
   const [status, setStatus] = useState<TodoStatus>('next');
   const activityRef = useRef<HTMLElement>(null);
@@ -475,7 +475,19 @@ export const TodoEditorPane: React.FC<{
       : null,
   );
 
-  if (loading || !todo) {
+  // Show the loading screen only when we don't yet have a todo for the
+  // requested todoId. Refetches triggered by app:data-changed flip
+  // `loading` back to true every time the AI or another surface mutates
+  // the row — including our own progress.log. Unmounting here would
+  // tear down ProgressInline and drop the pendingEntryId state we set
+  // in the .then right after the progress IPC resolved, so the "add a
+  // note" popover would open for a frame and then disappear (or never
+  // appear at all if the refetch outruns the IPC). Keep the editor
+  // mounted with the cached todo during a refetch — the new value lands
+  // via setTodo() shortly after. The `todo.id !== todoId` check still
+  // shows the spinner when the user picks a *different* task (cached
+  // todo no longer matches the requested id).
+  if (!todo || todo.id !== todoId) {
     return <div className="editor-pane__loading">加载中…</div>;
   }
 

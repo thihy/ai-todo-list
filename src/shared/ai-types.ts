@@ -76,7 +76,10 @@ export const PROVIDER_MODELS: Record<AIProvider, string[]> = {
 export interface ParsedTodo {
   title: string;
   dueAt: number | null;
-  priority: 'none' | 'low' | 'medium' | 'high';
+  // 5 档：very-low | low | medium | high | very-high。AI 解析不再有
+  // "none" 选项 —— 用户没显式标优先级时直接落到 low（与 todo_create 默
+  // 认行为一致）。
+  priority: 'very-low' | 'low' | 'medium' | 'high' | 'very-high';
   tags: string[];
 }
 

@@ -36,10 +36,11 @@ import {
 } from '../../shared/task-appearance';
 
 const PRIORITY_LABEL: Record<Priority, string> = {
-  none: '无',
-  low: '低',
-  medium: '中',
-  high: '高',
+  'very-low': '极低',
+  'low': '低',
+  'medium': '中',
+  'high': '高',
+  'very-high': '极高',
 };
 
 /** Save state machine — drives the status row + button enable/disable. */
@@ -289,10 +290,11 @@ export const TaskAppearancePane: React.FC<Props> = ({
     const sanitized: TaskAppearance = {
       mode: draft.mode,
       colors: {
-        none:   sanitizePair(draft.colors.none),
-        low:    sanitizePair(draft.colors.low),
-        medium: sanitizePair(draft.colors.medium),
-        high:   sanitizePair(draft.colors.high),
+        'very-low': sanitizePair(draft.colors['very-low']),
+        'low':      sanitizePair(draft.colors.low),
+        'medium':   sanitizePair(draft.colors.medium),
+        'high':     sanitizePair(draft.colors.high),
+        'very-high':sanitizePair(draft.colors['very-high']),
       },
     };
     // 「命中用户自定义预设」时把该预设的 colors 同步成当前草稿 —— 隐式
@@ -680,10 +682,11 @@ function sanitizePair(p: TaskColorPair): TaskColorPair {
 
 function cloneColors(c: PriorityColorMap): PriorityColorMap {
   return {
-    none:   { ...c.none },
-    low:    { ...c.low },
-    medium: { ...c.medium },
-    high:   { ...c.high },
+    'very-low': { ...c['very-low'] },
+    'low':      { ...c.low },
+    'medium':   { ...c.medium },
+    'high':     { ...c.high },
+    'very-high':{ ...c['very-high'] },
   };
 }
 

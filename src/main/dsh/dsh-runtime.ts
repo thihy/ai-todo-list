@@ -1613,7 +1613,7 @@ function registerDomainTools(
     description: 'List TODO items, optionally filtered. Every field is optional; omit all of them to return every todo. The model may pass status/priority/tag as a single string or a JSON array. "all" / unknown values for status/priority mean no filter.',
     parameters: {
       status: { type: 'string', description: 'Filter by status: next | doing | done | cancelled | blocked (or comma-separated)' },
-      priority: { type: 'string', description: 'Filter by priority: none | low | medium | high (or comma-separated)' },
+      priority: { type: 'string', description: 'Filter by priority: very-low | low | medium | high | very-high (or comma-separated)' },
       tag: { type: 'string', description: 'Filter by a single tag (matches tasks tagged with this string)' },
       dueBefore: { type: 'number', description: 'Only tasks with dueAt <= this unix ms' },
       dueAfter: { type: 'number', description: 'Only tasks with dueAt >= this unix ms' },
@@ -1664,11 +1664,11 @@ function registerDomainTools(
   reg(defineTool({
     name: 'todo_create',
     ...wire('todo_create'),
-    description: 'Create a real TODO and return it with its generated id. Use a concise actionable title. Defaults are status=next and priority=none; do not invent urgency, due dates, tags, or parent ids. parentId must come from an actual todo_list/todo_search result. Set plannedFor only when the user explicitly asks to do/add it today; a due date of today alone is not enough. Markdown body starts empty — use content_writeBody only when the user supplied meaningful notes.',
+    description: 'Create a real TODO and return it with its generated id. Use a concise actionable title. Defaults are status=next and priority=low; do not invent urgency, due dates, tags, or parent ids. parentId must come from an actual todo_list/todo_search result. Set plannedFor only when the user explicitly asks to do/add it today; a due date of today alone is not enough. Markdown body starts empty — use content_writeBody only when the user supplied meaningful notes.',
     parameters: {
       title: { type: 'string', required: true, description: 'TODO title (required)' },
       status: { type: 'string', description: 'next | doing | done | cancelled | blocked (default next)' },
-      priority: { type: 'string', description: 'none | low | medium | high (default none)' },
+      priority: { type: 'string', description: 'very-low | low | medium | high | very-high (default low)' },
       dueAt: { type: 'number', description: 'Due date as unix ms; null/omitted means no due date' },
       tags: { type: 'string', description: 'JSON array of Chinese tag strings (e.g. \'["紧急","设计"]\'); 留空或省略表示不打标签' },
       parentId: { type: 'string', description: 'Parent TODO id to create as a subtask; null/omitted means top-level. Use subtasks_list on the parent to see existing children before adding more. Cycles are rejected — you cannot nest a task under one of its own descendants.' },
@@ -1702,7 +1702,7 @@ function registerDomainTools(
       id: { type: 'string', required: true, description: 'TODO id' },
       title: { type: 'string' },
       status: { type: 'string', description: 'next | doing | done | cancelled | blocked' },
-      priority: { type: 'string', description: 'none | low | medium | high' },
+      priority: { type: 'string', description: 'very-low | low | medium | high | very-high' },
       dueAt: { type: 'number', description: 'Due date as unix ms; null clears' },
       tags: { type: 'string', description: 'JSON array of Chinese tag strings; replaces the existing tag set' },
       parentId: { type: 'string', description: 'Parent TODO id to reparent under; null/empty string promotes to top-level.' },

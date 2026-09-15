@@ -146,6 +146,10 @@ export interface SettingsPatchArgs {
    *  immediately (cancels / schedules the post-startup background
    *  check) and persists across restarts. */
   autoUpdate?: boolean;
+  /** AI 助手「对话列表」未归档容量上限。0 = 不限；超过时新建后会
+   *  自动物理删除最老的（按 updated_at ASC）。归档里的对话不受此
+   *  限制。默认 100。设置 UI 在 Settings → 数据 → AI 对话保留数量。 */
+  maxConversations?: number;
 }
 
 // --- TodoListApi ---
@@ -407,6 +411,12 @@ export interface TodoListApi {
     /** L3-F: themed delete confirmation. Returns whether the user confirmed.
      *  Replaces window.confirm() — native dialog respects the OS theme. */
     confirmDelete(id: string, title: string): Promise<IpcResponse<'ai.conversation.confirmDelete'>>;
+    /** 批量硬删：删除多行 + 各自的 JSONL 日志。返回实际删除的 DB 行数
+     *  （≤ ids.length）。上限 200（main 夹紧）。 */
+    deleteMany(ids: string[]): Promise<IpcResponse<'ai.conversation.deleteMany'>>;
+    /** 批量删除的主题化 confirm：一次弹窗搞定多行。titles 可选；
+     *  传前几个标题进 detail 做示例展示。 */
+    confirmDeleteMany(count: number, titles?: string[]): Promise<IpcResponse<'ai.conversation.confirmDeleteMany'>>;
     /** Load decoded history turns from the persistence backend. */
     history(id: string): Promise<IpcResponse<'ai.conversation.history'>>;
   };

@@ -165,7 +165,7 @@ export class TodoRepo {
     const id = newId();
     const now = Date.now();
     const status = input.status ?? 'next';
-    const priority = input.priority ?? 'none';
+    const priority = input.priority ?? 'low';
     const dueAt = input.dueAt ?? null;
     const parentId = input.parentId ?? null;
     const plannedFor = input.plannedFor ?? null;

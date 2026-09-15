@@ -309,6 +309,20 @@ export function registerAiHandlers(dsh: DshHandle): void {
     if (!deps) return Promise.resolve(failResult('ai_not_ready', 'DSH not initialised'));
     try {
       const conv = deps.conversations.create({ title: req?.title });
+      // 容量上限：创建后立即按 updated_at ASC 删最老的，直到未归档数 ≤ 上限。
+      // maxConversations = 0 表示不限，跳过 sweep。sweep 只动 DB 不动 JSONL
+      // （纯 DB 操作，不依赖 runtime，避免阻塞 create 路径）。
+      const max = deps.settings.get().maxConversations;
+      if (max > 0) {
+        const removed = deps.conversations.sweep(max);
+        if (removed > 0) {
+          logger.info(`conversation sweep: removed ${removed} old row(s) to stay under cap ${max}`);
+          // 广播 data-changed 让所有窗口的 AIPane 列表自动刷新
+          for (const w of BrowserWindow.getAllWindows()) {
+            if (!w.isDestroyed()) w.webContents.send('app:data-changed', { scope: 'conversations' });
+          }
+        }
+      }
       return Promise.resolve(okResult({ conversation: conv }));
     } catch (err) {
       return Promise.resolve(failResult('create_failed', (err as Error).message));
@@ -399,6 +413,79 @@ export function registerAiHandlers(dsh: DshHandle): void {
         title: '删除对话',
         message: `删除对话"${req.title}"？`,
         detail: '对话本身将从侧栏移除。其 AI 历史日志会保留在本地供后续清理（设置 → 数据目录）。',
+        noLink: true,
+      });
+      return okResult({ confirmed: result.response === 1 });
+    } catch (err) {
+      return failResult('confirm_failed', (err as Error).message);
+    }
+  });
+
+  // 批量硬删：删多行 DB + 各自 JSONL 日志（沿用 L3-G 模式）。
+  // 与 ai.conversation.delete 不同的点：
+  //   1) DB 走单条 IN(...) SQL，事务原子；
+  //   2) JSONL 清理是顺序 await 多个 disposeConversation/removeSession，
+  //      任何一个失败只 warn 不中断其余（部分清理也优于整批回滚）。
+  // 上限 200：超过会 fail('too_many')，避免一次发起的 IPC 太大撑爆内存
+  // 或锁太久 DB。
+  register('ai.conversation.deleteMany', async (_e, req) => {
+    if (!deps) return failResult('ai_not_ready', 'DSH not initialised');
+    if (!Array.isArray(req?.ids) || req.ids.length === 0) {
+      return failResult('bad_request', 'ids required');
+    }
+    if (req.ids.length > 200) {
+      return failResult('too_many', 'cannot delete more than 200 at once');
+    }
+    try {
+      const deleted = deps.conversations.deleteMany(req.ids);
+      // JSONL 清理：参考 ai.conversation.delete 的 L3-G 模式。
+      // 整体 wrap 在 try 里，runtime 不可用或 per-id 失败都不影响 DB 删除。
+      try {
+        const runtime = await getDshRuntime(buildRuntimeDeps()!);
+        if (runtime) {
+          for (const id of req.ids) {
+            try {
+              await runtime.disposeConversation(id);
+              await runtime.removeSession(id);
+            } catch (e) {
+              console.warn(`[ai.conversation.deleteMany] JSONL cleanup failed for ${id}:`, (e as Error).message);
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('[ai.conversation.deleteMany] runtime unavailable:', (e as Error).message);
+      }
+      // 广播让所有窗口的列表自动刷新（与 ai.ask 的 broadcastDataChanged 行为一致）
+      for (const w of BrowserWindow.getAllWindows()) {
+        if (!w.isDestroyed()) w.webContents.send('app:data-changed', { scope: 'conversations' });
+      }
+      return okResult({ deleted });
+    } catch (err) {
+      return failResult('delete_many_failed', (err as Error).message);
+    }
+  });
+
+  // 批量删除的主题化 confirm：与 ai.conversation.confirmDelete 同一模式，
+  // 但 message 用 count、detail 里塞前 3 个 titles 作为示例。
+  register('ai.conversation.confirmDeleteMany', async (_e, req) => {
+    try {
+      const count = typeof req?.count === 'number' && req.count > 0 ? req.count : 0;
+      if (count === 0) return failResult('bad_request', 'count required');
+      const titles = Array.isArray(req?.titles)
+        ? req.titles.filter((t): t is string => typeof t === 'string' && t.length > 0)
+        : [];
+      const preview = titles.length > 0
+        ? `（含：${titles.slice(0, 3).map((t) => `"${t}"`).join('、')}${titles.length > 3 ? ' 等' : ''}）`
+        : '';
+      const win = BrowserWindow.getFocusedWindow() ?? undefined;
+      const result = await dialog.showMessageBox(win as never, {
+        type: 'warning',
+        buttons: ['取消', '删除'],
+        defaultId: 0,
+        cancelId: 0,
+        title: '批量删除对话',
+        message: `删除选中的 ${count} 条对话？`,
+        detail: `将被永久移除${preview}。其 AI 历史日志会一并清理。`,
         noLink: true,
       });
       return okResult({ confirmed: result.response === 1 });
