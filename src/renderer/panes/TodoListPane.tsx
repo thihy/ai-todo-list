@@ -26,7 +26,7 @@ import type { ToastBus } from '../components/Toast';
 import type { Todo, TodoStatus, ULID } from '../../shared/todo-types';
 import { UserMenu } from '../components/UserMenu';
 import { StatusSelect } from '../components/StatusSelect';
-import { IconCalendar, IconCollapseBar, IconDrawing, IconInboxEmpty, IconTrash } from '../components/icons';
+import { IconCalendar, IconChevronDown, IconCollapseBar, IconDrawing, IconInboxEmpty, IconTrash } from '../components/icons';
 import { todayDateKey } from '../components/PlanGuideModal';
 import { DEFAULT_TASK_APPEARANCE, type TaskAppearance } from '../../shared/task-appearance';
 
@@ -226,6 +226,12 @@ export const TodoListPane: React.FC<{
   const togglePeerExpanded = useCallback((id: string) => {
     setPeerCollapseMap((prev) => ({ ...prev, [id]: !(prev[id] ?? false) }));
   }, []);
+  // Section-level 折叠 —— 「今日待办」「全部任务」两个 <section> 各自独立的
+  // 折叠状态；VSCode 风格：点击 header 切换，chevron 旋转 90°，列表用
+  // grid-template-rows 平滑收起。默认展开 —— 不主动隐藏用户预期可见的
+  // 内容。状态留在组件内（与 expandMap 同生命周期）；持久化不是这次范围。
+  const [plannedSectionCollapsed, setPlannedSectionCollapsed] = useState(false);
+  const [otherSectionCollapsed, setOtherSectionCollapsed] = useState(false);
   // 上半区要展示的根任务 = shownSet 里 parentId === null 的任务，按 sort 排序。
   const plannedRoots = useMemo(
     () => (shownSet.size === 0 ? [] : sortTodos(data.filter((t) => !t.parentId && shownSet.has(t.id)), sort)),
@@ -337,36 +343,49 @@ export const TodoListPane: React.FC<{
               {/* 只有 active 列表才显示今日区；归档视图只显示归档行。 */}
               {!archivedView && plannedRoots.length > 0 && (
                 <section className="planned-section" aria-label="今日待办">
-                  <header className="planned-section__header">
-                    <h2 className="planned-section__title">今日待办</h2>
+                  <button
+                    type="button"
+                    className="planned-section__header section-toggle"
+                    aria-expanded={!plannedSectionCollapsed}
+                    aria-controls="planned-section-list"
+                    onClick={() => setPlannedSectionCollapsed((v) => !v)}
+                  >
+                    <IconChevronDown size={12} className="section-toggle__chevron" />
+                    <span className="planned-section__title">今日待办</span>
                     <span className="planned-section__count">{plannedSet.size}</span>
-                  </header>
-                  <ul className="planned-section__list">
-                    {plannedRoots.map((t) => (
-                      <PlannedBranch
-                        key={`planned-${t.id}`}
-                        todo={t}
-                        depth={0}
-                        selectedId={selectedId}
-                        onSelect={onSelect}
-                        allTodos={data}
-                        sort={sort}
-                        getExpanded={getPlannedExpanded}
-                        toggleExpanded={togglePlannedExpanded}
-                        todayKey={todayKey}
-                        shownSet={shownSet}
-                        getPeerExpanded={getPeerExpanded}
-                        togglePeerExpanded={togglePeerExpanded}
-                        onCycle={async (next) => {
-                          await window.todoList.todo.update(t.id, { status: next });
-                          await refresh();
-                        }}
-                        onDelete={onDelete}
-                        onUnplan={onUnplan}
-                        onCreateSubtask={onCreateSubtask}
-                      />
-                    ))}
-                  </ul>
+                  </button>
+                  <div
+                    id="planned-section-list"
+                    className={`section-collapse${plannedSectionCollapsed ? ' is-collapsed' : ''}`}
+                    aria-hidden={plannedSectionCollapsed}
+                  >
+                    <ul className="planned-section__list">
+                      {plannedRoots.map((t) => (
+                        <PlannedBranch
+                          key={`planned-${t.id}`}
+                          todo={t}
+                          depth={0}
+                          selectedId={selectedId}
+                          onSelect={onSelect}
+                          allTodos={data}
+                          sort={sort}
+                          getExpanded={getPlannedExpanded}
+                          toggleExpanded={togglePlannedExpanded}
+                          todayKey={todayKey}
+                          shownSet={shownSet}
+                          getPeerExpanded={getPeerExpanded}
+                          togglePeerExpanded={togglePeerExpanded}
+                          onCycle={async (next) => {
+                            await window.todoList.todo.update(t.id, { status: next });
+                            await refresh();
+                          }}
+                          onDelete={onDelete}
+                          onUnplan={onUnplan}
+                          onCreateSubtask={onCreateSubtask}
+                        />
+                      ))}
+                    </ul>
+                  </div>
                 </section>
               )}
 
@@ -376,37 +395,50 @@ export const TodoListPane: React.FC<{
                   直接看到所有任务，再叠加判断哪些今天要做）。 */}
               {rootTasks.length > 0 && (
                 <section className="other-section" aria-label="全部任务">
-                  <header className="other-section__header">
-                    <h2 className="other-section__title">{archivedView ? '归档' : '全部任务'}</h2>
+                  <button
+                    type="button"
+                    className="other-section__header section-toggle"
+                    aria-expanded={!otherSectionCollapsed}
+                    aria-controls="other-section-list"
+                    onClick={() => setOtherSectionCollapsed((v) => !v)}
+                  >
+                    <IconChevronDown size={12} className="section-toggle__chevron" />
+                    <span className="other-section__title">{archivedView ? '归档' : '全部任务'}</span>
                     <span className="other-section__count">{rootTasks.length}</span>
-                  </header>
-                  <ul className="other-section__list task-list__root-tasks">
-                    {rootTasks.map((t) => (
-                      <TaskBranch
-                        key={`other-${t.id}`}
-                        todo={t}
-                        depth={0}
-                        selectedId={selectedId}
-                        onSelect={onSelect}
-                        allTodos={data}
-                        sort={sort}
-                        getExpanded={getExpanded}
-                        toggleExpanded={toggleExpanded}
-                        archivedView={archivedView}
-                        todayKey={todayKey}
-                        shownSet={shownSet}
-                        onCycle={async (next) => {
-                          await window.todoList.todo.update(t.id, { status: next });
-                          await refresh();
-                        }}
-                        onDelete={onDelete}
-                        onRestore={onRestore}
-                        onCreateSubtask={onCreateSubtask}
-                        onPlanToday={onPlanToday}
-                        onUnplan={onUnplan}
-                      />
-                    ))}
-                  </ul>
+                  </button>
+                  <div
+                    id="other-section-list"
+                    className={`section-collapse${otherSectionCollapsed ? ' is-collapsed' : ''}`}
+                    aria-hidden={otherSectionCollapsed}
+                  >
+                    <ul className="other-section__list task-list__root-tasks">
+                      {rootTasks.map((t) => (
+                        <TaskBranch
+                          key={`other-${t.id}`}
+                          todo={t}
+                          depth={0}
+                          selectedId={selectedId}
+                          onSelect={onSelect}
+                          allTodos={data}
+                          sort={sort}
+                          getExpanded={getExpanded}
+                          toggleExpanded={toggleExpanded}
+                          archivedView={archivedView}
+                          todayKey={todayKey}
+                          shownSet={shownSet}
+                          onCycle={async (next) => {
+                            await window.todoList.todo.update(t.id, { status: next });
+                            await refresh();
+                          }}
+                          onDelete={onDelete}
+                          onRestore={onRestore}
+                          onCreateSubtask={onCreateSubtask}
+                          onPlanToday={onPlanToday}
+                          onUnplan={onUnplan}
+                        />
+                      ))}
+                    </ul>
+                  </div>
                 </section>
               )}
             </>
