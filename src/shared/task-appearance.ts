@@ -43,19 +43,22 @@ export interface TaskAppearance {
 
 /** 默认配色 —— 主题预设（"系统"），由 CSS 在 theme 模式下生效，不需要
  *  在 renderer 注入自定义属性。所有优先级都用项目浅色 token 的浅色版，
- *  与现有 .task-row 视觉保持一致；用户切到 custom 才接管具体颜色。 */
+ *  与现有 .task-row 视觉保持一致；用户切到 custom 才接管具体颜色。
+ *  无优先级与低优先级共用同一组色（视觉上"未标优先级的任务"和"低优先
+ *  级任务"在主题模式下不再区分），让优先级升档的视觉对比更清晰。 */
 export const DEFAULT_TASK_APPEARANCE: TaskAppearance = {
   mode: 'theme',
   colors: {
-    none:    { background: '#FFFFFF', foreground: '#1F2329' },
-    low:     { background: '#F3F4F6', foreground: '#111827' },
-    medium:  { background: '#EFF6FF', foreground: '#1E3A8A' },
-    high:    { background: '#FFFBEB', foreground: '#78350F' },
+    none:   { background: '#F3F4F6', foreground: '#111827' },
+    low:    { background: '#F3F4F6', foreground: '#111827' },
+    medium: { background: '#EFF6FF', foreground: '#1E3A8A' },
+    high:   { background: '#FFFBEB', foreground: '#78350F' },
   },
 };
 
 /** 预设 1：白底黑字 —— 全优先级统一 #FFFFFF / #000000。
- *  mode = custom：CSS 注入颜色变量，行直接上白底黑字，不再走主题默认。 */
+ *  mode = custom：CSS 注入颜色变量，行直接上白底黑字，不再走主题默认。
+ *  无优先级与低优先级同色（同套白底黑字，无视觉差异）。 */
 export const PRESET_WHITE_ON_BLACK: TaskAppearance = {
   mode: 'custom',
   colors: {
@@ -66,13 +69,15 @@ export const PRESET_WHITE_ON_BLACK: TaskAppearance = {
   },
 };
 
-/** 预设 2：柔和彩色 —— 4 个优先级分别淡色 bg + 深色 fg，对应 task-row
- *  历史默认行为（none 接近白底 / low 浅灰 / medium 浅蓝 / high 浅橙黄）。
+/** 预设 2：柔和彩色 —— 3 个有效优先级分别淡色 bg + 深色 fg，对应 task-row
+ *  历史默认行为（无/低优先级 浅蓝，中优先级 浅黄，高优先级 浅红）。
+ *  无优先级与低优先级共用同一组色（柔和彩色预设只有 3 个可见色阶，
+ *  low/none 合并；让中等与高优先级之间的对比更突出）。
  *  mode = custom：CSS 注入颜色变量。 */
 export const PRESET_SOFT_COLORS: TaskAppearance = {
   mode: 'custom',
   colors: {
-    none:   { background: '#F3F4F6', foreground: '#111827' },
+    none:   { background: '#EFF6FF', foreground: '#1E3A8A' },
     low:    { background: '#EFF6FF', foreground: '#1E3A8A' },
     medium: { background: '#FFFBEB', foreground: '#78350F' },
     high:   { background: '#FEF2F2', foreground: '#7F1D1D' },

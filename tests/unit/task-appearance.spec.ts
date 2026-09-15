@@ -235,3 +235,15 @@ describe('presetIdOf', () => {
     expect(result).toBe('custom');
   });
 });
+
+describe('built-in preset invariants', () => {
+  // 无优先级与低优先级共用同一组色 —— 让优先级升档的视觉对比更清晰，
+  // 避免 4 个色阶都太接近。任意内置预设改了 none/low 都会破坏这一不变量。
+  it.each([
+    ['DEFAULT_TASK_APPEARANCE', DEFAULT_TASK_APPEARANCE.colors],
+    ['PRESET_WHITE_ON_BLACK', PRESET_WHITE_ON_BLACK.colors],
+    ['PRESET_SOFT_COLORS', PRESET_SOFT_COLORS.colors],
+  ])('%s: none === low', (_name, colors) => {
+    expect(colors.none).toEqual(colors.low);
+  });
+});
