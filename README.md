@@ -9,7 +9,7 @@
 > An AI-native desktop TODO list built on DeepSeek Harness (DSH) — the agent runtime is wired through the same DSH-shaped interface (Cordis container + tool registry + 3-tier permission gate) so you can drop in a real DSH build later without touching call sites.
 > Capture fast, organize freely, write Markdown notes, sketch on Excalidraw, and ask the assistant directly — all inside one Electron app.
 
-![status](https://img.shields.io/badge/status-RC_1.0.0--rc4-yellow)
+![status](https://img.shields.io/badge/status-RC_1.0.0--rc5-yellow)
 ![electron](https://img.shields.io/badge/electron-33-47848F)
 ![dsh](https://img.shields.io/badge/DSH-in--process-blue)
 
@@ -144,7 +144,7 @@ MIT — see [LICENSE](./LICENSE).
 > 一个 AI 原生的桌面待办应用，构建在 DeepSeek Harness（DSH）之上——agent 运行时复用同一套 DSH 形态接口（Cordis 容器 + 工具注册表 + 三级权限闸），日后接入真实 DSH 构建时无需改动调用方。
 > 快速捕获、自由组织、写 Markdown 笔记、在 Excalidraw 上手绘、直接向助手提问——全部在同一个 Electron 应用内完成。
 
-![status](https://img.shields.io/badge/status-RC_1.0.0--rc4-yellow)
+![status](https://img.shields.io/badge/status-RC_1.0.0--rc5-yellow)
 ![electron](https://img.shields.io/badge/electron-33-47848F)
 ![dsh](https://img.shields.io/badge/DSH-in--process-blue)
 
