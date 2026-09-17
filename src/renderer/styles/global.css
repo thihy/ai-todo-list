@@ -2810,9 +2810,16 @@ a:hover {
     overlay (which would clash with the priority bg, especially in
     theme-mode presets where the priority colour IS the row background).
     The border-width jump from 2px→4px is offset by a matching -2px on
-    padding-left so checkbox / title stay aligned with non-active rows. */
+    padding-left so checkbox / title stay aligned with non-active rows.
+    The colour is set here so the default (theme-mode) row gets a visible
+    accent rail; .task-list--custom overrides it with the row's own
+    priority fg below so the bar matches the row's identity in custom
+    mode. Without the explicit color the 4px border inherits
+    `border-left: 2px solid transparent` from .task-row and the active
+    state is invisible. */
 .task-row.is-active {
   border-left-width: 4px;
+  border-left-color: var(--accent-primary);
   padding-left: calc(var(--space-sm) - 2px + var(--row-depth, 0) * 14px);
 }
 .task-row.is-done .task-row__title {
