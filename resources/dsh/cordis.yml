@@ -2,10 +2,16 @@
 # register our own TodoListLlmAdapter wrapping client.ts invokeChat after boot),
 # tool registry (we register our todo/content/drawing handlers), system prompt,
 # session service + projection + JSONL persistence, agent factory, and the
-# agent loop. NO bash/editor/sandbox/terminal tools — this is a TODO app, not a
-# coding agent; only our own typed domain tools are exposed to the model.
-# Configured agents: [] — we create agents programmatically via ctx.agents.create
-# per AI invocation, so activation needs no provider adapter at boot time.
+# agent loop. Configured agents: [] — we create agents programmatically via
+# ctx.agents.create per AI invocation, so activation needs no provider adapter
+# at boot time.
+#
+# File-edit / shell tooling (read / read_image / write / edit / bash / pwsh /
+# grep / glob) is mounted in the sandbox stack below. The host-side approval
+# gate is wired in src/main/dsh/dsh-runtime.ts (`tools/pre-execute` waterfall
+# forces ask; `approval/request` short-circuits on PersistedSettings.aiGrantedTools).
+# Workspace containment is set via `process.env.DSH_WORKSPACE_ROOT` (resolved
+# in src/main/index.ts before this YAML is parsed).
 
 - id: llm
   name: '@deepseek-ai/dsh-llm'
@@ -286,3 +292,86 @@
 # self-contained (no schema knobs).
 - id: tool-ask-user
   name: '@deepseek-ai/dsh-tool-ask-user'
+
+# ────────────────────────────────────────────────────────────────────────────
+# Filesystem + shell tools (OPENSPEC §ai-assistant Filesystem and shell tools
+# registered with DSH / Mandatory approval for mutating tools).
+#
+# Three layers:
+#   1. sandbox-policy   : workspace-write mode + workspaceRoot from env
+#   2. sandbox          : kernel-level confinement (win32 ACL / POSIX bwrap)
+#   3. tool-*           : DSH's own model-facing tools + their per-tool sandbox
+#
+# HOST APPROVAL: DSH sandbox does NOT force user approval by itself — mutate
+# tools inside workspace-write pass without asking. The host
+# `tools/pre-execute` listener (src/main/dsh/dsh-runtime.ts) returns
+# `{ kind: 'ask' }` for write / edit / bash / pwsh, which routes them through
+# `approval/request` → PendingApprovalCard.
+#
+# PLATFORM BRANCH: `sandbox` and the shell side differ across win32/POSIX.
+# This file as written uses the Windows composition (current dev box). For
+# macOS / Linux, swap the names as the inline comments indicate; the rest of
+# the composition is platform-neutral.
+# ────────────────────────────────────────────────────────────────────────────
+
+- id: sandbox-policy
+  name: '@deepseek-ai/dsh-sandbox-policy'
+  config:
+    mode: workspace-write
+    workspaceRoot: !!js "process.env.DSH_WORKSPACE_ROOT"
+
+# Kernel-level containment. Win32 uses a WRITE_RESTRICTED token + ACL DACL;
+# POSIX uses bwrap (preferred), falling back to Landlock / Seatbelt. Switch to
+# `@deepseek-ai/dsh-sandbox-local` on darwin/linux.
+- id: sandbox
+  name: '@deepseek-ai/dsh-sandbox-windows-acl'
+
+# Filesystem sandbox — pairs with `dsh-tool-fs` to confine reads/writes to
+# the workspace directory + system tmp (per dsh-sandbox-policy's
+# workspace-write semantics).
+- id: fs-sandbox
+  name: '@deepseek-ai/dsh-fs-sandbox'
+  config:
+    cwd: !!js "process.env.DSH_WORKSPACE_ROOT"
+
+# read / read_image / write / edit — DSH's model-facing fs tools.
+- id: tool-fs
+  name: '@deepseek-ai/dsh-tool-fs'
+
+# Optional: edit-policy that requires read-before-edit (anti-blind-overwrite).
+# Host path-guard covers containment; observation-policy covers "don't edit
+# what you never read" — keep on for safety.
+- id: fs-observation-policy
+  name: '@deepseek-ai/dsh-fs-observation-policy'
+
+# Windows shell. Use dsh-pwsh-sandbox + dsh-tool-pwsh on win32 (paired with
+# the win32 sandbox above).
+- id: pwsh-sandbox
+  name: '@deepseek-ai/dsh-pwsh-sandbox'
+- id: tool-pwsh
+  name: '@deepseek-ai/dsh-tool-pwsh'
+
+# POSIX shell. On darwin/linux, replace `sandbox` above with
+# `@deepseek-ai/dsh-sandbox-local` and swap in the two plugins below.
+# - id: bash-sandbox
+#   name: '@deepseek-ai/dsh-bash-sandbox'
+# - id: tool-bash
+#   name: '@deepseek-ai/dsh-tool-bash'
+
+# Full-text + filename search (grep / glob). Sandbox pair is implicit via
+# fs-sandbox above; the tool plugin itself reads from ctx.fsSandbox.
+- id: tool-fs-search
+  name: '@deepseek-ai/dsh-tool-fs-search'
+
+# Subprocess / spill transports used by the shell tools to spawn the actual
+# pwsh (or bash) child process and stream its output. dsh-subprocess-local uses
+# node-pty + koffi (PTY-aware, ANSI escape handling) and works on both win32
+# and POSIX. dsh-spill-local is the local spillover buffer for long output.
+- id: subprocess
+  name: '@deepseek-ai/dsh-subprocess'
+- id: subprocess-local
+  name: '@deepseek-ai/dsh-subprocess-local'
+- id: spill
+  name: '@deepseek-ai/dsh-spill'
+- id: spill-local
+  name: '@deepseek-ai/dsh-spill-local'

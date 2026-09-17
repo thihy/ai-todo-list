@@ -43,6 +43,14 @@ export const DRAWINGS_SUBDIR = 'drawings';
 export const THUMBS_SUBDIR = 'thumbs';
 export const ATTACHMENTS_SUBDIR = 'inbox-attachments';
 export const TRASH_SUBDIR = 'trash';
+/** AI 助手文件系统 + shell 工具的根目录。AI 的 read/read_image/write/edit/
+ *  grep/glob 在 <dataDir>/<DSH_WORKSPACE_SUBDIR>/ 下运作（host 在
+ *  tools/pre-execute 监听器里强制校验路径越界）；bash/pwsh 由 DSH sandbox
+ *  在 kernel 层做 path containment 的二次保护。DSH_SESSIONS_ROOT 不重用此目录
+ *  —— 会话存档是单独的根（`~/.dsh` 或环境变量），与用户的工作区不冲突。
+ *  `process.env.DSH_WORKSPACE_ROOT` 在 src/main/index.ts 的 mkdirSync 之前
+ *  设置（cordis.yml 的 !!js 表达式在 boot 时读取）。 */
+export const DSH_WORKSPACE_SUBDIR = 'dsh_workspace';
 
 export const MAX_BODY_VERSIONS = 20;
 export const THUMB_WIDTH = 320;

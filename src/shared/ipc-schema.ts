@@ -581,6 +581,26 @@ export interface IpcRegistry {
   // resolves the pending waterfall promise on receipt.
   'ai.userQuestion.answer': IpcChannel<UserQuestionAnswer, IpcResult<{ ok: true }>>;
   'ai.userApproval.answer': IpcChannel<UserApprovalAnswer, IpcResult<{ ok: true }>>;
+  // OPENSPEC §ai-assistant Persistent and session tool grants. Grant
+  // handlers internally resolve the pending waterfall to 'allowed-once'
+  // AND persist the grant (always → settings; session → runtime Map),
+  // so the renderer doesn't need a separate ai.userApproval.answer leg.
+  'ai.userApproval.grantAlways': IpcChannel<
+    { reqId: string; toolName: string },
+    IpcResult<{ ok: true; reqId: string; persisted: true; settled: boolean }>
+  >;
+  'ai.userApproval.grantSession': IpcChannel<
+    { reqId: string; toolName: string; conversationId: string },
+    IpcResult<{ ok: true; reqId: string; persisted: false; settled: boolean }>
+  >;
+  'ai.tools.listGranted': IpcChannel<
+    { conversationId?: string },
+    IpcResult<{ always: string[]; session: string[] }>
+  >;
+  'ai.tools.revoke': IpcChannel<
+    { toolName: string; scope: 'always' | 'session'; conversationId?: string },
+    IpcResult<{ ok: true; revoked: boolean; scope: 'always' | 'session' }>
+  >;
 
   // Type-only exports of the push-direction payloads so the renderer
   // can read the event bus payload shape without redeclaring it.

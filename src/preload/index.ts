@@ -243,6 +243,12 @@ const api: TodoListApi = {
   },
   aiUserApproval: {
     answer: (reqId, decision) => invoke('ai.userApproval.answer', { reqId, decision }),
+    grantAlways: (req) => invoke('ai.userApproval.grantAlways', req),
+    grantSession: (req) => invoke('ai.userApproval.grantSession', req),
+  },
+  aiTools: {
+    listGranted: (req) => invoke('ai.tools.listGranted', req ?? {}),
+    revoke: (req) => invoke('ai.tools.revoke', req),
   },
   // Tag catalog (DB-backed since v17). All mutations broadcast
   // `app:tags-changed`; consumers should re-fetch on receipt.

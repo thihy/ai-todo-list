@@ -41,6 +41,7 @@ import {
   TODOS_SUBDIR,
   DRAWINGS_SUBDIR,
   ATTACHMENTS_SUBDIR,
+  DSH_WORKSPACE_SUBDIR,
   APP_PRODUCT_NAME,
   APP_USER_MODEL_ID,
 } from '../shared/constants';
@@ -200,9 +201,14 @@ function bootstrap(): void {
     const todosDir = join(rootDir, TODOS_SUBDIR);
     const drawingsDir = join(rootDir, DRAWINGS_SUBDIR);
     const attachmentsDir = join(rootDir, ATTACHMENTS_SUBDIR);
+    // AI 助手文件系统 / shell 工具的工作区（DSH sandbox-policy 的 workspaceRoot
+    // + host `tools/pre-execute` 路径校验的目标）。在 attachmentsDir 之后一并
+    // 创建；DSH_WORKSPACE_ROOT env 在 boot DSH container 之前再设置（见下）。
+    const dshWorkspaceDir = join(rootDir, DSH_WORKSPACE_SUBDIR);
     mkdirSync(todosDir, { recursive: true });
     mkdirSync(drawingsDir, { recursive: true });
     mkdirSync(attachmentsDir, { recursive: true });
+    mkdirSync(dshWorkspaceDir, { recursive: true });
     mark('data-dirs-created');
 
     startupState.setCorePhase('db-open');
@@ -363,6 +369,10 @@ function bootstrap(): void {
     const sessionsRoot = join(rootDir, 'dsh-sessions');
     mkdirSync(sessionsRoot, { recursive: true });
     process.env['DSH_SESSIONS_ROOT'] = sessionsRoot;
+    // 同上：DSH sandbox-policy / dsh-fs-sandbox 的 workspaceRoot 来自
+    // `process.env.DSH_WORKSPACE_ROOT`（cordis.yml 用 !!js 表达式读取）。
+    // 在 import DSH container 之前 set；mkdirSync 已在 data-dir 阶段完成。
+    process.env['DSH_WORKSPACE_ROOT'] = dshWorkspaceDir;
 
     // Phase: AI runtime. STARTUP-DSH-001 — the splash now waits for the
     // DSH bootstrap to reach a terminal state (ready OR failed) before

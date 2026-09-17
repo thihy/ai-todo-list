@@ -16,6 +16,12 @@ export const SAFE_TOOLS: ReadonlySet<string> = new Set([
   'content_history',
   'drawing_list',
   'drawing_read',
+  // DSH 自带工具——读类工具经 host `tools/pre-execute` 监听器（path 校验）
+  // 直通；越界会被 host 强制 return { kind: 'deny' }，不在 tier 表里管。
+  'read',
+  'read_image',
+  'grep',
+  'glob',
 ]);
 
 export const NOTIFY_UNDO_TOOLS: ReadonlySet<string> = new Set([
@@ -30,6 +36,14 @@ export const DESTRUCTIVE_TOOLS: ReadonlySet<string> = new Set([
   'todo_delete',
   'drawing_delete',
   'content_restoreVersion',
+  // DSH 自带工具——mutate 类由 host `tools/pre-execute` 监听器强制
+  // { kind: 'ask' } 进入 approval/request 审批路径。tier 表只是声明性分类
+  // （对应 OPENSPEC §ai-assistant Permission boundaries），实际强制由
+  // dsh-runtime.ts 的 waterfall 监听器实现。
+  'write',
+  'edit',
+  'bash',
+  'pwsh',
 ]);
 
 export type PermissionTier = 'auto' | 'notify-undo' | 'block';

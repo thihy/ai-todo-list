@@ -11,7 +11,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomBytes } from 'node:crypto';
-import { DEFAULT_CAPTURE_HOTKEY, ROOT_DIR_NAME, CONFIG_FILENAME, DEFAULT_PROVIDER, DEFAULT_AI_USER_AGENT } from '../../shared/constants';
+import { DEFAULT_CAPTURE_HOTKEY, ROOT_DIR_NAME, CONFIG_FILENAME, DEFAULT_PROVIDER, DEFAULT_AI_USER_AGENT, DSH_WORKSPACE_SUBDIR } from '../../shared/constants';
 import type { AIModel, AIProvider, CustomProviderConfig, CustomProviderInput } from '../../shared/ai-types';
 import type { TagDef } from '../../shared/todo-types';
 import {
@@ -100,6 +100,22 @@ export interface PersistedSettings {
    *  ai.conversation.create handler 在每次 create 后跑 sweep；归档对话
    *  不计入也不被 sweep。设置 UI 在 Settings → 数据 → AI 对话保留数量。 */
   maxConversations: number;
+  /** 用户在 PendingApprovalCard 上点"始终允许此工具 / 本次会话允许"产生的
+   *  工具授权表。键是工具名（如 `read` / `write` / `bash` / `pwsh` /
+   *  `edit`），值是授权范围：
+   *    - `'always'`：跨进程、跨会话的全局允许，写入 config.json 后下次启动
+   *      依然生效。settings 面板里的"AI 工具授权"页面可撤销。
+   *    - `'session'`：当前 conversationId 的内存级允许；进程重启即失效。
+   *  会话级授权不入此表，由 `sessionGrantsByConv: Map<convId, Set<tool>>`
+   *  维护（dsh-runtime.ts 顶层）。 */
+  aiGrantedTools: Record<string, 'session' | 'always'>;
+  /** DSH 工作区根目录的可选覆盖。`null` 表示使用默认 `<dataDir>/dsh_workspace`。
+   *  工作区是 AI 助手 fs / shell 工具（`read` / `read_image` / `write` /
+   *  `edit` / `bash` / `pwsh` / `grep` / `glob`）的 containment boundary——
+   *  任何超出此根的路径会被 host `tools/pre-execute` 监听器拒绝。高级用户可
+   *  在 settings 改成自己已有的工作目录（共享给其他工具）；默认 null 走
+   *  `<dataDir>/dsh_workspace`，与 DSH_SESSIONS_ROOT / 附件 / 画板完全隔离。 */
+  dshWorkspaceDir: string | null;
 }
 
 const DEFAULTS: PersistedSettings = {
@@ -125,6 +141,8 @@ const DEFAULTS: PersistedSettings = {
   sdkBridge: { enabled: false, token: null },
   autoUpdate: true,
   maxConversations: 100,
+  aiGrantedTools: {},
+  dshWorkspaceDir: null,
 };
 
 /** Default data root when the user has not picked a directory. */
@@ -259,6 +277,11 @@ export class SettingsStore {
       },
       autoUpdate: v.autoUpdate,
       maxConversations: v.maxConversations,
+      aiGrantedTools: { ...v.aiGrantedTools },
+      // 显示解析后的默认路径（dataDir + /dsh_workspace），让 settings UI 知道
+      // 当前实际生效的位置。`dshWorkspaceDir: null` 的语义是"未覆盖"，
+      // 但 UI 不该把 null 展示成"未配置"——它仍有一个默认根。
+      dshWorkspaceDir: v.dshWorkspaceDir ?? join(this.getDataDir(), DSH_WORKSPACE_SUBDIR),
     };
   }
 

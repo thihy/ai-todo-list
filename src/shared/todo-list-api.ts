@@ -445,6 +445,16 @@ export interface TodoListApi {
   };
   aiUserApproval: {
     answer(reqId: string, decision: 'allow-once' | 'reject'): Promise<IpcResponse<'ai.userApproval.answer'>>;
+    grantAlways(req: { reqId: string; toolName: string }): Promise<IpcResponse<'ai.userApproval.grantAlways'>>;
+    grantSession(req: { reqId: string; toolName: string; conversationId: string }): Promise<IpcResponse<'ai.userApproval.grantSession'>>;
+  };
+  /** AI tool-grant introspection / revocation (OPENSPEC §ai-assistant
+   *  Persistent and session tool grants). listGranted reports the union of
+   *  always-allowed + currently-session-allowed; revoke drops an entry
+   *  from the corresponding table. */
+  aiTools: {
+    listGranted(req: { conversationId?: string }): Promise<IpcResponse<'ai.tools.listGranted'>>;
+    revoke(req: { toolName: string; scope: 'always' | 'session'; conversationId?: string }): Promise<IpcResponse<'ai.tools.revoke'>>;
   };
   on<E extends AppEvent>(event: E, cb: (payload: AppEventMap[E]) => void): () => void;
 }

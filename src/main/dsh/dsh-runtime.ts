@@ -32,6 +32,7 @@ import type { TodoFilter, TodoStatus, TodoCreate, TodoPatch, Priority } from '..
 import { TODO_STATUSES, PRIORITIES } from '../../shared/todo-types';
 import type { UserQuestionAnswer, UserQuestionRequest } from '../../shared/ai-types';
 import { presentToolCall, presentToolResult, recoverToolResultValue } from '@shared/tool-presentation';
+import { isWithinWorkspace, extractStringPath } from './path-guard';
 import type Database from 'better-sqlite3';
 import { mimeExt, sanitizeName } from '../util/mime';
 import { decodeUserMessage, encodeTaskCreationEnvelope, type UserIntent } from '../../shared/task-creation';
@@ -375,6 +376,62 @@ interface PendingApproval {
 
 const pendingQuestions = new Map<string, PendingQuestion>();
 const pendingApprovals = new Map<string, PendingApproval>();
+
+// ===== AI 工具授权表（OPENSPEC §ai-assistant Persistent and session tool grants）=====
+//
+// 两级粒度：
+//   - `aiGrantedTools: Record<toolName, 'always'>`  → 持久化在 settings.aiGrantedTools，
+//     进程重启仍生效；由 approval/request 监听器读取。
+//   - `sessionGrantsByConv: Map<convId, Set<toolName>>`  → 内存态，"本次会话允许"专用；
+//     进程重启即丢失。
+//
+// 两者短路 `approval/request` 监听器：always 在任意会话都直接通过；session 只对
+// 命中的 conversationId 通过。撤销走 `revokeSessionTool` / settings.patch。
+//
+// 工具白名单（应在 approval/request 之前过的 read 类工具名 + mutate 类工具名）
+// 由 `PRE_APPROVE_TOOLS` / `READ_CLASS_TOOLS` 两个常量维护；新增工具时同步。
+const PRE_APPROVE_TOOLS: ReadonlySet<string> = new Set(['write', 'edit', 'bash', 'pwsh']);
+const READ_CLASS_TOOLS: ReadonlySet<string> = new Set(['read', 'read_image', 'grep', 'glob']);
+const EMPTY_GRANTS: ReadonlySet<string> = new Set();
+
+const sessionGrantsByConv = new Map<string, Set<string>>();
+
+/** Mark `toolName` as granted for the lifetime of the given conversation.
+ *  Used by `ai.userApproval.grantSession` IPC; idempotent. */
+export function grantSessionTool(conversationId: string, toolName: string): void {
+  if (!conversationId || !toolName) return;
+  let set = sessionGrantsByConv.get(conversationId);
+  if (!set) {
+    set = new Set<string>();
+    sessionGrantsByConv.set(conversationId, set);
+  }
+  set.add(toolName);
+}
+
+/** Drop the session grant for one tool (settings page "撤销本次会话授权") or
+ *  for the entire conversation (disposeConversation). No-op if absent. */
+export function revokeSessionTool(conversationId: string, toolName: string): boolean {
+  const set = sessionGrantsByConv.get(conversationId);
+  if (!set) return false;
+  const had = set.delete(toolName);
+  if (set.size === 0) sessionGrantsByConv.delete(conversationId);
+  return had;
+}
+
+/** Read-only snapshot of the session-grant set for one conversation.
+ *  Used by `ai.tools.listGranted` IPC to surface currently-allowed tools in
+ *  the settings UI. */
+export function listSessionGranted(conversationId: string): string[] {
+  const set = sessionGrantsByConv.get(conversationId);
+  return set ? Array.from(set) : [];
+}
+
+/** Dispose all session-level grants for a conversation (called from
+ * disposeConversation in main index). Keeps the map leak-free across long
+ * sessions. */
+export function clearSessionGrants(conversationId: string): void {
+  sessionGrantsByConv.delete(conversationId);
+}
 
 /** 渲染端应答 ai.userQuestion.answer 时调用。reqId 找不到 pending 条目
  *  （超时/重复）返回 false。渲染端把完整 { reqId, answers } 给我们，我们
@@ -880,6 +937,61 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
   // waterfall 监听器把每次提问广播给渲染端（内联卡片），再通过
   // answerUserQuestion / answerUserApproval IPC 等答复。90s 自动取消，
   // 避免用户走开时 agent loop 永久阻塞。
+  //
+  // OPENSPEC §ai-assistant Mandatory approval for mutating tools——
+  // `tools/pre-execute` waterfall 是 host 端强制审批的官方扩展点。DSH 的
+  // sandbox（`dsh-fs-sandbox` / `dsh-bash-sandbox` / `dsh-pwsh-sandbox` +
+  // `dsh-sandbox-policy`）只做 kernel-level containment，不强制审批：mutate
+  // 工具在 sandbox 允许 workspace-write 时**默认直接执行**。要 100% 走审批
+  // 路径，必须在 `tools/pre-execute` 上返回 `{ kind: 'ask' }`，让调度器自
+  // 动转入 `approval/request` waterfall（→ 本监听器 → 渲染端按钮）。
+  //
+  // read 类工具沙箱不覆盖读（只覆盖写），所以路径越界必须由 host 自己
+  // 校验；我们用 `path-guard.isWithinWorkspace` 拒绝对 workspace 外的读
+  // 取，结果是 `{ kind: 'deny', reason: 'PATH_OUTSIDE_WORKSPACE' }`。
+  // 其他非 fs / shell 工具（todo_* / content_* / drawing_* 等）一律直通
+  // —— 它们本来就有自己的 `tierFor()` 闸控 + approval/request 流程。
+  ctx.on('tools/pre-execute', (
+    exec: { toolName: string; args?: unknown; description?: string },
+    next: () => Promise<unknown>,
+  ): Promise<unknown> => {
+    const { toolName } = exec;
+    if (READ_CLASS_TOOLS.has(toolName)) {
+      const workspace = deps.settings.get().dshWorkspaceDir;
+      // DSH fs 工具的参数键：`read` / `read_image` 用 `file_path`；
+      // `grep` 用 `path`（搜索根目录）+ `pattern`（文本）；`glob` 用 `pattern`。
+      const requested = extractStringPath(exec.args, ['file_path', 'path', 'pattern']);
+      if (workspace && typeof requested === 'string') {
+        if (!isWithinWorkspace(workspace, requested)) {
+          const reason = `PATH_OUTSIDE_WORKSPACE: ${requested} 不在工作区 ${workspace} 内`;
+          logger.warn(`tools/pre-execute deny ${toolName}: ${reason}`);
+          return Promise.resolve({ kind: 'deny', reason });
+        }
+      }
+      // 路径合法 → 直通；DSH 工具自己负责后续的读 / grep / glob
+      return next();
+    }
+    if (PRE_APPROVE_TOOLS.has(toolName)) {
+      const desc = (typeof exec.description === 'string' && exec.description.trim())
+        ? exec.description
+        : (() => {
+          const a = exec.args;
+          if (a && typeof a === 'object') {
+            const rec = a as Record<string, unknown>;
+            const cmd = rec['command'];
+            const fp = rec['file_path'];
+            if (typeof cmd === 'string') return cmd.slice(0, 80);
+            if (typeof fp === 'string') return fp;
+          }
+          return '';
+        })();
+      const reason = `AI 想要调用 ${toolName}${desc ? ` (${desc})` : ''}。`;
+      logger.info(`tools/pre-execute ask ${toolName}: ${reason}`);
+      return Promise.resolve({ kind: 'ask', reason });
+    }
+    return next();
+  });
+
   ctx.on('user-questions/request', (request: {
     questions: ReadonlyArray<{ id: string; question: string; detail?: string; header?: string; options?: ReadonlyArray<{ label: string; description?: string }>; multiSelect?: boolean }>;
   }, _next: () => Promise<unknown>): Promise<UserQuestionAnswer> => {
@@ -908,6 +1020,13 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
   // 二元审批的对称实现。DSH 把 answerer 返回值归一为四种结局；渲染端路径
   // 只 resolve 'allowed-once' / 'rejected'（超时 resolve 'unavailable'，
   // signal abort resolve 'cancelled'）。
+  //
+  // OPENSPEC §ai-assistant Persistent and session tool grants——短路优先级：
+  //   1. settings.aiGrantedTools[toolName] === 'always'  → 直接放行
+  //   2. sessionGrantsByConv.get(convId)?.has(toolName)  → 本会话放行
+  //   3. 否则走 90s 超时 + IPC 广播给渲染端
+  // convId 取自 `req.agent.id`：DSH agent handle 与会话 1:1（见 ensureAgent
+  // 注释），所以这个 id 就是 conversationId。
   ctx.on('approval/request', (req: {
     agent: { id?: unknown };
     toolName: string;
@@ -915,6 +1034,17 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
     reason?: string;
     signal?: AbortSignal;
   }, _next: () => Promise<unknown>): Promise<'allowed-once' | 'rejected' | 'cancelled' | 'unavailable'> => {
+    const convId = req.agent?.id != null ? String(req.agent.id) : '';
+    const alwaysGranted = deps.settings.get().aiGrantedTools[req.toolName];
+    if (alwaysGranted === 'always') {
+      logger.info(`DSH approval/request short-circuit (always): ${req.toolName} (conv=${convId})`);
+      return Promise.resolve('allowed-once');
+    }
+    const sessionSet = convId ? (sessionGrantsByConv.get(convId) ?? EMPTY_GRANTS) : EMPTY_GRANTS;
+    if (sessionSet.has(req.toolName)) {
+      logger.info(`DSH approval/request short-circuit (session): ${req.toolName} (conv=${convId})`);
+      return Promise.resolve('allowed-once');
+    }
     const reqId = randomUUID();
     return new Promise((resolve) => {
       let settled = false;

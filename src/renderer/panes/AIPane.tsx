@@ -1631,6 +1631,8 @@ export const AIPane: React.FC<{
           toolName={activeApproval.toolName}
           reason={activeApproval.reason}
           preview={activeApproval.preview}
+          reqId={activeApproval.reqId}
+          conversationId={activeApproval.convId ?? undefined}
           onAllow={() => void submitApproval('allow-once')}
           onReject={() => void submitApproval('reject')}
         />

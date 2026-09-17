@@ -13,7 +13,7 @@
 import { register, okResult, failResult } from './router';
 import type { DshHandle } from '../dsh/types';
 import { resolveEndpoint, healthCheck } from '../dsh/endpoints';
-import { getDshRuntime, peekDshRuntime, answerUserQuestion, answerUserApproval, type DshRuntimeDeps } from '../dsh/dsh-runtime';
+import { getDshRuntime, peekDshRuntime, answerUserQuestion, answerUserApproval, grantSessionTool, revokeSessionTool, listSessionGranted, type DshRuntimeDeps } from '../dsh/dsh-runtime';
 import { costForUsage } from '../dsh/pricing';
 import { SettingsStore } from '../settings/store';
 import { BrowserWindow, dialog } from 'electron';
@@ -753,6 +753,78 @@ export function registerAiHandlers(dsh: DshHandle): void {
       clearTimeout(timer);
     }
   });
+
+  // ===== OPENSPEC §ai-assistant Persistent and session tool grants =====
+  //
+  // 4 个新通道：
+  //   - ai.userApproval.grantAlways({ reqId, toolName })
+  //       把工具加进 settings.aiGrantedTools（持久化）并 resolve 当前 waterfall
+  //       为 'allowed-once'，用户不再被问。渲染端的"始终允许此工具"按钮触发。
+  //   - ai.userApproval.grantSession({ reqId, toolName, conversationId })
+  //       写入 sessionGrantsByConv（内存态）并 resolve 当前 waterfall。会话
+  //       结束 / disposeConversation 时随清空。渲染端的"本次会话允许"按钮触发。
+  //   - ai.tools.listGranted({ conversationId })
+  //       返回 always + 当前会话 session 的工具列表，settings UI 用它做
+  //       "AI 工具授权"页。
+  //   - ai.tools.revoke({ toolName, scope, conversationId? })
+  //       从 settings 或 session Map 删一条授权；下一次同工具的 approval
+  //       请求会重新落到 PendingApprovalCard。
+  register('ai.userApproval.grantAlways', async (_e, req: { reqId: string; toolName: string }) => {
+    if (!deps) return failResult('ai_not_ready', 'DSH not initialised');
+    if (!req?.toolName || !req?.reqId) {
+      return failResult('bad_request', 'toolName and reqId are required');
+    }
+    const prev = deps.settings.get().aiGrantedTools;
+    // 写持久化表（settings.patch 自动 persist）；不影响其他工具的授权
+    deps.settings.patch({ aiGrantedTools: { ...prev, [req.toolName]: 'always' } });
+    // 直接 resolve 当前 waterfall，渲染端不需要再调一次 allow-once
+    const settled = answerUserApproval(req.reqId, 'allow-once');
+    return okResult({ ok: true, reqId: req.reqId, persisted: true, settled });
+  });
+
+  register('ai.userApproval.grantSession', async (_e, req: { reqId: string; toolName: string; conversationId: string }) => {
+    if (!deps) return failResult('ai_not_ready', 'DSH not initialised');
+    if (!req?.toolName || !req?.reqId || !req?.conversationId) {
+      return failResult('bad_request', 'toolName, reqId and conversationId are required');
+    }
+    grantSessionTool(req.conversationId, req.toolName);
+    const settled = answerUserApproval(req.reqId, 'allow-once');
+    return okResult({ ok: true, reqId: req.reqId, persisted: false, settled });
+  });
+
+  register('ai.tools.listGranted', async (_e, req: { conversationId?: string }) => {
+    if (!deps) return failResult('ai_not_ready', 'DSH not initialised');
+    const settings = deps.settings.get();
+    const always = Object.entries(settings.aiGrantedTools)
+      .filter(([, scope]) => scope === 'always')
+      .map(([toolName]) => toolName);
+    const session = req?.conversationId ? listSessionGranted(req.conversationId) : [];
+    return okResult({ always, session });
+  });
+
+  register('ai.tools.revoke', async (_e, req: { toolName: string; scope: 'always' | 'session'; conversationId?: string }) => {
+    if (!deps) return failResult('ai_not_ready', 'DSH not initialised');
+    if (!req?.toolName) return failResult('bad_request', 'toolName is required');
+    if (req.scope === 'always') {
+      const prev = deps.settings.get().aiGrantedTools;
+      if (prev[req.toolName] !== 'always') {
+        return okResult({ ok: true, revoked: false, scope: 'always' });
+      }
+      // 不修改其他字段；spread + delete 保持其它工具的授权不变
+      const next = { ...prev };
+      delete next[req.toolName];
+      deps.settings.patch({ aiGrantedTools: next });
+      return okResult({ ok: true, revoked: true, scope: 'always' });
+    }
+    if (req.scope === 'session') {
+      if (!req.conversationId) {
+        return failResult('bad_request', 'conversationId is required for scope=session');
+      }
+      const revoked = revokeSessionTool(req.conversationId, req.toolName);
+      return okResult({ ok: true, revoked, scope: 'session' });
+    }
+    return failResult('bad_request', `unknown scope ${String(req?.scope)}`);
+  });
 }
 
 export function bindAiDeps(d: HandlerDeps): void {
@@ -765,39 +837,49 @@ export type { HandlerDeps };
  *  The `conversations` scope is also updated by the DSH session-title listener in
  *  dsh-runtime.ts (it pushes app:data-changed directly), but we still keep the
  *  map here as the single source of truth so adding a new mutating tool is a
- *  one-line change. */
+ *  one-line change.
+ *
+ *  历史：早期版本用带点名字（`todo.create`），与 DSH tool registry（下划线
+ *  名）脱节，case 永远 miss，所有 mutate 都走 default → null → 不广播。
+ *  这是「ai.ask 后左栏不刷新」的根因之一（另一个根因是会话级 agent 在
+ *  detach / resume 之间的 stream listener 链路，详见 attachLiveListener
+ *  注释）。改名与 registerDomainTools 一一对应。 */
 function mutatingScope(name: string): DataScope | null {
   switch (name) {
-    case 'todo.create':
-    case 'todo.update':
-    case 'todo.delete':
-    case 'todo.restore':
-    case 'todo.batchUpdate':
+    case 'todo_create':
+    case 'todo_update':
+    case 'todo_delete':
+    case 'todo_restore':
+    case 'todo_batchUpdate':
+    case 'todo_planForToday':
+    case 'todo_unplan':
       return 'todos';
-    case 'content.writeBody':
-    case 'content.restoreVersion':
+    case 'content_writeBody':
+    case 'content_restoreVersion':
       return 'content';
-    case 'drawing.save':
-    case 'drawing.delete':
-    case 'drawing.rename':
-    case 'drawing.setThumb':
+    case 'drawing_save':
+    case 'drawing_delete':
+    case 'drawing_setThumb':
       return 'drawings';
-    case 'document.create':
-    case 'document.remove':
-    case 'document.rename':
-      return 'content';
-    case 'progress.log':
-      return 'todos';
-    case 'inbox.attach':
-    case 'inbox.attachBlob':
-    case 'inbox.remove':
-      return 'content';
-    case 'conversation.create':
-    case 'conversation.rename':
-    case 'conversation.archive':
-    case 'conversation.unarchive':
-    case 'conversation.delete':
+    case 'conversation_create':
+    case 'conversation_rename':
+    case 'conversation_archive':
+    case 'conversation_unarchive':
+    case 'conversation_delete':
       return 'conversations';
+    // DSH 自带的 fs / shell 工具（`write` / `edit` / `bash` / `pwsh` /
+    // `grep` / `glob` / `read` / `read_image`）一律返回 null：它们修改
+    // 的是 dsh_workspace 下的文件，不在我们的 store；broadcast
+    // app:data-changed 渲染端无 handler，纯 no-op。还不如别推。
+    case 'write':
+    case 'edit':
+    case 'bash':
+    case 'pwsh':
+    case 'grep':
+    case 'glob':
+    case 'read':
+    case 'read_image':
+      return null;
     default:
       return null;
   }

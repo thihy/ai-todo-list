@@ -92,6 +92,37 @@ The system SHALL classify every DSH tool into one of three host-owned tiers defi
 - **THEN** the renderer shows an 8-second "已撤销" toast wired to `window.todoList.ai.undo` IPC
 - **AND** pressing the toast within 8 seconds reverts the change and logs `ai.undo` in the session
 
+### Requirement: Workspace directory for AI filesystem access
+The system SHALL create `<dataDir>/dsh_workspace/` on first boot and confine all DSH filesystem and shell tools to that root. `src/main/index.ts` MUST create the directory during data-dir setup and `process.env.DSH_WORKSPACE_ROOT` MUST be set before the DSH container is imported. `src/main/dsh/path-guard.ts` MUST validate every read path argument against the workspace and reject paths that escape it via absolute paths, `..`, symlinks, or junctions.
+
+#### Scenario: Path outside workspace is rejected
+- **WHEN** the AI calls `read({ file_path: '/etc/passwd' })`
+- **THEN** the `tools/pre-execute` listener in `dsh-runtime.ts` returns `{ kind: 'deny', reason: 'PATH_OUTSIDE_WORKSPACE' }`
+- **AND** the agent receives a structured error and no file content reaches the model
+
+### Requirement: Filesystem and shell tools registered with DSH
+The system SHALL expose `read`, `read_image`, `write`, `edit`, `bash` (POSIX), `pwsh` (Windows), `grep`, and `glob` as DSH tools via `@deepseek-ai/dsh-tool-fs`, `@deepseek-ai/dsh-tool-bash`, `@deepseek-ai/dsh-tool-pwsh`, and `@deepseek-ai/dsh-tool-fs-search`, loaded in `resources/dsh/cordis.yml`. Each tool SHALL be paired with its sandbox backend (`dsh-fs-sandbox`, `dsh-bash-sandbox`, `dsh-pwsh-sandbox`, `dsh-sandbox-policy`) for kernel-level confinement. On Windows the composition MUST use `@deepseek-ai/dsh-sandbox-windows-acl`; on Linux/macOS it MUST use `@deepseek-ai/dsh-sandbox-local`.
+
+#### Scenario: AI reads a workspace file
+- **WHEN** the user asks the AI to read `dsh_workspace/notes.md`
+- **THEN** the AI invokes `read({ file_path: 'notes.md' })` and the file is returned without user approval (read is auto tier)
+
+### Requirement: Mandatory approval for mutating tools
+The system SHALL force every call to `write`, `edit`, `bash`, and `pwsh` through `ctx.approval.request(...)` via a `tools/pre-execute` listener mounted in `src/main/dsh/dsh-runtime.ts`. The listener MUST return `{ kind: 'ask' }` regardless of DSH sandbox escalation arguments, and the existing `approval/request` waterfall listener MUST broadcast the request to the renderer for user response within 90 seconds before timing out.
+
+#### Scenario: Write requires approval
+- **WHEN** the AI calls `write({ file_path: 'a.txt', content: 'hi' })`
+- **THEN** `PendingApprovalCard` displays the file path, byte length, and a 200-character content preview
+- **AND** the tool only proceeds if the user approves within 90 seconds
+
+### Requirement: Persistent and session tool grants
+The system SHALL persist user-approved tool grants in `PersistedSettings.aiGrantedTools` as `Record<toolName, 'session' | 'always'>`. `session` grants SHALL expire on app restart and apply only to the current conversation. `always` grants SHALL persist across restarts and apply globally. The Settings UI MUST list currently-granted tools with a revoke button. The `approval/request` waterfall listener in `src/main/dsh/dsh-runtime.ts` MUST short-circuit when the requested tool is in either grants table.
+
+#### Scenario: User grants always for read
+- **WHEN** the user clicks "始终允许此工具" on a `read` approval card
+- **THEN** `ai.userApproval.grantAlways({ toolName: 'read' })` writes `aiGrantedTools.read = 'always'` to `config.json`
+- **AND** subsequent `read` calls in any conversation resolve without prompting
+
 ### Requirement: Streaming responses
 The system SHALL stream AI responses to the UI for any request longer than 2 seconds, showing progressive output.
 

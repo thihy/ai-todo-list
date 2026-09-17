@@ -19,6 +19,7 @@
 // always calls `presentToolResult` at render time — either from meta on the
 // wire or from the local fallback.
 
+import { readResultToView, writeEditToView, grepResultToView, globResultToView, bashToView } from './tool-presentation-helpers';
 import type { DiffHunk } from '@deepseek-ai/dsh-client-ui-primitives';
 import type {
   ToolCallView,
@@ -107,7 +108,19 @@ export type ToolName =
   | 'ai_stats'
   | 'app_currentContext'
   | 'web_search'
-  | 'web_fetch';
+  | 'web_fetch'
+  // DSH 自带 fs / shell 工具（resources/dsh/cordis.yml）。每个工具都有
+  // presentToolResult 路由（read → ReadBlock、write/edit → DiffBlock、
+  // grep → SearchMatchesBlock、glob → SearchPathsBlock、bash/pwsh →
+  // TerminalBlock），靠 src/shared/tool-presentation-helpers.ts 投影。
+  | 'read'
+  | 'read_image'
+  | 'write'
+  | 'edit'
+  | 'bash'
+  | 'pwsh'
+  | 'grep'
+  | 'glob';
 
 const kindByTool: Record<ToolName, ToolCallKind> = {
   'todo_list': 'search',
@@ -146,6 +159,17 @@ const kindByTool: Record<ToolName, ToolCallKind> = {
   'app_currentContext': 'read',
   'web_search': 'search',
   'web_fetch': 'fetch',
+  // DSH 自带 fs / shell 工具的 kind —— DSH unpack 端期望 read / edit /
+  // search 三类。bash/pwsh 在 presentCall 阶段归 'other'（TerminalCard
+  // 是结果阶段的事，不是 call 阶段）。
+  'read': 'read',
+  'read_image': 'read',
+  'write': 'edit',
+  'edit': 'edit',
+  'bash': 'other',
+  'pwsh': 'other',
+  'grep': 'search',
+  'glob': 'search',
 };
 
 /** Pending-call card. DSH default shape: generic title + rawInput +
@@ -198,6 +222,21 @@ export function presentToolResult(
       return drawingListToGeneric(result);
     case 'content_writeBody':
       return writeBodyToDiff(args, result);
+    // DSH 自带 fs / shell 工具 → 走 src/shared/tool-presentation-helpers
+    // 投影到对应 UI card。不投影会退化成 JsonBlock（plan O6）。
+    case 'read':
+    case 'read_image':
+      return readResultToView(args, result);
+    case 'write':
+    case 'edit':
+      return writeEditToView(toolName, args, result);
+    case 'grep':
+      return grepResultToView(args, result);
+    case 'glob':
+      return globResultToView(args, result);
+    case 'bash':
+    case 'pwsh':
+      return bashToView(toolName, args, result);
     default:
       return genericResult(toolName, result);
   }
@@ -316,6 +355,35 @@ export function summarizeToolCall(
     }
     case 'conversation_rename':
       return truncate(stringField(a, 'title') ?? '', 60);
+    // DSH 自带 fs / shell 工具的 collapsed-row 摘要：
+    //   read / read_image → 文件路径
+    //   write            → 文件路径 + 字节数（如果 result 带 bytesWritten）
+    //   edit             → 文件路径
+    //   bash / pwsh      → 命令前 60 字
+    //   grep             → pattern
+    //   glob             → pattern
+    case 'read':
+    case 'read_image': {
+      const fp = stringField(a, 'file_path') ?? stringField(a, 'path') ?? '';
+      return truncate(fp, 60);
+    }
+    case 'write': {
+      const fp = stringField(a, 'file_path') ?? '';
+      // `content` is the text being written; we surface its length so the
+      // collapsed row reads "a.txt (5 bytes)" instead of just the path.
+      const bytes = typeof a?.['content'] === 'string' ? (a['content'] as string).length : null;
+      return fp ? `${truncate(fp, 50)}${bytes != null ? ` (${bytes} bytes)` : ''}` : '';
+    }
+    case 'edit': {
+      return truncate(stringField(a, 'file_path') ?? '', 60);
+    }
+    case 'bash':
+    case 'pwsh': {
+      return truncate(stringField(a, 'command') ?? '', 60);
+    }
+    case 'grep':
+    case 'glob':
+      return truncate(stringField(a, 'pattern') ?? '', 60);
     default:
       return '';
   }
@@ -388,6 +456,15 @@ function titleFor(toolName: string): string {
     'app_currentContext': '当前焦点',
     'web_search': '搜索网页',
     'web_fetch': '读取网页',
+    // DSH 自带 fs / shell 工具
+    'read': '读取文件',
+    'read_image': '查看图片',
+    'write': '写入文件',
+    'edit': '编辑文件',
+    'bash': '运行命令',
+    'pwsh': '运行 PowerShell',
+    'grep': '文本搜索',
+    'glob': '文件匹配',
   };
   return map[toolName] ?? toolName;
 }
