@@ -109,6 +109,20 @@ release markers. Compared with 0.1.0:
   success.
 - `progress.md` save flow no longer races the per-write
   burst-merge window in `progress_log`.
+- **Markdown editor view mode persists.** Toggling the 全屏 / 取消全屏
+  on the task detail DocumentsView unmounts and remounts the whole
+  editor tree (TodoEditorPane → FullscreenDoc), which used to drop
+  the 编辑 / 预览 / 分屏 selection back to `编辑`. The mode is now
+  persisted to `localStorage` (`todo-list.mdView`) so it survives both
+  the fullscreen transition and an app restart.
+- **Document MD preview no longer inherits the AI-chat font shrink.**
+  Earlier the AIPane's 14 px assistant prose was implemented by
+  re-pointing the global `--dsw-font-markdown-*` tokens in
+  `gradient-shadow-text.css` `body { }` down to 14 px, which also
+  shrank the MarkdownEditor preview used by DocumentsView. Reverted
+  the global tokens to their figma defaults (16 px base, 24 / 22 /
+  20 / 16 px for h1–h4) and restored the `.aipane__body` scoped
+  override so only the chat stream stays at 14 px.
 
 ### Removed
 

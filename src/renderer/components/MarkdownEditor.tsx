@@ -174,6 +174,26 @@ function continuationMarker(line: string): { insert: string; exit: boolean } | n
   // (matches GitHub's behaviour).
 }
 
+/** Persist the 编辑 / 预览 / 分屏 mode across DocumentsView remounts (e.g. the
+ *  fullscreen-doc toggle unmounts DocumentsView when TodoEditorPane unmounts
+ *  and remounts inside FullscreenDoc) AND across app restarts. Without
+ *  persistence the user lands back on '编辑' every time they toggle
+ *  fullscreen or reopen the app, even if they were reading in 预览. */
+const MD_VIEW_STORAGE_KEY = 'todo-list.mdView';
+const MD_VIEW_VALUES = ['write', 'preview', 'split'] as const;
+type MdView = typeof MD_VIEW_VALUES[number];
+
+function loadMdView(): MdView {
+  try {
+    const v = localStorage.getItem(MD_VIEW_STORAGE_KEY);
+    if (MD_VIEW_VALUES.includes(v as MdView)) return v as MdView;
+  } catch {
+    /* localStorage may be disabled (private mode, sandbox, tests) — fall
+       through to the default and silently skip persistence below. */
+  }
+  return 'write';
+}
+
 export const MarkdownEditor: React.FC<{
   docId: string;
   value: string;
@@ -183,7 +203,15 @@ export const MarkdownEditor: React.FC<{
   error: string | null;
 }> = ({ docId, value, version, onSave, saving, error }) => {
   const [md, setMd] = useState(value);
-  const [view, setView] = useState<'write' | 'preview' | 'split'>('write');
+  const [view, setView] = useState<MdView>(loadMdView);
+  const setViewPersisted = useCallback((next: MdView): void => {
+    setView(next);
+    try {
+      localStorage.setItem(MD_VIEW_STORAGE_KEY, next);
+    } catch {
+      /* best-effort persistence — UI still updates in-memory */
+    }
+  }, []);
   const [lastSavedAt, setLastSavedAt] = useState<number | null>(null);
   const dirty = md !== value && md !== '';
   // Wrap onSave so we can stamp lastSavedAt when the round-trip resolves —
@@ -449,7 +477,7 @@ export const MarkdownEditor: React.FC<{
         saving={saving}
         dirty={dirty}
         view={view}
-        onViewChange={setView}
+        onViewChange={setViewPersisted}
       />
     </div>
   );

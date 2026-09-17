@@ -1655,6 +1655,30 @@ a:hover {
      stream guttered. Previously padding-top created a blank strip above
      the sticky header that read as "transparent space above the title". */
   padding: 0 var(--space-lg) var(--space-lg);
+
+  /* Scope the small-AI-chat markdown font to the AIPane only. The DSH
+     MarkdownText primitive ships at 16px/28px (see
+     src/renderer/styles/dsh/gradient-shadow-text.css `body` tokens — the
+     figma export's defaults) and is also the canonical size used by the
+     MarkdownEditor preview in the task-detail DocumentsView. The chat
+     stream wants the same chat-rhythm as the surrounding bubbles
+     (14px/24px); re-point the tokens here so assistant prose matches
+     without dragging the document preview down with it. The MarkdownText
+     `.markdown` root reads `--dsw-font-markdown-base` via `font:` and
+     inherits the rest by name, so we override the four common tokens
+     (base + strong + italic + strong-italic) for completeness. */
+  --dsw-font-markdown-base: 14px/24px var(--dsw-font-family);
+  --dsw-font-markdown-base-font-size: 14px;
+  --dsw-font-markdown-base-line-height: 24px;
+  --dsw-font-markdown-base-strong: 600 14px/24px var(--dsw-font-family);
+  --dsw-font-markdown-base-strong-font-size: 14px;
+  --dsw-font-markdown-base-strong-line-height: 24px;
+  --dsw-font-markdown-base-italic: italic 14px/24px var(--dsw-font-family);
+  --dsw-font-markdown-base-italic-font-size: 14px;
+  --dsw-font-markdown-base-italic-line-height: 24px;
+  --dsw-font-markdown-base-strong-italic: italic 600 14px/24px var(--dsw-font-family);
+  --dsw-font-markdown-base-strong-italic-font-size: 14px;
+  --dsw-font-markdown-base-strong-italic-line-height: 24px;
 }
 
 /* Inner content wrapper inside the scroll viewport. Owns the message
