@@ -2,9 +2,26 @@
 import type { TerminalBlockLabels, TerminalBlockProps } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 import { resolveWorkspacePath } from '@deepseek-ai/dsh-util-workspace-path'
-import { hasSpillNotice } from '@deepseek-ai/dsh-spill-policy/notice'
 import type { ToolCallBlock } from './tool-call-model'
 import { parsedToolCall, singleResultText, validEscalationFields } from './raw-tool-call'
+
+/**
+ * Detect a spill-notice footer appended by @deepseek-ai/dsh-spill-policy when
+ * a tool result exceeds `maxInlineBytes`. The notice is formatted as
+ * `(<omitted> Full formatted result stored at: <locator>. <retrievalHint>)`
+ * (see `formatSpillNotice` in dsh-spill-policy/lib/index.js); the
+ * `" Full formatted result stored at: "` marker is unique to spill notices
+ * and never appears in normal tool output, so substring detection is enough.
+ *
+ * Inline stub because DSH 0.1.5-rc.2 dropped the
+ * `@deepseek-ai/dsh-spill-policy/notice` subpath export that 0.1.2-rc.1
+ * carried; the rest of the spill-policy package still works in 0.1.5-rc.2 but
+ * `hasSpillNotice` only existed via the removed `./notice` re-export. Re-add
+ * the package import once DSH restores the subpath.
+ */
+function hasSpillNotice(text: string): boolean {
+  return text.includes(' Full formatted result stored at: ')
+}
 
 /**
  * Build the TerminalBlock display copy from the conversation locale seat —
