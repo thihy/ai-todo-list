@@ -1612,6 +1612,7 @@ function registerDomainTools(
     ...wire('todo_list'),
     description: 'List TODO items, optionally filtered. Every field is optional; omit all of them to return every todo. The model may pass status/priority/tag as a single string or a JSON array. "all" / unknown values for status/priority mean no filter.',
     parameters: {
+      description: { type: 'string', description: '一句中文意图说明；展示在 UI 卡片标题旁（DSH 原生约定，可选；不填则由 summarizeToolCall 从结果/参数结构化字段派生）' },
       status: { type: 'string', description: 'Filter by status: next | doing | done | cancelled | blocked (or comma-separated)' },
       priority: { type: 'string', description: 'Filter by priority: very-low | low | medium | high | very-high (or comma-separated)' },
       tag: { type: 'string', description: 'Filter by a single tag (matches tasks tagged with this string)' },
@@ -1656,7 +1657,7 @@ function registerDomainTools(
     name: 'todo_get',
     ...wire('todo_get'),
     description: 'Get a single TODO by id. Returns null if the id is unknown.',
-    parameters: { id: { type: 'string', required: true, description: 'TODO id (ULID)' } },
+    parameters: { description: { type: 'string', description: '一句中文意图说明；展示在 UI 卡片标题旁（DSH 原生约定，可选；不填则由 summarizeToolCall 从结果/参数结构化字段派生）' }, id: { type: 'string', required: true, description: 'TODO id (ULID)' } },
     output: jsonOutput,
     async execute(args: { id: string }) { return repo.get(args.id as never); },
   }));
@@ -1666,6 +1667,7 @@ function registerDomainTools(
     ...wire('todo_create'),
     description: 'Create a real TODO and return it with its generated id. Use a concise actionable title. Defaults are status=next and priority=low; do not invent urgency, due dates, tags, or parent ids. parentId must come from an actual todo_list/todo_search result. Set plannedFor only when the user explicitly asks to do/add it today; a due date of today alone is not enough. Markdown body starts empty — use content_writeBody only when the user supplied meaningful notes.',
     parameters: {
+      description: { type: 'string', description: '一句中文意图说明；展示在 UI 卡片标题旁（DSH 原生约定，可选；不填则由 summarizeToolCall 从结果/参数结构化字段派生）' },
       title: { type: 'string', required: true, description: 'TODO title (required)' },
       status: { type: 'string', description: 'next | doing | done | cancelled | blocked (default next)' },
       priority: { type: 'string', description: 'very-low | low | medium | high | very-high (default low)' },
@@ -1699,6 +1701,7 @@ function registerDomainTools(
     ...wire('todo_update'),
     description: 'Update fields of an existing TODO. Pass only the fields you want to change — null clears the field (e.g. dueAt: null). Setting status="done" automatically stamps doneAt; any other status clears it. Pass parentId to reparent a task (make it a subtask of another); pass parentId=null to promote to top-level. Cycles are rejected. Pass archivedAt to archive (a unix-ms timestamp, e.g. Date.now()) or archivedAt=null to restore an archived task.',
     parameters: {
+      description: { type: 'string', description: '一句中文意图说明；展示在 UI 卡片标题旁（DSH 原生约定，可选；不填则由 summarizeToolCall 从结果/参数结构化字段派生）' },
       id: { type: 'string', required: true, description: 'TODO id' },
       title: { type: 'string' },
       status: { type: 'string', description: 'next | doing | done | cancelled | blocked' },
@@ -1732,7 +1735,7 @@ function registerDomainTools(
     name: 'subtasks_list',
     ...wire('subtasks_list'),
     description: 'List the direct subtasks of a TODO (parentId == id). Returns [] if the task has no subtasks or does not exist. Use this to inspect a parent\'s children before reparenting or to summarise "the work broken out under this task".',
-    parameters: { parentId: { type: 'string', required: true, description: 'Parent TODO id' } },
+    parameters: { description: { type: 'string', description: '一句中文意图说明；展示在 UI 卡片标题旁（DSH 原生约定，可选；不填则由 summarizeToolCall 从结果/参数结构化字段派生）' }, parentId: { type: 'string', required: true, description: 'Parent TODO id' } },
     output: jsonOutput,
     async execute(args: { parentId: string }) {
       return repo.list({ parentId: args.parentId } as never);
@@ -1744,6 +1747,7 @@ function registerDomainTools(
     ...wire('todo_planForToday'),
     description: 'Stamp an existing TODO for the today view. Pass todayKey = today\'s local date as \'YYYY-MM-DD\' (e.g. compute via `new Date().toLocaleDateString(\'en-CA\')` — the same value the renderer reads back when matching the upper section). Yesterday\'s stamp naturally drops off tomorrow morning without any sweep. Only call when the user EXPLICITLY says "今天做 X" / "加到今天" / "把 X 加到今日"; do not bulk-stamp. Returns the updated TODO. No-op (returns the existing row) when the task is already planned for that day.',
     parameters: {
+      description: { type: 'string', description: '一句中文意图说明；展示在 UI 卡片标题旁（DSH 原生约定，可选；不填则由 summarizeToolCall 从结果/参数结构化字段派生）' },
       id: { type: 'string', required: true, description: 'TODO id to stamp for today' },
       todayKey: { type: 'string', required: true, description: 'Today\'s local date \'YYYY-MM-DD\'. Must match the renderer\'s equality check exactly.' },
     },
@@ -1760,7 +1764,7 @@ function registerDomainTools(
     name: 'todo_unplan',
     ...wire('todo_unplan'),
     description: 'Remove an existing TODO from the today view (clears plannedFor). Idempotent: no-op when the task was not planned. Returns the updated TODO.',
-    parameters: { id: { type: 'string', required: true, description: 'TODO id to remove from today\'s plan' } },
+    parameters: { description: { type: 'string', description: '一句中文意图说明；展示在 UI 卡片标题旁（DSH 原生约定，可选；不填则由 summarizeToolCall 从结果/参数结构化字段派生）' }, id: { type: 'string', required: true, description: 'TODO id to remove from today\'s plan' } },
     output: jsonOutput,
     async execute(args: { id: string }) {
       return repo.update(args.id, { plannedFor: null });
@@ -1771,7 +1775,7 @@ function registerDomainTools(
     name: 'todo_delete',
     ...wire('todo_delete'),
     description: 'Soft-delete a TODO and its entire subtree. This is a LOGICAL delete — the row, markdown body, and drawings survive so the action is always undoable via todo_restore. The task disappears from every active view (list, search, stats) and is only visible via todo_list with deletedOnly=true. No confirmation needed beyond the normal permission tier.',
-    parameters: { id: { type: 'string', required: true, description: 'TODO id to soft-delete (cascades to its subtasks)' } },
+    parameters: { description: { type: 'string', description: '一句中文意图说明；展示在 UI 卡片标题旁（DSH 原生约定，可选；不填则由 summarizeToolCall 从结果/参数结构化字段派生）' }, id: { type: 'string', required: true, description: 'TODO id to soft-delete (cascades to its subtasks)' } },
     output: jsonOutput,
     async execute(args: { id: string }) { repo.delete(args.id as never); return { ok: true }; },
   }));
@@ -1780,7 +1784,7 @@ function registerDomainTools(
     name: 'todo_restore',
     ...wire('todo_restore'),
     description: 'Restore a soft-deleted TODO and its entire subtree — the inverse of todo_delete. Clears deleted_at on the task + every descendant so the whole branch returns to the active list. Safe to call on an already-live task (no-op).',
-    parameters: { id: { type: 'string', required: true, description: 'TODO id to restore (clears deleted_at on its subtree)' } },
+    parameters: { description: { type: 'string', description: '一句中文意图说明；展示在 UI 卡片标题旁（DSH 原生约定，可选；不填则由 summarizeToolCall 从结果/参数结构化字段派生）' }, id: { type: 'string', required: true, description: 'TODO id to restore (clears deleted_at on its subtree)' } },
     output: jsonOutput,
     async execute(args: { id: string }) { repo.restore(args.id as never); return { ok: true }; },
   }));
@@ -1790,6 +1794,7 @@ function registerDomainTools(
     ...wire('todo_batchUpdate'),
     description: 'Apply the same patch to multiple TODOs in one transaction. Useful for "mark all 未完成 items as done" or "reparent every task under a new parent". Returns the updated rows.',
     parameters: {
+      description: { type: 'string', description: '一句中文意图说明；展示在 UI 卡片标题旁（DSH 原生约定，可选；不填则由 summarizeToolCall 从结果/参数结构化字段派生）' },
       ids: { type: 'string', required: true, description: 'JSON array of TODO ids' },
       status: { type: 'string' },
       priority: { type: 'string' },
@@ -1824,7 +1829,7 @@ function registerDomainTools(
     name: 'todo_search',
     ...wire('todo_search'),
     description: 'Full-text search across TODO titles and markdown bodies (FTS5-backed). Returns hits with a short snippet + score.',
-    parameters: { query: { type: 'string', required: true, description: 'Search query' }, limit: { type: 'number', description: 'Max hits (default 20)' } },
+    parameters: { description: { type: 'string', description: '一句中文意图说明；展示在 UI 卡片标题旁（DSH 原生约定，可选；不填则由 summarizeToolCall 从结果/参数结构化字段派生）' }, query: { type: 'string', required: true, description: 'Search query' }, limit: { type: 'number', description: 'Max hits (default 20)' } },
     output: jsonOutput,
     async execute(args: { query: string; limit?: number }) { return repo.search(args.query, args.limit ?? 20); },
   }));
@@ -1833,7 +1838,7 @@ function registerDomainTools(
     name: 'todo_stats',
     ...wire('todo_stats'),
     description: 'Aggregate stats: counts by status, 7-day completion rate, average done latency. Useful as a preflight before summarising the user\'s workload.',
-    parameters: { windowDays: { type: 'number', description: 'Window for completion stats (default 7)' } },
+    parameters: { description: { type: 'string', description: '一句中文意图说明；展示在 UI 卡片标题旁（DSH 原生约定，可选；不填则由 summarizeToolCall 从结果/参数结构化字段派生）' }, windowDays: { type: 'number', description: 'Window for completion stats (default 7)' } },
     output: jsonOutput,
     async execute(args: { windowDays?: number }) { return repo.stats(args.windowDays ?? 7); },
   }));
@@ -1846,7 +1851,7 @@ function registerDomainTools(
     name: 'content_readBody',
     ...wire('content_readBody'),
     description: 'Read the markdown body of a TODO (current version). Returns markdown text + the version number.',
-    parameters: { id: { type: 'string', required: true, description: 'TODO id' } },
+    parameters: { description: { type: 'string', description: '一句中文意图说明；展示在 UI 卡片标题旁（DSH 原生约定，可选；不填则由 summarizeToolCall 从结果/参数结构化字段派生）' }, id: { type: 'string', required: true, description: 'TODO id' } },
     output: jsonOutput,
     async execute(args: { id: string }) { return md.readBody(args.id as never); },
   }));
@@ -1856,6 +1861,7 @@ function registerDomainTools(
     ...wire('content_writeBody'),
     description: 'Write/replace the markdown body of a TODO. Creates a new version (old version preserved for content_history). For long drafts, write the full body each time — partial updates are not supported.',
     parameters: {
+      description: { type: 'string', description: '一句中文意图说明；展示在 UI 卡片标题旁（DSH 原生约定，可选；不填则由 summarizeToolCall 从结果/参数结构化字段派生）' },
       id: { type: 'string', required: true, description: 'TODO id' },
       markdown: { type: 'string', required: true, description: 'New markdown content' },
     },
@@ -1880,7 +1886,7 @@ function registerDomainTools(
     name: 'content_history',
     ...wire('content_history'),
     description: 'List saved markdown versions for a TODO, oldest to newest. Each entry has an id (version number), savedAt, and the body. Use content_restoreVersion to roll back.',
-    parameters: { id: { type: 'string', required: true, description: 'TODO id' } },
+    parameters: { description: { type: 'string', description: '一句中文意图说明；展示在 UI 卡片标题旁（DSH 原生约定，可选；不填则由 summarizeToolCall 从结果/参数结构化字段派生）' }, id: { type: 'string', required: true, description: 'TODO id' } },
     output: jsonOutput,
     async execute(args: { id: string }) { return md.history(args.id as never); },
   }));
@@ -1890,6 +1896,7 @@ function registerDomainTools(
     ...wire('content_restoreVersion'),
     description: 'Restore a previous markdown version. The current version is preserved as a new version before the restore (so undo via content_history + restoreVersion is always possible). Destructive in the sense that it overwrites current body — confirm with the user first.',
     parameters: {
+      description: { type: 'string', description: '一句中文意图说明；展示在 UI 卡片标题旁（DSH 原生约定，可选；不填则由 summarizeToolCall 从结果/参数结构化字段派生）' },
       id: { type: 'string', required: true, description: 'TODO id' },
       versionId: { type: 'number', required: true, description: 'Version number to restore (from content_history)' },
     },
@@ -1905,7 +1912,7 @@ function registerDomainTools(
     name: 'drawing_list',
     ...wire('drawing_list'),
     description: 'List Excalidraw drawings attached to a TODO. Returns metadata (id, title, thumb path, timestamps). Use drawing_read to get the scene JSON.',
-    parameters: { todoId: { type: 'string', required: true, description: 'TODO id' } },
+    parameters: { description: { type: 'string', description: '一句中文意图说明；展示在 UI 卡片标题旁（DSH 原生约定，可选；不填则由 summarizeToolCall 从结果/参数结构化字段派生）' }, todoId: { type: 'string', required: true, description: 'TODO id' } },
     output: jsonOutput,
     async execute(args: { todoId: string }) { return drawings.list(args.todoId as never); },
   }));
@@ -1914,7 +1921,7 @@ function registerDomainTools(
     name: 'drawing_read',
     ...wire('drawing_read'),
     description: 'Read an Excalidraw drawing scene by id. Returns the full scene JSON (elements, appState). Throws if the id is unknown or the scene file is missing on disk.',
-    parameters: { id: { type: 'string', required: true, description: 'Drawing id' } },
+    parameters: { description: { type: 'string', description: '一句中文意图说明；展示在 UI 卡片标题旁（DSH 原生约定，可选；不填则由 summarizeToolCall 从结果/参数结构化字段派生）' }, id: { type: 'string', required: true, description: 'Drawing id' } },
     output: jsonOutput,
     async execute(args: { id: string }) { return drawings.read(args.id as never); },
   }));
@@ -1924,6 +1931,7 @@ function registerDomainTools(
     ...wire('drawing_save'),
     description: 'Save (create or update) an Excalidraw drawing for a TODO. Pass `id` to update an existing drawing; omit to create a new one. The `scene` is the full Excalidraw scene JSON.',
     parameters: {
+      description: { type: 'string', description: '一句中文意图说明；展示在 UI 卡片标题旁（DSH 原生约定，可选；不填则由 summarizeToolCall 从结果/参数结构化字段派生）' },
       todoId: { type: 'string', required: true, description: 'TODO id this drawing belongs to' },
       scene: { type: 'json', required: true, description: 'Excalidraw scene JSON: { elements, appState, ... }' },
       id: { type: 'string', description: 'Existing drawing id to update (omit to create)' },
@@ -1939,7 +1947,7 @@ function registerDomainTools(
     name: 'drawing_delete',
     ...wire('drawing_delete'),
     description: 'Permanently delete a drawing. Destructive — confirm with the user first.',
-    parameters: { id: { type: 'string', required: true, description: 'Drawing id' } },
+    parameters: { description: { type: 'string', description: '一句中文意图说明；展示在 UI 卡片标题旁（DSH 原生约定，可选；不填则由 summarizeToolCall 从结果/参数结构化字段派生）' }, id: { type: 'string', required: true, description: 'Drawing id' } },
     output: jsonOutput,
     async execute(args: { id: string }) { drawings.delete(args.id as never); return { ok: true }; },
   }));
@@ -1949,6 +1957,7 @@ function registerDomainTools(
     ...wire('drawing_setThumb'),
     description: 'Set the thumbnail image for a drawing (a data: URL, typically captured from the canvas). The renderer uses this to show a preview chip in the drawing list. Not destructive.',
     parameters: {
+      description: { type: 'string', description: '一句中文意图说明；展示在 UI 卡片标题旁（DSH 原生约定，可选；不填则由 summarizeToolCall 从结果/参数结构化字段派生）' },
       id: { type: 'string', required: true, description: 'Drawing id' },
       dataUrl: { type: 'string', required: true, description: 'data: URL of the thumbnail image (e.g. data:image/png;base64,...)' },
     },
@@ -1968,6 +1977,7 @@ function registerDomainTools(
     ...wire('inbox_attach'),
     description: 'Attach a file from disk to a TODO. Copies the file into the app\'s attachments directory and records it in inbox_attachments. Returns the new attachment row.',
     parameters: {
+      description: { type: 'string', description: '一句中文意图说明；展示在 UI 卡片标题旁（DSH 原生约定，可选；不填则由 summarizeToolCall 从结果/参数结构化字段派生）' },
       todoId: { type: 'string', required: true, description: 'Target TODO id' },
       filePath: { type: 'string', required: true, description: 'Absolute path to the file to attach' },
       mime: { type: 'string', required: true, description: 'MIME type (e.g. "image/png", "application/pdf")' },
@@ -1992,6 +2002,7 @@ function registerDomainTools(
     ...wire('inbox_attachBlob'),
     description: 'Attach a pasted image (data: URL) to a TODO. Decodes the data URL, writes the bytes to disk, records the row. Use for screenshots / clipboard images the user said "add this picture to the todo".',
     parameters: {
+      description: { type: 'string', description: '一句中文意图说明；展示在 UI 卡片标题旁（DSH 原生约定，可选；不填则由 summarizeToolCall 从结果/参数结构化字段派生）' },
       todoId: { type: 'string', required: true, description: 'Target TODO id' },
       dataUrl: { type: 'string', required: true, description: 'data: URL of the image (e.g. data:image/png;base64,iVBORw0K...)' },
       filename: { type: 'string', required: true, description: 'Original filename (used for extension inference and display)' },
@@ -2032,7 +2043,7 @@ function registerDomainTools(
     name: 'conversation_list',
     ...wire('conversation_list'),
     description: 'List AI conversations. By default archived threads are hidden. Each row includes the title, timestamps, and an archived flag. Use conversation_history to load the turns of a specific conversation.',
-    parameters: { includeArchived: { type: 'boolean', description: 'Include archived conversations (default false)' } },
+    parameters: { description: { type: 'string', description: '一句中文意图说明；展示在 UI 卡片标题旁（DSH 原生约定，可选；不填则由 summarizeToolCall 从结果/参数结构化字段派生）' }, includeArchived: { type: 'boolean', description: 'Include archived conversations (default false)' } },
     output: jsonOutput,
     async execute(args: { includeArchived?: boolean }) {
       const includeArchived = args.includeArchived ?? false;
@@ -2046,7 +2057,7 @@ function registerDomainTools(
     name: 'conversation_create',
     ...wire('conversation_create'),
     description: 'Create a new (empty) AI conversation. Returns the new conversation row (id, title, timestamps). The default title is "新对话 <timestamp>" — the DSH session-title service will replace it with an AI-generated title after the first turn, or the user can rename it via the UI.',
-    parameters: { title: { type: 'string', description: 'Optional explicit title; omit to use the default new-conversation title' } },
+    parameters: { description: { type: 'string', description: '一句中文意图说明；展示在 UI 卡片标题旁（DSH 原生约定，可选；不填则由 summarizeToolCall 从结果/参数结构化字段派生）' }, title: { type: 'string', description: 'Optional explicit title; omit to use the default new-conversation title' } },
     output: jsonOutput,
     async execute(args: { title?: string }) { return { conversation: conversations.create(args.title ? { title: args.title } : undefined) }; },
   }));
@@ -2056,6 +2067,7 @@ function registerDomainTools(
     ...wire('conversation_rename'),
     description: 'Rename an AI conversation. Throws if the id is unknown or the title is empty.',
     parameters: {
+      description: { type: 'string', description: '一句中文意图说明；展示在 UI 卡片标题旁（DSH 原生约定，可选；不填则由 summarizeToolCall 从结果/参数结构化字段派生）' },
       id: { type: 'string', required: true, description: 'Conversation id' },
       title: { type: 'string', required: true, description: 'New title' },
     },
@@ -2071,7 +2083,7 @@ function registerDomainTools(
     name: 'conversation_archive',
     ...wire('conversation_archive'),
     description: 'Archive an AI conversation (soft delete). Hidden from the default list. Reversible via conversation_unarchive. The on-disk JSONL log is NOT touched.',
-    parameters: { id: { type: 'string', required: true, description: 'Conversation id' } },
+    parameters: { description: { type: 'string', description: '一句中文意图说明；展示在 UI 卡片标题旁（DSH 原生约定，可选；不填则由 summarizeToolCall 从结果/参数结构化字段派生）' }, id: { type: 'string', required: true, description: 'Conversation id' } },
     output: jsonOutput,
     async execute(args: { id: string }) { return { ok: conversations.archive(args.id) }; },
   }));
@@ -2080,7 +2092,7 @@ function registerDomainTools(
     name: 'conversation_unarchive',
     ...wire('conversation_unarchive'),
     description: 'Restore an archived conversation so it shows in the default list again.',
-    parameters: { id: { type: 'string', required: true, description: 'Conversation id' } },
+    parameters: { description: { type: 'string', description: '一句中文意图说明；展示在 UI 卡片标题旁（DSH 原生约定，可选；不填则由 summarizeToolCall 从结果/参数结构化字段派生）' }, id: { type: 'string', required: true, description: 'Conversation id' } },
     output: jsonOutput,
     async execute(args: { id: string }) { return { ok: conversations.unarchive(args.id) }; },
   }));
@@ -2089,7 +2101,7 @@ function registerDomainTools(
     name: 'conversation_delete',
     ...wire('conversation_delete'),
     description: 'Hard delete the DB row of an AI conversation. The on-disk JSONL event log is NOT cleaned up by this (out of scope). Prefer conversation_archive for "I\'m done with this thread" semantics.',
-    parameters: { id: { type: 'string', required: true, description: 'Conversation id' } },
+    parameters: { description: { type: 'string', description: '一句中文意图说明；展示在 UI 卡片标题旁（DSH 原生约定，可选；不填则由 summarizeToolCall 从结果/参数结构化字段派生）' }, id: { type: 'string', required: true, description: 'Conversation id' } },
     output: jsonOutput,
     async execute(args: { id: string }) { return { ok: conversations.delete(args.id) }; },
   }));
@@ -2098,7 +2110,7 @@ function registerDomainTools(
     name: 'conversation_history',
     ...wire('conversation_history'),
     description: 'Load the persisted turn history of a conversation. Returns the same shape the AIPane uses: { type: "user" | "assistant" | "tool", text?, reasoning?, name?, args?, ok?, data?, error? }. Use this to "remember" what a past conversation discussed.',
-    parameters: { id: { type: 'string', required: true, description: 'Conversation id' } },
+    parameters: { description: { type: 'string', description: '一句中文意图说明；展示在 UI 卡片标题旁（DSH 原生约定，可选；不填则由 summarizeToolCall 从结果/参数结构化字段派生）' }, id: { type: 'string', required: true, description: 'Conversation id' } },
     output: jsonOutput,
     async execute(args: { id: string }) {
       // L4-H: 历史加载由 runtime 持有（dsh-session-persistence-jsonl 后端）。
@@ -2122,7 +2134,7 @@ function registerDomainTools(
     name: 'ai_health',
     ...wire('ai_health'),
     description: 'Check the AI provider connection. Returns { ok, mode, latencyMs?, error? }. "shim" mode means offline / no API key — model calls will echo pre-canned answers. Use this before declaring "the API is broken" — it might just be missing credentials.',
-    parameters: {},
+    parameters: { description: { type: 'string', description: '一句中文意图说明；展示在 UI 卡片标题旁（DSH 原生约定，可选；不填则由 summarizeToolCall 从结果/参数结构化字段派生）' } },
     output: jsonOutput,
     async execute() {
       try {
@@ -2144,7 +2156,7 @@ function registerDomainTools(
     name: 'ai_models',
     ...wire('ai_models'),
     description: 'List the configured model(s) for the active provider. Returns the list of models the user has enabled (per-provider defaults from settings). Useful when the user asks "which model are you?".',
-    parameters: {},
+    parameters: { description: { type: 'string', description: '一句中文意图说明；展示在 UI 卡片标题旁（DSH 原生约定，可选；不填则由 summarizeToolCall 从结果/参数结构化字段派生）' } },
     output: jsonOutput,
     async execute() {
       const s = settings.get();
@@ -2156,7 +2168,7 @@ function registerDomainTools(
     name: 'ai_stats',
     ...wire('ai_stats'),
     description: 'Read the cumulative AI cost from settings (sum of every successful turn\'s costUsd). Useful when the user asks "how much have you spent this month?"',
-    parameters: {},
+    parameters: { description: { type: 'string', description: '一句中文意图说明；展示在 UI 卡片标题旁（DSH 原生约定，可选；不填则由 summarizeToolCall 从结果/参数结构化字段派生）' } },
     output: jsonOutput,
     async execute() {
       const s = settings.get();
@@ -2181,7 +2193,7 @@ function registerDomainTools(
     name: 'app_currentContext',
     ...wire('app_currentContext'),
     description: 'Read the user\'s current focus (what they have open right now — a task, document, or drawing). Returns the full row(s) so you can act on them with todo_update / content_writeBody / drawing_save etc. without a separate lookup. Returns null when nothing is focused — the user is on the list/stats view, in which case call todo_list to find a candidate.',
-    parameters: {},
+    parameters: { description: { type: 'string', description: '一句中文意图说明；展示在 UI 卡片标题旁（DSH 原生约定，可选；不填则由 summarizeToolCall 从结果/参数结构化字段派生）' } },
     output: jsonOutput,
     async execute() {
       const f = getFocus();
@@ -2224,6 +2236,7 @@ function registerDomainTools(
     ...wire('ask_user_approval'),
     description: 'Pause the agent loop and ask the user to approve or reject a specific tool call. Returns one of: "allowed-once" | "rejected" | "cancelled" | "unavailable". Use this BEFORE performing an irreversible side effect (deleting a file, sending a message, etc.). The user can always "reject" — the agent loop then aborts the tool call. Auto-cancels after 90s.',
     parameters: {
+      description: { type: 'string', description: '一句中文意图说明；展示在 UI 卡片标题旁（DSH 原生约定，可选；不填则由 summarizeToolCall 从结果/参数结构化字段派生）' },
       toolName: { type: 'string', required: true, description: 'Name of the tool the agent is about to call (for display in the approval card)' },
       reason: { type: 'string', required: true, description: 'Human-readable explanation of what this tool will do and why the user should approve' },
       preview: { type: 'string', description: 'Optional JSON-stringified preview of the args (shown in the card so the user sees what they\'re approving)' },

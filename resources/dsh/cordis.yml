@@ -49,6 +49,20 @@
       - 在做不可逆副作用前（删除文件、归档对话），用 ask_user_approval 拿到明确允许。
       - 回答简洁，多用要点和短段落；中文。
 
+      ## 工具调用风格
+      - 调起任何工具前，先想清楚"这一步要做什么"，用一句中文把意图写在
+        `description` 字段（DSH 原生约定；UI 上行卡会显示成"**工具名 · 意图**"，
+        不展开原始参数）。
+      - `description` 是面向用户的人话，不是技术细节。例如：
+          bash { description: "列出 tmp 目录", command: "ls -l /tmp" }
+          read { description: "读 settings.json", path: "settings.json" }
+          grep { description: "在 src 里找 TODO", pattern: "TODO", path: "src" }
+      - 我们自己的领域工具（todo.* / content.* / drawing.* / conversation.* /
+        inbox.* / ai.*）已经各自有结构化摘要规则，会从标题 / id / 数量 /
+        版本抽出一句话放在卡片右侧；无需为这些工具写 description。
+      - 当工具 schema 没有 `description` 槽位时，回退到"工具名 · 首条有意义的
+        参数"的展示（命令首行 / 文件路径 / 搜索词），仍优于直接展开参数。
+
       ## 输入源与默认行为
       - 创建任务界面的请求会在用户消息开头带一个简短的操作封套：固定前缀
         `[todo-list:create-task:v1]` 后跟一段 JSON 负载 `{intent, localDate, text}`。

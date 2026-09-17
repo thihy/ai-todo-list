@@ -148,13 +148,17 @@ function pickString(args: Record<string, unknown>, keys: readonly string[]): str
   return undefined
 }
 
-/** Summary key preference per variant (args-derived; result-derived summaries are a ledger item). */
+/** Summary key preference per variant (args-derived; result-derived summaries are a ledger item).
+ *  `description` is checked first across all variants — DSH-native intent slot, see
+ *  cordis.yml "工具调用风格" prompt rule and `summarizeToolCall` in
+ *  src/shared/tool-presentation.ts (which applies the same preference for our
+ *  domain tools). Falls back to the variant-specific structured field. */
 const SUMMARY_KEYS: Record<ToolRowVariant, readonly string[]> = {
   bash: ['description', 'command'],
-  read: ['path', 'file_path', 'url'],
-  search: ['query', 'pattern', 'url'],
-  write: ['path', 'file_path'],
-  edit: ['path', 'file_path'],
+  read: ['description', 'path', 'file_path', 'url'],
+  search: ['description', 'query', 'pattern', 'url'],
+  write: ['description', 'path', 'file_path'],
+  edit: ['description', 'path', 'file_path'],
   code: ['description'],
   others: [],
 }

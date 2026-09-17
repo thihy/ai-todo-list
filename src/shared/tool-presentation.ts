@@ -219,6 +219,16 @@ export function summarizeToolCall(
   const a = typeof args === 'object' && args !== null
     ? args as Record<string, unknown>
     : undefined;
+  // DSH-native intent slot: when the model fills `description`, prefer it over
+  // the per-tool structured subject. This is the UI hook for the
+  // cordis.yml "工具调用风格" prompt rule ("调起任何工具前先写一句中文意图")
+  // and the DSH primitives' SUMMARY_KEYS (which already put `description`
+  // first for bash/code). A short Chinese phrase here makes the collapsed
+  // row read like "查询 TODO · 看看本周到期" instead of "查询 TODO · {…}".
+  if (a) {
+    const desc = stringField(a, 'description');
+    if (desc) return truncate(desc, 60);
+  }
   const resultTitle = (): string | undefined => stringField(result, 'title');
   switch (toolName) {
     case 'todo_create':
