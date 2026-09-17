@@ -31,8 +31,8 @@
 ## Impact
 
 - **新增代码 / 目录**：`src/main/`、`src/preload/`、`src/renderer/`、`src/shared/`、`openspec/`、构建配置（electron-builder / vite）、测试（vitest + playwright）。
-- **新增依赖**：Electron、Vite + React、Excalidraw、better-sqlite3、gray-matter、DeepSeek Harness（DSH，作为 Cordis 容器内进程内库：`@deepseek-ai/dsh-base` + `dsh-agent` + `dsh-tools` + `dsh-skill` + `dsh-goal` + `dsh-permission` + `dsh-llm-deepseek`）。
-- **新增外部资源**：DeepSeek API Key（用户自填，仅用于 `https://api.deepseek.com/v1`）、系统托盘图标、Excalidraw 自托管资源。
-- **数据 / 存储**：用户文档目录下创建 `~/.todo-list/` 包含 `db.sqlite`、`todos/*.md`、`drawings/*.excalidraw`。
-- **安全模型**：渲染进程开启 `contextIsolation`，主进程通过受限 IPC 暴露能力；AI 请求走主进程代理，密钥不入渲染层；DSH 在同一主进程内以 Cordis 容器持有危险 tool 的权限策略。
+- **新增依赖**：Electron、Vite + React、Excalidraw、better-sqlite3、gray-matter、DeepSeek Harness（DSH，进程内真实依赖：`@deepseek-ai/dsh-base`、`@deepseek-ai/dsh-agent`、`@deepseek-ai/dsh-agent-loop`、`@deepseek-ai/dsh-app-boot`、`@deepseek-ai/dsh-tools`、`@deepseek-ai/dsh-skill`、`@deepseek-ai/dsh-session-persistence-jsonl`、`@deepseek-ai/dsh-llm-deepseek`、`@deepseek-ai/dsh-llm-pi-ai`、`@deepseek-ai/cordis`、以及若干 `dsh-*` 辅助包，全部钉到 `0.1.5-rc.2`）。
+- **新增外部资源**：DeepSeek / OpenAI / Anthropic / Ollama / 自定义 OpenAI-compatible API Key（用户自填，按设置切换），系统托盘图标，Excalidraw 自托管资源。
+- **数据 / 存储**：用户文档目录下创建 `~/.todo-list/` 包含 `db.sqlite`、`todos/<storage_dir>/`、`drawings/`、`inbox-attachments/`、`dsh-sessions/`。
+- **安全模型**：渲染进程开启 `contextIsolation`，主进程通过受限 IPC 暴露能力；AI 请求走主进程代理，密钥不入渲染层；危险 tool 的三级权限（auto / notify-undo / block）由宿主侧的 `src/shared/permission-tiers.ts` 拥有，在 `registerDomainTools`（`src/main/dsh/dsh-runtime.ts`）执行前通过 `tierFor()` 闸控。
 - **跨平台**：Windows / macOS / Linux 一套代码，差异点收敛在 `desktop-runtime`。

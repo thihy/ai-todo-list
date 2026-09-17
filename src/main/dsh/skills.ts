@@ -1,6 +1,6 @@
 // DSH skills — `todo.*` / `content.*` / `drawing.*` are exposed as DSH-compatible
-// tools via the registry in `tools.ts`. This file groups them into named "skills"
-// the user can opt into from settings.
+// tools via the registry in `dsh-runtime.ts` (`registerDomainTools`). This file
+// groups them into named "skills" the user can opt into from settings.
 
 export interface DshSkill {
   id: string;

@@ -1,4 +1,4 @@
-// Auto-update via electron-updater. GitHub Releases feed.
+// Auto-update via electron-updater. GitCode Releases feed (declared in package.json → build.publish).
 // electron-updater is CommonJS; use default import + destructure under ESM.
 
 import { app, BrowserWindow } from 'electron';

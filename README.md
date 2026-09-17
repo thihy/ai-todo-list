@@ -6,12 +6,11 @@
 
 ## English
 
-> An AI-native desktop TODO list built on DeepSeek Harness (DSH) — the agent runtime is wired through the same DSH-shaped interface (Cordis container + tool registry + 3-tier permission gate) so you can drop in a real DSH build later without touching call sites.
-> Capture fast, organize freely, write Markdown notes, sketch on Excalidraw, and ask the assistant directly — all inside one Electron app.
+> An AI-native desktop TODO list built on top of DeepSeek Harness (DSH) — the agent runtime is the real `@deepseek-ai/dsh-*@0.1.5-rc.2` stack running in-process inside a Cordis container, not a shim. Capture fast, organize freely, write Markdown notes, sketch on Excalidraw, and ask the assistant directly — all inside one Electron app.
 
 ![status](https://img.shields.io/badge/status-RC_1.0.0--rc5-yellow)
 ![electron](https://img.shields.io/badge/electron-33-47848F)
-![dsh](https://img.shields.io/badge/DSH-in--process-blue)
+![dsh](https://img.shields.io/badge/DSH-0.1.5--rc.2-blue)
 
 ### Highlights
 
@@ -68,10 +67,13 @@ After a Windows build, run `pnpm test:packaged-dsh` to boot the DSH plugin tree 
 │       ├── files/MD  ──┴── better-sqlite3 + Markdown files             │
 │       ├── files/Drawings (JSON scenes + thumbs)                       │
 │       │                                                               │
-│       └── dsh/container ── in-process Cordis container                │
-│              ├── dsh/tools ── todo.*, content.*, drawing.*            │
-│              ├── dsh/skills ── grouped tool bundles                   │
-│              └── dsh/client ── DeepSeek API (streaming fetch)          │
+│       └── dsh/container ── eager { health, models } handle            │
+│              │                                                        │
+│              └── dsh/dsh-runtime ── lazy @deepseek-ai/dsh-app-boot     │
+│                     ├── dsh/llm-adapter (PiAiAdapter → pi-ai)         │
+│                     ├── dsh/skills  (todo-ops, content-ops, …)        │
+│                     ├── dsh/tools   (registerDomainTools)             │
+│                     └── dsh/endpoints (deepseek/openai/anthropic/ollama/custom)
 └───────────────────────────────────────────────────────────────────────┘
                         ▲
                         │ JsonRpcBridge (Unix socket / named pipe, off by default)
@@ -86,29 +88,49 @@ After a Windows build, run `pnpm test:packaged-dsh` to boot the DSH plugin tree 
 
 ### DSH integration model
 
-The agent runtime is wired through a **DSH-shaped interface** — a Cordis container plus a tool registry plus a 3-tier permission gate — but ships as an **in-process shim** (see `src/main/dsh/container.ts`). The shim implements the same tool surface as real DSH so the app is fully usable today.
+The agent runtime is the real `@deepseek-ai/dsh-*@0.1.5-rc.2` stack,
+imported via `npm` and wired together by
+[`@deepseek-ai/cordis`](https://www.npmjs.com/package/@deepseek-ai/cordis)
+inside the Electron main process — there is no shim, no `dsh`
+subprocess, and no stdio bridge. The dependency is declared in
+`package.json` and pinned in `pnpm-lock.yaml`; `pnpm install`
+succeeds without `ERR_PNPM_FETCH_404`.
 
-#### Why a shim, not the published `@deepseek-ai/dsh-base`?
+#### Two halves of the runtime
 
-The published rc/next packages on npm (as of 2026-09) reference `@deepseek-ai/dsh-bash-env` and several other packages that **are not on the registry** — `pnpm install` fails with `ERR_PNPM_FETCH_404`. Until that resolves upstream, we ship the shim.
+- `src/main/dsh/container.ts` builds an eager `{ health, models }`
+  handle the moment the main process boots. It answers
+  `ai.health` / `ai.models` without needing credentials.
+- `src/main/dsh/dsh-runtime.ts` lazily boots the real agent loop on
+  the first `ai.ask`. It dynamically
+  `await import('@deepseek-ai/dsh-app-boot')`, parses
+  `resources/dsh/cordis.yml`, registers the
+  `todo.*` / `content.*` / `drawing.*` tools via
+  `registerDomainTools`, and constructs the `PiAiAdapter`
+  from `@deepseek-ai/dsh-llm-pi-ai` (which delegates streaming,
+  SSE parsing, and per-provider reasoning deltas to
+  `@earendil-works/pi-ai`). The first `ai.ask` pays the Cordis
+  cold-boot cost; subsequent calls share the singleton runtime.
 
-#### Swapping in real DSH later
+The renderer never touches `window.todoList.ai.*` IPC differently
+because of this split — the contract is the same either way.
 
-When the upstream packages become installable:
+#### Three permission tiers
 
-```bash
-pnpm add @deepseek-ai/dsh-base@^0.1.0 @deepseek-ai/cordis@^4
-```
-
-Then replace `bootShim()` in `src/main/dsh/container.ts` with `loadRealDsh()` (already written — currently dead code). The rest of the app is unchanged because every call site goes through `DshContainer`.
-
-Three permission tiers, from `src/main/dsh/tools.ts`:
+The host owns the tier classification in
+`src/shared/permission-tiers.ts`. Every tool registered by
+`registerDomainTools` is gated through `tierFor(toolName)` before it
+runs:
 
 | Tier         | Example tools                    | UI                                  |
 | ------------ | -------------------------------- | ----------------------------------- |
 | auto         | `todo.list`, `content.readBody`  | runs silently                       |
 | notify-undo  | `todo.update`, `content.writeBody` | 8-second undo toast                |
 | block        | `todo.delete`, `content.restoreVersion` | explicit confirmation dialog    |
+
+See `src/main/dsh/dsh-runtime.ts` (`registerDomainTools`) and
+`docs/adr/006-json-rpc-bridge-capability-token.md` for the
+external-script side of the same gate.
 
 ### Security
 
@@ -141,12 +163,12 @@ MIT — see [LICENSE](./LICENSE).
 
 ## 中文
 
-> 一个 AI 原生的桌面待办应用，构建在 DeepSeek Harness（DSH）之上——agent 运行时复用同一套 DSH 形态接口（Cordis 容器 + 工具注册表 + 三级权限闸），日后接入真实 DSH 构建时无需改动调用方。
+> 一个 AI 原生的桌面待办应用，构建于 DeepSeek Harness（DSH）之上——agent 运行时就是真正的 `@deepseek-ai/dsh-*@0.1.5-rc.2`，通过 Cordis 容器在 Electron 主进程内运行，没有 shim、没有子进程、没有 stdio 桥。
 > 快速捕获、自由组织、写 Markdown 笔记、在 Excalidraw 上手绘、直接向助手提问——全部在同一个 Electron 应用内完成。
 
 ![status](https://img.shields.io/badge/status-RC_1.0.0--rc5-yellow)
 ![electron](https://img.shields.io/badge/electron-33-47848F)
-![dsh](https://img.shields.io/badge/DSH-in--process-blue)
+![dsh](https://img.shields.io/badge/DSH-0.1.5--rc.2-blue)
 
 ### 特性亮点
 
@@ -203,10 +225,13 @@ Windows 构建后运行 `pnpm test:packaged-dsh`，直接从 `dist/win-unpacked/
 │       ├── files/MD  ──┴── better-sqlite3 + Markdown 文件              │
 │       ├── files/Drawings (JSON 场景 + 缩略图)                          │
 │       │                                                               │
-│       └── dsh/container ── 进程内 Cordis 容器                         │
-│              ├── dsh/tools ── todo.*, content.*, drawing.*            │
-│              ├── dsh/skills ── 分组工具束                              │
-│              └── dsh/client ── DeepSeek API (流式 fetch)              │
+│       └── dsh/container ── 启动即就绪的 { health, models } 句柄        │
+│              │                                                       │
+│              └── dsh/dsh-runtime ── 首次 ai.ask 时懒加载               │
+│                     ├── dsh/llm-adapter (PiAiAdapter → pi-ai)         │
+│                     ├── dsh/skills  (todo-ops、content-ops 等)        │
+│                     ├── dsh/tools   (registerDomainTools)             │
+│                     └── dsh/endpoints (deepseek/openai/anthropic/ollama/custom)
 └───────────────────────────────────────────────────────────────────────┘
                         ▲
                         │ JsonRpcBridge (Unix socket / 命名管道，默认关闭)
@@ -221,29 +246,40 @@ Windows 构建后运行 `pnpm test:packaged-dsh`，直接从 `dist/win-unpacked/
 
 ### DSH 集成模型
 
-agent 运行时通过一套 **DSH 形态接口**接入——Cordis 容器 + 工具注册表 + 三级权限闸——但以**进程内 shim** 形式发布（见 `src/main/dsh/container.ts`）。shim 实现了与真实 DSH 相同的工具面，应用今天即可完整使用。
+agent 运行时就是真正的 `@deepseek-ai/dsh-*@0.1.5-rc.2`，通过
+`npm` 引入、由 [`@deepseek-ai/cordis`](https://www.npmjs.com/package/@deepseek-ai/cordis)
+在 electron 主进程内组装——没有 shim、没有 `dsh` 子进程、没有 stdio 桥。
+依赖声明在 `package.json`，版本钉在 `pnpm-lock.yaml`；
+`pnpm install` 直接成功，不会撞上 `ERR_PNPM_FETCH_404`。
 
-#### 为什么是 shim，而不是已发布的 `@deepseek-ai/dsh-base`？
+#### 运行时的两部分
 
-npm 上的 rc/next 包（截至 2026-09）引用了 `@deepseek-ai/dsh-bash-env` 等若干**不在 registry 上**的包——`pnpm install` 会报 `ERR_PNPM_FETCH_404`。在上游修复前，我们随应用附带 shim。
+- `src/main/dsh/container.ts` 在主进程启动时就返回一个
+  `{ health, models }` 句柄，无需凭据即可回答
+  `ai.health` / `ai.models`。
+- `src/main/dsh/dsh-runtime.ts` 在第一次 `ai.ask` 时**懒加载**真正的 agent
+  循环：动态 `await import('@deepseek-ai/dsh-app-boot')`，解析
+  `resources/dsh/cordis.yml`，通过 `registerDomainTools` 注册
+  `todo.*` / `content.*` / `drawing.*` 工具，并构造
+  `@deepseek-ai/dsh-llm-pi-ai` 的 `PiAiAdapter`（流式、SSE 解析、
+  各家 reasoning delta 都委托给 `@earendil-works/pi-ai`）。第一次
+  `ai.ask` 承担 Cordis 冷启动开销，之后所有调用复用同一个单例运行时。
 
-#### 日后接入真实 DSH
+渲染端对这一拆分无感——`window.todoList.ai.*` 的契约保持不变。
 
-当上游包可安装后：
+#### 三级权限
 
-```bash
-pnpm add @deepseek-ai/dsh-base@^0.1.0 @deepseek-ai/cordis@^4
-```
-
-然后把 `src/main/dsh/container.ts` 中的 `bootShim()` 换成 `loadRealDsh()`（已写好，目前为死代码）。其余调用方无需改动，因为所有调用都走 `DshContainer`。
-
-三级权限（见 `src/main/dsh/tools.ts`）：
+权限分级由宿主拥有，集中在 `src/shared/permission-tiers.ts`。
+`registerDomainTools` 注册的每个工具都会先过 `tierFor(toolName)`：
 
 | 层级         | 示例工具                         | UI                                  |
 | ------------ | -------------------------------- | ----------------------------------- |
 | auto         | `todo.list`, `content.readBody`  | 静默执行                            |
 | notify-undo  | `todo.update`, `content.writeBody` | 8 秒撤销 toast                     |
 | block        | `todo.delete`, `content.restoreVersion` | 显式确认弹窗                    |
+
+工具实现见 `src/main/dsh/dsh-runtime.ts` 的 `registerDomainTools`；
+外部脚本侧的安全闸见 `docs/adr/006-json-rpc-bridge-capability-token.md`。
 
 ### 安全
 

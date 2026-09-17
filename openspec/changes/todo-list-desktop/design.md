@@ -33,8 +33,8 @@
 - **数据**: SQLite via `better-sqlite3`(同步、性能好、主进程独占) + 文件系统(Markdown / Excalidraw JSON / 缩略图)。
 - **Markdown**: CodeMirror 6(编辑器) + `unified/remark/rehype` 管线 + `gray-matter` front-matter。
 - **绘图**: Excalidraw 包(`@excalidraw/excalidraw`),自托管静态资源,渲染进程嵌入。
-- **AI**: DeepSeek Harness (DSH) 以进程内库形式嵌入:在主进程内构造一个 Cordis 容器,引入 `@deepseek-ai/dsh-base` + `@deepseek-ai/dsh-agent` + `@deepseek-ai/dsh-tools` + `@deepseek-ai/dsh-skill` + `@deepseek-ai/dsh-llm-deepseek`;LLM 走 DeepSeek(`https://api.deepseek.com/v1`),API key 仅主进程持有。
-- **外部 Agent**: 在主进程内暴露 MCP server(`@modelcontextprotocol/sdk`),stdio + 本地 socket 双传输。
+- **AI**: DeepSeek Harness (DSH) 作为进程内库嵌入:在主进程内构造一个 Cordis 容器,引入 `@deepseek-ai/cordis` + `@deepseek-ai/dsh-base` + `@deepseek-ai/dsh-agent` + `@deepseek-ai/dsh-agent-loop` + `@deepseek-ai/dsh-app-boot` + `@deepseek-ai/dsh-tools` + `@deepseek-ai/dsh-skill` + `@deepseek-ai/dsh-session-persistence-jsonl` + `@deepseek-ai/dsh-llm-deepseek` + `@deepseek-ai/dsh-llm-pi-ai`(后者再委托 `@earendil-works/pi-ai` 做流式 / SSE / per-provider reasoning delta);默认 LLM 走 DeepSeek(`https://api.deepseek.com/v1`),通过设置面板可切换到 OpenAI / Anthropic / Ollama 或自填 OpenAI-compatible endpoint,API key 仅主进程持有。
+- **外部 Agent**: 在主进程内暴露 JSON-RPC 桥(`src/main/sdk/bridge.ts`),Unix socket / Windows 命名管道双传输,**默认关闭**,开启时需 capability token(SEC-01)。
 - **测试**: Vitest(单元) + Playwright(E2E,含 Electron 启动)。
 
 **备选**:
@@ -50,8 +50,8 @@ src/
 │   ├── ipc/                    # 强类型 IPC handler 注册中心
 │   ├── db/                     # better-sqlite3 schema、迁移、查询
 │   ├── files/                  # Markdown / Excalidraw 落盘与索引同步
-│   ├── ai/                     # Vercel AI SDK 客户端、流式代理
-│   ├── mcp/                    # MCP server 暴露 todo CRUD
+│   ├── dsh/                    # DSH runtime (eager container + lazy dsh-runtime + adapter + skills + endpoints)
+│   ├── sdk/                    # JSON-RPC bridge (off by default, capability token)
 │   ├── shortcuts/              # globalShortcut 注册与 capture window 唤起
 │   └── tray/                   # 系统托盘菜单
 ├── preload/                    # contextBridge 桥
@@ -157,31 +157,26 @@ CREATE VIRTUAL TABLE todos_fts USING fts5(title, body, content='todos', content_
 - **配置**:`~/.todo-list/config.json`(AI provider、快捷键、主题)。
 
 ### 6. AI 代理链路(DSH 作为 Cordis 容器)
-- 单一 Cordis 容器在 `src/main/ai/container.ts` 创建,主进程持有。
-- 引入的 DSH 模块(作为库,非子进程):
+- 启动时 `src/main/dsh/container.ts` 构造一个 Cordis 容器并导出 `initDshContainer(deps)`,主进程持有。该 eager 路径只暴露 `{ health, models }` 句柄,无需凭据即可响应 IPC。
+- 真正的 agent 循环在 `src/main/dsh/dsh-runtime.ts` 懒加载:首次 `ai.ask` 时动态 `await import('@deepseek-ai/dsh-app-boot')`,解析 `resources/dsh/cordis.yml`,在同一个 Cordis 容器内:
+  - `@deepseek-ai/cordis` 容器基础 + `@deepseek-ai/cordis-plugin-*` 插件组
   - `@deepseek-ai/dsh-base` 基础 bundle
   - `@deepseek-ai/dsh-agent` + `@deepseek-ai/dsh-agent-loop` 推理循环
   - `@deepseek-ai/dsh-tools` tool 注册表
   - `@deepseek-ai/dsh-skill` skill 注册表
-  - `@deepseek-ai/dsh-goal` 目标生命周期
-  - `@deepseek-ai/dsh-session` 会话状态
-  - `@deepseek-ai/dsh-permission` 权限
-  - `@deepseek-ai/dsh-compaction-basic` 上下文压缩
-  - `@deepseek-ai/dsh-llm-deepseek` DeepSeek 适配器
-- 我们注册的 DSH 插件(在同一个 Cordis 容器里):
-  - `todoRepoPlugin`:`todo_search` / `todo_get` / `todo_create` / `todo_update` / `todo_delete` / `todo_stats` / `todo_batch_update`,封装 `TodoRepo` + IPC schema
-  - `contentPlugin`:`content_read_body` / `content_write_body` / `content_history` / `content_restore_version`
-  - `drawingPlugin`:`drawing_list` / `drawing_save` / `drawing_delete`
-  - `captureSkill`:自然语言采集
-  - `draftProgressSkill`:进展草稿
-  - `summarizeSkill`:总结
-  - `dataAnalysisSkill`:数据分析 / 周报
-- DSH 渲染层(渲染进程)只通过 IPC 调用主进程内的 Cordis 容器方法,**没有 stdio / 没有子进程**。
-- 流式响应:渲染进程发起 `ai.invoke` IPC,主进程订阅 DSH 的 token 事件,通过 `ai.streamEvent` push 回渲染层。
-- 系统提示词与 skill 模板定义在 `src/main/ai/skills/`,允许用户后续自定义。
-- 权限:DSH 的 `dsh-permission` 拦截危险 tool 调用,主进程 IPC handler 弹出确认 modal,批准后放行。
-- DeepSeek 不可达时,AIPanel 顶部展示明确状态(disconnected / no_key / error),其余能力照常可用。
-- 版本钉死:`@deepseek-ai/dsh-*` 全部 `^0.0.1-rc.1`(或锁文件固定),避免 RC 漂移破坏集成。
+  - `@deepseek-ai/dsh-session` + `@deepseek-ai/dsh-session-persistence-jsonl` 会话状态与 JSONL 持久化
+  - `@deepseek-ai/dsh-llm` + `@deepseek-ai/dsh-llm-deepseek` + `@deepseek-ai/dsh-llm-pi-ai` LLM 抽象与多 provider 适配
+- 我们注册的领域工具(在 `registerDomainTools` 中,同样挂在该 Cordis 容器上):
+  - `todo_*`:`todo_list` / `todo_get` / `todo_search` / `todo_stats` / `todo_create` / `todo_update` / `todo_delete` / `todo_restore`,封装 `TodoRepo` + IPC schema
+  - `content_*`:`content_readBody` / `content_writeBody` / `content_history` / `content_restoreVersion`
+  - `drawing_*`:`drawing_list` / `drawing_read` / `drawing_save` / `drawing_delete` / `drawing_setThumb`
+- 我们注册的 skill(在 `src/main/dsh/skills.ts`):`todo-ops` / `content-ops` / `drawing-ops` / `analysis`,每个 skill 把若干 tool 与提示词片段打包,用户可在设置中按需开启。
+- 渲染进程(AI 面板)只通过 `window.todoList.ai.*` IPC 与主进程对话,**没有 stdio / 没有子进程**——所有 agent 事件由主进程订阅后通过 `ai:stream` 等 push 事件回推。
+- 流式响应:渲染进程发起 `ai.ask` IPC,主进程订阅 DSH 的 token / reasoning / tool-call 事件,通过 `ai:stream` push 回渲染层;AIPane 的 `BlockAssembler` 直接消费上游 `StreamChunk`,不在渲染层重做拼装。
+- 系统提示词与 skill 模板定义在 `resources/dsh/`,允许用户后续自定义。
+- 权限:危险 tool 的三级分级(`auto` / `notify-undo` / `block`)由宿主侧的 `src/shared/permission-tiers.ts` 拥有,`registerDomainTools` 在执行前先查 `tierFor()`:auto 直接跑,notify-undo 推到渲染层弹 8 秒撤销 toast,block 弹显式确认 dialog,30 秒未确认自动拒绝。
+- DeepSeek 不可达时,AIPanel 顶部展示明确状态(disconnected / no_key / error),其余能力照常可用;`ai.health` 在该场景下返回 `{ ok: false, mode: 'real' }` 由 IPC 错误码携带原因。
+- 版本钉死:`@deepseek-ai/dsh-*` 与 `@deepseek-ai/cordis*` 全部钉到 `0.1.5-rc.2`(`@earendil-works/pi-ai` 钉到 `0.85.1`),避免 RC 漂移破坏集成;升级时必须走独立的 OpenSpec 变更并重跑 `pnpm typecheck` + `pnpm test`。
 
 ### 7. Excalidraw 嵌入策略
 - 自托管 `@excalidraw/excalidraw` 静态资源到 `renderer/public/excalidraw/`,避免 CDN 失败。
@@ -196,7 +191,7 @@ CREATE VIRTUAL TABLE todos_fts USING fts5(title, body, content='todos', content_
 - 共享一个 `BrowserWindow` 工厂,统一应用安全策略。
 
 ### 9. 自动化与发布
-- 使用 `electron-updater` + GitHub Releases 作为默认 feed。
+- 使用 `electron-updater` + GitCode Releases 作为默认 feed(`package.json → build.publish` 声明 `https://gitcode.com/ai-sea/ai-todo-list/releases/latest`)。
 - CI 矩阵:`windows-latest`、`macos-latest`、`ubuntu-latest`,均跑 `pnpm test` + `pnpm dist`。
 - 数字签名:Windows 用 Azure Trusted Signing 或后续签;macOS 用 notarization。
 
@@ -209,7 +204,7 @@ CREATE VIRTUAL TABLE todos_fts USING fts5(title, body, content='todos', content_
 - **缩略图生成阻塞** → Mitigation: 在 Excalidraw 保存成功后异步生成,UI 先显示占位,生成完成后再替换。
 - **MCP 与 IPC schema 复用** → 复用 `shared/ipc-schema.ts`,避免两套定义漂移;但 MCP 工具描述需要单独映射到 schema 中的子集。
 - **跨平台快捷键冲突** → Mitigation: 默认快捷键可在 settings 中改;在 macOS 注册时把 `CommandOrControl` 替换为 `Command`。
-- **DSH RC 版本不稳**(`0.0.1-rc.1` 系列,官方明示 breaking changes) → Mitigation: lockfile 锁版本;升级前在 `openspec/changes/<name>/` 内开升级变更做迁移评估;CI 跑 `openspec validate` 防止规范漂移。
+- **DSH RC 版本不稳**(`0.1.5-rc.2`,官方明示 breaking changes 仍在 RC 阶段) → Mitigation: 全部 `@deepseek-ai/dsh-*` + `@deepseek-ai/cordis*` 钉到 `0.1.5-rc.2`,`@earendil-works/pi-ai` 钉到 `0.85.1`,lockfile 锁版本;升级前在 `openspec/changes/<name>/` 内开升级变更做迁移评估;CI 跑 `openspec validate` 防止规范漂移。
 - **首次启动没有 AI key** → Mitigation: 启动检测,无 key 时 AI 入口展示"配置"按钮而不报错。
 
 ## Migration Plan

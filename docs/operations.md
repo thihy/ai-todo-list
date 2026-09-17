@@ -96,7 +96,7 @@ provider credentials and capture hotkey.
 
 ## Auto-update
 
-`electron-updater` checks GitHub Releases on launch. A new
+`electron-updater` checks the GitCode Releases feed declared in `package.json → build.publish` on launch. A new
 version emits `app:update-available` to the renderer; the user
 can trigger the download from the settings pane; on completion
 the renderer gets `app:update-downloaded` and can "Restart to

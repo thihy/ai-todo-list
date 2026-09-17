@@ -4,19 +4,20 @@
 
 ## ADDED Requirements
 
-### Requirement: DeepSeek as the only AI provider
-The system SHALL use DeepSeek (via `@deepseek-ai/dsh-llm-deepseek`) as the sole LLM provider. The DeepSeek API base SHALL be `https://api.deepseek.com/v1` and SHALL NOT be user-configurable in v1. The system SHALL allow the user to choose between `deepseek-chat` and `deepseek-reasoner` in settings.
+### Requirement: DeepSeek as the default AI provider
+The system SHALL default to DeepSeek (via `@deepseek-ai/dsh-llm-deepseek`) and SHALL also expose `openai`, `anthropic`, `ollama`, and a user-defined OpenAI-compatible `custom` endpoint via `@deepseek-ai/dsh-llm-pi-ai` + `@earendil-works/pi-ai`. The default base URL is `https://api.deepseek.com/v1`; other providers are configured in Settings. The system SHALL allow the user to choose the model per provider (e.g. `deepseek-chat` / `deepseek-reasoner`) in settings.
 
-#### Scenario: User picks model
-- **WHEN** the user selects `deepseek-reasoner` in AI settings
-- **THEN** subsequent agent invocations use `deepseek-reasoner`
+#### Scenario: User picks provider + model
+- **WHEN** the user selects `anthropic` and a model id in AI settings
+- **THEN** subsequent agent invocations use that provider + model
 - **AND** the choice is persisted across restarts
+- **AND** no application restart is required for the change to take effect
 
 ### Requirement: API key isolation
-The system SHALL store the DeepSeek API key in the main process only and MUST NOT expose it to the renderer process. All AI requests MUST be proxied through the main process via IPC.
+The system SHALL store provider API keys in the main process only and MUST NOT expose them to the renderer process. All AI requests MUST be proxied through the main process via IPC.
 
 #### Scenario: Renderer cannot read the key
-- **WHEN** the renderer queries `window.todoList.settings.get({ key: 'deepseekApiKey' })`
+- **WHEN** the renderer queries `window.todoList.settings.get({ key: 'apiKey' })`
 - **THEN** the main process returns a redacted response
 - **AND** the API key never enters the renderer's JavaScript context
 
@@ -26,12 +27,12 @@ The system SHALL store the DeepSeek API key in the main process only and MUST NO
 - **AND** the response (or stream events) is delivered back through the typed IPC schema
 
 ### Requirement: DSH runtime embedded in-process
-The system SHALL embed DeepSeek Harness as an in-process Node library, composing its bundles through a single Cordis container owned by the Electron main process. The system MUST NOT spawn a `dsh` subprocess.
+The system SHALL embed DeepSeek Harness as an in-process Node library, composing its bundles through a single Cordis container owned by the Electron main process. The system MUST NOT spawn a `dsh` subprocess. The eager `container.ts` handle exposes only `{ health, models }`; the real agent loop lives in `dsh-runtime.ts` and boots lazily on the first `ai.ask`.
 
 #### Scenario: DSH modules imported directly
 - **WHEN** the main process boots
-- **THEN** it imports `@deepseek-ai/dsh-base`, `@deepseek-ai/dsh-agent`, `@deepseek-ai/dsh-tools`, `@deepseek-ai/dsh-skill`, `@deepseek-ai/dsh-llm-deepseek` directly via `npm` resolution
-- **AND** constructs a single Cordis container that hosts both DSH bundles and our plugins
+- **THEN** it imports `@deepseek-ai/cordis`, `@deepseek-ai/dsh-base`, `@deepseek-ai/dsh-agent`, `@deepseek-ai/dsh-agent-loop`, `@deepseek-ai/dsh-app-boot`, `@deepseek-ai/dsh-tools`, `@deepseek-ai/dsh-skill`, `@deepseek-ai/dsh-session`, `@deepseek-ai/dsh-session-persistence-jsonl`, `@deepseek-ai/dsh-llm`, `@deepseek-ai/dsh-llm-deepseek`, `@deepseek-ai/dsh-llm-pi-ai` directly via `npm` resolution
+- **AND** constructs a single Cordis container that hosts both DSH bundles and our domain tools (registered in `registerDomainTools` inside `dsh-runtime.ts`)
 
 #### Scenario: No extra process
 - **WHEN** the user invokes an AI feature
@@ -79,12 +80,17 @@ The system SHALL register the application's TODO, content, drawing, and search c
 - **AND** the same call is auditable in the DSH session log
 
 ### Requirement: Permission boundaries on destructive tools
-The system SHALL configure DSH permissions so that destructive tools (e.g. `todo.delete`, `content.overwriteBody` for non-empty bodies, `drawing.delete`) MUST require explicit user approval per call.
+The system SHALL classify every DSH tool into one of three host-owned tiers defined in `src/shared/permission-tiers.ts`: `auto` (runs without prompting), `notify-undo` (8-second undo toast), or `block` (explicit user approval per call). Destructive tools (`todo.delete`, `content.writeBody` for non-empty bodies, `content.restoreVersion`, `drawing.delete`) MUST be classified as either `notify-undo` or `block`. The `registerDomainTools` entry in `src/main/dsh/dsh-runtime.ts` MUST consult `tierFor(toolName)` before executing any tool call.
 
 #### Scenario: Delete requires confirmation
 - **WHEN** a DSH skill attempts to call `todo_delete`
-- **THEN** the main process intercepts the call and surfaces an "Allow this AI action?" prompt to the user
+- **THEN** the main process intercepts the call and surfaces a "Allow this AI action?" prompt to the user
 - **AND** the call only proceeds if the user approves within 30 seconds, otherwise it times out and the skill receives a denial event
+
+#### Scenario: Notify-undo surfaces an undo toast
+- **WHEN** a tool classified as `notify-undo` (e.g. `todo_update` on an existing task) executes
+- **THEN** the renderer shows an 8-second "已撤销" toast wired to `window.todoList.ai.undo` IPC
+- **AND** pressing the toast within 8 seconds reverts the change and logs `ai.undo` in the session
 
 ### Requirement: Streaming responses
 The system SHALL stream AI responses to the UI for any request longer than 2 seconds, showing progressive output.
@@ -102,9 +108,9 @@ The system MUST surface AI errors clearly to the user and MUST NOT silently swal
 - **AND** the TODO editor and capture remain usable offline
 
 ### Requirement: DSH version stability
-The system SHALL pin DSH packages to a specific `*-rc.*` version (e.g. `^0.0.1-rc.1`) and SHALL NOT automatically upgrade across minor lines without a documented migration.
+The system SHALL pin `@deepseek-ai/cordis*` and `@deepseek-ai/dsh-*` packages to `0.1.5-rc.2` and `@earendil-works/pi-ai` to `0.85.1` in `package.json`, and SHALL NOT automatically upgrade across minor lines without a documented OpenSpec migration change.
 
 #### Scenario: Upgrade is intentional
-- **WHEN** a contributor changes any `@deepseek-ai/dsh-*` dependency range
-- **THEN** the change requires a CHANGELOG entry and a re-run of `openspec validate`
+- **WHEN** a contributor changes any `@deepseek-ai/dsh-*` or `@deepseek-ai/cordis*` dependency range
+- **THEN** the change requires a CHANGELOG entry, a dedicated OpenSpec change describing the migration, and a re-run of `openspec validate`
 - **AND** silent `*` or `latest` ranges are forbidden by an ESLint rule on `package.json`

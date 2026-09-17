@@ -25,10 +25,9 @@ project is young — most of the conventions live in
 
 ## Adding a new DSH tool
 
-1. Pick a tier in `src/main/dsh/tools.ts`.
-2. Implement the tool in `registerDshTools`.
-3. Add it to the relevant skill in `src/main/dsh/skills.ts`, or create a
-   new skill if it belongs to a new domain.
+1. Pick a tier in `src/shared/permission-tiers.ts` (auto / notify-undo / block) and add the tool name to the matching set.
+2. Implement the tool in `registerDomainTools` inside `src/main/dsh/dsh-runtime.ts`.
+3. Add it to the relevant skill in `src/main/dsh/skills.ts`, or create a new skill if it belongs to a new domain.
 4. Document in `openspec/specs/ai-assistant/spec.md`.
 
 ## Style

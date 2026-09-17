@@ -1,6 +1,6 @@
 ## 1. 项目脚手架与构建
 
-- [ ] 1.1 初始化 `package.json` + `pnpm-workspace.yaml`,声明 Electron 30+、React 18、TypeScript 5、Vite 5、electron-vite、electron-builder、Cordis 与 DeepSeek Harness (`@deepseek-ai/dsh-*` 钉死 `^0.0.1-rc.1`) 依赖,并验证 `pnpm install` 成功生成 `node_modules` 与 `pnpm-lock.yaml`。
+- [ ] 1.1 初始化 `package.json` + `pnpm-workspace.yaml`,声明 Electron 30+、React 18、TypeScript 5、Vite 5、electron-vite、electron-builder、Cordis 与 DeepSeek Harness (`@deepseek-ai/cordis*` + `@deepseek-ai/dsh-*` 全部钉到 `0.1.5-rc.2`, `@earendil-works/pi-ai` 钉到 `0.85.1`) 依赖,并验证 `pnpm install` 成功生成 `node_modules` 与 `pnpm-lock.yaml`。
 - [ ] 1.2 配置 `electron-vite` 的 `main / preload / renderer` 三端构建,确认 `pnpm dev` 启动后主进程窗口能显示空白 React 页面 (打印 `app:ready` 与 `window:loaded`)。
 - [ ] 1.3 配置 `electron-builder` 的 `windows/nsis`、`mac/dmg`、`linux/AppImage` 三平台 target,验证 `pnpm dist:win` 在 Windows 主机产出 `dist/*.exe`。
 - [ ] 1.4 配置 ESLint + Prettier + Vitest + Playwright(Electron)脚本,验证 `pnpm test` 与 `pnpm lint` 均返回 0。
@@ -8,7 +8,7 @@
 
 ## 2. 共享类型与 IPC Schema
 
-- [ ] 2.1 在 `src/shared/ipc-schema.ts` 中声明所有 IPC channel 及其 request/response 类型 (todo.* / content.* / drawing.* / ai.* / settings.* / dsh-permission.*),验证 `pnpm tsc --noEmit` 通过。
+- [ ] 2.1 在 `src/shared/ipc-schema.ts` 中声明所有 IPC channel 及其 request/response 类型 (todo.* / content.* / drawing.* / ai.* / settings.*),验证 `pnpm tsc --noEmit` 通过。
 - [ ] 2.2 在 `src/shared/todo-types.ts` 与 `src/shared/ai-types.ts` 导出 `Todo`、`Tag`、`Project`、`Status`、`ParsedTodo`、`Summary` 等类型,验证在 main/preload/renderer 三端 `pnpm tsc --noEmit` 通过。
 - [ ] 2.3 在 `src/main/ipc/router.ts` 中实现通用 channel 校验器:未在 schema 中声明的 channel 拒绝并返回 `unknown_channel` 错误,验证单元测试 `router.spec.ts` 覆盖命中/未命中两条路径。
 
@@ -55,27 +55,28 @@
 
 ## 8. AI 助手 (DeepSeek Harness)
 
-- [ ] 8.1 在 `package.json` 中固定 `@deepseek-ai/dsh-base`、`@deepseek-ai/cordis`、`@deepseek-ai/dsh-agent`、`@deepseek-ai/dsh-tools`、`@deepseek-ai/dsh-skill`、`@deepseek-ai/dsh-goal`、`@deepseek-ai/dsh-permission`、`@deepseek-ai/dsh-compaction-basic`、`@deepseek-ai/dsh-llm-deepseek` 到 `^0.0.1-rc.1`,验证 `pnpm install` 成功,无 `latest` / `*` 范围。
-- [ ] 8.2 在 `src/main/ai/container.ts` 创建 Cordis 容器,加载 `dsh-base` bundle 并暴露 `ctx`,验证启动日志显示 DSH bundle 已激活。
-- [ ] 8.3 实现 `todoRepoPlugin`、`contentPlugin`、`drawingPlugin`,把我们的 IPC handler 注册成 DSH tools(`todo_search` / `todo_get` / `todo_create` / `todo_update` / `todo_delete` / `todo_stats` / `content_read_body` / `content_write_body` / `drawing_list` / `drawing_save`),验证 DSH 的 tool registry 中能列出这些工具。
-- [ ] 8.4 实现 `captureSkill`:接受自然语言文本,调用 `deepseek-chat`,返回结构化 `ParsedTodo`,验证在 capture window 中输入"明天 10 点和 Bob 评审登录页 !p1 @work"得到正确解析。
-- [ ] 8.5 实现 `draftProgressSkill` 与 `summarizeSkill`,使用 `dsh-agent-loop` 流式推理,逐 token 通过 `ai.streamEvent` IPC 推到渲染层,验证 AIPanel 实时增长。
-- [ ] 8.6 实现 `dataAnalysisSkill`:读取 `todo_search({createdAfter})` 与 `todo_stats`,调 `deepseek-reasoner` 生成周报,调用 `content_write_body` 写回"周报-<YYYY-Www>"TODO,验证 AIPanel 触发后 5 秒内打开对应 TODO 看到内容。
-- [ ] 8.7 配置 `dsh-permission` 拦截 `todo_delete` / `content_overwrite_body`(非空时)/ `drawing_delete`,通过 IPC 触发渲染进程确认 modal,验证 30 秒未确认自动拒绝。
-- [ ] 8.8 在 settings 中允许用户切换 `deepseek-chat` 与 `deepseek-reasoner`,验证切换后下一次 AI 调用使用新模型。
-- [ ] 8.9 处理 provider 失败(disconnected / no_key / error),AIPanel 顶部展示状态,验证断网下其余 TODO 功能可用。
-- [ ] 8.10 添加 ESLint 规则禁止 `package.json` 中 `@deepseek-ai/dsh-*` 使用 `latest` / `*`,验证 CI 跑 lint 通过。
+- [ ] 8.1 在 `package.json` 中固定 `@deepseek-ai/cordis`、`@deepseek-ai/dsh-base`、`@deepseek-ai/dsh-agent`、`@deepseek-ai/dsh-agent-loop`、`@deepseek-ai/dsh-app-boot`、`@deepseek-ai/dsh-tools`、`@deepseek-ai/dsh-skill`、`@deepseek-ai/dsh-session`、`@deepseek-ai/dsh-session-persistence-jsonl`、`@deepseek-ai/dsh-compaction-basic`、`@deepseek-ai/dsh-llm`、`@deepseek-ai/dsh-llm-deepseek`、`@deepseek-ai/dsh-llm-pi-ai` 到 `0.1.5-rc.2`,并把 `@earendil-works/pi-ai` 钉到 `0.85.1`,验证 `pnpm install` 成功,无 `latest` / `*` 范围。
+- [ ] 8.2 在 `src/main/dsh/container.ts` 创建 Cordis 容器并导出 `initDshContainer(deps)`,仅暴露无凭据的 `{ health, models }` 句柄;真正的 agent 循环在 `src/main/dsh/dsh-runtime.ts` 中由 `getDshRuntime()` 在首次 `ai.ask` 时懒加载,验证启动日志显示 `DSH handle ready (real runtime is lazy on first ai.ask)`。
+- [ ] 8.3 在 `registerDomainTools`(`src/main/dsh/dsh-runtime.ts`)中实现 `todo_*` / `content_*` / `drawing_*` 工具,把我们的 IPC handler 注册成 DSH tools(`todo_list` / `todo_get` / `todo_search` / `todo_stats` / `todo_create` / `todo_update` / `todo_delete` / `todo_restore` / `content_readBody` / `content_writeBody` / `content_history` / `content_restoreVersion` / `drawing_list` / `drawing_read` / `drawing_save` / `drawing_delete`),验证 DSH 的 tool registry 中能列出这些工具。
+- [ ] 8.4 实现 AI "自然语言采集" 流(走 `ai.ask` IPC + `intent: 'create-task'`,主进程在 `src/shared/task-creation.ts` 编码 `[todo-list:create-task:v1]` 信封):在 capture window 输入"明天 10 点和 Bob 评审登录页 !p1 @work",渲染端 AI 面板调 `ai.ask`,模型返回 `todo.create` 调用,落地为新的 TODO。
+- [ ] 8.5 实现 `draftProgress` 与 `summarize` 流(均通过 DSH skills),使用 `dsh-agent-loop` 流式推理,逐 token 通过 `ai:stream` push 推到渲染层,验证 AIPanel 实时增长。
+- [ ] 8.6 实现 `analysis` skill:读取 `todo_search({createdAfter})` 与 `todo_stats`,调 `deepseek-reasoner` 生成周报,调用 `content_writeBody` 写回"周报-<YYYY-Www>"TODO,验证 AIPanel 触发后 5 秒内打开对应 TODO 看到内容。
+- [ ] 8.7 配置 `src/shared/permission-tiers.ts` 的三级权限闸(`auto` / `notify-undo` / `block`)拦截 `todo_delete` / `content_writeBody`(非空时)/ `content_restoreVersion` / `drawing_delete`,在 `registerDomainTools` 入口查 `tierFor()`:notify-undo 通过 `ai:undo-toast` IPC 推 8 秒撤销 toast;block 通过 IPC 触发渲染进程确认 modal,30 秒未确认自动拒绝。
+- [ ] 8.8 在 settings 中允许用户切换 provider (`deepseek` / `openai` / `anthropic` / `ollama` / `custom`) 与 model,验证切换后下一次 AI 调用使用新配置(无需重启)。
+- [ ] 8.9 处理 provider 失败(disconnected / no_key / error),AIPanel 顶部展示状态,验证断网下其余 TODO 功能可用;若 boot 阶段就失败,`ai.status === 'failed'`,AI 面板展示「重试」按钮调 `app.startupRetry('ai')`(UX-01)。
+- [ ] 8.10 添加 ESLint 规则禁止 `package.json` 中 `@deepseek-ai/dsh-*` 与 `@deepseek-ai/cordis*` 使用 `latest` / `*`,验证 CI 跑 lint 通过。
 
-## 9. DSH 外部 Agent 接口 (ACP / SDK)
+## 9. 外部脚本 / 插件接入 (JSON-RPC 桥, SEC-01)
 
-- [ ] 9.1 在 Cordis 容器中加载 `@deepseek-ai/dsh-acp-app` 与 `@deepseek-ai/dsh-sdk-app` profile,验证 stdio 启动后接受 ACP 客户端连接。
-- [ ] 9.2 把我们的 todo/content/drawing tools 暴露为 ACP / SDK 工具,验证外部 agent 通过 ACP 调用 `todo_create` 后 UI 1 秒内可见新 TODO。
-- [ ] 9.3 编写集成测试:使用 mock ACP / SDK client 调 list / get / create / update / delete 五条路径,验证全部成功并审计日志可追溯。
+- [ ] 9.1 在 `src/main/sdk/sdk.ts` 实现 `TodoListSdk`,镜像 IPC 表面(todo / content / drawing / settings / ai.conversation / app)。
+- [ ] 9.2 在 `src/main/sdk/bridge.ts` 实现 JSON-RPC 2.0 桥(line-delimited JSON),Unix socket (`/tmp/todo-list.sock`) / Windows 命名管道 (`\\.\pipe\todo-list`) 双传输,只在 `SettingsStore.sdkBridge.enabled === true` 且 capability token 存在时启动(SEC-01),验证默认未启动时 `${userData}/todo-list.log` 中看不到 `bridge:` 行。
+- [ ] 9.3 在 `src/shared/sdk-types.ts` 与 `TodoListSdk` 之间定义 token 校验、来源标记、调用计数;每条 bridge 日志只记 `bridge: <phase> <method> <count>`,绝不记参数或 token。
+- [ ] 9.4 集成测试:mock JSON-RPC client 连入后调 `todo.list` / `todo.get` / `todo.create` / `todo.update` / `todo.delete` 五条路径,验证全部成功且审计日志可追溯。
 
 ## 10. 打包、签名与发布
 
-- [ ] 10.1 启用 `electron-updater` 默认 GitHub Releases feed,在测试仓库发版验证 `pnpm dist:win` 产物可被检测并下载。
-- [ ] 10.2 文档化 `pnpm dist:win|mac|linux` 三命令,验证 README 描述与实际产物一致 (NSIS/DMG/AppImage)。
+- [ ] 10.1 启用 `electron-updater` 默认 GitCode Releases feed(`package.json → build.publish` 指向 `https://gitcode.com/ai-sea/ai-todo-list/releases/latest`),在测试仓库发版验证 `pnpm dist:win` 产物可被检测并下载。
+- [ ] 10.2 文档化 `pnpm dist:win|mac|linux` 三命令,验证 README 描述与实际产物一致 (Windows NSIS / macOS DMG / Linux AppImage)。
 - [ ] 10.3 在 CI (GitHub Actions) 中加入 `windows-latest` / `macos-latest` / `ubuntu-latest` 矩阵,运行 lint+test+dist,验证 PR 上 CI 全绿。
 - [ ] 10.4 在 `package.json` 中声明 `appId`、`productName`、`copyright`,验证安装时显示正确名称与版本。
 

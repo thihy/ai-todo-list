@@ -1560,7 +1560,7 @@ export function foldHistory(events: ReadonlyArray<{ type: string; data?: unknown
   return turns;
 }
 
-/** Register the domain tools (todo/content/drawing) ported from dsh/tools.ts. */
+/** Register the domain tools (todo/content/drawing) against the DSH tool registry. */
 function registerDomainTools(
   tools: { register(def: unknown): () => void },
   defineTool: (d: any) => unknown,

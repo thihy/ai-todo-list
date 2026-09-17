@@ -62,7 +62,7 @@ src/
 │   ├── ipc/                    handler modules + router
 │   ├── db/                     better-sqlite3 schema + repositories
 │   ├── files/                  Markdown + drawing storage
-│   ├── dsh/                    in-process DSH container + tools + skills
+│   ├── dsh/                    DSH runtime: eager container handle + lazy dsh-runtime.ts + LLM adapter + skills + pricing + endpoints
 │   ├── sdk/                    external TodoListSdk + JSON-RPC bridge
 │   ├── settings/               config.json persistence
 │   ├── shortcuts/              global hotkey + capture window
