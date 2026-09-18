@@ -67,8 +67,10 @@ const APP_EVENTS: AppEvent[] = [
   // aiUserApproval.answer (defined below on the TodoListApi object).
   'ai:user-question-request',
   'ai:user-question-timeout',
+  'ai:user-question-cancelled',
   'ai:user-approval-timeout',
   'ai:user-approval-request',
+  'ai:user-approval-cancelled',
 ];
 
 function onAppEvent<E extends AppEvent>(

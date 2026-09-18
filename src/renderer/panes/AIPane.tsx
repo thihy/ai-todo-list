@@ -109,7 +109,12 @@ interface Turn {
    *  in arrival order. Source of truth for the whole assistant payload;
    *  the legacy `reasoning / assistant / tools` triple has been removed. */
   blocks: TurnBlock[];
-  status: 'streaming' | 'done' | 'error';
+  /** Turn lifecycle. `cancelled` is set synchronously by the Stop
+   *  handler (see stop() below) so the OLD turn's chips settle
+   *  immediately instead of waiting for the IPC reply — the
+   *  projection useEffect bails once streamingTurnId clears, so any
+   *  late tool/result event would otherwise never update the turn. */
+  status: 'streaming' | 'done' | 'error' | 'cancelled';
   error?: string;
   /** Files the user attached to this turn. Rendered as chips above the
    *  bubble; their text body was inlined into the prompt sent to the model. */
@@ -465,6 +470,24 @@ export const AIPane: React.FC<{
     setActiveQuestion((request) => request?.reqId === reqId ? null : request);
   });
   useAppEvent('ai:user-approval-timeout', ({ reqId }) => {
+    setActiveApproval((request) => request?.reqId === reqId ? null : request);
+  });
+  // Cancel bridges from main (see src/main/dsh/dsh-runtime.ts
+  // drainPendingForConversation + approval listener settle('cancelled')).
+  // Fired when a pending approval / question is abandoned via:
+  //   - the 90 s INTERACTION_TIMEOUT_MS timer (then settle('unavailable')
+  //     fires this too — same renderer-side cleanup)
+  //   - agent.cancel({kind:'user'}) during a Stop click, which
+  //     propagates to the waterfall signal and triggers settle('cancelled')
+  // Without these listeners activeApproval / activeQuestion would leak
+  // across the Stop boundary and runSubmit's gate would block new sends.
+  // stop() also clears them synchronously as a belt-and-braces guard,
+  // so in the Stop-click path this listener is redundant but harmless.
+  useAppEvent('ai:user-question-cancelled', ({ reqId }) => {
+    setActiveQuestion((request) => request?.reqId === reqId ? null : request);
+    setQuestionError(null);
+  });
+  useAppEvent('ai:user-approval-cancelled', ({ reqId }) => {
     setActiveApproval((request) => request?.reqId === reqId ? null : request);
   });
 
@@ -873,16 +896,69 @@ export const AIPane: React.FC<{
     }
   };
 
-  // L3-B: stop the in-flight turn. Soft-cancel the conversation's agent via
-  // main; partial tokens/tool results already in flight stay on the screen
-  // because the streaming turn remains in turnsByConv.
+  // L3-B (extended): stop the in-flight turn. We must settle the OLD
+  // turn synchronously here — the projection useEffect that updates
+  // blocks (lines 388-428) gates on `streamingTurnId` and bails once
+  // we clear it. Without the synchronous mutate below, the OLD
+  // turn's blocks freeze at whatever state they were in at Stop, and
+  // any tool/result event that arrives AFTER Stop but BEFORE the
+  // agent finishes shutting down (DSH's dispatch() promise doesn't
+  // observe abort — see node_modules @deepseek-ai/dsh-agent-loop
+  // runGroup:592) is dropped on the floor, leaving the tool block
+  // permanently `running`. We also clear HITL mirrors locally as a
+  // belt-and-braces guard before the cancel IPC round-trip; main
+  // pushes `ai:user-*-cancelled` once its listeners settle, but
+  // those events may race the Stop click and we want the composer
+  // gate (which checks activeApproval / activeQuestion) to release
+  // synchronously.
   const stop = async (): Promise<void> => {
-    if (!streamingConvId) return;
     const conv = streamingConvId;
-    const inv = streamingTurnId ?? undefined;
+    const turnId = streamingTurnId;
+    if (!conv) return;
+
+    // 1) Settle the OLD turn right now. We don't have access to a
+    //    fresh projection after Stop (the useEffect bailed), so we
+    //    use the LAST projected blocks we already have and flip any
+    //    tool block that's still `'running'` / `'missing-result'` to
+    //    `'stopped'` so the user sees the cancel was applied.
+    if (turnId) {
+      setTurnsByConv((prev) => {
+        const list = prev[conv] ?? [];
+        return {
+          ...prev,
+          [conv]: list.map((t) =>
+            t.id !== turnId
+              ? t
+              : {
+                  ...t,
+                  status: 'cancelled',
+                  error: '用户停止',
+                  blocks: t.blocks.map((b) =>
+                    b.kind === 'tool-call' &&
+                    (b.state === 'running' || b.state === 'missing-result')
+                      ? { ...b, state: 'stopped', result: b.result }
+                      : b,
+                  ),
+                },
+          ),
+        };
+      });
+    }
+
+    // 2) Clear streaming state. From here the projection useEffect
+    //    bails on this turn, but that's fine — step 1 already froze
+    //    the UI to a sensible final state.
     setStreamingConvId(null);
     setStreamingTurnId(null);
-    await window.todoList.ai.cancel(conv, inv);
+
+    // 3) Clear any HITL mirrors synchronously so runSubmit's gate
+    //    (which checks activeApproval / activeQuestion) releases
+    //    before the main-side cancel IPC round-trip completes.
+    setActiveApproval(null);
+    setActiveQuestion(null);
+
+    // 4) Tell main to actually stop the agent.
+    await window.todoList.ai.cancel(conv, turnId ?? undefined);
     void refreshList();
   };
 

@@ -9,7 +9,11 @@ import { conversationT } from './conversation-locale';
 /** DSH-backed rendering boundary for the ordered assistant portion of a turn. */
 export const AssistantTurnContent: React.FC<{
   blocks: AssistantTurnBlock[];
-  status: 'streaming' | 'done' | 'error';
+  /** `cancelled` is set synchronously by the Stop handler in AIPane —
+   *  it behaves like `error` for streaming-flag purposes (no running
+   *  indicators, no pending reasoning dots) but is shown with a
+   *  distinct user-facing message in the footer. */
+  status: 'streaming' | 'done' | 'error' | 'cancelled';
   error?: string;
 }> = ({ blocks, status, error }) => {
   const streaming = status === 'streaming';

@@ -367,15 +367,108 @@ interface PendingQuestion {
   resolve: (a: UserQuestionAnswer) => void;
   reject: (e: Error) => void;
   timer: NodeJS.Timeout;
+  /** DSH agent id = conversationId; lets us drain only this conv's
+   *  pending entries on dispose / cancel without nuking peer convs. */
+  conversationId: string;
 }
 interface PendingApproval {
   resolve: (o: 'allowed-once' | 'rejected' | 'cancelled' | 'unavailable') => void;
   reject: (e: Error) => void;
   timer: NodeJS.Timeout;
+  conversationId: string;
 }
 
 const pendingQuestions = new Map<string, PendingQuestion>();
 const pendingApprovals = new Map<string, PendingApproval>();
+
+/** TEST-ONLY: snapshot count of pending HITL entries per conversation.
+ *  Used by tests/unit/runtime-cancel.spec.ts to verify that
+ *  `drainPendingForConversation()` clears entries for one conversation
+ *  without touching peer conversations. Empty objects mean no pending
+ *  state — caller can't distinguish "absent conv" from "no entries",
+ *  which is fine because the contract is "drain removes all my entries". */
+export function __pendingSnapshotForTest(): { questions: Record<string, number>; approvals: Record<string, number> } {
+  const questions: Record<string, number> = {};
+  for (const entry of pendingQuestions.values()) {
+    questions[entry.conversationId] = (questions[entry.conversationId] ?? 0) + 1;
+  }
+  const approvals: Record<string, number> = {};
+  for (const entry of pendingApprovals.values()) {
+    approvals[entry.conversationId] = (approvals[entry.conversationId] ?? 0) + 1;
+  }
+  return { questions, approvals };
+}
+
+/** TEST-ONLY: inject a fake pending question entry. Returns the answer
+ *  promise plus a cleanup handle that the test MUST call in afterEach
+ *  to clear the timer + map entry. Used to verify drainPendingForConversation
+ *  rejects the pending promise when the conversation is cancelled.
+ *
+ *  The returned promise has a no-op `.catch` attached so vitest doesn't
+ *  flag drain-time rejections as unhandled — tests that want to assert
+ *  on the rejection still get the real promise back via `promise`. */
+export function __seedPendingQuestionForTest(conversationId: string, reqId: string): {
+  promise: Promise<unknown>;
+  cleanup: () => void;
+} {
+  let resolveFn!: (a: unknown) => void;
+  let rejectFn!: (e: Error) => void;
+  const promise = new Promise<unknown>((resolve, reject) => {
+    resolveFn = resolve;
+    rejectFn = reject;
+  });
+  // Swallow drain-time rejection so vitest doesn't flag an unhandled
+  // rejection — tests that care about the rejection attach their own
+  // `.rejects` matcher to `promise`.
+  promise.catch(() => {});
+  // 60s timer is plenty — drain tests should settle within a tick.
+  const timer = setTimeout(() => {}, 60_000);
+  pendingQuestions.set(reqId, { resolve: resolveFn, reject: rejectFn, timer, conversationId });
+  return {
+    promise,
+    cleanup: () => {
+      clearTimeout(timer);
+      pendingQuestions.delete(reqId);
+    },
+  };
+}
+
+/** TEST-ONLY: same shape as __seedPendingQuestionForTest but for approvals.
+ *  Approval drain resolves the promise (not rejects), so no swallow needed. */
+export function __seedPendingApprovalForTest(conversationId: string, reqId: string): {
+  promise: Promise<'allowed-once' | 'rejected' | 'cancelled' | 'unavailable'>;
+  cleanup: () => void;
+} {
+  let resolveFn!: (o: 'allowed-once' | 'rejected' | 'cancelled' | 'unavailable') => void;
+  let rejectFn!: (e: Error) => void;
+  const promise = new Promise<'allowed-once' | 'rejected' | 'cancelled' | 'unavailable'>((resolve, reject) => {
+    resolveFn = resolve;
+    rejectFn = reject;
+  });
+  promise.catch(() => {});
+  const timer = setTimeout(() => {}, 60_000);
+  pendingApprovals.set(reqId, { resolve: resolveFn, reject: rejectFn, timer, conversationId });
+  return {
+    promise,
+    cleanup: () => {
+      clearTimeout(timer);
+      pendingApprovals.delete(reqId);
+    },
+  };
+}
+
+/** Module-level pointer to the conversation whose turn is currently
+ *  in flight on this Node process. Used by the user-questions/request
+ *  waterfall listener (which DSH does NOT enrich with the agent /
+ *  conversationId) so a pending question can be associated with the
+ *  conversation that asked it. Then runtime.cancel / disposeConversation
+ *  can drain by conversationId without nuking peer conversations.
+ *
+ *  Map (not a single var) because in theory multiple agents could run
+ *  turns in parallel; in practice today only one turn runs at a time
+ *  (runTurn serializes via whenIdle), so the map typically has one
+ *  entry. Keeping it as a Map future-proofs against parallel turns. */
+const activeTurnConversations = new Map<string, true>();
 
 // ===== AI 工具授权表（OPENSPEC §ai-assistant Persistent and session tool grants）=====
 //
@@ -470,6 +563,53 @@ function cancelAllPending(): void {
     entry.resolve('cancelled');
   }
   pendingApprovals.clear();
+}
+
+/** Drain only the pending HITL entries that belong to one conversation.
+ *  Used by runtime.cancel(convId) and disposeConversation(convId) so a
+ *  single conversation going idle / being deleted doesn't yank peer
+ *  conversations' in-flight questions or approvals. Broadcasts the
+ *  matching `ai:user-question-cancelled` / `ai:user-approval-cancelled`
+ *  events so the renderer can drop its `activeQuestion` /
+ *  `activeApproval` mirror.
+ *
+ *  Exported for tests — the integration surface (runtime.cancel /
+ *  disposeConversation) calls this internally. The signal-driven
+ *  settle path inside the approval / question waterfall listeners
+ *  uses the same `broadcastCancel` helper, so this function doubles
+ *  as a behavioural proxy for that path. */
+export function drainPendingForConversation(conversationId: string): void {
+  for (const [reqId, entry] of pendingQuestions) {
+    if (entry.conversationId !== conversationId) continue;
+    clearTimeout(entry.timer);
+    entry.reject(new Error('ask_user_question was aborted before the user answered'));
+    pendingQuestions.delete(reqId);
+    broadcastCancel('question', reqId);
+  }
+  for (const [reqId, entry] of pendingApprovals) {
+    if (entry.conversationId !== conversationId) continue;
+    clearTimeout(entry.timer);
+    entry.resolve('cancelled');
+    pendingApprovals.delete(reqId);
+    broadcastCancel('approval', reqId);
+  }
+}
+
+/** Push a cancel event for one pending entry. Centralised so both
+ *  per-conv drain and signal-driven settle share the same broadcast. */
+function broadcastCancel(kind: 'question' | 'approval', reqId: string): void {
+  const channel = kind === 'question' ? 'ai:user-question-cancelled' : 'ai:user-approval-cancelled';
+  for (const w of BrowserWindow.getAllWindows()) {
+    if (!w.isDestroyed()) w.webContents.send(channel, { reqId });
+  }
+}
+
+/** First key of a Map (insertion order). Used to associate a DSH
+ *  waterfall event with its conversation when DSH doesn't enrich the
+ *  listener signature. */
+function firstKey<K>(m: Map<K, unknown>): K | undefined {
+  for (const k of m.keys()) return k;
+  return undefined;
 }
 
 /** 给渲染端构造 UserQuestionRequest payload。抽出来让 waterfall 监听器
@@ -996,21 +1136,29 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
     questions: ReadonlyArray<{ id: string; question: string; detail?: string; header?: string; options?: ReadonlyArray<{ label: string; description?: string }>; multiSelect?: boolean }>;
   }, _next: () => Promise<unknown>): Promise<UserQuestionAnswer> => {
     const reqId = randomUUID();
+    // DSH does not pass the agent / conversationId into the waterfall
+    // listener for user-questions. Use the module-level active-turn set
+    // (set by runTurn) to attribute this pending question to its
+    // conversation so cancel / dispose can drain it precisely.
+    const convId = firstKey(activeTurnConversations) ?? '';
     return new Promise<UserQuestionAnswer>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        const entry = pendingQuestions.get(reqId);
-        if (!entry) return; // 已 settle
+      const settle = (kind: 'timeout' | 'cancelled'): void => {
+        if (!pendingQuestions.has(reqId)) return;
         pendingQuestions.delete(reqId);
-        // 通知渲染端卡片翻成"已超时自动取消"，让 UI 与 agent 实际状态一致
-        // （loop 会收到 ASK_ABORTED 继续往下走）
-        for (const w of BrowserWindow.getAllWindows()) {
-          if (!w.isDestroyed()) w.webContents.send('ai:user-question-timeout', { reqId });
+        clearTimeout(timer);
+        if (kind === 'cancelled') {
+          broadcastCancel('question', reqId);
+        } else {
+          for (const w of BrowserWindow.getAllWindows()) {
+            if (!w.isDestroyed()) w.webContents.send('ai:user-question-timeout', { reqId });
+          }
         }
         reject(new Error('ask_user_question was aborted before the user answered'));
-      }, INTERACTION_TIMEOUT_MS);
-      pendingQuestions.set(reqId, { resolve, reject, timer });
+      };
+      const timer = setTimeout(() => settle('timeout'), INTERACTION_TIMEOUT_MS);
+      pendingQuestions.set(reqId, { resolve, reject, timer, conversationId: convId });
       const payload = questionRequestPayload(reqId, request);
-      logger.info(`DSH user-questions/request: reqId=${reqId} questions=${payload.questions.length}`);
+      logger.info(`DSH user-questions/request: reqId=${reqId} questions=${payload.questions.length} conv=${convId}`);
       for (const w of BrowserWindow.getAllWindows()) {
         if (!w.isDestroyed()) w.webContents.send('ai:user-question-request', payload);
       }
@@ -1054,6 +1202,16 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
         clearTimeout(timer);
         if (signal && !signal.aborted) signal.removeEventListener('abort', onAbort);
         pendingApprovals.delete(reqId);
+        // cancelled / unavailable: the user did NOT click the card —
+        // either we timed out (90 s) or the conversation's agent was
+        // aborted (Stop button). Push a cancel event so the renderer
+        // drops its `activeApproval` mirror. The user-button path
+        // (allowed-once / rejected) goes through answerUserApproval →
+        // resolve and does NOT fire this event because the renderer
+        // already clears its own state on the click handler.
+        if (outcome === 'cancelled' || outcome === 'unavailable') {
+          broadcastCancel('approval', reqId);
+        }
         resolve(outcome);
       };
       const timer = setTimeout(() => {
@@ -1068,7 +1226,7 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
         if (signal.aborted) { settle('cancelled'); return; }
         signal.addEventListener('abort', onAbort, { once: true });
       }
-      pendingApprovals.set(reqId, { resolve: (o) => settle(o), reject: () => settle('unavailable'), timer });
+      pendingApprovals.set(reqId, { resolve: (o) => settle(o), reject: () => settle('unavailable'), timer, conversationId: convId });
       const expiresAtMs = Date.now() + INTERACTION_TIMEOUT_MS;
       logger.info(`DSH approval/request: reqId=${reqId} tool=${req.toolName} callId=${String(req.callId ?? '')}`);
       for (const w of BrowserWindow.getAllWindows()) {
@@ -1300,8 +1458,18 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
         signal?.addEventListener('abort', () => {
           try { entry.agent.cancel({ kind: 'user' }); } catch { /* noop */ }
         });
-        await entry.agent.whenIdle();
-        return { content: fullText, tokensIn: turnTokensIn, tokensOut: turnTokensOut };
+        // Register this conversation as actively running a turn so the
+        // user-questions waterfall listener (which DSH does NOT enrich
+        // with the agent / conversationId) can attribute pending
+        // questions to this conversation. Removed in finally so a
+        // dispose-after-cancel race doesn't leak the marker.
+        activeTurnConversations.set(conversationId, true);
+        try {
+          await entry.agent.whenIdle();
+          return { content: fullText, tokensIn: turnTokensIn, tokensOut: turnTokensOut };
+        } finally {
+          activeTurnConversations.delete(conversationId);
+        }
       } finally {
         try { off(); } catch { /* noop */ }
         entry.dormant = true;
@@ -1310,17 +1478,25 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
 
     async cancel(conversationId) {
       const entry = conversations.get(conversationId);
-      if (!entry) return;
-      // L3-A 软取消：handle 留在缓存里，下次 followup() 走同 agent + 持久化
-      // session。硬销毁留给 disposeConversation（ai.conversation_delete 路径）。
-      //
-      // - 轮次在跑：agent.cancel({kind:'user'}) 中断它，whenIdle() 快速
-      //   resolve。在它前面的 text/tool 事件已经流过，会成为持久化日志的一部分，
-      //   loadHistory() 仍如实返回。
-      // - 闲置：cancel 是 no-op（DSH 文档），安全调用。
-      try { entry.agent.cancel({ kind: 'user' }); } catch { /* noop */ }
-      // 不 conversations.delete()——下次 ask() 会触发 re-resume，丢掉刚刚
-      // 积攒的 agent 内部缓存（已解析的 system prompt、pre-step 决策）。
+      if (entry) {
+        // L3-A 软取消：handle 留在缓存里，下次 followup() 走同 agent + 持久化
+        // session。硬销毁留给 disposeConversation（ai.conversation_delete 路径）。
+        //
+        // - 轮次在跑：agent.cancel({kind:'user'}) 中断它，whenIdle() 快速
+        //   resolve。在它前面的 text/tool 事件已经流过，会成为持久化日志的一部分，
+        //   loadHistory() 仍如实返回。
+        // - 闲置：cancel 是 no-op（DSH 文档），安全调用。
+        try { entry.agent.cancel({ kind: 'user' }); } catch { /* noop */ }
+        // 不 conversations.delete()——下次 ask() 会触发 re-resume，丢掉刚刚
+        // 积攒的 agent 内部缓存（已解析的 system prompt、pre-step 决策）。
+      }
+      // Drain any pending HITL entries for this conversation so the
+      // user-questions / user-approval card on the renderer disappears
+      // (broadcastCancel pushes the matching `ai:user-*-cancelled`
+      // event) and the runSubmit gate releases. Without this, a Stop
+      // while the approval card is showing leaves activeApproval
+      // stuck on the renderer side and blocks new sends.
+      drainPendingForConversation(conversationId);
     },
 
     async loadHistory({ conversationId }) {
@@ -1335,8 +1511,23 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
 
     async disposeConversation(conversationId) {
       const entry = conversations.get(conversationId);
-      if (!entry) return;
+      if (!entry) {
+        // Conversation row is already gone from our in-memory map, but
+        // a pending HITL entry for it could still be sitting in the
+        // module-level Maps (created right before the renderer fired
+        // ai.conversation.delete). Drain it to avoid a leak that
+        // survives the row deletion.
+        drainPendingForConversation(conversationId);
+        activeTurnConversations.delete(conversationId);
+        return;
+      }
       conversations.delete(conversationId);
+      // Drain this conversation's HITL entries first so any pending
+      // approval / question card on the renderer is removed and the
+      // per-entry timeout is cleared — otherwise the timer would fire
+      // later and try to resolve an answerer whose agent is gone.
+      drainPendingForConversation(conversationId);
+      activeTurnConversations.delete(conversationId);
       try { entry.offSession(); } catch { /* noop */ }
       try { await entry.disposeHandle(); } catch { /* noop */ }
     },

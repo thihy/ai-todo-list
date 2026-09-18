@@ -56,7 +56,14 @@ export type AppEvent =
   | 'ai:user-question-request'
   | 'ai:user-question-timeout'
   | 'ai:user-approval-timeout'
-  | 'ai:user-approval-request';
+  | 'ai:user-approval-request'
+  // HITL cancel bridges. Main fires these when the pending waterfall
+  // promise settles via the abort / rejected / signal-abort path (i.e.
+  // NOT the user clicking the card's button — that goes through the
+  // answer channels above). The renderer clears `activeApproval` /
+  // `activeQuestion` on receipt so the runSubmit gate releases.
+  | 'ai:user-question-cancelled'
+  | 'ai:user-approval-cancelled';
 
 /** Coarse-grained scope of a data mutation, so the renderer can re-fetch only
  *  the stores that actually changed (e.g. the AI's todo.create tool mutating
@@ -89,8 +96,10 @@ export interface AppEventMap {
   'ai:permission-request': PermissionRequest;
   'ai:user-question-request': UserQuestionRequest;
   'ai:user-question-timeout': { reqId: string };
+  'ai:user-question-cancelled': { reqId: string };
   'ai:user-approval-timeout': { reqId: string };
   'ai:user-approval-request': UserApprovalRequest;
+  'ai:user-approval-cancelled': { reqId: string };
 }
 
 // Renderer-side arg shapes. Match the IPC channel request types but with
