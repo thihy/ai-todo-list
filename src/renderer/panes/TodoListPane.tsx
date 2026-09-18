@@ -28,6 +28,7 @@ import { UserMenu } from '../components/UserMenu';
 import { StatusSelect } from '../components/StatusSelect';
 import { IconCalendar, IconChevronDown, IconCollapseBar, IconDrawing, IconInboxEmpty, IconTrash } from '../components/icons';
 import { todayDateKey } from '../components/PlanGuideModal';
+import TodayGlyph from '../components/TodayGlyph';
 import { DEFAULT_TASK_APPEARANCE, type TaskAppearance } from '../../shared/task-appearance';
 
 export const TodoListPane: React.FC<{
@@ -1249,22 +1250,7 @@ const PlusGlyph: React.FC = () => (
   </svg>
 );
 
-// TodayGlyph — a small circle representing the "planned for today"
-// state. When `planned` is true the circle is filled with the accent
-// colour (showing this task is on today's list); otherwise it is an
-// empty outline (showing the button is the affordance to add it). The
-// same glyph is used in the toggle button so visual feedback tracks the
-// state on click.
-const TodayGlyph: React.FC<{ planned?: boolean }> = ({ planned = false }) => (
-  <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
-    <circle cx="6" cy="6" r="4.5"
-      fill={planned ? 'currentColor' : 'transparent'}
-      stroke="currentColor"
-      strokeWidth="1.4"
-    />
-    <path d="M6 3.5V6L7.5 7.5" stroke={planned ? 'var(--bg-base)' : 'currentColor'} strokeWidth="1.2" strokeLinecap="round" />
-  </svg>
-);
+// TodayGlyph lives in components/TodayGlyph.tsx — shared with TodoEditorPane.
 
 // Cancel — × glyph matching the 14×14 stroke family of PlusGlyph / TrashGlyph.
 const SubtaskCancelGlyph: React.FC = () => (

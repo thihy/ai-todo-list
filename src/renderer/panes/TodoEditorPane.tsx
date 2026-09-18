@@ -34,6 +34,8 @@ import { TagInput } from '../components/TagInput';
 import { DatePicker } from '../components/DatePicker';
 import { StatusSelect } from '../components/StatusSelect';
 import { ProgressInline, ProgressTimeline } from '../components/ProgressView';
+import TodayGlyph from '../components/TodayGlyph';
+import { todayDateKey } from '../components/PlanGuideModal';
 import { IconAttach, IconExternal, IconLink, IconPlus, IconTrash } from '../components/icons';
 import type { InboxAttachment, Priority, TodoStatus, TaskDocument } from '../../shared/todo-types';
 
@@ -460,6 +462,16 @@ export const TodoEditorPane: React.FC<{
     await window.todoList.todo.update(todo.id, patch);
   };
 
+  // 今日 toggle —— 与列表端 TaskRow 的 onTogglePlan 完全同形：写入则给今天
+  // 日期串（tz 稳定），移除则显式 null。useTodo 通过 app:data-changed 自动
+  // 重新拉取本行，所以这里不需要手动 refresh；列表也会同步刷新。
+  const todayKey = useMemo(() => todayDateKey(), []);
+  const togglePlannedForToday = useCallback(async (): Promise<void> => {
+    if (!todo) return;
+    const next = todo.plannedFor === todayKey ? null : todayKey;
+    await window.todoList.todo.update(todo.id, { plannedFor: next });
+  }, [todo, todayKey]);
+
   // Push a task-level focus pointer. DocumentsView will push a more-specific
   // document/drawing focus as the user picks tabs; this broader pointer is
   // what the AI sees when the user is in the basic-info / links / activity
@@ -501,6 +513,25 @@ export const TodoEditorPane: React.FC<{
             onChange={(v) => { setStatus(v); void commitMeta({ status: v }); }}
             variant="icon"
           />
+          {/* 今日 toggle —— 与列表端 TaskRow 的同款实心/空心圆点。
+              复用 .task-row__plan-btn 样式保证两处视觉一致；
+              aria-pressed 同时给屏幕阅读器和 is-active 高亮信号。
+              归档任务不显示，与列表 archivedView 的隐藏条件对齐。 */}
+          {!todo.archivedAt && (() => {
+            const isPlanned = todo.plannedFor === todayKey;
+            return (
+              <button
+                type="button"
+                className={`task-row__action task-row__plan-btn${isPlanned ? ' is-active' : ''}`}
+                aria-label={isPlanned ? '今天不做了' : '今天要做的'}
+                title={isPlanned ? '今天不做了' : '今天要做的'}
+                aria-pressed={isPlanned}
+                onClick={() => { void togglePlannedForToday(); }}
+              >
+                <TodayGlyph planned={isPlanned} />
+              </button>
+            );
+          })()}
           <InlineTitle
             value={todo.title}
             onCommit={(next) => { void commitMeta({ title: next }); }}
