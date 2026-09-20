@@ -163,6 +163,24 @@ const GeneralPane: React.FC<PaneProps> = ({ data, patch }) => (
         <option value="dark">深色</option>
       </select>
     </Field>
+    {/* 日志级别：默认 info。需要抓 stop-stuck / LLM 交互现场时切到 debug，
+        所有 [LLM ...] chunk / TTFB / abort 都会立刻写入 todo-list.log。
+        切换后立即生效，无需重启。 */}
+    <Field
+      label="日志级别"
+      hint="控制主进程写入 todo-list.log 的详细程度。调试大模型交互（stop-stuck / 超时 / 401 等）时切到 debug 即可抓现场，无需重启。日常保持 info 即可。"
+    >
+      <select
+        className="input"
+        value={data.logLevel}
+        onChange={(e) => void patch({ logLevel: e.target.value as 'debug' | 'info' | 'warn' | 'error' })}
+      >
+        <option value="debug">debug · 详细诊断</option>
+        <option value="info">info · 默认</option>
+        <option value="warn">warn · 仅警告</option>
+        <option value="error">error · 仅错误</option>
+      </select>
+    </Field>
   </div>
 );
 

@@ -288,4 +288,13 @@ export interface AISettings {
   customProviderId: string | null;
   /** User-Agent header sent on LLM provider requests. */
   userAgent: string;
+  /** Main 进程 logger 阈值。`debug` 包含 chunk 计数 / TTFB / abort 等
+   *  诊断信息（用于 stop-stuck 排障）；默认 `info`。切换后立即生效，
+   *  无需重启。 */
+  logLevel: LogLevel;
 }
+
+/** Main 进程 logger 阈值等级。值对应 src/main/logger.ts 的 LEVELS 映射：
+ *  debug=10 / info=20 / warn=30 / error=40，数值越小越啰嗦。
+ *  渲染端控件的下拉选项直接用这个字符串字面量。 */
+export type LogLevel = 'debug' | 'info' | 'warn' | 'error';

@@ -12,7 +12,7 @@ import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomBytes } from 'node:crypto';
 import { DEFAULT_CAPTURE_HOTKEY, ROOT_DIR_NAME, CONFIG_FILENAME, DEFAULT_PROVIDER, DEFAULT_AI_USER_AGENT, DSH_WORKSPACE_SUBDIR } from '../../shared/constants';
-import type { AIModel, AIProvider, CustomProviderConfig, CustomProviderInput } from '../../shared/ai-types';
+import type { AIModel, AIProvider, CustomProviderConfig, CustomProviderInput, LogLevel } from '../../shared/ai-types';
 import type { TagDef } from '../../shared/todo-types';
 import {
   DEFAULT_TASK_APPEARANCE,
@@ -116,6 +116,11 @@ export interface PersistedSettings {
    *  在 settings 改成自己已有的工作目录（共享给其他工具）；默认 null 走
    *  `<dataDir>/dsh_workspace`，与 DSH_SESSIONS_ROOT / 附件 / 画板完全隔离。 */
   dshWorkspaceDir: string | null;
+  /** Main 进程 logger 阈值。`debug` 把 chunk / TTFB / abort 等诊断行也写
+   *  进 todo-list.log——用于 stop-stuck 这类需要在用户机器上抓现场的场景。
+   *  默认 `info`；用户可在 Settings → 通用 → 日志级别 切换，立即生效。
+   *  接受 `LogLevel` 字面量；非法值在 load() 里回退到 `info`。 */
+  logLevel: LogLevel;
 }
 
 const DEFAULTS: PersistedSettings = {
@@ -143,7 +148,15 @@ const DEFAULTS: PersistedSettings = {
   maxConversations: 100,
   aiGrantedTools: {},
   dshWorkspaceDir: null,
+  logLevel: 'info',
 };
+
+/** Accept the literal string set; unknown / missing → 'info'. Used by load() to
+ *  normalise a possibly-stale config.json (e.g. someone hand-edits it to
+ *  `verbose` before this build shipped). */
+function normaliseLogLevel(raw: unknown): LogLevel {
+  return raw === 'debug' || raw === 'info' || raw === 'warn' || raw === 'error' ? raw : 'info';
+}
 
 /** Default data root when the user has not picked a directory. */
 export function defaultDataDir(): string {
@@ -191,6 +204,8 @@ export class SettingsStore {
       merged.taskAppearance = normalizeTaskAppearance(raw.taskAppearance);
       // 用户自定义预设：缺字段 / 损坏值时归一化成 []。
       merged.taskAppearanceCustomPresets = normalizeCustomPresets(raw.taskAppearanceCustomPresets);
+      // logLevel：损坏字面量 / 缺失字段都回退到 'info'，不让 logger 阈值被脏值卡住。
+      merged.logLevel = normaliseLogLevel(raw.logLevel);
       return merged;
     } catch {
       return {
@@ -264,6 +279,8 @@ export class SettingsStore {
       snoozePlanGuideUntil: v.snoozePlanGuideUntil,
       taskAppearance: v.taskAppearance,
       taskAppearanceCustomPresets: v.taskAppearanceCustomPresets,
+      // 透传 logger 阈值给渲染端。SettingsModal 把它接成 GeneralPane 的下拉。
+      logLevel: v.logLevel,
       // SEC-01 — always return the full state (enabled + token) so the
       // renderer can show "regenerate / copy" affordances even when the
       // bridge is currently disabled. The token is NOT an API key — its
@@ -313,8 +330,16 @@ export class SettingsStore {
     const next: PersistedSettings = { ...this.cache, ...patch };
     // Never let streaming default override true if patch omits it
     if (patch.streaming === undefined && DEFAULTS.streaming) next.streaming = DEFAULTS.streaming;
+    // logLevel：渲染端可能发来非法字面量（IPC 边界外），归一化后再写。
+    next.logLevel = normaliseLogLevel(next.logLevel);
     this.cache = next;
     this.persist();
+    // 把新阈值同步到 logger 单例——立即生效，下一行 logger.debug / info 就用新阈值。
+    // 这里有意用动态 import 避免 settings.ts 在 logger.ts 完成初始化前反向依赖。
+    void import('../logger').then(({ logger }) => {
+      logger.setThreshold(next.logLevel);
+      logger.info(`settings: logLevel=${next.logLevel} (effective immediately)`);
+    });
     return this.cache;
   }
 

@@ -192,6 +192,12 @@ function bootstrap(): void {
     // constructed.
     startupState.setCorePhase('settings');
     const settings = new SettingsStore();
+    // boot 时把持久化的 logger 阈值推给单例——之前的所有 main 启动日志
+    // 会按 'info' 跑（默认）；持久化值生效后，从这里开始的所有 logger 调用
+    // 都按新阈值过滤。让 logger 先 import 一次，等 settings 拿到再 set。
+    const { logger } = await import('./logger');
+    logger.setThreshold(settings.get().logLevel);
+    logger.info(`boot: logLevel=${settings.get().logLevel}`);
     const rootDir = settings.getDataDir();
     mark('settings-loaded');
 

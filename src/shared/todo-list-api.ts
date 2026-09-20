@@ -159,6 +159,10 @@ export interface SettingsPatchArgs {
    *  自动物理删除最老的（按 updated_at ASC）。归档里的对话不受此
    *  限制。默认 100。设置 UI 在 Settings → 数据 → AI 对话保留数量。 */
   maxConversations?: number;
+  /** Main 进程 logger 阈值。`debug` 输出所有 chunk / TTFB / abort 等
+   *  诊断日志（用于 stop-stuck 排障）；默认 `info`。切换后立即生效，
+   *  无需重启。 */
+  logLevel?: 'debug' | 'info' | 'warn' | 'error';
 }
 
 // --- TodoListApi ---
