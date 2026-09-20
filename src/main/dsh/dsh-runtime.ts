@@ -670,6 +670,76 @@ function questionRequestPayload(reqId: string, request: { questions: ReadonlyArr
   };
 }
 
+/** Bridge one DSH user-questions waterfall call to the renderer.
+ *
+ *  Extracted from the `user-questions/request` listener so the signal-handling
+ *  path is unit-testable without booting Cordis / DSH. Three settle paths:
+ *    1. user answers via IPC (resolve with their answer) — not modelled here,
+ *       that path runs through answerUserQuestion(reqId, ...).
+ *    2. signal aborts (`request.signal.abort()` from agent.cancel / parent
+ *       cancellation / parent agent disposal). Settles 'cancelled' and broadcasts
+ *       `ai:user-question-cancelled`. Without this, Stop clicks during a
+ *       pending question left whenIdle() unresolved → AIPane hung "running".
+ *    3. 90 s timeout. Settles 'timeout' and broadcasts `ai:user-question-timeout`.
+ *    4. drainPendingForConversation(convId) — clears the map entry externally;
+ *       our settle() then sees `!pendingQuestions.has(reqId)` and bails before
+ *       broadcasting again (drain already broadcast).
+ *
+ *  Idempotency: the `settled` flag guards our own settle() calls; the
+ *  pendingQuestions.has() guard handles external drain. Both are needed
+ *  because a timer fire and a signal abort can race.
+ *
+ *  Exported so tests in tests/unit/user-question-listener.spec.ts can drive
+ *  the listener body without spinning up Cordis / DSH. */
+export function handleUserQuestionRequest(
+  request: {
+    questions: ReadonlyArray<{ id: string; question: string; detail?: string; header?: string; options?: ReadonlyArray<{ label: string; description?: string }>; multiSelect?: boolean }>;
+    signal?: AbortSignal;
+  },
+  conversationId: string,
+): Promise<UserQuestionAnswer> {
+  const reqId = randomUUID();
+  return new Promise<UserQuestionAnswer>((resolve, reject) => {
+    let settled = false;
+    const settle = (kind: 'timeout' | 'cancelled'): void => {
+      if (settled) return;
+      settled = true;
+      // Drop the signal listener so an abort that arrives later (or the one
+      // we just fired) doesn't try to clearTimeout on a dead timer.
+      if (signal && !signal.aborted) signal.removeEventListener('abort', onAbort);
+      // External drain already cleaned this entry — it also broadcast its
+      // own cancel, so we just bail without re-broadcasting.
+      if (!pendingQuestions.has(reqId)) return;
+      pendingQuestions.delete(reqId);
+      clearTimeout(timer);
+      if (kind === 'cancelled') {
+        broadcastCancel('question', reqId);
+      } else {
+        for (const w of BrowserWindow.getAllWindows()) {
+          if (!w.isDestroyed()) w.webContents.send('ai:user-question-timeout', { reqId });
+        }
+      }
+      reject(new Error('ask_user_question was aborted before the user answered'));
+    };
+    const timer = setTimeout(() => settle('timeout'), INTERACTION_TIMEOUT_MS);
+    const signal = request.signal;
+    const onAbort = (): void => settle('cancelled');
+    // Set the pending entry BEFORE the signal-aborted branch so settle()
+    // can find it and call reject. Otherwise the early-return bails on
+    // !pendingQuestions.has(reqId) and the promise hangs forever.
+    pendingQuestions.set(reqId, { resolve, reject, timer, conversationId });
+    if (signal) {
+      if (signal.aborted) { settle('cancelled'); return; }
+      signal.addEventListener('abort', onAbort, { once: true });
+    }
+    const payload = questionRequestPayload(reqId, request);
+    logger.info(`DSH user-questions/request: reqId=${reqId} questions=${payload.questions.length} conv=${conversationId}`);
+    for (const w of BrowserWindow.getAllWindows()) {
+      if (!w.isDestroyed()) w.webContents.send('ai:user-question-request', payload);
+    }
+  });
+}
+
 /**
  * L3-C：给磁盘上有 JSONL 但 DB 没对应行的 session 补行。
  *
@@ -1176,35 +1246,20 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
 
   ctx.on('user-questions/request', (request: {
     questions: ReadonlyArray<{ id: string; question: string; detail?: string; header?: string; options?: ReadonlyArray<{ label: string; description?: string }>; multiSelect?: boolean }>;
+    /** DSH passes the calling agent's lifecycle signal here (see
+     *  dsh-tool-ask-user execute() → ctx.userQuestions.ask({signal: exec.signal})).
+     *  Listening on it lets the listener settle('cancelled') when the agent
+     *  is aborted while a question card is on screen — without this the
+     *  waterfall promise stays pending, whenIdle() never settles, and the
+     *  AIPane turn hangs at "running" even though no tool/LLM is active. */
+    signal?: AbortSignal;
   }, _next: () => Promise<unknown>): Promise<UserQuestionAnswer> => {
-    const reqId = randomUUID();
     // DSH does not pass the agent / conversationId into the waterfall
     // listener for user-questions. Use the module-level active-turn set
     // (set by runTurn) to attribute this pending question to its
     // conversation so cancel / dispose can drain it precisely.
     const convId = firstKey(activeTurnConversations) ?? '';
-    return new Promise<UserQuestionAnswer>((resolve, reject) => {
-      const settle = (kind: 'timeout' | 'cancelled'): void => {
-        if (!pendingQuestions.has(reqId)) return;
-        pendingQuestions.delete(reqId);
-        clearTimeout(timer);
-        if (kind === 'cancelled') {
-          broadcastCancel('question', reqId);
-        } else {
-          for (const w of BrowserWindow.getAllWindows()) {
-            if (!w.isDestroyed()) w.webContents.send('ai:user-question-timeout', { reqId });
-          }
-        }
-        reject(new Error('ask_user_question was aborted before the user answered'));
-      };
-      const timer = setTimeout(() => settle('timeout'), INTERACTION_TIMEOUT_MS);
-      pendingQuestions.set(reqId, { resolve, reject, timer, conversationId: convId });
-      const payload = questionRequestPayload(reqId, request);
-      logger.info(`DSH user-questions/request: reqId=${reqId} questions=${payload.questions.length} conv=${convId}`);
-      for (const w of BrowserWindow.getAllWindows()) {
-        if (!w.isDestroyed()) w.webContents.send('ai:user-question-request', payload);
-      }
-    });
+    return handleUserQuestionRequest(request, convId);
   });
 
   // 二元审批的对称实现。DSH 把 answerer 返回值归一为四种结局；渲染端路径
