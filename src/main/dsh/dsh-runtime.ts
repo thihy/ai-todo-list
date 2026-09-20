@@ -33,6 +33,9 @@ import { TODO_STATUSES, PRIORITIES } from '../../shared/todo-types';
 import type { UserQuestionAnswer, UserQuestionRequest } from '../../shared/ai-types';
 import { presentToolCall, presentToolResult, recoverToolResultValue } from '@shared/tool-presentation';
 import { isWithinWorkspace, extractStringPath } from './path-guard';
+import type { ToolExecution, PreToolDecision } from '@deepseek-ai/dsh-tools';
+import { TurnFailureGuard } from './turn-failure';
+import { configureElectronSubprocess } from './subprocess-compat';
 import type Database from 'better-sqlite3';
 import { mimeExt, sanitizeName } from '../util/mime';
 import { decodeUserMessage, encodeTaskCreationEnvelope, type UserIntent } from '../../shared/task-creation';
@@ -113,16 +116,51 @@ type StreamChunkLike =
 /** Mirror LLM deltas onto the session-shaped event surface while preserving
  * the original async iterable for DSH's BlockAssembler. Kept as a small pure
  * adapter so the streaming contract can be tested without booting Electron or
- * making a provider request. */
+ * making a provider request.
+ *
+ * LLM 日志点：流式 chunk 计数 + 起止耗时。不打印每条 chunk（量大会刷屏），
+ * 只在首个 chunk 到达时打点（首字节延迟，TTFB 指标），结束时汇总。
+ * 抛出 / abort 时打 warn 区分正常结束和异常中断。 */
 export async function* bridgeLlmStream(
   upstream: AsyncIterable<StreamChunkLike>,
-  onEvent: (event: DshRawEvent) => void,
+  onEvent: (e: DshRawEvent) => void,
+  opts?: { sessionId?: string; model?: string },
 ): AsyncIterable<StreamChunkLike> {
-  for await (const chunk of upstream) {
-    if (chunk.type === 'text-delta' || chunk.type === 'reasoning-delta') {
-      onEvent({ type: 'assistant/chunk', data: { chunk } });
+  const sessionLabel = opts?.sessionId ?? '?';
+  const modelLabel = opts?.model ?? '?';
+  const t0 = Date.now();
+  logger.debug(`[LLM stream] start session=${sessionLabel} model=${modelLabel}`);
+  let textChunks = 0;
+  let reasoningChunks = 0;
+  let otherChunks = 0;
+  let firstChunkAt: number | null = null;
+  try {
+    for await (const chunk of upstream) {
+      if (firstChunkAt == null) {
+        firstChunkAt = Date.now();
+        logger.debug(`[LLM stream] first-chunk session=${sessionLabel} model=${modelLabel} ttfb=${firstChunkAt - t0}ms`);
+      }
+      if (chunk.type === 'text-delta') textChunks++;
+      else if (chunk.type === 'reasoning-delta') reasoningChunks++;
+      else otherChunks++;
+      if (chunk.type === 'text-delta' || chunk.type === 'reasoning-delta') {
+        onEvent({ type: 'assistant/chunk', data: { chunk } });
+      }
+      yield chunk;
     }
-    yield chunk;
+    const totalMs = Date.now() - t0;
+    logger.info(
+      `[LLM stream] done session=${sessionLabel} model=${modelLabel} ` +
+      `text=${textChunks} reasoning=${reasoningChunks} other=${otherChunks} totalMs=${totalMs}`,
+    );
+  } catch (err) {
+    const totalMs = Date.now() - t0;
+    logger.warn(
+      `[LLM stream] aborted session=${sessionLabel} model=${modelLabel} ` +
+      `text=${textChunks} reasoning=${reasoningChunks} other=${otherChunks} ` +
+      `totalMs=${totalMs} err=${(err as Error).message}`,
+    );
+    throw err;
   }
 }
 
@@ -975,6 +1013,8 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
   // `failed` path emits from the catch.
   try {
 
+  configureElectronSubprocess();
+
   // 暴露持久化层：列出 <DSH_SESSIONS_ROOT> 下已有的会话，让用户从日志里看到
   // 历史会话保存情况。每次启动都跑一遍没事——list() 只走目录不读事件。
   try {
@@ -1092,15 +1132,15 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
   // 其他非 fs / shell 工具（todo_* / content_* / drawing_* 等）一律直通
   // —— 它们本来就有自己的 `tierFor()` 闸控 + approval/request 流程。
   ctx.on('tools/pre-execute', (
-    exec: { toolName: string; args?: unknown; description?: string },
-    next: () => Promise<unknown>,
-  ): Promise<unknown> => {
-    const { toolName } = exec;
+    exec: ToolExecution,
+    next: () => Promise<PreToolDecision>,
+  ): Promise<PreToolDecision> => {
+    const { name: toolName, arguments: args } = exec;
     if (READ_CLASS_TOOLS.has(toolName)) {
-      const workspace = deps.settings.get().dshWorkspaceDir;
+      const workspace = deps.settings.get().dshWorkspaceDir || process.env.DSH_WORKSPACE_ROOT;
       // DSH fs 工具的参数键：`read` / `read_image` 用 `file_path`；
-      // `grep` 用 `path`（搜索根目录）+ `pattern`（文本）；`glob` 用 `pattern`。
-      const requested = extractStringPath(exec.args, ['file_path', 'path', 'pattern']);
+      // `grep` / `glob` 用 `path` 指定搜索根目录；pattern 是匹配表达式。
+      const requested = extractStringPath(args, ['file_path', 'path']);
       if (workspace && typeof requested === 'string') {
         if (!isWithinWorkspace(workspace, requested)) {
           const reason = `PATH_OUTSIDE_WORKSPACE: ${requested} 不在工作区 ${workspace} 内`;
@@ -1112,10 +1152,11 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
       return next();
     }
     if (PRE_APPROVE_TOOLS.has(toolName)) {
-      const desc = (typeof exec.description === 'string' && exec.description.trim())
-        ? exec.description
+      const description = extractStringPath(args, ['description']);
+      const desc = description?.trim()
+        ? description
         : (() => {
-          const a = exec.args;
+          const a = args;
           if (a && typeof a === 'object') {
             const rec = a as Record<string, unknown>;
             const cmd = rec['command'];
@@ -1260,6 +1301,8 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
 
   interface ConversationEntry {
     id: string;
+    /** LLM 模型名（创建 agent 时锁定），便于 stream/cancel 日志关联。 */
+    model: string;
     agent: {
       followup(m: unknown): void;
       whenIdle(): Promise<void>;
@@ -1301,6 +1344,7 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
 
     const entry: ConversationEntry = {
       id: conversationId,
+      model,
       agent: handle.agent,
       disposeHandle: () => handle.dispose(),
       offSession: () => {},
@@ -1358,7 +1402,11 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
       if (options.purpose) return next();
       const streamSid = options.sessionId != null ? String(options.sessionId) : undefined;
       if (streamSid !== entry.id) return next();
-      return bridgeLlmStream(next(), onEvent);
+      // LLM 日志点：`llm/stream` 是 DSH 唯一一个跨 provider 统一的 stream
+      // 入口（dsh-session-title / 我们的 AIPane 都走它）。每条主回复进来
+      // 一次（purpose 为空），从这里开始就能确认 provider 真的开始吐数据。
+      logger.debug(`[LLM stream-in] session=${entry.id} model=${entry.model} purpose=${options.purpose ?? '(main)'}`);
+      return bridgeLlmStream(next(), onEvent, { sessionId: entry.id, model: entry.model });
     });
     entry.offSession = () => {
       try { off(); } catch { /* noop */ }
@@ -1381,6 +1429,16 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
       const endpoint = deps.getEndpoint();
       const model = endpoint?.model ?? 'deepseek-chat';
       const entry = await ensureAgent(conversationId, model);
+      // LLM 日志点：runTurn 入口。一行把"谁、用什么模型、发什么、打什么意图"
+      // 全部打出来。挂在 ask 链路上半段，是分析 stop-stuck / 卡死的第一步：
+      // 看到入口没出现就知道 IPC / runtime 都还没轮到；看到 followup 没打
+      // 出来就知道卡在 ensureAgent。
+      const turnStart = Date.now();
+      logger.info(
+        `[LLM turn] start conv=${conversationId} model=${model} ` +
+        `intent=${intent ?? 'chat'} promptBytes=${Buffer.byteLength(prompt ?? '', 'utf8')} ` +
+        `endpoint=${endpoint?.baseUrl ?? '(none)'}`,
+      );
       // Create-task envelope assembly lives here, not in the renderer: the
       // fixed creation rules (default status, conservative priority, etc.)
       // are in the DSH system prompt (resources/dsh/cordis.yml), so the wire
@@ -1407,6 +1465,11 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
       // answer into chunks, not the final message) — so we only read the
       // message text when no chunks arrived this step, avoiding double-count.
       let stepChunkText = '';
+      let firstChunkSeen = false;
+      const failure = new TurnFailureGuard(() => {
+        entry.agent.cancel({ kind: 'hook', reason: 'filesystem-tool-failed' });
+        drainPendingForConversation(conversationId);
+      });
       const off = attachLiveListener(entry, (event) => {
         if (event?.type === 'assistant/chunk') {
           const d = event.data as { chunk?: { type?: string; text?: string } } | undefined;
@@ -1414,6 +1477,13 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
           // text-delta 累加成当轮可见文本；reasoning-delta 不入 fullText，
           // 它有独立 UI 通道（ai.ask 会把 reasoning-delta 翻译成 reasoning 流事件）
           if (chunk?.type === 'text-delta' && chunk.text) {
+            if (!firstChunkSeen) {
+              firstChunkSeen = true;
+              logger.info(
+                `[LLM turn] first-chunk conv=${conversationId} model=${model} ` +
+                `after=${Date.now() - turnStart}ms`,
+              );
+            }
             stepChunkText += chunk.text;
             fullText += chunk.text;
           }
@@ -1443,21 +1513,33 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
           stepChunkText = '';
         }
         onEvent(event);
+        failure.observe(event);
       });
+      const onAbort = (): void => {
+        // LLM 日志点：取消信号到达。DISTINGUISH 这两条：
+        //   1. abort → onAbort fire → cancel user（软中断）
+        //   2. whenIdle 自然 settle（成功或失败）
+        // stop-stuck 排查时关注这条是否到达，以及到达时间 vs whenIdle 收敛时间。
+        logger.info(`[LLM turn] abort-signal conv=${conversationId} after=${Date.now() - turnStart}ms`);
+        entry.agent.cancel({ kind: 'user' });
+      };
       try {
+        signal?.throwIfAborted();
         const userMsg = createUserMessage({
           content: [{ type: 'text', text: wirePrompt }],
           source: { kind: 'user' },
         });
+        // LLM 日志点：实际把 user message 推进 agent loop 的瞬间。stop-stuck
+        // 排查时，看到 followup 打了但 whenIdle 没回来 → agent 内部 hang；
+        // 看到 followup 都没打 → 卡在更前面（IPC、ensureAgent、createUserMessage）。
+        logger.debug(`[LLM turn] followup conv=${conversationId}`);
         entry.agent.followup(userMsg);
         // 协作式取消：渲染端取消时软中止 agent。L3-A 偏好 agent.cancel
         // ({kind:'user'}) 而非销毁 handle——agent 留下，next followup() 复用
         // 同 session 不必重 resume。whenIdle() 在被中止的轮次收敛到 idle 时
         // 自行 resolve。无活跃轮次时调用是 no-op（DSH 文档），对伪 abort
         // 信号也安全。
-        signal?.addEventListener('abort', () => {
-          try { entry.agent.cancel({ kind: 'user' }); } catch { /* noop */ }
-        });
+        signal?.addEventListener('abort', onAbort, { once: true });
         // Register this conversation as actively running a turn so the
         // user-questions waterfall listener (which DSH does NOT enrich
         // with the agent / conversationId) can attribute pending
@@ -1466,18 +1548,38 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
         activeTurnConversations.set(conversationId, true);
         try {
           await entry.agent.whenIdle();
+          const turnMs = Date.now() - turnStart;
+          if (failure.error) {
+            logger.warn(`[LLM turn] fail conv=${conversationId} model=${model} ms=${turnMs} err=${failure.error.message}`);
+            throw failure.error;
+          }
+          logger.info(
+            `[LLM turn] done conv=${conversationId} model=${model} ` +
+            `ms=${turnMs} tokensIn=${turnTokensIn} tokensOut=${turnTokensOut} ` +
+            `chunksStreamed=${firstChunkSeen} contentBytes=${Buffer.byteLength(fullText, 'utf8')}`,
+          );
           return { content: fullText, tokensIn: turnTokensIn, tokensOut: turnTokensOut };
         } finally {
           activeTurnConversations.delete(conversationId);
         }
       } finally {
+        signal?.removeEventListener('abort', onAbort);
         try { off(); } catch { /* noop */ }
         entry.dormant = true;
       }
     },
 
     async cancel(conversationId) {
+      // LLM 日志点：渲染端发 stop → runtime.cancel。打印进入时间、是否有
+      // agent handle（idle 情况是 no-op）、是否触发 drainPending。这是排查
+      // "stop 没反应 / composer 卡死" 的关键点。
+      const tCancel = Date.now();
       const entry = conversations.get(conversationId);
+      logger.info(
+        `[LLM turn] cancel-request conv=${conversationId} ` +
+        `agentCached=${!!entry} activeQuestions=${__pendingSnapshotForTest().questions[conversationId] ?? 0} ` +
+        `activeApprovals=${__pendingSnapshotForTest().approvals[conversationId] ?? 0}`,
+      );
       if (entry) {
         // L3-A 软取消：handle 留在缓存里，下次 followup() 走同 agent + 持久化
         // session。硬销毁留给 disposeConversation（ai.conversation_delete 路径）。
@@ -1486,7 +1588,12 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
         //   resolve。在它前面的 text/tool 事件已经流过，会成为持久化日志的一部分，
         //   loadHistory() 仍如实返回。
         // - 闲置：cancel 是 no-op（DSH 文档），安全调用。
-        try { entry.agent.cancel({ kind: 'user' }); } catch { /* noop */ }
+        try {
+          entry.agent.cancel({ kind: 'user' });
+          logger.debug(`[LLM turn] cancel-agent conv=${conversationId} dispatched`);
+        } catch (err) {
+          logger.warn(`[LLM turn] cancel-agent conv=${conversationId} threw: ${(err as Error).message}`);
+        }
         // 不 conversations.delete()——下次 ask() 会触发 re-resume，丢掉刚刚
         // 积攒的 agent 内部缓存（已解析的 system prompt、pre-step 决策）。
       }
@@ -1497,6 +1604,7 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
       // while the approval card is showing leaves activeApproval
       // stuck on the renderer side and blocks new sends.
       drainPendingForConversation(conversationId);
+      logger.info(`[LLM turn] cancel-done conv=${conversationId} ms=${Date.now() - tCancel}`);
     },
 
     async loadHistory({ conversationId }) {

@@ -47,6 +47,7 @@ import { openAIResponsesApi } from '@earendil-works/pi-ai/api/openai-responses.l
 import type { LlmAdapter } from '@deepseek-ai/dsh-llm';
 import type { AIProvider, CustomProviderConfig, AICustomProtocol } from '../../shared/ai-types';
 import type { ResolvedEndpoint } from './endpoints';
+import { logger } from '../logger';
 
 /** Routes registered with the LlmService. Order is irrelevant; dispatch is
  *  by `agentOptions.provider`. We omit `'shim'` — `ai.ask` short-circuits
@@ -326,7 +327,11 @@ const noopAuthContext: AuthContext = {
  *  override seam. `new Headers(init.headers)` copies whatever shape the
  *  SDK used (plain object / Headers / array of pairs) and `set()` overrides
  *  case-insensitively. `HeadersInit` is DOM-typed and not in the node tsconfig
- *  lib, so the param is left permissive here. */
+ *  lib, so the param is left permissive here.
+ *
+ *  LLM 日志点：每个走这条 fetch 的出站请求都打印 method/URL/状态码/耗时，
+ *  便于排查大模型调用挂起/超时/HTTP 异常。所有日志前缀 `[LLM HTTP]`，便于
+ *  grep 聚合；URL 上的 query string（含 API key）会被 redact，仅保留 host+path。 */
 function makeUserAgentFetch(ua: string): typeof globalThis.fetch {
   const base = globalThis.fetch;
   // Build a fresh Headers from whatever the SDK passed and stamp the UA.
@@ -338,8 +343,45 @@ function makeUserAgentFetch(ua: string): typeof globalThis.fetch {
     h.set('user-agent', ua);
     return h;
   };
-  return (input, init) =>
-    base(input, { ...(init ?? {}), headers: stamp(init?.headers) });
+  // 把 URL 折成 host + path 形式，丢掉 query（api_key 等敏感参数）。
+  const safeUrl = (input: unknown): string => {
+    const raw = typeof input === 'string' ? input : (input as { url?: string } | undefined)?.url ?? String(input);
+    try {
+      const u = new URL(raw);
+      return `${u.host}${u.pathname}`;
+    } catch {
+      // 非标准 URL（如 'data:'、'blob:'）原样保留
+      return raw.slice(0, 120);
+    }
+  };
+  return (input, init) => {
+    const method = (init?.method ?? 'GET').toUpperCase();
+    const urlLabel = safeUrl(input);
+    const t0 = Date.now();
+    logger.debug(`[LLM HTTP] → ${method} ${urlLabel}`);
+    let outcome = 'unknown';
+    let status: number | undefined;
+    return Promise.resolve()
+      .then(() => base(input, { ...(init ?? {}), headers: stamp(init?.headers) }))
+      .then((res) => {
+        status = res?.status;
+        outcome = 'ok';
+        return res;
+      })
+      .catch((err) => {
+        outcome = 'error';
+        throw err;
+      })
+      .finally(() => {
+        const ms = Date.now() - t0;
+        if (outcome === 'ok') {
+          logger.info(`[LLM HTTP] ← ${status ?? '?'} ${method} ${urlLabel} in ${ms}ms`);
+        } else {
+          // fetch reject 通常是 AbortError / DNS 失败 / 连接重置；和 provider 200/4xx/5xx 不同源
+          logger.warn(`[LLM HTTP] ← ERROR ${method} ${urlLabel} after ${ms}ms`);
+        }
+      }) as ReturnType<typeof globalThis.fetch>;
+  };
 }
 
 /** Override each provider's stream/streamSimple so the request runs through a
@@ -373,6 +415,12 @@ function buildProfiles(deps: CreateAdaptersDeps): ReadonlyMap<string, ResolvedPi
   // next request without restart (same invariant as endpoint/customProviders).
   const ua = deps.getUserAgent();
   if (ua) for (const [, profile] of profiles) if (profile.piProvider) applyUserAgent(profile.piProvider, ua);
+  // LLM 日志点：profile map 重建（每次 LLM 操作都跑一次，因为 key/endpoint
+  // 可能热更新）。打印每条路由的 host + UA 是否生效。
+  const summary = profiles
+    .map(([name, p]) => `${name}=${p.baseURL ?? '(catalog)'}`)
+    .join(' ');
+  logger.info(`[LLM profiles] rebuilt ${profiles.length} routes ua=${ua ? 'set' : 'default'} ${summary}`);
   return new Map(profiles);
 }
 
@@ -394,15 +442,29 @@ export function createLlmAdapters(deps: CreateAdaptersDeps): {
       //   - custom             → the active instance's apiKey
       // We resolve via getEndpoint so the same one-call-per-turn invariant
       // holds — a changed key reaches the next request without restart.
+      // LLM 日志点：每个 LLM 调用前都会查一次 key。打印 provider + 是否
+      // 拿到 key + key 长度（不打印 key 本身）。当用户报的"401/未授权"
+      // 类问题复现时，能从日志直接看到这一次实际查到的 key 是空字符串还是
+      // 有值，避免怀疑到 env var / 缓存上去。
+      let resolved = '';
       if (provider === 'custom') {
         const list = deps.getCustomProviders();
         const activeId = deps.getCustomProviderId();
-        return list.find((c) => c.id === activeId)?.apiKey ?? list[0]?.apiKey ?? '';
+        resolved = list.find((c) => c.id === activeId)?.apiKey ?? list[0]?.apiKey ?? '';
+      } else {
+        const ep = deps.getEndpoint();
+        if (!ep) {
+          logger.warn(`[LLM key] provider=${provider} → empty (no endpoint resolved)`);
+          return '';
+        }
+        if (provider === 'ollama') {
+          resolved = '';
+        } else {
+          resolved = ep.apiKey;
+        }
       }
-      const ep = deps.getEndpoint();
-      if (!ep) return '';
-      if (provider === 'ollama') return '';
-      return ep.apiKey;
+      logger.debug(`[LLM key] provider=${provider} len=${resolved.length}`);
+      return resolved;
     },
     auth: {
       credentials: noopCredentialStore,
