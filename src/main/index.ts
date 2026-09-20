@@ -195,9 +195,13 @@ function bootstrap(): void {
     // boot 时把持久化的 logger 阈值推给单例——之前的所有 main 启动日志
     // 会按 'info' 跑（默认）；持久化值生效后，从这里开始的所有 logger 调用
     // 都按新阈值过滤。让 logger 先 import 一次，等 settings 拿到再 set。
-    const { logger } = await import('./logger');
-    logger.setThreshold(settings.get().logLevel);
-    logger.info(`boot: logLevel=${settings.get().logLevel}`);
+    // NOTE: 局部变量必须改名 `loggerMod` —— 同名 const 会通过 lexical
+    // scope 遮蔽顶层 `import { logger } from './logger'`，而 `mark`
+    // 闭包在 line 151 已定义并引用顶层 logger；transpile 时 TS 会把
+    // mark 内的 logger 引用错绑到下面的 `const` 上，造成 TDZ。
+    const { logger: loggerMod } = await import('./logger');
+    loggerMod.setThreshold(settings.get().logLevel);
+    loggerMod.info(`boot: logLevel=${settings.get().logLevel}`);
     const rootDir = settings.getDataDir();
     mark('settings-loaded');
 
@@ -944,8 +948,8 @@ function registerSettingsHandlers(
         } catch (err) {
           // Non-fatal: the value is persisted, so the next launch
           // will pick it up. Logged at warn so it's visible.
-          const { logger } = await import('./logger');
-          logger.warn(`updater: applyAutoUpdatePreference failed: ${(err as Error).message}`);
+          const { logger: loggerMod } = await import('./logger');
+          loggerMod.warn(`updater: applyAutoUpdatePreference failed: ${(err as Error).message}`);
         }
       }
     } catch (err) {
