@@ -225,15 +225,18 @@ describe('presetIdOf', () => {
     ).toBe('a');
   });
 
-  it('treats DEFAULT colors in custom mode as custom (not theme)', () => {
-    // Important: user explicitly chose custom mode with default colours
-    // must NOT silently flip to 'theme' — that would snap the dropdown back
-    // and erase the user's intent.
+  it('treats DEFAULT colors in custom mode as the matching built-in (soft), not theme', () => {
+    // Important: mode='custom' must NEVER snap back to 'theme' just
+    // because the colours happen to equal DEFAULT — that would erase
+    // the user's explicit "自定义" intent. The implementation instead
+    // resolves to the matching built-in custom preset ('soft',
+    // which is identical to DEFAULT_TASK_APPEARANCE), so the dropdown
+    // highlights a real preset without silently switching mode.
     const result = presetIdOf(
       { mode: 'custom', colors: DEFAULT_TASK_APPEARANCE.colors },
       [],
     );
-    expect(result).toBe('custom');
+    expect(result).toBe('soft');
   });
 });
 

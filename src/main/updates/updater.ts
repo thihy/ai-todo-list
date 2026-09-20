@@ -30,6 +30,7 @@
 // synchronous-feeling status queries.
 
 import { app } from 'electron';
+import { logger } from '../logger';
 
 // Lazy import — `electron-updater` is a runtime-only dependency
 // and shouldn't be loaded in dev for performance, and definitely
@@ -289,11 +290,8 @@ export function __resetUpdaterForTests(): void {
 }
 
 function getLogger(): { warn: (msg: string) => void; info: (msg: string) => void } {
-  // Lazy require to keep the test surface narrow (tests can
-  // mock '../logger' without breaking the auto-updater).
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { logger } = require('../logger') as {
-    logger: { warn: (msg: string) => void; info: (msg: string) => void };
-  };
+  // Top-level `import { logger } from '../logger'` keeps this
+  // module testable under ESM (the previous `require()` form
+  // failed at runtime — `require` is undefined in ESM context).
   return logger;
 }

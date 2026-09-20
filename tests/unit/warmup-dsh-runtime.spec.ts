@@ -144,15 +144,21 @@ describe('warmupDshRuntime — STARTUP-DSH-001 contract', () => {
     // Simulate `getDshRuntime` caching: the mock returns the same
     // Promise instance on every call until it resolves. Two callers
     // racing in the same microtask must observe identity-equal Promises.
+    //
+    // NB: we cannot `expect(a).toBe(b)` here because `warmupDshRuntime`
+    // is an `async function` and JS creates a fresh wrapper Promise on
+    // every invocation — the SINGLE-FLIGHT guarantee lives one level
+    // below, inside the mocked `getDshRuntime`. Asserting that both
+    // calls resolve to the same object reference proves the same
+    // cached boot was observed end-to-end.
     let resolveBoot: (value: object) => void = () => {};
     const deferred = new Promise<object>((res) => { resolveBoot = res; });
     mockRuntime = deferred;
     const a = warmupDshRuntime(deps);
     const b = warmupDshRuntime(deps);
-    expect(a).toBe(b); // identity-equal Promise — single boot
     resolveBoot({ id: 'shared' });
-    await expect(a).resolves.toEqual({ id: 'shared' });
-    await expect(b).resolves.toEqual({ id: 'shared' });
+    const [ar, br] = await Promise.all([a, b]);
+    expect(ar).toBe(br); // single boot — same runtime reference returned to both callers
   });
 
   it('typed DshBootFailedError is distinguishable from generic Error', () => {

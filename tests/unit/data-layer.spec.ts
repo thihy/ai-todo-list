@@ -413,7 +413,7 @@ describe('TodoRepo + MarkdownStore', () => {
       const meta = migrated.db
         .prepare<[], { version: number }>('SELECT MAX(version) as version FROM schema_meta')
         .get();
-      expect(meta?.version).toBe(18);
+      expect(meta?.version).toBe(19);
 
       const repo14 = new TodoRepo(migrated.db);
       const all = repo14.list();
