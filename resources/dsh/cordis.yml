@@ -19,6 +19,10 @@
 - id: tools
   name: '@deepseek-ai/dsh-tools'
 
+# Enforce tool-declared deadlines (including glob/grep) through cancellation.
+- id: tool-call-timeout-policy
+  name: '@deepseek-ai/dsh-tool-call-timeout-policy'
+
 - id: system-prompt
   name: '@deepseek-ai/dsh-system-prompt'
   config:
@@ -320,11 +324,14 @@
     mode: workspace-write
     workspaceRoot: !!js "process.env.DSH_WORKSPACE_ROOT"
 
-# Kernel-level containment. Win32 uses a WRITE_RESTRICTED token + ACL DACL;
-# POSIX uses bwrap (preferred), falling back to Landlock / Seatbelt. Switch to
-# `@deepseek-ai/dsh-sandbox-local` on darwin/linux.
+# Kernel-level containment. The single cordis plugin `dsh-sandbox-local`
+# handles both platforms: Windows uses a WRITE_RESTRICTED token + ACL DACL
+# (via `@deepseek-ai/dsh-sandbox-windows-acl` as a runner backend); POSIX
+# uses bwrap (preferred), falling back to Landlock / Seatbelt. The
+# `-windows-acl` package is a backend library, not a cordis plugin — do NOT
+# register it directly here.
 - id: sandbox
-  name: '@deepseek-ai/dsh-sandbox-windows-acl'
+  name: '@deepseek-ai/dsh-sandbox-local'
 
 # Filesystem sandbox — pairs with `dsh-tool-fs` to confine reads/writes to
 # the workspace directory + system tmp (per dsh-sandbox-policy's
@@ -344,34 +351,57 @@
 - id: fs-observation-policy
   name: '@deepseek-ai/dsh-fs-observation-policy'
 
+# `shell-env` provides the `ctx.shellEnv` registry of trusted per-execution
+# `DSH_*` variables that `dsh-tool-bash` / `dsh-tool-pwsh` inject into each
+# shell call. It is a SEPARATE service from the sandbox — sandbox restricts
+# what the process can touch; shell-env builds the DSH_* namespace the model
+# can read. `Config.dshHome` is required by the schema, but `resolveDshHome()`
+# falls back to `$DSH_HOME` env / `~/.dsh` when the configured value is empty,
+# so an empty string is safe and matches the pattern used by `dsh-skill-filesystem`.
+- id: shell-env
+  name: '@deepseek-ai/dsh-shell-env'
+  config:
+    dshHome: ''
+
 # Windows shell. Use dsh-pwsh-sandbox + dsh-tool-pwsh on win32 (paired with
-# the win32 sandbox above).
+# the win32 sandbox above). `disabled: !!js process.platform !== 'win32'` keeps
+# pwsh dormant on macOS/Linux without forking the YAML.
 - id: pwsh-sandbox
   name: '@deepseek-ai/dsh-pwsh-sandbox'
 - id: tool-pwsh
   name: '@deepseek-ai/dsh-tool-pwsh'
+  disabled: !!js process.platform !== 'win32'
 
-# POSIX shell. On darwin/linux, replace `sandbox` above with
-# `@deepseek-ai/dsh-sandbox-local` and swap in the two plugins below.
+# POSIX shell. On darwin/linux, uncomment the two plugins below and add
+# `disabled: !!js process.platform === 'win32'` to `tool-pwsh` (or remove
+# tool-pwsh entirely).
 # - id: bash-sandbox
 #   name: '@deepseek-ai/dsh-bash-sandbox'
 # - id: tool-bash
 #   name: '@deepseek-ai/dsh-tool-bash'
+#   disabled: !!js process.platform === 'win32'
 
 # Full-text + filename search (grep / glob). Sandbox pair is implicit via
 # fs-sandbox above; the tool plugin itself reads from ctx.fsSandbox.
+# `sampleOverCapGlobResults: false` → over-cap results keep the
+# modification-time-ordered head (matches dsh-base's CLI default).
 - id: tool-fs-search
   name: '@deepseek-ai/dsh-tool-fs-search'
+  config:
+    sampleOverCapGlobResults: false
 
 # Subprocess / spill transports used by the shell tools to spawn the actual
-# pwsh (or bash) child process and stream its output. dsh-subprocess-local uses
-# node-pty + koffi (PTY-aware, ANSI escape handling) and works on both win32
-# and POSIX. dsh-spill-local is the local spillover buffer for long output.
+# pwsh (or bash) child process and stream its output. dsh-subprocess-local
+# uses node-pty + koffi (PTY-aware, ANSI escape handling) and works on both
+# win32 and POSIX. dsh-spill-local is the local spillover buffer for long
+# output.
+#
+# NOTE: `@deepseek-ai/dsh-subprocess` and `@deepseek-ai/dsh-spill` are the
+# abstract Service definitions only — they share the SAME service name as
+# their `-local` backend implementations (subprocess / spillStore) and
+# register duplicate services if loaded together. Only mount the `-local`
+# packages; the abstract bases are imported as types by other plugins.
 - id: subprocess
-  name: '@deepseek-ai/dsh-subprocess'
-- id: subprocess-local
   name: '@deepseek-ai/dsh-subprocess-local'
-- id: spill
-  name: '@deepseek-ai/dsh-spill'
 - id: spill-local
   name: '@deepseek-ai/dsh-spill-local'

@@ -36,6 +36,7 @@ import { isWithinWorkspace, extractStringPath } from './path-guard';
 import type { ToolExecution, PreToolDecision } from '@deepseek-ai/dsh-tools';
 import { TurnFailureGuard } from './turn-failure';
 import { configureElectronSubprocess } from './subprocess-compat';
+import { toolInterruptionState } from '../../shared/tool-interruption';
 import type Database from 'better-sqlite3';
 import { mimeExt, sanitizeName } from '../util/mime';
 import { decodeUserMessage, encodeTaskCreationEnvelope, type UserIntent } from '../../shared/task-creation';
@@ -1314,6 +1315,8 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
     offSession: () => void;
     /** true 表示当前无消费者在读事件（轮次间） */
     dormant: boolean;
+    /** Resolves only after the previous invocation detached its listeners. */
+    activeTurn?: Promise<void>;
   }
 
   const conversations = new Map<string, ConversationEntry>();
@@ -1429,6 +1432,12 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
       const endpoint = deps.getEndpoint();
       const model = endpoint?.model ?? 'deepseek-chat';
       const entry = await ensureAgent(conversationId, model);
+      // A Stop click can be followed immediately by Send. Do not attach a
+      // second consumer or enqueue input into an agent still cancelling.
+      while (entry.activeTurn) await entry.activeTurn;
+      let releaseTurn!: () => void;
+      entry.activeTurn = new Promise<void>(resolve => { releaseTurn = resolve; });
+      try {
       // LLM 日志点：runTurn 入口。一行把"谁、用什么模型、发什么、打什么意图"
       // 全部打出来。挂在 ask 链路上半段，是分析 stop-stuck / 卡死的第一步：
       // 看到入口没出现就知道 IPC / runtime 都还没轮到；看到 followup 没打
@@ -1567,6 +1576,10 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
         try { off(); } catch { /* noop */ }
         entry.dormant = true;
       }
+      } finally {
+        entry.activeTurn = undefined;
+        releaseTurn();
+      }
     },
 
     async cancel(conversationId) {
@@ -1575,6 +1588,7 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
       // "stop 没反应 / composer 卡死" 的关键点。
       const tCancel = Date.now();
       const entry = conversations.get(conversationId);
+      const pendingTurn = entry?.activeTurn;
       logger.info(
         `[LLM turn] cancel-request conv=${conversationId} ` +
         `agentCached=${!!entry} activeQuestions=${__pendingSnapshotForTest().questions[conversationId] ?? 0} ` +
@@ -1604,6 +1618,7 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
       // while the approval card is showing leaves activeApproval
       // stuck on the renderer side and blocks new sends.
       drainPendingForConversation(conversationId);
+      await pendingTurn;
       logger.info(`[LLM turn] cancel-done conv=${conversationId} ms=${Date.now() - tCancel}`);
     },
 
@@ -1735,11 +1750,12 @@ export function foldHistory(events: ReadonlyArray<{ type: string; data?: unknown
   // Orphan results (no source.callId) are buffered separately and emitted
   // at the end of pass 2 — defensive only, real DSH sessions always carry
   // a callId on tool/result.
-  const pendingResults = new Map<string, { ok: boolean; data?: unknown; presentationMeta?: unknown; error?: string }>();
+  const pendingResults = new Map<string, { ok: boolean; data?: unknown; presentationMeta?: unknown; error?: string; interruption?: 'stopped' | 'missing-result' }>();
   const orphanResults: Array<{ block: { isError?: boolean; content?: unknown[] } | undefined; presentationMeta: unknown }> = [];
   for (const ev of events) {
     if (ev.type === 'tool/result') {
       const d = ev.data as {
+        error?: unknown;
         message?: {
           source?: { callId?: unknown };
           content?: Array<{ isError?: boolean; content?: unknown[] }>;
@@ -1751,6 +1767,7 @@ export function foldHistory(events: ReadonlyArray<{ type: string; data?: unknown
       if (rawCallId != null) {
         pendingResults.set(String(rawCallId), {
           ok: !block?.isError,
+          interruption: toolInterruptionState(d?.error),
           data: block?.content,
           presentationMeta: d?.meta,
           error: block?.isError ? JSON.stringify(block?.content) : undefined,
@@ -1897,7 +1914,7 @@ export function foldHistory(events: ReadonlyArray<{ type: string; data?: unknown
       const callId = rawCallId !== '' ? rawCallId : `orphan-${orphanSynthCounter++}`;
       const result = pendingResults.get(callId);
       if (result) {
-        const state = classifyResult(result.ok, result.data, result.error);
+        const state = result.interruption ?? classifyResult(result.ok, result.data, result.error);
         turns.push({
           type: 'tool',
           callId,
@@ -1966,7 +1983,7 @@ export function foldHistory(events: ReadonlyArray<{ type: string; data?: unknown
   // resilient to partial logs.
   for (const [strayCallId, result] of pendingResults.entries()) {
     flushAssistant();
-    const resultState = classifyResult(result.ok, result.data, result.error);
+    const resultState = result.interruption ?? classifyResult(result.ok, result.data, result.error);
     turns.push({
       type: 'tool',
       callId: `orphan-${orphanSynthCounter++}-${strayCallId}`,

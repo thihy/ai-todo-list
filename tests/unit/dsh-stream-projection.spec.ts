@@ -28,6 +28,18 @@ describe('compactAiStreamEvents', () => {
 });
 
 describe('projectStreamTurn', () => {
+  it.each([
+    ['TOOL_OUTCOME_UNKNOWN', 'missing-result'],
+    ['ABORTED', 'stopped'],
+  ])('keeps %s distinct from execution failure', (code, state) => {
+    const events: AIStreamEvent[] = [
+      { type: 'sessionEvent', invocationId: 'run', event: { type: 'tool/call', data: { name: 'glob', callId: 'g1', arguments: '{}' } } },
+      { type: 'sessionEvent', invocationId: 'run', event: { type: 'tool/result', data: {
+        error: { code }, message: { source: { callId: 'g1' }, content: [{ isError: true, content: [{ type: 'text', text: 'interrupted' }] }] },
+      } } },
+    ];
+    expect(projectStreamTurn(events, 'run').blocks[0]).toMatchObject({ kind: 'tool-call', state });
+  });
   it('preserves reasoning, tool and text order and exposes metrics', () => {
     // Live wire uses `sessionEvent` envelopes carrying the raw DSH
     // SessionEvent (projectStreamTurn is a pure function over that

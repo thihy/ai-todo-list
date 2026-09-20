@@ -1,3 +1,5 @@
+import { toolInterruptionState } from '../../shared/tool-interruption';
+
 /** Stop a failed filesystem turn before the agent can retry it indefinitely. */
 import { logger } from '../logger';
 
@@ -12,6 +14,7 @@ export class TurnFailureGuard {
     const data = event.data as {
       callId?: unknown;
       name?: string;
+      error?: unknown;
       message?: { source?: { callId?: unknown }; content?: Array<{ isError?: boolean; content?: Array<{ type?: string; text?: string }> }> };
       reason?: { kind?: string; error?: { message?: string } };
     } | undefined;
@@ -23,6 +26,7 @@ export class TurnFailureGuard {
       if (id != null) this.calls.delete(String(id));
       const block = data?.message?.content?.[0];
       if (!name || !FILE_TOOLS.has(name) || !block?.isError) return;
+      if (toolInterruptionState(data?.error)) return;
       const detail = block.content?.filter(c => c.type === 'text').map(c => c.text ?? '').join('\n');
       // User cancellation already has its own normal terminal path.
       if (detail?.startsWith('cancelled:')) return;

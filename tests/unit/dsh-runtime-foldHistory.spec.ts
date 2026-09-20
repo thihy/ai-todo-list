@@ -46,6 +46,18 @@ function toolResult(callId: string, ok = true, content: unknown = { ok: true }, 
 function stepEnd() { return { type: 'step/end', data: {} }; }
 
 describe('foldHistory', () => {
+  it.each([
+    ['TOOL_OUTCOME_UNKNOWN', 'missing-result'],
+    ['ABORTED', 'stopped'],
+    ['ABORTED_BEFORE_DISPATCH', 'stopped'],
+  ])('classifies recovered %s without falsely showing a tool failure', (code, state) => {
+    const result = toolResult('g1', false, [{ type: 'text', text: 'interrupted, outcome unknown' }]);
+    const turns = foldHistory([
+      toolCall('g1', 'glob'),
+      { ...result, data: { ...result.data, error: { code } } },
+    ]);
+    expect(turns[0]).toMatchObject({ type: 'tool', name: 'glob', state });
+  });
   it('returns empty for an empty log', () => {
     expect(foldHistory([])).toEqual([]);
   });

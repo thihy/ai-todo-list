@@ -21,6 +21,7 @@
 import type { AIStreamEvent } from '../../shared/ai-types';
 import { recoverToolResultValue, parseToolArgs } from '../tool-presentation';
 import { normalizeAssistantBlocks } from './normalize-assistant-blocks';
+import { toolInterruptionState } from '../../shared/tool-interruption';
 
 /** Explicit tool-call lifecycle. */
 export type ToolCallState =
@@ -172,6 +173,7 @@ export function projectStreamTurn(
   };
 
   const handleToolResult = (d: {
+    error?: unknown;
     message?: {
       source?: { callId?: unknown };
       content?: Array<{ isError?: boolean; content?: unknown[] }>;
@@ -189,7 +191,7 @@ export function projectStreamTurn(
     // this from the cancel path). Mirror DomainToolRow's detection so the
     // projection's state agrees with what the renderer would compute.
     const stopped = ok === false && typeof result === 'string' && result.startsWith('cancelled:');
-    const state: ToolCallState = stopped ? 'stopped' : ok ? 'done' : 'error';
+    const state: ToolCallState = toolInterruptionState(d.error) ?? (stopped ? 'stopped' : ok ? 'done' : 'error');
 
     if (!callId) {
       // Orphan result — never had a matching call. Render a placeholder at
