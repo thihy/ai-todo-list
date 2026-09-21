@@ -537,6 +537,128 @@ export function __seedPendingApprovalForTest(conversationId: string, reqId: stri
 const PRE_APPROVE_TOOLS: ReadonlySet<string> = new Set(['write', 'edit', 'bash', 'pwsh']);
 const READ_CLASS_TOOLS: ReadonlySet<string> = new Set(['read', 'read_image', 'grep', 'glob']);
 
+// 工作空间路径修改硬拒黑名单 —— 用户明确要求:AI 助手**不允许**通过任何
+// 工具调用(bash / pwsh / write / edit 等)修改 workspace 路径或 DSH 容器
+// 绑定的环境变量。只能通过「设置 → 数据目录」修改,然后由 main 重新
+// 决定 DSH_WORKSPACE_ROOT 并重启 DSH 容器。
+//
+// 触发条件(任一命中即 deny,不弹卡、永不调 AI 分类器):
+//   1. 命令文本含 `DSH_WORKSPACE_ROOT=` / `setx DSH_WORKSPACE_ROOT` 等
+//   2. 写 / 编辑目标是 dsh_workspace 目录里的 config.json / settings.json
+//   3. 写 / 编辑目标含 ROOT_DIR_NAME(dataDir 根目录)
+//   4. 命令文本含 `config.json` / `settings.json` 的写入动作(Set-Content
+//      / Add-Content / Out-File / Set-ItemProperty 等)
+//
+// 不在黑名单的:仅读取 config 文件(模型想看配置)、重命名 dataDir 之外的
+// 普通文件 —— 这些属于用户正常的「读应用配置」场景,沙箱本身已经把它们
+// 挡在 workspace 外。
+//
+// 大小写不敏感 + 子串匹配,避免误伤时太严苛(模型可读不能写)。
+export const WORKSPACE_MUTATION_DENY_REASON =
+  '禁止通过 AI 工具修改工作空间路径或 DSH 容器配置;请到「设置 → 数据目录」修改后重启应用。';
+
+/** 在 args(command / file_path / path) 里查找黑名单关键字面。
+ *  命中返回 true。空 args 一律返回 false(不误伤)。 */
+function argsMatchWorkspaceMutation(toolName: string, args: unknown): boolean {
+  if (!args || typeof args !== 'object') return false;
+  const rec = args as Record<string, unknown>;
+  const haystacks: string[] = [];
+  for (const key of ['command', 'file_path', 'path', 'content', 'description', 'old_string', 'new_string']) {
+    const v = rec[key];
+    if (typeof v === 'string') haystacks.push(v);
+  }
+  if (haystacks.length === 0) return false;
+  const text = haystacks.join('\n').toLowerCase();
+  // 1. 直接修改 env var(Windows / POSIX)
+  if (/\bsetx?\b[^\n]*dsh_workspace_root\b/i.test(text) ||
+      /\bdsh_workspace_root\s*=/i.test(text) ||
+      /\$env:dsh_workspace_root\s*=/i.test(text)) return true;
+  // 2. 写入 settings.json / config.json —— 在我们的设置层这俩文件就是
+  //    dataDir + dsh_workspace 的真源
+  const writesConfigFile =
+    /(settings|config)\.json/.test(text) && (
+      /(set-content|add-content|out-file|set-itemproperty|>" )/i.test(text) ||
+      /=\s*["']?\{/.test(text) // JSON 重写模式
+    );
+  if (writesConfigFile) return true;
+  // 3. 写入动作 + dataDir / dsh_workspace 路径前缀
+  const writesWorkspacePath =
+    /(\bset-content\b|\badd-content\b|\bout-file\b|\bset-itemproperty\b|>\s*["']?["']?[^|]+\brm\s+-rf|\brm\s+-rf|\brmdir\b|\bremove-item\b)/i.test(text) &&
+    /(dsh_workspace|datadir|rootdir|\bdata\b|\bappdata\b)/i.test(text);
+  if (writesWorkspacePath) return true;
+  // 4. write / edit 工具 → 只要 file_path 是 settings.json / config.json,
+  //    一律 deny。理由:这俩文件就是 dshWorkspaceDir 的真源,允许 AI 编辑
+  //    等于变相让它改 workspace。read 类工具不命中这一条(只读无害)。
+  if ((toolName === 'write' || toolName === 'edit') &&
+      typeof rec['file_path'] === 'string' &&
+      /(settings|config)\.json/i.test(rec['file_path'] as string)) {
+    return true;
+  }
+  return false;
+}
+
+/** 监听器本体,被命名导出供单测直接喂参数,避开 cordis/DSH 依赖树。
+ *  返回 PreToolDecision:denty / ask / next() 透传。
+ *  `currentPreset` 跟 currentPermissionPreset 签名一致:接收完整 ToolExecution,
+ *  内部自己从 exec.agent.session 读 live session。 */
+export async function handlePreExecute(
+  exec: ToolExecution,
+  next: () => Promise<PreToolDecision>,
+  deps: {
+    settings: { get(): { dshWorkspaceDir?: string | null } };
+    currentPreset: (exec: ToolExecution) => string | undefined;
+  },
+): Promise<PreToolDecision> {
+  const { name: toolName, arguments: args } = exec;
+  // 0. workspace 黑名单 —— 永远 deny,不论 preset/sandbox 是否开启。
+  //    必须放在 sandbox / approval gate 之前,因为我们不希望这条策略
+  //    被任何后续层(danger-full-access、auto 插件、用户一次审批)绕过。
+  if (argsMatchWorkspaceMutation(toolName, args)) {
+    logger.warn(`tools/pre-execute deny ${toolName}: workspace mutation blocked`);
+    return { kind: 'deny', reason: WORKSPACE_MUTATION_DENY_REASON };
+  }
+  if (READ_CLASS_TOOLS.has(toolName)) {
+    const workspace = deps.settings.get().dshWorkspaceDir || process.env.DSH_WORKSPACE_ROOT;
+    // DSH fs 工具的参数键:`read` / `read_image` 用 `file_path`;
+    // `grep` / `glob` 用 `path` 指定搜索根目录;pattern 是匹配表达式。
+    const requested = extractStringPath(args, ['file_path', 'path']);
+    if (workspace && typeof requested === 'string') {
+      if (!isWithinWorkspace(workspace, requested)) {
+        const reason = `PATH_OUTSIDE_WORKSPACE: ${requested} 不在工作区 ${workspace} 内`;
+        logger.warn(`tools/pre-execute deny ${toolName}: ${reason}`);
+        return { kind: 'deny', reason };
+      }
+    }
+    // 路径合法 → 直通;DSH 工具自己负责后续的读 / grep / glob
+    return next();
+  }
+  if (PRE_APPROVE_TOOLS.has(toolName)) {
+    // Auto 预设:放行,让插件(已先于我们返回 next())的 allow 生效。
+    if (decideMutatingToolGate(deps.currentPreset(exec)) === 'auto-passthrough') {
+      logger.info(`tools/pre-execute auto-passthrough ${toolName}`);
+      return next();
+    }
+    const description = extractStringPath(args, ['description']);
+    const desc = description?.trim()
+      ? description
+      : (() => {
+          const a = args;
+          if (a && typeof a === 'object') {
+            const rec = a as Record<string, unknown>;
+            const cmd = rec['command'];
+            const fp = rec['file_path'];
+            if (typeof cmd === 'string') return cmd.slice(0, 80);
+            if (typeof fp === 'string') return fp;
+          }
+          return '';
+        })();
+    const reason = `AI 想要调用 ${toolName}${desc ? ` (${desc})` : ''}。`;
+    logger.info(`tools/pre-execute ask ${toolName}: ${reason}`);
+    return { kind: 'ask', reason };
+  }
+  return next();
+}
+
 // 会话预设名，与 cordis.yml 的 `permission.presets.auto` 及
 // `@nanmicoder/dsh-auto-mode` 的 AUTO_PERMISSION_PRESET 一致。处于该预设
 // 时会话的审批由插件接管，本文件的强制 ask 必须让位（见
@@ -1318,47 +1440,10 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
     exec: ToolExecution,
     next: () => Promise<PreToolDecision>,
   ): Promise<PreToolDecision> => {
-    const { name: toolName, arguments: args } = exec;
-    if (READ_CLASS_TOOLS.has(toolName)) {
-      const workspace = deps.settings.get().dshWorkspaceDir || process.env.DSH_WORKSPACE_ROOT;
-      // DSH fs 工具的参数键：`read` / `read_image` 用 `file_path`；
-      // `grep` / `glob` 用 `path` 指定搜索根目录；pattern 是匹配表达式。
-      const requested = extractStringPath(args, ['file_path', 'path']);
-      if (workspace && typeof requested === 'string') {
-        if (!isWithinWorkspace(workspace, requested)) {
-          const reason = `PATH_OUTSIDE_WORKSPACE: ${requested} 不在工作区 ${workspace} 内`;
-          logger.warn(`tools/pre-execute deny ${toolName}: ${reason}`);
-          return Promise.resolve({ kind: 'deny', reason });
-        }
-      }
-      // 路径合法 → 直通；DSH 工具自己负责后续的读 / grep / glob
-      return next();
-    }
-    if (PRE_APPROVE_TOOLS.has(toolName)) {
-      // Auto 预设：放行，让插件（已先于我们返回 next()）的 allow 生效。
-      if (decideMutatingToolGate(currentPermissionPreset(exec)) === 'auto-passthrough') {
-        logger.info(`tools/pre-execute auto-passthrough ${toolName}`);
-        return next();
-      }
-      const description = extractStringPath(args, ['description']);
-      const desc = description?.trim()
-        ? description
-        : (() => {
-          const a = args;
-          if (a && typeof a === 'object') {
-            const rec = a as Record<string, unknown>;
-            const cmd = rec['command'];
-            const fp = rec['file_path'];
-            if (typeof cmd === 'string') return cmd.slice(0, 80);
-            if (typeof fp === 'string') return fp;
-          }
-          return '';
-        })();
-      const reason = `AI 想要调用 ${toolName}${desc ? ` (${desc})` : ''}。`;
-      logger.info(`tools/pre-execute ask ${toolName}: ${reason}`);
-      return Promise.resolve({ kind: 'ask', reason });
-    }
-    return next();
+    return handlePreExecute(exec, next, {
+      settings: deps.settings,
+      currentPreset: (e) => currentPermissionPreset(e),
+    });
   });
 
   ctx.on('user-questions/request', (request: {

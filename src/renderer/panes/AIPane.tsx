@@ -158,6 +158,25 @@ interface HistoryTurnLike {
   argsKnown?: boolean;
 }
 
+/** 把首位的 `/` 当成"系统命令前缀"剥掉。本应用没有 slash command,但用户
+ *  习惯从 Claude Code / 其它客户端带过来——打字输入 `/help` 时,期望的
+ *  行为是"help 这条消息发给 AI",而不是把 `/help` 当字面字符串传过去,
+ *  否则模型会困惑(以为是未实现的命令)。
+ *
+ *  规则:
+ *    - 仅剥离**首个**字符 `/`,避免误伤 URL(`https://...`)和带转义的路径
+ *    - 紧随 `/` 的 0~1 个 ASCII 空格一并吃掉,符合 `/help` / `/ help` 两种常见输入
+ *    - 中段 / 末段的 `/` 不动(那是合法文本)
+ *    - 空字符串 / 不以 `/` 开头 → 原样返回
+ *  纯函数,无副作用。runSubmit 在主路径之外再调一次兜底(capture /
+ *  externalSubmit 等不走 textarea onChange 的路径)。 */
+export function stripLeadingSlashCommand(text: string): string {
+  if (!text) return text;
+  if (text[0] !== '/') return text;
+  // 仅剥首位的 `/` + 紧随的 0~1 个 ASCII 空格
+  return text.slice(1).replace(/^ /, '');
+}
+
 /** Active HITL request — at most one of each kind visible at a time. */
 interface ActiveQuestion {
   reqId: string;
@@ -215,6 +234,15 @@ export const AIPane: React.FC<{
   const [historyLoaded, setHistoryLoaded] = useState<Set<string>>(new Set());
   const [bootError, setBootError] = useState<string | null>(null);
   const [input, setInput] = useState('');
+  // 用户在输入框里以 `/` 开头会被当作"系统命令",但本应用目前**没有**任何
+  // slash command —— 输入 `/help` / `/clear` 之类实际是想跟 AI 聊。我们
+  // 在 setInput 那一层把首位的 `/` 吃掉(连同 1 个可选的紧邻空格),保证
+  // 视觉上"打什么发什么",不留尾巴。stripLeadingSlashCommand() 同步再走
+  // 一次 runSubmit 是兜底,处理 capture / externalSubmit 等不走 onChange
+  // 的路径。
+  const onInputChange = useCallback((value: string) => {
+    setInput(stripLeadingSlashCommand(value));
+  }, []);
   // 权限预设选择器。`effective` 是 UI 显示的当前值（用户意图优先，回退到
   // DSH 运行时真相）；`options` 来自 DSH 的 preset 表；两者都为 null/[] 时
   // 隐藏整个控件（DSH 未 boot / 插件没挂载 —— 显示一个点了没反应的按钮
@@ -1129,6 +1157,10 @@ export const AIPane: React.FC<{
       // multimodal model can see them — DSH's LLM adapter passes image
       // URLs through to the underlying vision-capable provider.
       prompt = override.prompt.trim();
+      // Composer 的 /command 输入已经在 onChange 阶段被归一化,这里再做
+      // 一次防御性 strip —— 走 capture / externalSubmit 等非 textarea
+      // 路径仍要保证不留尾。
+      prompt = stripLeadingSlashCommand(prompt);
       if (!prompt && override.images.length === 0) return;
       attached = override.images.map((img) => ({
         path: `data:${img.mime};name=${img.name}`,
@@ -1138,8 +1170,10 @@ export const AIPane: React.FC<{
         text: `[image:${img.name}]\n${img.dataUrl}`,
       }));
     } else {
-      prompt = input.trim();
+      prompt = stripLeadingSlashCommand(input.trim());
       if (!prompt) return;
+      // 把归一化结果写回输入框,用户能看到 `/` 被吃掉,不是凭空消失
+      if (input.trim() !== prompt) setInput(prompt);
       attached = attachments;
     }
 
@@ -1803,7 +1837,7 @@ export const AIPane: React.FC<{
                 <AIComposer
                   ref={textareaRef}
                   value={input}
-                  onChange={setInput}
+                  onChange={onInputChange}
                   attachments={attachments}
                   onRemoveAttachment={removeAttachment}
                   onPickAttachment={() => void pickAttachment()}
@@ -1890,7 +1924,7 @@ export const AIPane: React.FC<{
         <AIComposer
           ref={textareaRef}
           value={input}
-          onChange={setInput}
+          onChange={onInputChange}
           attachments={attachments}
           onRemoveAttachment={removeAttachment}
           onPickAttachment={() => void pickAttachment()}
