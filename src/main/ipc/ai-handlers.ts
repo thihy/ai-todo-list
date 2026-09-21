@@ -25,6 +25,7 @@ import { ConversationRepo } from '../db/conversation-repo';
 import { MarkdownStore } from '../files/markdown';
 import { DrawingStore } from '../files/drawings';
 import { DocumentStore } from '../files/documents';
+import * as composerInbox from '../ai/composer-inbox';
 import type Database from 'better-sqlite3';
 
 interface HandlerDeps {
@@ -42,6 +43,10 @@ interface HandlerDeps {
   /** Absolute path to the directory where inbox attachments are copied
    *  on disk; used by the AI tool surface for inbox.attach / attachBlob. */
   attachmentsDir: string;
+  /** Root data dir — parent of `.todo-list/`. Used by composer-inbox
+   *  cleanup paths (delete / deleteMany / sweep) to wipe the per-conv
+   *  AI composer attachments on disk. */
+  rootDir: string;
 }
 
 let deps: HandlerDeps | null = null;
@@ -305,27 +310,38 @@ export function registerAiHandlers(dsh: DshHandle): void {
     }
   });
 
-  register('ai.conversation.create', (_e, req) => {
-    if (!deps) return Promise.resolve(failResult('ai_not_ready', 'DSH not initialised'));
+  register('ai.conversation.create', async (_e, req) => {
+    if (!deps) return failResult('ai_not_ready', 'DSH not initialised');
     try {
       const conv = deps.conversations.create({ title: req?.title });
       // 容量上限：创建后立即按 updated_at ASC 删最老的，直到未归档数 ≤ 上限。
       // maxConversations = 0 表示不限，跳过 sweep。sweep 只动 DB 不动 JSONL
-      // （纯 DB 操作，不依赖 runtime，避免阻塞 create 路径）。
+      // （纯 DB 操作，不依赖 runtime，避免阻塞 create 路径），但被 sweep
+      // 走的会话对应的 AI composer inbox 文件需要按 id 清理。
       const max = deps.settings.get().maxConversations;
       if (max > 0) {
-        const removed = deps.conversations.sweep(max);
-        if (removed > 0) {
-          logger.info(`conversation sweep: removed ${removed} old row(s) to stay under cap ${max}`);
+        const sweptIds = deps.conversations.sweep(max);
+        if (sweptIds.length > 0) {
+          logger.info(`conversation sweep: removed ${sweptIds.length} old row(s) to stay under cap ${max}`);
           // 广播 data-changed 让所有窗口的 AIPane 列表自动刷新
           for (const w of BrowserWindow.getAllWindows()) {
             if (!w.isDestroyed()) w.webContents.send('app:data-changed', { scope: 'conversations' });
           }
+          // Composer inbox cleanup：每个被 sweep 的 id 顺序清理。
+          // 失败仅 warn —— sweep 的语义本就是「硬删除」，残留孤儿文件
+          // 可以下次手动清，不应该阻塞 create 响应。
+          for (const id of sweptIds) {
+            try {
+              await composerInbox.cleanupForConv(deps.rootDir, id);
+            } catch (err) {
+              console.warn(`[ai.conversation.create] composer inbox cleanup failed for ${id}:`, (err as Error).message);
+            }
+          }
         }
       }
-      return Promise.resolve(okResult({ conversation: conv }));
+      return okResult({ conversation: conv });
     } catch (err) {
-      return Promise.resolve(failResult('create_failed', (err as Error).message));
+      return failResult('create_failed', (err as Error).message);
     }
   });
 
@@ -387,6 +403,13 @@ export function registerAiHandlers(dsh: DshHandle): void {
       } catch (err) {
         // Non-fatal — the agent will be dropped on next dispose() anyway.
         console.warn('[ai.conversation.delete] runtime dispose failed:', (err as Error).message);
+      }
+      // Composer inbox cleanup: same best-effort policy — failure here
+      // must not block the DB delete result the renderer is waiting on.
+      try {
+        await composerInbox.cleanupForConv(deps.rootDir, req.id);
+      } catch (err) {
+        console.warn(`[ai.conversation.delete] composer inbox cleanup failed for ${req.id}:`, (err as Error).message);
       }
       return okResult({ deleted });
     } catch (err) {
@@ -539,6 +562,15 @@ export function registerAiHandlers(dsh: DshHandle): void {
         }
       } catch (e) {
         console.warn('[ai.conversation.deleteMany] runtime unavailable:', (e as Error).message);
+      }
+      // Composer inbox cleanup — per-id, best-effort. 失败的 id 不影响
+      // 整体成功响应（DB 已删，用户看不到半清理状态）。
+      for (const id of req.ids) {
+        try {
+          await composerInbox.cleanupForConv(deps.rootDir, id);
+        } catch (e) {
+          console.warn(`[ai.conversation.deleteMany] composer inbox cleanup failed for ${id}:`, (e as Error).message);
+        }
       }
       // 广播让所有窗口的列表自动刷新（与 ai.ask 的 broadcastDataChanged 行为一致）
       for (const w of BrowserWindow.getAllWindows()) {

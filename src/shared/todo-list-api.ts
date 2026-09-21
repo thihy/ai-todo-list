@@ -274,13 +274,36 @@ export interface TodoListApi {
     /** Pop a single category's submenu (flat topbar buttons). */
     popupMenuCategory(category: '文件' | '编辑' | '视图' | '窗口' | '帮助'): Promise<IpcResponse<'app.popupMenuCategory'>>;
     /**
-     * Show a native file picker. On confirm, main reads up to `maxBytes` of
-     * the file as utf-8 text and returns `{ canceled:false, text, name, ... }`.
-     * Returns `{ canceled:true }` if the user dismisses the dialog. Returns
-     * `ok:false` with code `not_text` / `too_large` if the file is binary or
-     * over the byte limit, so the renderer can surface a clear message.
+     * Show a native file picker. On confirm, main copies the chosen file
+     * into the AI composer inbox (<rootDir>/.todo-list/dsh_workspace/inbox/)
+     * and returns `{ canceled:false, path, name, mime, size }`. The renderer
+     * never sees the file body — the AI uses DSH `read` / `read_image` to
+     * stream it. Returns `{ canceled:true }` if the user dismisses the dialog.
      */
-    pickFile(opts?: { maxBytes?: number }): Promise<IpcResponse<'app.pickFile'>>;
+    pickFile(): Promise<IpcResponse<'app.pickFile'>>;
+    /**
+     * Drop a renderer-side Blob (e.g. pasted image) into the AI composer
+     * inbox. Caller has already encoded it to a `data:` URL; main decodes
+     * the base64 payload and writes the bytes to disk, returning the same
+     * `{ path, name, mime, size }` shape as `pickFile`. `conversationId` is
+     * the currently-active AIPane conversation (sent via
+     * `todo-list:ai-conv-active`); pass `null` for drafts.
+     */
+    importBlob(args: {
+      conversationId: string | null;
+      name: string;
+      mime: string;
+      dataUrl: string;
+    }): Promise<IpcResponse<'ai.attachment.importBlob'>>;
+    /**
+     * Move paths from the `draft` index key to a real conversationId key.
+     * Called by AIPane on submit right after `pickFile`-produced
+     * attachments are about to land in the prompt. Idempotent.
+     */
+    relinkDraft(args: {
+      conversationId: string;
+      paths: string[];
+    }): Promise<IpcResponse<'ai.attachment.relinkDraft'>>;
     /** User-menu actions (bottom-left chip). */
     action(a: 'about' | 'checkUpdate' | 'quit'): Promise<IpcResponse<'app.action'>>;
     /** OS username for the bottom-left chip (no hardcoded preset identity). */

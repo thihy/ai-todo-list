@@ -228,27 +228,31 @@ export class ConversationRepo {
    * Cap enforcement: when the active (unarchived) count exceeds `maxCount`,
    * hard-delete the oldest rows by `updated_at ASC` until we're back under
    * the cap. `maxCount <= 0` means "unlimited" → no-op. Archived rows are
-   * never swept — they're "kept but hidden" by the user. Pure DB op; the
-   * on-disk JSONL of swept rows is left as a ghost (the renderer accepts
-   * this trade-off to keep `ai.conversation.create` free of a runtime-boot
-   * dependency).
+   * never swept — they're "kept but hidden" by the user. Returns the list
+   * of swept conversation ids so callers can also clean per-conv side
+   * effects (composer inbox files, etc). The on-disk JSONL of swept rows
+   * is still left as a ghost — the renderer accepts this trade-off to
+   * keep `ai.conversation.create` free of a runtime-boot dependency.
    */
-  sweep(maxCount: number): number {
-    if (!Number.isFinite(maxCount) || maxCount <= 0) return 0;
+  sweep(maxCount: number): string[] {
+    if (!Number.isFinite(maxCount) || maxCount <= 0) return [];
     const current = this.count(false); // 仅未归档
-    if (current <= maxCount) return 0;
+    if (current <= maxCount) return [];
     const overflow = current - maxCount;
-    const res = this.db
-      .prepare(
-        `DELETE FROM conversations
-         WHERE id IN (
-           SELECT id FROM conversations
-           WHERE archived = 0
-           ORDER BY updated_at ASC
-           LIMIT ?
-         )`,
+    const selectIds = this.db
+      .prepare<[number]>(
+        `SELECT id FROM conversations
+         WHERE archived = 0
+         ORDER BY updated_at ASC
+         LIMIT ?`,
       )
-      .run(overflow);
-    return res.changes;
+      .all(overflow) as Array<{ id: string }>;
+    const ids = selectIds.map((r) => r.id);
+    if (ids.length === 0) return [];
+    const placeholders = ids.map(() => '?').join(',');
+    this.db
+      .prepare(`DELETE FROM conversations WHERE id IN (${placeholders})`)
+      .run(...ids);
+    return ids;
   }
 }

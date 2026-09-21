@@ -29,6 +29,7 @@ import { MarkdownStore } from './files/markdown';
 import { DrawingStore } from './files/drawings';
 import { DocumentStore } from './files/documents';
 import { InboxStore } from './files/inbox';
+import * as composerInbox from './ai/composer-inbox';
 import { SettingsStore } from './settings/store';
 import { CaptureController } from './shortcuts/capture';
 import { TrayController } from './tray/tray';
@@ -219,6 +220,9 @@ function bootstrap(): void {
     mkdirSync(drawingsDir, { recursive: true });
     mkdirSync(attachmentsDir, { recursive: true });
     mkdirSync(dshWorkspaceDir, { recursive: true });
+    // Composer inbox lives under the DSH workspace so AI `read` /
+    // `read_image` can find it without sandbox policy edits.
+    composerInbox.initComposerInbox(rootDir);
     mark('data-dirs-created');
 
     startupState.setCorePhase('db-open');
@@ -346,7 +350,7 @@ function bootstrap(): void {
     // projections; the SQLite copy uses better-sqlite3's online
     // backup API which handles WAL correctly.
     registerBackupHandlers({ rootDir, db: handle.db });
-    registerAppHandlers(() => main);
+    registerAppHandlers(rootDir, () => main);
     registerCaptureHandlers(repo, md);
     registerCapturePreviewHandler();
 
@@ -431,7 +435,7 @@ function bootstrap(): void {
           const dsh = await initDshContainer({ repo, md, drawings, settings, db: handle.db, docs });
           const { registerAiHandlers, bindAiDeps } = await import('./ipc/ai-handlers');
           registerAiHandlers(dsh);
-          bindAiDeps({ dsh, settings, repo, conversations, md, drawings, docs, db: handle.db, attachmentsDir });
+          bindAiDeps({ dsh, settings, repo, conversations, md, drawings, docs, db: handle.db, attachmentsDir, rootDir });
           logger.info(`startup[ai]: DSH handlers registered (${reason}) @ ${Date.now() - aiStart}ms`);
 
           // The splash gate. warmupDshRuntime awaits the live DSH
@@ -825,8 +829,6 @@ function broadcastDataChanged(scope: 'content'): void {
 
 /** Best-effort mime-type from extension. Returns 'application/octet-stream'
  *  for unknown extensions so callers can branch on a known set. */
-/** Best-effort mime-type from extension. Returns 'application/octet-stream'
- *  for unknown extensions so callers can branch on a known set. */
 function mimeFromExt(ext: string): string {
   const map: Record<string, string> = {
     '.txt': 'text/plain',
@@ -870,28 +872,6 @@ function mimeFromExt(ext: string): string {
     '.env': 'text/plain',
   };
   return map[ext] ?? 'application/octet-stream';
-}
-
-/** Heuristic text/binary check. Treat the file as binary if any of the
- *  first 8 KiB is a NUL byte or a high ratio of bytes are outside printable
- *  ASCII + common whitespace. */
-function looksLikeText(buf: Buffer): boolean {
-  const sample = buf.subarray(0, Math.min(buf.length, 8 * 1024));
-  if (sample.length === 0) return true;
-  let bad = 0;
-  for (let i = 0; i < sample.length; i++) {
-    const b = sample[i]!;
-    if (b === 0) return false;
-    // Allow printable ASCII (0x20-0x7E), tab, LF, CR, and high-bit bytes
-    // (UTF-8 multibyte sequences). Anything else (e.g. 0x01-0x08, 0x0B,
-    // 0x0C, 0x0E-0x1F) is suspicious but only counts toward the ratio.
-    const printable =
-      (b >= 0x20 && b <= 0x7e) ||
-      b === 0x09 || b === 0x0a || b === 0x0d ||
-      b >= 0x80;
-    if (!printable) bad++;
-  }
-  return bad / sample.length < 0.05;
 }
 
 function registerSettingsHandlers(
@@ -1108,7 +1088,7 @@ function registerCaptureHandlers(repo: TodoRepo, md: MarkdownStore): void {
   });
 }
 
-function registerAppHandlers(getMainWindow: () => BrowserWindow | null): void {
+function registerAppHandlers(rootDir: string, getMainWindow: () => BrowserWindow | null): void {
   // Title-bar 菜单 button: pop the native application menu at the cursor.
   register('app.popupMenu', async () => {
     try {
@@ -1130,13 +1110,14 @@ function registerAppHandlers(getMainWindow: () => BrowserWindow | null): void {
       return failResult('popup_menu_failed', (err as Error).message);
     }
   });
-  // Native file picker for the AI composer. Reads up to `maxBytes` (default
-  // 256 KiB) of the chosen file as utf-8 text and returns both the path and
-  // the body so the renderer can inline it into the prompt. Binary / over-
-  // limit files return ok=false with a precise code so the renderer can
-  // surface a clear message instead of silently truncating.
-  const PICK_TEXT_LIMIT_DEFAULT = 256 * 1024;
-  register('app.pickFile', async (_e, req) => {
+  // Native file picker for the AI composer. Copies the chosen file into
+  // the composer inbox (<rootDir>/.todo-list/dsh_workspace/inbox/) and
+  // returns the inbox absolute path + metadata. The file body never
+  // leaves main; the AI uses DSH `read` / `read_image` to stream it.
+  // The path is registered under the `draft` index key — AIPane will
+  // call `ai.attachment.relinkDraft` on submit to move it under the
+  // real conversationId so cleanup-on-delete can find it.
+  register('app.pickFile', async (_e, _req) => {
     try {
       const win = BrowserWindow.getFocusedWindow() ?? undefined;
       const res = await dialog.showOpenDialog(win as never, {
@@ -1147,28 +1128,65 @@ function registerAppHandlers(getMainWindow: () => BrowserWindow | null): void {
         return okResult({ canceled: true });
       }
       const filePath = res.filePaths[0]!;
-      const stat = statSync(filePath);
-      const limit = req.maxBytes ?? PICK_TEXT_LIMIT_DEFAULT;
+      const name = basename(filePath);
       const ext = extname(filePath).toLowerCase();
       const mime = mimeFromExt(ext);
-      if (stat.size > limit) {
-        return failResult('too_large', `文件太大 (${stat.size} 字节)，上限 ${limit} 字节`);
-      }
-      const buf = readFileSync(filePath);
-      if (!looksLikeText(buf)) {
-        return failResult('not_text', '文件不是可读文本，请选择代码或文本文件');
-      }
-      const text = buf.toString('utf8');
+      const stat = statSync(filePath);
+      const result = await composerInbox.copyPathToInbox(rootDir, filePath, name, mime, null);
       return okResult({
         canceled: false,
-        path: filePath,
-        name: basename(filePath),
-        mime,
-        size: stat.size,
-        text,
+        path: result.path,
+        name: result.name,
+        mime: result.mime,
+        size: result.size ?? stat.size,
       });
     } catch (err) {
       return failResult('pick_file_failed', (err as Error).message);
+    }
+  });
+  // AI composer: drop a renderer-side Blob (e.g. pasted image) into the
+  // composer inbox. Renderer does the FileReader.readAsDataURL round-
+  // trip; main decodes base64 → bytes and writes to disk. conversationId
+  // is the active AIPane conversation (from `todo-list:ai-conv-active`),
+  // or null for draft state (the AIPane will relink on submit).
+  register('ai.attachment.importBlob', async (_e, req) => {
+    try {
+      const m = /^data:([^;,]+)?(?:;base64)?,(.*)$/s.exec(req.dataUrl);
+      if (!m) {
+        return failResult('bad_data_url', 'dataUrl 格式不正确');
+      }
+      const mime = m[1] || req.mime || 'application/octet-stream';
+      const b64 = m[2] ?? '';
+      const buf = Buffer.from(b64, 'base64');
+      const result = await composerInbox.writeBlobToInbox(
+        rootDir,
+        req.name,
+        mime,
+        buf,
+        req.conversationId,
+      );
+      return okResult({
+        path: result.path,
+        name: result.name,
+        mime: result.mime,
+        size: result.size,
+      });
+    } catch (err) {
+      return failResult('import_blob_failed', (err as Error).message);
+    }
+  });
+  // Move paths from the `draft` index key to a real conversationId key.
+  // Idempotent: paths not under `draft` are simply re-added to the target
+  // key. Called by AIPane on submit right before it issues the LLM call.
+  register('ai.attachment.relinkDraft', async (_e, req) => {
+    try {
+      if (!req.conversationId || !Array.isArray(req.paths)) {
+        return okResult(undefined);
+      }
+      await composerInbox.relinkDraft(rootDir, req.conversationId, req.paths);
+      return okResult(undefined);
+    } catch (err) {
+      return failResult('relink_draft_failed', (err as Error).message);
     }
   });
   // Bottom-left user menu actions.

@@ -149,7 +149,11 @@ const api: TodoListApi = {
   app: {
     popupMenu: () => invoke('app.popupMenu', undefined as never),
     popupMenuCategory: (category: string) => invoke('app.popupMenuCategory', { category }),
-    pickFile: (opts) => invoke('app.pickFile', opts ?? {}),
+    pickFile: () => invoke('app.pickFile', undefined as never),
+    importBlob: (args: { conversationId: string | null; name: string; mime: string; dataUrl: string }) =>
+      invoke('ai.attachment.importBlob', args),
+    relinkDraft: (args: { conversationId: string; paths: string[] }) =>
+      invoke('ai.attachment.relinkDraft', args),
     action: (action) => invoke('app.action', { action }),
     osUser: () => invoke('app.osUser', undefined as never),
     setFocus: (focus) => invoke('app.focus.set', { focus }),

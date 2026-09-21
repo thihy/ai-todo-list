@@ -113,6 +113,8 @@ const RUNTIME_CHANNEL_KEYS = [
   'app.popupMenuCategory',
   'app.pickFile',
   'app.action',
+  'ai.attachment.importBlob',
+  'ai.attachment.relinkDraft',
   'app.osUser',
   'app.focus.set',
   'app.focus.get',

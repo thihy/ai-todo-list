@@ -521,8 +521,7 @@ export const AIPane: React.FC<{
   useEffect(() => {
     if (!streamingTurnId || !streamingConvId) return;
     const projection = projectStreamTurn(events, streamingTurnId);
-    if (projection === null) return;
-    if (
+    if (projection === null) return;    if (
       projection.createdTodoId &&
       openedCreatedTodoIdRef.current !== projection.createdTodoId
     ) {
@@ -676,6 +675,18 @@ export const AIPane: React.FC<{
       el.removeEventListener('scroll', onScroll);
     };
   }, [recomputeActiveQuestion]);
+
+  // 通知页面其它组件（中央 Composer）当前活跃的 convId。
+  // Composer 读这个事件来决定 importBlob 该用哪个 convId 写入
+  // dsh_workspace/inbox/。集中在一处 effect 而不是散在每个
+  // setCurrentId 调用点，避免遗漏。
+  useEffect(() => {
+    window.dispatchEvent(
+      new CustomEvent('todo-list:ai-conv-active', {
+        detail: { conversationId: currentId },
+      }),
+    );
+  }, [currentId]);
 
   // Auto-follow the bottom of the conversation stream — but only when the
   // user is at (or near) the bottom. Pauses on upward wheel / touch / keyboard
@@ -848,15 +859,17 @@ export const AIPane: React.FC<{
     setDraftPreset(null);
   }, []);
 
-  // Open the native file picker (main does dialog.showOpenDialog, reads the
-  // file as utf-8 up to a small limit) and append the result to the chip
-  // row above the textarea. Multi-pick is disabled — adding one file at a
-  // time keeps the prompt length predictable; the user can keep clicking
-  // + to add more.
+  // Open the native file picker (main copies the file into
+  // <rootDir>/.todo-list/dsh_workspace/inbox/ and returns just the
+  // absolute path + metadata) and append the result to the chip row above
+  // the textarea. Multi-pick is disabled — adding one file at a time keeps
+  // the prompt length predictable; the user can keep clicking + to add
+  // more. The file body is never loaded into renderer memory; the AI
+  // streams it later via DSH `read` / `read_image`.
   const pickAttachment = async (): Promise<void> => {
-    const r = await window.todoList.app.pickFile({ maxBytes: 256 * 1024 });
+    const r = await window.todoList.app.pickFile();
     if (!r.ok) {
-      // not_text / too_large — surface the message in the prompt itself so
+      // pick_file_failed — surface the message in the prompt itself so
       // the user knows what went wrong without leaving the pane.
       setInput((cur) => cur || `[无法附加文件：${r.message ?? r.code ?? '未知错误'}]`);
       return;
@@ -866,8 +879,7 @@ export const AIPane: React.FC<{
       path: r.data.path!,
       name: r.data.name!,
       mime: r.data.mime ?? 'application/octet-stream',
-      size: r.data.size ?? (r.data.text?.length ?? 0),
-      text: r.data.text ?? '',
+      size: r.data.size ?? 0,
     };
     setAttachments((prev) => [...prev, a]);
   };
@@ -879,6 +891,10 @@ export const AIPane: React.FC<{
     setShowHistory(false);
     setRowMenuId(null);
     if (id === currentId) return;
+    // 切换会话时清空当前 composer 的附件 chip —— 之前选的文件留在
+    // 另一会话的上下文里，跨会话混合会污染 prompt。Draft 期间的 draft
+    // 路径还会留在磁盘上，runSubmit 时主进程会 relink 到当前 convId。
+    setAttachments([]);
     setCurrentId(id);
   };
 
@@ -1162,12 +1178,15 @@ export const AIPane: React.FC<{
       // 路径仍要保证不留尾。
       prompt = stripLeadingSlashCommand(prompt);
       if (!prompt && override.images.length === 0) return;
+      // Composer → AIPane 图片：Composer 已经在粘贴时把字节流落盘到
+      // dsh_workspace/inbox/（带 convId 前缀），这里只持有元数据 +
+      // inbox 绝对路径。不再 inline dataUrl 进 prompt —— AI 用 DSH
+      // `read_image` 读磁盘上的 png/jpeg。
       attached = override.images.map((img) => ({
-        path: `data:${img.mime};name=${img.name}`,
+        path: img.path,
         name: img.name,
         mime: img.mime,
-        size: Math.floor((img.dataUrl.length * 3) / 4),
-        text: `[image:${img.name}]\n${img.dataUrl}`,
+        size: img.size,
       }));
     } else {
       prompt = stripLeadingSlashCommand(input.trim());
@@ -1192,6 +1211,11 @@ export const AIPane: React.FC<{
       setTurnsByConv((prev) => ({ ...prev, [convId!]: [] }));
       setHistoryLoaded((prev) => new Set(prev).add(convId!));
       setCurrentId(convId);
+      // 通知 Composer：当前活跃 convId 已经落地（之前是 draft），
+      // 后续粘贴图片走 importBlob 时会写到正确的 convId key。
+      window.dispatchEvent(
+        new CustomEvent('todo-list:ai-conv-active', { detail: { conversationId: convId } }),
+      );
       // draft 期间选的预设：行刚建出来，现在有地方落库了。必须赶在
       // runTurn 之前写完 —— main 侧 pinPermissionPreset() 是 ensureAgent()
       // 里读 DB 的，晚一步这次对话就按 defaultPreset 跑了。
@@ -1206,11 +1230,37 @@ export const AIPane: React.FC<{
 
     if (!override) setAttachments([]);
 
+    // 把 draft 期间 pickFile 写入的「c-draft-...」路径挪到正式 convId
+    // 下，让 cleanupForConv(convId) 之后能找到并 unlink。Composer 已经
+    // 把数据写到正确的 convId key（它读了 conv-active 事件），所以
+    // 这里只对 `app.pickFile` 的产物（即 path 前缀是 c-draft- 的）调用
+    // relinkDraft —— relinkDraft 是幂等的，对非 draft 路径是 no-op。
+    if (attached.length > 0 && convId) {
+      const draftPaths = attached
+        .map((a) => a.path)
+        .filter((p) => /[/\\]c-draft-[^/\\]+$/.test(p));
+      if (draftPaths.length > 0) {
+        try {
+          await window.todoList.app.relinkDraft({
+            conversationId: convId,
+            paths: draftPaths,
+          });
+        } catch (err) {
+          // Best-effort: 索引跟不上不影响 prompt 投递 —— DSH 仍能
+          // 从磁盘读这些孤儿文件，只是删除对话时不会自动清。
+          console.warn('[runSubmit] relinkDraft failed:', err);
+        }
+      }
+    }
+
     let finalWire = prompt;
     if (attached.length > 0) {
+      // 每个附件塞一个 header + 绝对路径块。AI 看到路径后会自己调
+      // `read` / `read_image` 流式读磁盘，prompt 体积不会随附件 size
+      // 增长；DSH 的 path-guard 确保路径必须在 dsh_workspace/ 下。
       const blocks = attached.map((a) => {
         const header = `[attached: ${a.name} (${a.mime}, ${a.size} 字节)]`;
-        return `${header}\n${a.text}`;
+        return `${header}\n${a.path}`;
       });
       finalWire = `${prompt}\n\n---\n\n${blocks.join('\n\n---\n\n')}`;
     }
@@ -1965,12 +2015,38 @@ function historyToTurn(h: HistoryTurnLike): Turn {
     // 只在加载历史时跑一次，不在流式热路径上。
     const userIntent: 'chat' | 'create-task' | undefined =
       h.intent ?? (decodeUserMessage(rawText).intent ?? undefined);
+    // 历史回放：把新格式的附件引用块（`[attached: name (mime, size 字节)]\n<path>`）
+    // 解析出来，挂到 `attached`，并把 user 字符串里的对应块剥掉，让 bubble
+    // 只显示用户原始输入。块之间用 `\n\n---\n\n` 分隔，所以正则匹配到
+    // 下一个 header 或文末为止。
+    const ATTACH_BLOCK = /\[attached: ([^()]+) \(([^,]+), (\d+) 字节\)\]\n([^\n]+)/g;
+    const attached: AttachedFile[] = [];
+    let userText = rawText;
+    const matches = rawText.matchAll(ATTACH_BLOCK);
+    for (const m of matches) {
+      attached.push({
+        name: m[1]!.trim(),
+        mime: m[2]!.trim(),
+        size: Number(m[3]),
+        path: m[4]!.trim(),
+      });
+    }
+    if (attached.length > 0) {
+      // 整体替换：把附件块 + 紧随其后的 `\n\n---\n\n` 分隔符一起剥掉。
+      userText = rawText
+        .replace(/\[attached: [^\n]+\n[^\n]+\n\n---\n\n?/g, '')
+        // 兜底：若历史文本格式稍变（缺 trailing separator），把孤立的
+        // header 行 + 路径行也剥掉，避免 bubble 显示重复的附件引用。
+        .replace(/\[attached: [^\n]+\n[^\n]+/g, '')
+        .trimEnd();
+    }
     return {
       id: crypto.randomUUID(),
-      user: rawText,
+      user: userText,
       userIntent,
       blocks: [],
       status: 'done',
+      ...(attached.length > 0 ? { attached } : {}),
     };
   }
   if (h.type === 'assistant') {

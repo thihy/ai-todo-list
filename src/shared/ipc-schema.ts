@@ -724,22 +724,61 @@ export interface IpcRegistry {
   'app.popupMenuCategory': IpcChannel<{ category: string }, IpcResult<void>>;
 
   // Native file picker. The renderer asks the main process to show
-  // dialog.showOpenDialog; on confirm, main reads up to `maxBytes` of the
-  // file as utf-8 text and returns both the raw text and the metadata.
-  // Binary / oversized files return ok=false with code `not_text` /
-  // `too_large` so the renderer can surface a clear message instead of
-  // silently truncating. Returns ok=true with canceled=true when the user
-  // dismisses the dialog.
+  // dialog.showOpenDialog; on confirm, main copies the chosen file into the
+  // AI composer inbox (<rootDir>/.todo-list/dsh_workspace/inbox/) and
+  // returns its absolute path + metadata. The renderer only ever sees
+  // metadata — the file stays on disk and the AI uses DSH `read` /
+  // `read_image` to stream it. Returns ok=true with canceled=true when
+  // the user dismisses the dialog.
   'app.pickFile': IpcChannel<
-    { maxBytes?: number },
+    undefined,
     IpcResult<{
       canceled: boolean;
       path?: string;
       name?: string;
       mime?: string;
       size?: number;
-      text?: string;
     }>
+  >;
+
+  // Renderer → main: drop a Blob (e.g. pasted image from the central
+  // Composer) into the AI composer inbox. The caller does the
+  // FileReader.readAsDataURL round-trip; main decodes base64 → bytes and
+  // writes the file under the inbox, returning the inbox-relative
+  // absolute path + metadata. `conversationId` is the currently-active
+  // AIPane conversation (sent via `todo-list:ai-conv-active`); pass
+  // `null` for drafts — main parks the entry under the `draft` key and
+  // relinks it once the AIPane publishes its real convId.
+  'ai.attachment.importBlob': IpcChannel<
+    {
+      conversationId: string | null;
+      name: string;
+      mime: string;
+      /** Full data URL: `data:<mime>;base64,<...>`. */
+      dataUrl: string;
+    },
+    IpcResult<{
+      path: string;
+      name: string;
+      mime: string;
+      size: number;
+    }>
+  >;
+
+  // Renderer → main: move a list of paths from the `draft` key in the
+  // composer inbox index to a real conversationId key. Called by AIPane
+  // on submit right after `app.pickFile`-produced attachments are about
+  // to land in the prompt — the file bodies were already written when
+  // the user picked them (path prefix is `c-draft-...`), but the index
+  // entry must follow the real convId so `cleanupForConv(convId)` can
+  // find and unlink them later. Idempotent: paths not in `draft` are
+  // no-ops.
+  'ai.attachment.relinkDraft': IpcChannel<
+    {
+      conversationId: string;
+      paths: string[];
+    },
+    IpcResult<void>
   >;
 
   // User-menu actions (bottom-left chip): about dialog, check-for-update, quit.

@@ -9,12 +9,14 @@ import {
 } from '@deepseek-ai/dsh-client-ui-primitives';
 import type { ComposerBlock } from '@deepseek-ai/dsh-client-ui-conversation/client';
 
+/** Composer 附件元数据。文件本体留在磁盘（<rootDir>/.todo-list/
+ *  dsh_workspace/inbox/c-<convId>-<ulid>-<basename>），AI 用 DSH `read` /
+ *  `read_image` 工具流式读；prompt 里只塞 path 引用，不再 inline 全文。 */
 export interface AIComposerAttachment {
   path: string;
   name: string;
   mime: string;
   size: number;
-  text: string;
 }
 
 interface AIComposerProps {
