@@ -110,10 +110,18 @@ The system SHALL expose `read`, `read_image`, `write`, `edit`, `bash` (POSIX), `
 ### Requirement: Mandatory approval for mutating tools
 The system SHALL force every call to `write`, `edit`, `bash`, and `pwsh` through `ctx.approval.request(...)` via a `tools/pre-execute` listener mounted in `src/main/dsh/dsh-runtime.ts`. The listener MUST return `{ kind: 'ask' }` regardless of DSH sandbox escalation arguments, and the existing `approval/request` waterfall listener MUST broadcast the request to the renderer for user response within 90 seconds before timing out.
 
+The one exception is a session whose permission preset resolves to `auto`. There the listener MUST delegate to the `@nanmicoder/dsh-auto-mode` policy mounted in `resources/dsh/cordis.yml` and return `next()` instead of `{ kind: 'ask' }`, so the plugin's verdict governs. That plugin returns `allow` for deterministic-safe calls, `deny` for hard-denied ones (writes outside the workspace, credential reads, destructive targets, malformed sandbox escalations), and `ask` otherwise, which re-enters the same `approval/request` bridge and 90-second timeout. A classifier failure MUST fail closed. Every other preset (`read-only`, `workspace-write`, `danger-full-access`) MUST retain the unconditional `{ kind: 'ask' }` behavior above.
+
 #### Scenario: Write requires approval
-- **WHEN** the AI calls `write({ file_path: 'a.txt', content: 'hi' })`
+- **WHEN** the AI calls `write({ file_path: 'a.txt', content: 'hi' })` in a session whose preset is not `auto`
 - **THEN** `PendingApprovalCard` displays the file path, byte length, and a 200-character content preview
 - **AND** the tool only proceeds if the user approves within 90 seconds
+
+#### Scenario: Auto preset delegates shell approval
+- **WHEN** the AI calls `pwsh({ command: 'Get-ChildItem' })` in a session whose preset is `auto`
+- **THEN** the auto-mode policy classifies the call and, when it is deterministic-safe, the tool runs without displaying `PendingApprovalCard`
+- **AND** a destructive or outside-workspace command is denied without prompting
+- **AND** an ambiguous command still displays `PendingApprovalCard` with the plugin's stated reason
 
 ### Requirement: Persistent and session tool grants
 The system SHALL persist user-approved tool grants in `PersistedSettings.aiGrantedTools` as `Record<toolName, 'session' | 'always'>`. `session` grants SHALL expire on app restart and apply only to the current conversation. `always` grants SHALL persist across restarts and apply globally. The Settings UI MUST list currently-granted tools with a revoke button. The `approval/request` waterfall listener in `src/main/dsh/dsh-runtime.ts` MUST short-circuit when the requested tool is in either grants table.

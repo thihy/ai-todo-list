@@ -35,7 +35,7 @@ import { presentToolCall, presentToolResult, recoverToolResultValue } from '@sha
 import { isWithinWorkspace, extractStringPath } from './path-guard';
 import type { ToolExecution, PreToolDecision } from '@deepseek-ai/dsh-tools';
 import { TurnFailureGuard } from './turn-failure';
-import { configureElectronSubprocess } from './subprocess-compat';
+import { configureElectronSubprocess, configureElectronSandboxRunner } from './subprocess-compat';
 import { toolInterruptionState } from '../../shared/tool-interruption';
 import type Database from 'better-sqlite3';
 import { mimeExt, sanitizeName } from '../util/mime';
@@ -496,40 +496,43 @@ export function __seedPendingApprovalForTest(conversationId: string, reqId: stri
   };
 }
 
-/** Module-level pointer to the conversation whose turn is currently
- *  in flight on this Node process. Used by the user-questions/request
- *  waterfall listener (which DSH does NOT enrich with the agent /
- *  conversationId) so a pending question can be associated with the
- *  conversation that asked it. Then runtime.cancel / disposeConversation
- *  can drain by conversationId without nuking peer conversations.
- *
- *  Map (not a single var) because in theory multiple agents could run
- *  turns in parallel; in practice today only one turn runs at a time
- *  (runTurn serializes via whenIdle), so the map typically has one
- *  entry. Keeping it as a Map future-proofs against parallel turns. */
-const activeTurnConversations = new Map<string, true>();
-
-// ===== AI 工具授权表（OPENSPEC §ai-assistant Persistent and session tool grants）=====
-//
-// 两级粒度：
-//   - `aiGrantedTools: Record<toolName, 'always'>`  → 持久化在 settings.aiGrantedTools，
-//     进程重启仍生效；由 approval/request 监听器读取。
-//   - `sessionGrantsByConv: Map<convId, Set<toolName>>`  → 内存态，"本次会话允许"专用；
-//     进程重启即丢失。
-//
-// 两者短路 `approval/request` 监听器：always 在任意会话都直接通过；session 只对
-// 命中的 conversationId 通过。撤销走 `revokeSessionTool` / settings.patch。
+// Legacy tool-grant storage is retained only for listing and cleanup.
+// Approval dispatch ignores BOTH these entries and settings.aiGrantedTools.
 //
 // 工具白名单（应在 approval/request 之前过的 read 类工具名 + mutate 类工具名）
 // 由 `PRE_APPROVE_TOOLS` / `READ_CLASS_TOOLS` 两个常量维护；新增工具时同步。
 const PRE_APPROVE_TOOLS: ReadonlySet<string> = new Set(['write', 'edit', 'bash', 'pwsh']);
 const READ_CLASS_TOOLS: ReadonlySet<string> = new Set(['read', 'read_image', 'grep', 'glob']);
-const EMPTY_GRANTS: ReadonlySet<string> = new Set();
+
+// 会话预设名，与 cordis.yml 的 `permission.presets.auto` 及
+// `@nanmicoder/dsh-auto-mode` 的 AUTO_PERMISSION_PRESET 一致。处于该预设
+// 时会话的审批由插件接管，本文件的强制 ask 必须让位（见
+// `tools/pre-execute` 监听器里的 auto 分支）。
+const AUTO_PRESET = 'auto';
+
+/**
+ * `tools/pre-execute` 监听器对单个 mutate 工具调用的分支决定。
+ *
+ * 单独抽成纯函数（而不是内联在监听器里）是为了可测：监听器本身只在
+ * `bootDsh()` 里存在，需要真实 Cordis/DSH 依赖树才能跑（见
+ * tests/unit/warmup-dsh-runtime.spec.ts 的说明），而这条分支正是整个
+ * auto 集成的承重部分——一旦退回无条件 `ask`，插件的 allow 会被覆盖，
+ * 集成静默失效且没有报错。
+ *
+ * @param preset 当前会话的预设名；`undefined` 表示 permissionPresets 服务
+ *   缺失或会话未初始化。
+ * @returns `'auto-passthrough'` → 返回 next()，把决定权交给插件；
+ *   `'force-ask'` → 维持强制审批。
+ */
+export function decideMutatingToolGate(
+  preset: string | undefined,
+): 'auto-passthrough' | 'force-ask' {
+  return preset === AUTO_PRESET ? 'auto-passthrough' : 'force-ask';
+}
 
 const sessionGrantsByConv = new Map<string, Set<string>>();
 
-/** Mark `toolName` as granted for the lifetime of the given conversation.
- *  Used by `ai.userApproval.grantSession` IPC; idempotent. */
+/** Legacy storage helper, no longer used by grant IPC or approval dispatch. */
 export function grantSessionTool(conversationId: string, toolName: string): void {
   if (!conversationId || !toolName) return;
   let set = sessionGrantsByConv.get(conversationId);
@@ -643,14 +646,6 @@ function broadcastCancel(kind: 'question' | 'approval', reqId: string): void {
   }
 }
 
-/** First key of a Map (insertion order). Used to associate a DSH
- *  waterfall event with its conversation when DSH doesn't enrich the
- *  listener signature. */
-function firstKey<K>(m: Map<K, unknown>): K | undefined {
-  for (const k of m.keys()) return k;
-  return undefined;
-}
-
 /** 给渲染端构造 UserQuestionRequest payload。抽出来让 waterfall 监听器
  *  一行写完 */
 function questionRequestPayload(reqId: string, request: { questions: ReadonlyArray<{ id: string; question: string; detail?: string; header?: string; options?: ReadonlyArray<{ label: string; description?: string }>; multiSelect?: boolean }> }): UserQuestionRequest {
@@ -695,9 +690,11 @@ export function handleUserQuestionRequest(
   request: {
     questions: ReadonlyArray<{ id: string; question: string; detail?: string; header?: string; options?: ReadonlyArray<{ label: string; description?: string }>; multiSelect?: boolean }>;
     signal?: AbortSignal;
+    agent?: { id?: unknown };
   },
-  conversationId: string,
+  fallbackConversationId = '',
 ): Promise<UserQuestionAnswer> {
+  const conversationId = request.agent?.id != null ? String(request.agent.id) : fallbackConversationId;
   const reqId = randomUUID();
   return new Promise<UserQuestionAnswer>((resolve, reject) => {
     let settled = false;
@@ -732,7 +729,10 @@ export function handleUserQuestionRequest(
       if (signal.aborted) { settle('cancelled'); return; }
       signal.addEventListener('abort', onAbort, { once: true });
     }
-    const payload = questionRequestPayload(reqId, request);
+    const payload = {
+      ...questionRequestPayload(reqId, request),
+      ...(conversationId ? { conversationId } : {}),
+    };
     logger.info(`DSH user-questions/request: reqId=${reqId} questions=${payload.questions.length} conv=${conversationId}`);
     for (const w of BrowserWindow.getAllWindows()) {
       if (!w.isDestroyed()) w.webContents.send('ai:user-question-request', payload);
@@ -1085,6 +1085,7 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
   try {
 
   configureElectronSubprocess();
+  configureElectronSandboxRunner(ctx.get('subprocess') as Parameters<typeof configureElectronSandboxRunner>[0]);
 
   // 暴露持久化层：列出 <DSH_SESSIONS_ROOT> 下已有的会话，让用户从日志里看到
   // 历史会话保存情况。每次启动都跑一遍没事——list() 只走目录不读事件。
@@ -1202,7 +1203,30 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
   // 取，结果是 `{ kind: 'deny', reason: 'PATH_OUTSIDE_WORKSPACE' }`。
   // 其他非 fs / shell 工具（todo_* / content_* / drawing_* 等）一律直通
   // —— 它们本来就有自己的 `tierFor()` 闸控 + approval/request 流程。
-  ctx.on('tools/pre-execute', (
+  //
+  // AUTO 预设例外：会话预设为 `auto` 时，审批权交给
+  // `@nanmicoder/dsh-auto-mode` 插件（cordis.yml 的 auto-permission-mode
+  // 条目）。它在 boot() 期间注册，因此在 waterfall 中先于本监听器执行：
+  //   allow → 返回 next() 把决定权交下来，此时我们**必须**跟着放行，
+  //           否则下面的强制 ask 会覆盖插件的 allow，插件等于完全失效；
+  //   deny  → 短路，本监听器根本不会被执行；
+  //   ask   → 同样短路，走插件自己的 reason。
+  // 非 auto 预设（read-only / workspace-write / danger-full-access）维持
+  // 原有的强制 ask 行为，审批契约不变。
+  const currentPermissionPreset = (exec: ToolExecution): string | undefined => {
+    try {
+      const svc = (ctx as unknown as {
+        permissionPresets?: { current(session: unknown): string };
+      }).permissionPresets;
+      const session = exec.agent?.session;
+      if (!svc || !session) return undefined;
+      return svc.current(session);
+    } catch (err) {
+      // 服务缺失 / 会话未初始化 → 回退到强制 ask（fail-closed）
+      logger.warn(`permissionPresets.current failed: ${(err as Error).message}`);
+      return undefined;
+    }
+  };  ctx.on('tools/pre-execute', (
     exec: ToolExecution,
     next: () => Promise<PreToolDecision>,
   ): Promise<PreToolDecision> => {
@@ -1223,6 +1247,11 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
       return next();
     }
     if (PRE_APPROVE_TOOLS.has(toolName)) {
+      // Auto 预设：放行，让插件（已先于我们返回 next()）的 allow 生效。
+      if (decideMutatingToolGate(currentPermissionPreset(exec)) === 'auto-passthrough') {
+        logger.info(`tools/pre-execute auto-passthrough ${toolName}`);
+        return next();
+      }
       const description = extractStringPath(args, ['description']);
       const desc = description?.trim()
         ? description
@@ -1245,6 +1274,7 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
   });
 
   ctx.on('user-questions/request', (request: {
+    agent?: { id?: unknown };
     questions: ReadonlyArray<{ id: string; question: string; detail?: string; header?: string; options?: ReadonlyArray<{ label: string; description?: string }>; multiSelect?: boolean }>;
     /** DSH passes the calling agent's lifecycle signal here (see
      *  dsh-tool-ask-user execute() → ctx.userQuestions.ask({signal: exec.signal})).
@@ -1254,22 +1284,17 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
      *  AIPane turn hangs at "running" even though no tool/LLM is active. */
     signal?: AbortSignal;
   }, _next: () => Promise<unknown>): Promise<UserQuestionAnswer> => {
-    // DSH does not pass the agent / conversationId into the waterfall
-    // listener for user-questions. Use the module-level active-turn set
-    // (set by runTurn) to attribute this pending question to its
-    // conversation so cancel / dispose can drain it precisely.
-    const convId = firstKey(activeTurnConversations) ?? '';
-    return handleUserQuestionRequest(request, convId);
+    // Current DSH forwards the calling agent. Never infer ownership from
+    // whichever unrelated conversation happened to become active first.
+    return handleUserQuestionRequest(request);
   });
 
   // 二元审批的对称实现。DSH 把 answerer 返回值归一为四种结局；渲染端路径
   // 只 resolve 'allowed-once' / 'rejected'（超时 resolve 'unavailable'，
   // signal abort resolve 'cancelled'）。
   //
-  // OPENSPEC §ai-assistant Persistent and session tool grants——短路优先级：
-  //   1. settings.aiGrantedTools[toolName] === 'always'  → 直接放行
-  //   2. sessionGrantsByConv.get(convId)?.has(toolName)  → 本会话放行
-  //   3. 否则走 90s 超时 + IPC 广播给渲染端
+  // Every requested approval is per invocation. Legacy tool-name grants
+  // must never bypass approval, including requests to widen sandbox access.
   // convId 取自 `req.agent.id`：DSH agent handle 与会话 1:1（见 ensureAgent
   // 注释），所以这个 id 就是 conversationId。
   ctx.on('approval/request', (req: {
@@ -1280,16 +1305,6 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
     signal?: AbortSignal;
   }, _next: () => Promise<unknown>): Promise<'allowed-once' | 'rejected' | 'cancelled' | 'unavailable'> => {
     const convId = req.agent?.id != null ? String(req.agent.id) : '';
-    const alwaysGranted = deps.settings.get().aiGrantedTools[req.toolName];
-    if (alwaysGranted === 'always') {
-      logger.info(`DSH approval/request short-circuit (always): ${req.toolName} (conv=${convId})`);
-      return Promise.resolve('allowed-once');
-    }
-    const sessionSet = convId ? (sessionGrantsByConv.get(convId) ?? EMPTY_GRANTS) : EMPTY_GRANTS;
-    if (sessionSet.has(req.toolName)) {
-      logger.info(`DSH approval/request short-circuit (session): ${req.toolName} (conv=${convId})`);
-      return Promise.resolve('allowed-once');
-    }
     const reqId = randomUUID();
     return new Promise((resolve) => {
       let settled = false;
@@ -1604,28 +1619,18 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
         // 自行 resolve。无活跃轮次时调用是 no-op（DSH 文档），对伪 abort
         // 信号也安全。
         signal?.addEventListener('abort', onAbort, { once: true });
-        // Register this conversation as actively running a turn so the
-        // user-questions waterfall listener (which DSH does NOT enrich
-        // with the agent / conversationId) can attribute pending
-        // questions to this conversation. Removed in finally so a
-        // dispose-after-cancel race doesn't leak the marker.
-        activeTurnConversations.set(conversationId, true);
-        try {
-          await entry.agent.whenIdle();
-          const turnMs = Date.now() - turnStart;
-          if (failure.error) {
-            logger.warn(`[LLM turn] fail conv=${conversationId} model=${model} ms=${turnMs} err=${failure.error.message}`);
-            throw failure.error;
-          }
-          logger.info(
-            `[LLM turn] done conv=${conversationId} model=${model} ` +
-            `ms=${turnMs} tokensIn=${turnTokensIn} tokensOut=${turnTokensOut} ` +
-            `chunksStreamed=${firstChunkSeen} contentBytes=${Buffer.byteLength(fullText, 'utf8')}`,
-          );
-          return { content: fullText, tokensIn: turnTokensIn, tokensOut: turnTokensOut };
-        } finally {
-          activeTurnConversations.delete(conversationId);
+        await entry.agent.whenIdle();
+        const turnMs = Date.now() - turnStart;
+        if (failure.error) {
+          logger.warn(`[LLM turn] fail conv=${conversationId} model=${model} ms=${turnMs} err=${failure.error.message}`);
+          throw failure.error;
         }
+        logger.info(
+          `[LLM turn] done conv=${conversationId} model=${model} ` +
+          `ms=${turnMs} tokensIn=${turnTokensIn} tokensOut=${turnTokensOut} ` +
+          `chunksStreamed=${firstChunkSeen} contentBytes=${Buffer.byteLength(fullText, 'utf8')}`,
+        );
+        return { content: fullText, tokensIn: turnTokensIn, tokensOut: turnTokensOut };
       } finally {
         signal?.removeEventListener('abort', onAbort);
         try { off(); } catch { /* noop */ }
@@ -1696,7 +1701,6 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
         // ai.conversation.delete). Drain it to avoid a leak that
         // survives the row deletion.
         drainPendingForConversation(conversationId);
-        activeTurnConversations.delete(conversationId);
         return;
       }
       conversations.delete(conversationId);
@@ -1705,7 +1709,6 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
       // per-entry timeout is cleared — otherwise the timer would fire
       // later and try to resolve an answerer whose agent is gone.
       drainPendingForConversation(conversationId);
-      activeTurnConversations.delete(conversationId);
       try { entry.offSession(); } catch { /* noop */ }
       try { await entry.disposeHandle(); } catch { /* noop */ }
     },

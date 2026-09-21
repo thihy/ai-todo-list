@@ -101,6 +101,7 @@
     "@deepseek-ai/schemastery": "^3.18.2",
     "@earendil-works/pi-ai": "0.85.1",
     "@excalidraw/excalidraw": "^0.18.0",
+    "@nanmicoder/dsh-auto-mode": "0.1.9",
     "@shikijs/langs": "^4.4.3",
     "anser": "^2.3.5",
     "better-sqlite3": "^13.0.3",

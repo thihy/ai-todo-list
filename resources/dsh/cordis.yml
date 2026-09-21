@@ -119,6 +119,37 @@
 - id: sessions
   name: '@deepseek-ai/dsh-session'
 
+# Permission presets: the user-facing switch over the two independent knobs
+# (sandbox mode + approval policy). Four presets — read-only,
+# workspace-write, auto, danger-full-access. `defaultPreset: auto` seeds every
+# new session into Auto so the auto-permission-mode policy below is active
+# from the first turn.
+#
+# This service is what `auto-permission-mode` injects to resolve a session's
+# current preset; without it the plugin never activates. Its own inject list is
+# [shell, approval, sessions, sessionProjections] — all mounted by this point,
+# and `ctx.shell.sandboxMode` is defined (dsh-pwsh-sandbox reads
+# ctx.sandboxPolicy.defaultMode), which the service asserts at construction.
+- id: permission
+  name: '@deepseek-ai/dsh-permission-presets'
+  config:
+    defaultPreset: auto
+    presets:
+      read-only:
+        sandbox: read-only
+        approval: ask
+      workspace-write:
+        sandbox: workspace-write
+        approval: ask
+      auto:
+        sandbox: workspace-write
+        approval: ask
+        name: Auto
+        description: Workspace-sandboxed execution with automatic review and one-shot approval for wider access.
+      danger-full-access:
+        sandbox: danger-full-access
+        approval: never
+
 # Durable on-disk session store: one JSONL log per session, optionally
 # Zstandard-compressed (default). Injects `sessions` (the in-memory
 # coordinator) on the upstream side and exposes `ctx.sessionPersistence` to
@@ -405,3 +436,27 @@
   name: '@deepseek-ai/dsh-subprocess-local'
 - id: spill-local
   name: '@deepseek-ai/dsh-spill-local'
+
+# ────────────────────────────────────────────────────────────────────────────
+# Auto permission mode (third-party: @nanmicoder/dsh-auto-mode).
+#
+# Injects [tools, llm, permissionPresets] — all mounted above. Active only for
+# sessions whose preset resolves to `auto`; for those it replaces the blanket
+# host approval gate with a deterministic policy + LLM safety classifier:
+#   allow  → the tool runs with no prompt
+#   deny   → hard refusal (outside-workspace writes, credential reads,
+#            destructive targets, malformed sandbox escalations)
+#   ask    → the ordinary PendingApprovalCard
+# A classifier outage fails closed (deny, then ask after 3 failures).
+#
+# The classifier reuses ctx.llm and the session's own provider/model route, so
+# it runs through our registered adapter and needs no separate API key.
+#
+# VENDORED + PATCHED: the built package is copied into
+# node_modules/@nanmicoder/dsh-auto-mode with NO bundled node_modules, so its
+# `@deepseek-ai/*` imports resolve to our 0.1.5-rc.2 cohort instead of the
+# 0.1.5-rc.1 copies its own lockfile would install (duplicate cordis Service
+# classes would break identity checks). compatibility.json was extended to
+# accept 0.1.5-rc.2, whose API surface matches rc.1.
+- id: auto-permission-mode
+  name: '@nanmicoder/dsh-auto-mode'
