@@ -231,6 +231,8 @@ export interface UserQuestionItem {
 export interface UserQuestionRequest {
   reqId: string;
   invocationId: string;
+  /** Owning DSH agent/session; optional for older event producers. */
+  conversationId?: string;
   questions: UserQuestionItem[];
 }
 

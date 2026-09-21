@@ -1,0 +1,4 @@
+- [x] Store active invocation identity atomically and preserve cancelled turns.
+- [x] Route questions using the calling agent in main and renderer.
+- [x] Add delayed-reply React tests and cross-conversation question tests.
+- [x] Run relevant tests, typecheck, and build (48 relevant tests passed; final targeted rerun: 10 tests passed; typecheck and build passed).

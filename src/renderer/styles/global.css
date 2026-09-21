@@ -1313,6 +1313,86 @@ a:hover {
   position: relative;
 }
 
+/* ===== 权限预设选择器（会话级沙箱模式 + 审批策略） =====
+   坐在 title-row 的右侧动作簇里，历史按钮左边。它是个带文字的下拉触发器
+   （不是纯图标），因为「当前是什么权限姿态」必须一眼可见 —— 纯图标按钮
+   表达不了四种预设的差别。锚点 position:relative 让菜单挂在它下面。 */
+.aipane__presets {
+  position: relative;
+  flex: 0 0 auto;
+}
+.aipane__preset-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 26px;
+  padding: 0 var(--space-sm);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--fg-secondary);
+  font-size: var(--font-xs);
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background var(--dur-fast) var(--ease-out),
+              color var(--dur-fast) var(--ease-out),
+              border-color var(--dur-fast) var(--ease-out);
+}
+.aipane__preset-btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--fg-primary);
+}
+.aipane__preset-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.aipane__preset-label {
+  max-width: 88px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* danger-full-access 是唯一一个"关掉所有护栏"的姿态 —— 常驻高亮，
+   让用户任何时候扫一眼标题栏都知道当前没有审批保护。 */
+.aipane__preset-btn--danger {
+  border-color: var(--accent-danger);
+  color: var(--accent-danger);
+}
+.aipane__preset-btn--danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent-danger) 12%, transparent);
+  color: var(--accent-danger);
+}
+.aipane__preset-menu {
+  /* 预设名 + 描述比对话标题长，200px 太窄会折成三行。 */
+  min-width: 260px;
+}
+.aipane__preset-item {
+  gap: 2px;
+}
+.aipane__preset-item.is-active {
+  background: color-mix(in srgb, var(--accent-primary) 12%, transparent);
+}
+.aipane__preset-item.is-active .aipane__preset-item-name {
+  color: var(--accent-primary);
+  font-weight: 600;
+}
+.aipane__preset-item--danger.is-active {
+  background: color-mix(in srgb, var(--accent-danger) 12%, transparent);
+}
+.aipane__preset-item--danger .aipane__preset-item-name {
+  color: var(--accent-danger);
+}
+.aipane__preset-item-name {
+  font-size: var(--font-sm);
+  line-height: 1.3;
+}
+.aipane__preset-item-desc {
+  font-size: var(--font-xs);
+  color: var(--fg-muted);
+  line-height: 1.35;
+  white-space: normal;
+}
+
 /* Generic dropdown menu — used by both the switcher (left-anchored) and the
    actions ⋯ menu (right-anchored). Absolute-positioned so it floats above
    the body without disturbing header layout. */
@@ -7189,3 +7269,15 @@ a:hover {
   background: color-mix(in srgb, var(--accent-primary) 12%, transparent);
 }
 
+.aipane__approval-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.aipane__approval-description {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 40vh;
+  overflow: auto;
+}

@@ -74,6 +74,19 @@ const SAMPLE_QUESTIONS = [
 ];
 
 describe('handleUserQuestionRequest — signal handling', () => {
+  it('uses the supplied agent for pending ownership and renderer routing', async () => {
+    const a = handleUserQuestionRequest({ questions: SAMPLE_QUESTIONS, agent: { id: 'conv-A' } });
+    const b = handleUserQuestionRequest({ questions: SAMPLE_QUESTIONS, agent: { id: 'conv-B' } }, 'conv-A');
+    expect(__pendingSnapshotForTest().questions).toMatchObject({ 'conv-A': 1, 'conv-B': 1 });
+    const requests = broadcastCalls.filter(c => c.channel === 'ai:user-question-request');
+    expect(requests.map(c => (c.payload as { conversationId: string }).conversationId)).toEqual(['conv-A', 'conv-B']);
+    drainPendingForConversation('conv-A');
+    await expect(a).rejects.toThrow(/aborted/);
+    expect(__pendingSnapshotForTest().questions['conv-B']).toBe(1);
+    const reqId = (requests[1]!.payload as { reqId: string }).reqId;
+    expect(answerUserQuestion(reqId, [{ id: 'q1', selected: ['B'] }])).toBe(true);
+    await expect(b).resolves.toMatchObject({ answers: [{ id: 'q1', selected: ['B'] }] });
+  });
   it('rejects immediately and broadcasts cancel when signal is already aborted', async () => {
     const ac = new AbortController();
     ac.abort();

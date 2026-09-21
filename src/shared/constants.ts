@@ -51,6 +51,12 @@ export const TRASH_SUBDIR = 'trash';
  *  `process.env.DSH_WORKSPACE_ROOT` 在 src/main/index.ts 的 mkdirSync 之前
  *  设置（cordis.yml 的 !!js 表达式在 boot 时读取）。 */
 export const DSH_WORKSPACE_SUBDIR = 'dsh_workspace';
+/** AI composer 附件子目录。用户点 AI 输入框的「+」选的文件 / 拖入的图片
+ *  都会先 copy 到 <rootDir>/.todo-list/<DSH_WORKSPACE_SUBDIR>/<COMPOSER_INBOX_SUBDIR>/，
+ *  prompt 里只塞绝对路径引用，AI 用 DSH 的 read / read_image 工具流式读。
+ *  这跟 DSH `inbox_attach` 工具的 legacy 目录（<rootDir>/.todo-list/inbox-attachments/）
+ *  是不同父目录，无冲突——前者给 AI composer 用，后者给 TODO 附件用。 */
+export const COMPOSER_INBOX_SUBDIR = 'inbox';
 
 export const MAX_BODY_VERSIONS = 20;
 export const THUMB_WIDTH = 320;

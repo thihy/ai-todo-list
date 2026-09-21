@@ -35,7 +35,7 @@ import { presentToolCall, presentToolResult, recoverToolResultValue } from '@sha
 import { isWithinWorkspace, extractStringPath } from './path-guard';
 import type { ToolExecution, PreToolDecision } from '@deepseek-ai/dsh-tools';
 import { TurnFailureGuard } from './turn-failure';
-import { configureElectronSubprocess } from './subprocess-compat';
+import { configureElectronSubprocess, configureElectronSandboxRunner } from './subprocess-compat';
 import { toolInterruptionState } from '../../shared/tool-interruption';
 import type Database from 'better-sqlite3';
 import { mimeExt, sanitizeName } from '../util/mime';
@@ -188,6 +188,17 @@ export interface DshRuntime {
    *  递归删除 <DSH_SESSIONS_ROOT>/<project>/<id>/。DB 行由 ConversationRepo
    *  负责，本函数只管日志。对未知 id 安全，返回静默。 */
   removeSession(conversationId: string): Promise<{ removed: boolean }>;
+  /** 读权限预设的选项表 + 默认值。DSH 未 boot 时返回 null（UI 应隐藏选择器）。 */
+  permissionPresetCatalog(): PermissionPresetCatalog | null;
+  /** 读某条会话**运行时**生效的预设。会话没有 live agent（新对话 / 已
+   *  dispose）时返回 null —— 调用方应回退到 DB 里的 stored 值。 */
+  currentPermissionPreset(conversationId: string): string | null;
+  /** 把预设推给 live session。会话尚未建立时返回 false（调用方只需落库，
+   *  等首轮 ensureAgent() 时由 pinPermissionPreset() 补上）。 */
+  applyPermissionPreset(conversationId: string, preset: string): boolean;
+  /** 会话首次建立时把 DB 里的用户意图 pin 进 DSH session。由
+   *  ensureAgent() 在 agent 就绪后调用；无 stored 值则 no-op。 */
+  pinPermissionPreset(conversationId: string): boolean;
   /** STARTUP-DSH-001: orphan-migration facade built from the live
    *  runtime's `sessionPersistence` ctx service. Null when the
    *  persistence plugin didn't register (caller must skip migration
@@ -196,6 +207,13 @@ export interface DshRuntime {
    *  instead of booting a second `todo-list-migrate` context. */
   persistence: OrphanMigrationFacade | null;
   dispose(): Promise<void>;
+}
+
+/** 权限预设的选项表快照，来自 DSH 的 permissionPresets 服务。 */
+export interface PermissionPresetCatalog {
+  /** cordis.yml 的 defaultPreset —— 新会话的初值。 */
+  defaultPreset: string;
+  options: Array<{ value: string; name: string; description?: string }>;
 }
 
 let runtimePromise: Promise<DshRuntime | null> | null = null;
@@ -314,6 +332,21 @@ export interface AgentsFacade {
 export interface ResumeLogger {
   warn: (msg: string) => void;
   info: (msg: string) => void;
+}
+
+/**
+ * `@deepseek-ai/dsh-permission-presets` 暴露的服务面（我们用到的那部分）。
+ *
+ * 只声明公开方法 —— `apply` 在 0.1.5-rc.2 里是 private，外部拿不到，也正
+ * 因为如此我们只能走 `set()`（见 applyPresetToSession 的注释）。
+ */
+export interface PermissionPresetServiceLike {
+  readonly names: readonly string[];
+  readonly defaultPreset: string;
+  current(session: unknown): string;
+  resolve(name: string): { sandbox: string; approval: string; name?: string; description?: string };
+  optionOf(name: string): { value: string; name: string; description?: string };
+  set(session: unknown, name: string): void;
 }
 
 /** resumeOrCreate 的依赖。打包好让 helper 保持纯净，可单独单测。 */
@@ -496,40 +529,165 @@ export function __seedPendingApprovalForTest(conversationId: string, reqId: stri
   };
 }
 
-/** Module-level pointer to the conversation whose turn is currently
- *  in flight on this Node process. Used by the user-questions/request
- *  waterfall listener (which DSH does NOT enrich with the agent /
- *  conversationId) so a pending question can be associated with the
- *  conversation that asked it. Then runtime.cancel / disposeConversation
- *  can drain by conversationId without nuking peer conversations.
- *
- *  Map (not a single var) because in theory multiple agents could run
- *  turns in parallel; in practice today only one turn runs at a time
- *  (runTurn serializes via whenIdle), so the map typically has one
- *  entry. Keeping it as a Map future-proofs against parallel turns. */
-const activeTurnConversations = new Map<string, true>();
-
-// ===== AI 工具授权表（OPENSPEC §ai-assistant Persistent and session tool grants）=====
-//
-// 两级粒度：
-//   - `aiGrantedTools: Record<toolName, 'always'>`  → 持久化在 settings.aiGrantedTools，
-//     进程重启仍生效；由 approval/request 监听器读取。
-//   - `sessionGrantsByConv: Map<convId, Set<toolName>>`  → 内存态，"本次会话允许"专用；
-//     进程重启即丢失。
-//
-// 两者短路 `approval/request` 监听器：always 在任意会话都直接通过；session 只对
-// 命中的 conversationId 通过。撤销走 `revokeSessionTool` / settings.patch。
+// Legacy tool-grant storage is retained only for listing and cleanup.
+// Approval dispatch ignores BOTH these entries and settings.aiGrantedTools.
 //
 // 工具白名单（应在 approval/request 之前过的 read 类工具名 + mutate 类工具名）
 // 由 `PRE_APPROVE_TOOLS` / `READ_CLASS_TOOLS` 两个常量维护；新增工具时同步。
 const PRE_APPROVE_TOOLS: ReadonlySet<string> = new Set(['write', 'edit', 'bash', 'pwsh']);
 const READ_CLASS_TOOLS: ReadonlySet<string> = new Set(['read', 'read_image', 'grep', 'glob']);
-const EMPTY_GRANTS: ReadonlySet<string> = new Set();
+
+// 工作空间路径修改硬拒黑名单 —— 用户明确要求:AI 助手**不允许**通过任何
+// 工具调用(bash / pwsh / write / edit 等)修改 workspace 路径或 DSH 容器
+// 绑定的环境变量。只能通过「设置 → 数据目录」修改,然后由 main 重新
+// 决定 DSH_WORKSPACE_ROOT 并重启 DSH 容器。
+//
+// 触发条件(任一命中即 deny,不弹卡、永不调 AI 分类器):
+//   1. 命令文本含 `DSH_WORKSPACE_ROOT=` / `setx DSH_WORKSPACE_ROOT` 等
+//   2. 写 / 编辑目标是 dsh_workspace 目录里的 config.json / settings.json
+//   3. 写 / 编辑目标含 ROOT_DIR_NAME(dataDir 根目录)
+//   4. 命令文本含 `config.json` / `settings.json` 的写入动作(Set-Content
+//      / Add-Content / Out-File / Set-ItemProperty 等)
+//
+// 不在黑名单的:仅读取 config 文件(模型想看配置)、重命名 dataDir 之外的
+// 普通文件 —— 这些属于用户正常的「读应用配置」场景,沙箱本身已经把它们
+// 挡在 workspace 外。
+//
+// 大小写不敏感 + 子串匹配,避免误伤时太严苛(模型可读不能写)。
+export const WORKSPACE_MUTATION_DENY_REASON =
+  '禁止通过 AI 工具修改工作空间路径或 DSH 容器配置;请到「设置 → 数据目录」修改后重启应用。';
+
+/** 在 args(command / file_path / path) 里查找黑名单关键字面。
+ *  命中返回 true。空 args 一律返回 false(不误伤)。 */
+function argsMatchWorkspaceMutation(toolName: string, args: unknown): boolean {
+  if (!args || typeof args !== 'object') return false;
+  const rec = args as Record<string, unknown>;
+  const haystacks: string[] = [];
+  for (const key of ['command', 'file_path', 'path', 'content', 'description', 'old_string', 'new_string']) {
+    const v = rec[key];
+    if (typeof v === 'string') haystacks.push(v);
+  }
+  if (haystacks.length === 0) return false;
+  const text = haystacks.join('\n').toLowerCase();
+  // 1. 直接修改 env var(Windows / POSIX)
+  if (/\bsetx?\b[^\n]*dsh_workspace_root\b/i.test(text) ||
+      /\bdsh_workspace_root\s*=/i.test(text) ||
+      /\$env:dsh_workspace_root\s*=/i.test(text)) return true;
+  // 2. 写入 settings.json / config.json —— 在我们的设置层这俩文件就是
+  //    dataDir + dsh_workspace 的真源
+  const writesConfigFile =
+    /(settings|config)\.json/.test(text) && (
+      /(set-content|add-content|out-file|set-itemproperty|>" )/i.test(text) ||
+      /=\s*["']?\{/.test(text) // JSON 重写模式
+    );
+  if (writesConfigFile) return true;
+  // 3. 写入动作 + dataDir / dsh_workspace 路径前缀
+  const writesWorkspacePath =
+    /(\bset-content\b|\badd-content\b|\bout-file\b|\bset-itemproperty\b|>\s*["']?["']?[^|]+\brm\s+-rf|\brm\s+-rf|\brmdir\b|\bremove-item\b)/i.test(text) &&
+    /(dsh_workspace|datadir|rootdir|\bdata\b|\bappdata\b)/i.test(text);
+  if (writesWorkspacePath) return true;
+  // 4. write / edit 工具 → 只要 file_path 是 settings.json / config.json,
+  //    一律 deny。理由:这俩文件就是 dshWorkspaceDir 的真源,允许 AI 编辑
+  //    等于变相让它改 workspace。read 类工具不命中这一条(只读无害)。
+  if ((toolName === 'write' || toolName === 'edit') &&
+      typeof rec['file_path'] === 'string' &&
+      /(settings|config)\.json/i.test(rec['file_path'] as string)) {
+    return true;
+  }
+  return false;
+}
+
+/** 监听器本体,被命名导出供单测直接喂参数,避开 cordis/DSH 依赖树。
+ *  返回 PreToolDecision:denty / ask / next() 透传。
+ *  `currentPreset` 跟 currentPermissionPreset 签名一致:接收完整 ToolExecution,
+ *  内部自己从 exec.agent.session 读 live session。 */
+export async function handlePreExecute(
+  exec: ToolExecution,
+  next: () => Promise<PreToolDecision>,
+  deps: {
+    settings: { get(): { dshWorkspaceDir?: string | null } };
+    currentPreset: (exec: ToolExecution) => string | undefined;
+  },
+): Promise<PreToolDecision> {
+  const { name: toolName, arguments: args } = exec;
+  // 0. workspace 黑名单 —— 永远 deny,不论 preset/sandbox 是否开启。
+  //    必须放在 sandbox / approval gate 之前,因为我们不希望这条策略
+  //    被任何后续层(danger-full-access、auto 插件、用户一次审批)绕过。
+  if (argsMatchWorkspaceMutation(toolName, args)) {
+    logger.warn(`tools/pre-execute deny ${toolName}: workspace mutation blocked`);
+    return { kind: 'deny', reason: WORKSPACE_MUTATION_DENY_REASON };
+  }
+  if (READ_CLASS_TOOLS.has(toolName)) {
+    const workspace = deps.settings.get().dshWorkspaceDir || process.env.DSH_WORKSPACE_ROOT;
+    // DSH fs 工具的参数键:`read` / `read_image` 用 `file_path`;
+    // `grep` / `glob` 用 `path` 指定搜索根目录;pattern 是匹配表达式。
+    const requested = extractStringPath(args, ['file_path', 'path']);
+    if (workspace && typeof requested === 'string') {
+      if (!isWithinWorkspace(workspace, requested)) {
+        const reason = `PATH_OUTSIDE_WORKSPACE: ${requested} 不在工作区 ${workspace} 内`;
+        logger.warn(`tools/pre-execute deny ${toolName}: ${reason}`);
+        return { kind: 'deny', reason };
+      }
+    }
+    // 路径合法 → 直通;DSH 工具自己负责后续的读 / grep / glob
+    return next();
+  }
+  if (PRE_APPROVE_TOOLS.has(toolName)) {
+    // Auto 预设:放行,让插件(已先于我们返回 next())的 allow 生效。
+    if (decideMutatingToolGate(deps.currentPreset(exec)) === 'auto-passthrough') {
+      logger.info(`tools/pre-execute auto-passthrough ${toolName}`);
+      return next();
+    }
+    const description = extractStringPath(args, ['description']);
+    const desc = description?.trim()
+      ? description
+      : (() => {
+          const a = args;
+          if (a && typeof a === 'object') {
+            const rec = a as Record<string, unknown>;
+            const cmd = rec['command'];
+            const fp = rec['file_path'];
+            if (typeof cmd === 'string') return cmd.slice(0, 80);
+            if (typeof fp === 'string') return fp;
+          }
+          return '';
+        })();
+    const reason = `AI 想要调用 ${toolName}${desc ? ` (${desc})` : ''}。`;
+    logger.info(`tools/pre-execute ask ${toolName}: ${reason}`);
+    return { kind: 'ask', reason };
+  }
+  return next();
+}
+
+// 会话预设名，与 cordis.yml 的 `permission.presets.auto` 及
+// `@nanmicoder/dsh-auto-mode` 的 AUTO_PERMISSION_PRESET 一致。处于该预设
+// 时会话的审批由插件接管，本文件的强制 ask 必须让位（见
+// `tools/pre-execute` 监听器里的 auto 分支）。
+const AUTO_PRESET = 'auto';
+
+/**
+ * `tools/pre-execute` 监听器对单个 mutate 工具调用的分支决定。
+ *
+ * 单独抽成纯函数（而不是内联在监听器里）是为了可测：监听器本身只在
+ * `bootDsh()` 里存在，需要真实 Cordis/DSH 依赖树才能跑（见
+ * tests/unit/warmup-dsh-runtime.spec.ts 的说明），而这条分支正是整个
+ * auto 集成的承重部分——一旦退回无条件 `ask`，插件的 allow 会被覆盖，
+ * 集成静默失效且没有报错。
+ *
+ * @param preset 当前会话的预设名；`undefined` 表示 permissionPresets 服务
+ *   缺失或会话未初始化。
+ * @returns `'auto-passthrough'` → 返回 next()，把决定权交给插件；
+ *   `'force-ask'` → 维持强制审批。
+ */
+export function decideMutatingToolGate(
+  preset: string | undefined,
+): 'auto-passthrough' | 'force-ask' {
+  return preset === AUTO_PRESET ? 'auto-passthrough' : 'force-ask';
+}
 
 const sessionGrantsByConv = new Map<string, Set<string>>();
 
-/** Mark `toolName` as granted for the lifetime of the given conversation.
- *  Used by `ai.userApproval.grantSession` IPC; idempotent. */
+/** Legacy storage helper, no longer used by grant IPC or approval dispatch. */
 export function grantSessionTool(conversationId: string, toolName: string): void {
   if (!conversationId || !toolName) return;
   let set = sessionGrantsByConv.get(conversationId);
@@ -643,14 +801,6 @@ function broadcastCancel(kind: 'question' | 'approval', reqId: string): void {
   }
 }
 
-/** First key of a Map (insertion order). Used to associate a DSH
- *  waterfall event with its conversation when DSH doesn't enrich the
- *  listener signature. */
-function firstKey<K>(m: Map<K, unknown>): K | undefined {
-  for (const k of m.keys()) return k;
-  return undefined;
-}
-
 /** 给渲染端构造 UserQuestionRequest payload。抽出来让 waterfall 监听器
  *  一行写完 */
 function questionRequestPayload(reqId: string, request: { questions: ReadonlyArray<{ id: string; question: string; detail?: string; header?: string; options?: ReadonlyArray<{ label: string; description?: string }>; multiSelect?: boolean }> }): UserQuestionRequest {
@@ -695,9 +845,11 @@ export function handleUserQuestionRequest(
   request: {
     questions: ReadonlyArray<{ id: string; question: string; detail?: string; header?: string; options?: ReadonlyArray<{ label: string; description?: string }>; multiSelect?: boolean }>;
     signal?: AbortSignal;
+    agent?: { id?: unknown };
   },
-  conversationId: string,
+  fallbackConversationId = '',
 ): Promise<UserQuestionAnswer> {
+  const conversationId = request.agent?.id != null ? String(request.agent.id) : fallbackConversationId;
   const reqId = randomUUID();
   return new Promise<UserQuestionAnswer>((resolve, reject) => {
     let settled = false;
@@ -732,7 +884,10 @@ export function handleUserQuestionRequest(
       if (signal.aborted) { settle('cancelled'); return; }
       signal.addEventListener('abort', onAbort, { once: true });
     }
-    const payload = questionRequestPayload(reqId, request);
+    const payload = {
+      ...questionRequestPayload(reqId, request),
+      ...(conversationId ? { conversationId } : {}),
+    };
     logger.info(`DSH user-questions/request: reqId=${reqId} questions=${payload.questions.length} conv=${conversationId}`);
     for (const w of BrowserWindow.getAllWindows()) {
       if (!w.isDestroyed()) w.webContents.send('ai:user-question-request', payload);
@@ -1085,6 +1240,7 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
   try {
 
   configureElectronSubprocess();
+  configureElectronSandboxRunner(ctx.get('subprocess') as Parameters<typeof configureElectronSandboxRunner>[0]);
 
   // 暴露持久化层：列出 <DSH_SESSIONS_ROOT> 下已有的会话，让用户从日志里看到
   // 历史会话保存情况。每次启动都跑一遍没事——list() 只走目录不读事件。
@@ -1202,49 +1358,96 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
   // 取，结果是 `{ kind: 'deny', reason: 'PATH_OUTSIDE_WORKSPACE' }`。
   // 其他非 fs / shell 工具（todo_* / content_* / drawing_* 等）一律直通
   // —— 它们本来就有自己的 `tierFor()` 闸控 + approval/request 流程。
+  //
+  // AUTO 预设例外：会话预设为 `auto` 时，审批权交给
+  // `@nanmicoder/dsh-auto-mode` 插件（cordis.yml 的 auto-permission-mode
+  // 条目）。它在 boot() 期间注册，因此在 waterfall 中先于本监听器执行：
+  //   allow → 返回 next() 把决定权交下来，此时我们**必须**跟着放行，
+  //           否则下面的强制 ask 会覆盖插件的 allow，插件等于完全失效；
+  //   deny  → 短路，本监听器根本不会被执行；
+  //   ask   → 同样短路，走插件自己的 reason。
+  // 非 auto 预设（read-only / workspace-write / danger-full-access）维持
+  // 原有的强制 ask 行为，审批契约不变。
+  // permissionPresets 服务的类型化访问器。DSH 未 boot / 插件没挂载时返回
+  // null，调用方各自决定回退策略（审批闸门 fail-closed 到强制 ask；UI 则
+  // 隐藏选择器）。抽成模块级 helper 是因为下面的 runtime API 也要用它。
+  const presetService = (): PermissionPresetServiceLike | null => {
+    try {
+      const svc = (ctx as unknown as { permissionPresets?: PermissionPresetServiceLike })
+        .permissionPresets;
+      return svc ?? null;
+    } catch {
+      return null;
+    }
+  };
+
+  // 取一条会话的 live Session。走 ctx.sessions.get()（公开 API）而不是从
+  // agent handle 上摸 `.session`：agent 的 handle 类型是我们自己声明的最小
+  // 形状，不含 session；而 dsh-session 的 store 是 agent 创建时注册进去的，
+  // 拿到的是同一个对象。会话没建过 agent 时返回 undefined。
+  const sessionOf = (conversationId: string): unknown => {
+    try {
+      const sessions = (ctx as unknown as {
+        sessions?: { get(id: string): unknown };
+      }).sessions;
+      return sessions?.get(conversationId);
+    } catch {
+      return undefined;
+    }
+  };
+
+  const currentPermissionPreset = (exec: ToolExecution): string | undefined => {
+    try {
+      const svc = presetService();
+      const session = exec.agent?.session;
+      if (!svc || !session) return undefined;
+      return svc.current(session);
+    } catch (err) {
+      // 服务缺失 / 会话未初始化 → 回退到强制 ask（fail-closed）
+      logger.warn(`permissionPresets.current failed: ${(err as Error).message}`);
+      return undefined;
+    }
+  };
+
+  // 把 DB 里的用户意图推给 DSH session。
+  //
+  // 走 svc.set(session, name) 而不是插件自己 /permission 命令那条
+  // apply(session, name, policy => ctx.approval.setPolicy(agent, policy))：
+  //   - apply 是 private，外部拿不到；
+  //   - setPolicy() 会 agent.inject() 一条合成 user message（"The approval
+  //     policy changed..."），而我们的 foldHistory 会把 source.kind ===
+  //     'plugin' 之外的 user/message 渲染成用户气泡 —— 那条系统通知会变成
+  //     用户自己说的话，是明确的坏 UX。
+  //
+  // set() 的语义已足够：它 append permission/preset 事件并按需写
+  // sandbox/mode + approval/policy。三个投影都是懒折叠的，而系统提示词的
+  // approval/sandbox context 是**每轮重渲染的函数**（读 effectivePolicy /
+  // resolve），所以下一轮模型自然看到新策略，不需要注入消息。
+  const applyPresetToSession = (session: unknown, preset: string): boolean => {
+    const svc = presetService();
+    if (!svc) return false;
+    try {
+      svc.set(session, preset);
+      logger.info(`permissionPresets.set ${preset}`);
+      return true;
+    } catch (err) {
+      logger.warn(`permissionPresets.set(${preset}) failed: ${(err as Error).message}`);
+      return false;
+    }
+  };
+
   ctx.on('tools/pre-execute', (
     exec: ToolExecution,
     next: () => Promise<PreToolDecision>,
   ): Promise<PreToolDecision> => {
-    const { name: toolName, arguments: args } = exec;
-    if (READ_CLASS_TOOLS.has(toolName)) {
-      const workspace = deps.settings.get().dshWorkspaceDir || process.env.DSH_WORKSPACE_ROOT;
-      // DSH fs 工具的参数键：`read` / `read_image` 用 `file_path`；
-      // `grep` / `glob` 用 `path` 指定搜索根目录；pattern 是匹配表达式。
-      const requested = extractStringPath(args, ['file_path', 'path']);
-      if (workspace && typeof requested === 'string') {
-        if (!isWithinWorkspace(workspace, requested)) {
-          const reason = `PATH_OUTSIDE_WORKSPACE: ${requested} 不在工作区 ${workspace} 内`;
-          logger.warn(`tools/pre-execute deny ${toolName}: ${reason}`);
-          return Promise.resolve({ kind: 'deny', reason });
-        }
-      }
-      // 路径合法 → 直通；DSH 工具自己负责后续的读 / grep / glob
-      return next();
-    }
-    if (PRE_APPROVE_TOOLS.has(toolName)) {
-      const description = extractStringPath(args, ['description']);
-      const desc = description?.trim()
-        ? description
-        : (() => {
-          const a = args;
-          if (a && typeof a === 'object') {
-            const rec = a as Record<string, unknown>;
-            const cmd = rec['command'];
-            const fp = rec['file_path'];
-            if (typeof cmd === 'string') return cmd.slice(0, 80);
-            if (typeof fp === 'string') return fp;
-          }
-          return '';
-        })();
-      const reason = `AI 想要调用 ${toolName}${desc ? ` (${desc})` : ''}。`;
-      logger.info(`tools/pre-execute ask ${toolName}: ${reason}`);
-      return Promise.resolve({ kind: 'ask', reason });
-    }
-    return next();
+    return handlePreExecute(exec, next, {
+      settings: deps.settings,
+      currentPreset: (e) => currentPermissionPreset(e),
+    });
   });
 
   ctx.on('user-questions/request', (request: {
+    agent?: { id?: unknown };
     questions: ReadonlyArray<{ id: string; question: string; detail?: string; header?: string; options?: ReadonlyArray<{ label: string; description?: string }>; multiSelect?: boolean }>;
     /** DSH passes the calling agent's lifecycle signal here (see
      *  dsh-tool-ask-user execute() → ctx.userQuestions.ask({signal: exec.signal})).
@@ -1254,22 +1457,17 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
      *  AIPane turn hangs at "running" even though no tool/LLM is active. */
     signal?: AbortSignal;
   }, _next: () => Promise<unknown>): Promise<UserQuestionAnswer> => {
-    // DSH does not pass the agent / conversationId into the waterfall
-    // listener for user-questions. Use the module-level active-turn set
-    // (set by runTurn) to attribute this pending question to its
-    // conversation so cancel / dispose can drain it precisely.
-    const convId = firstKey(activeTurnConversations) ?? '';
-    return handleUserQuestionRequest(request, convId);
+    // Current DSH forwards the calling agent. Never infer ownership from
+    // whichever unrelated conversation happened to become active first.
+    return handleUserQuestionRequest(request);
   });
 
   // 二元审批的对称实现。DSH 把 answerer 返回值归一为四种结局；渲染端路径
   // 只 resolve 'allowed-once' / 'rejected'（超时 resolve 'unavailable'，
   // signal abort resolve 'cancelled'）。
   //
-  // OPENSPEC §ai-assistant Persistent and session tool grants——短路优先级：
-  //   1. settings.aiGrantedTools[toolName] === 'always'  → 直接放行
-  //   2. sessionGrantsByConv.get(convId)?.has(toolName)  → 本会话放行
-  //   3. 否则走 90s 超时 + IPC 广播给渲染端
+  // Every requested approval is per invocation. Legacy tool-name grants
+  // must never bypass approval, including requests to widen sandbox access.
   // convId 取自 `req.agent.id`：DSH agent handle 与会话 1:1（见 ensureAgent
   // 注释），所以这个 id 就是 conversationId。
   ctx.on('approval/request', (req: {
@@ -1280,16 +1478,6 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
     signal?: AbortSignal;
   }, _next: () => Promise<unknown>): Promise<'allowed-once' | 'rejected' | 'cancelled' | 'unavailable'> => {
     const convId = req.agent?.id != null ? String(req.agent.id) : '';
-    const alwaysGranted = deps.settings.get().aiGrantedTools[req.toolName];
-    if (alwaysGranted === 'always') {
-      logger.info(`DSH approval/request short-circuit (always): ${req.toolName} (conv=${convId})`);
-      return Promise.resolve('allowed-once');
-    }
-    const sessionSet = convId ? (sessionGrantsByConv.get(convId) ?? EMPTY_GRANTS) : EMPTY_GRANTS;
-    if (sessionSet.has(req.toolName)) {
-      logger.info(`DSH approval/request short-circuit (session): ${req.toolName} (conv=${convId})`);
-      return Promise.resolve('allowed-once');
-    }
     const reqId = randomUUID();
     return new Promise((resolve) => {
       let settled = false;
@@ -1409,6 +1597,15 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
       dormant: true,
     };
     conversations.set(conversationId, entry);
+    // 会话首次建立：把用户在 DB 里存过的权限预设推给 DSH。必须在 agent
+    // 就绪之后（session 已注册进 ctx.sessions）才能跑。无 stored 值 → no-op，
+    // 让 permission-presets 插件的 pinInitialPermission() 用 defaultPreset。
+    try {
+      runtime.pinPermissionPreset(conversationId);
+    } catch (err) {
+      // 预设 pin 失败不该挡住对话本身 —— 用户顶多回到默认预设。
+      logger.warn(`pinPermissionPreset(${conversationId}) threw: ${(err as Error).message}`);
+    }
     return entry;
   }
 
@@ -1604,28 +1801,18 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
         // 自行 resolve。无活跃轮次时调用是 no-op（DSH 文档），对伪 abort
         // 信号也安全。
         signal?.addEventListener('abort', onAbort, { once: true });
-        // Register this conversation as actively running a turn so the
-        // user-questions waterfall listener (which DSH does NOT enrich
-        // with the agent / conversationId) can attribute pending
-        // questions to this conversation. Removed in finally so a
-        // dispose-after-cancel race doesn't leak the marker.
-        activeTurnConversations.set(conversationId, true);
-        try {
-          await entry.agent.whenIdle();
-          const turnMs = Date.now() - turnStart;
-          if (failure.error) {
-            logger.warn(`[LLM turn] fail conv=${conversationId} model=${model} ms=${turnMs} err=${failure.error.message}`);
-            throw failure.error;
-          }
-          logger.info(
-            `[LLM turn] done conv=${conversationId} model=${model} ` +
-            `ms=${turnMs} tokensIn=${turnTokensIn} tokensOut=${turnTokensOut} ` +
-            `chunksStreamed=${firstChunkSeen} contentBytes=${Buffer.byteLength(fullText, 'utf8')}`,
-          );
-          return { content: fullText, tokensIn: turnTokensIn, tokensOut: turnTokensOut };
-        } finally {
-          activeTurnConversations.delete(conversationId);
+        await entry.agent.whenIdle();
+        const turnMs = Date.now() - turnStart;
+        if (failure.error) {
+          logger.warn(`[LLM turn] fail conv=${conversationId} model=${model} ms=${turnMs} err=${failure.error.message}`);
+          throw failure.error;
         }
+        logger.info(
+          `[LLM turn] done conv=${conversationId} model=${model} ` +
+          `ms=${turnMs} tokensIn=${turnTokensIn} tokensOut=${turnTokensOut} ` +
+          `chunksStreamed=${firstChunkSeen} contentBytes=${Buffer.byteLength(fullText, 'utf8')}`,
+        );
+        return { content: fullText, tokensIn: turnTokensIn, tokensOut: turnTokensOut };
       } finally {
         signal?.removeEventListener('abort', onAbort);
         try { off(); } catch { /* noop */ }
@@ -1696,7 +1883,6 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
         // ai.conversation.delete). Drain it to avoid a leak that
         // survives the row deletion.
         drainPendingForConversation(conversationId);
-        activeTurnConversations.delete(conversationId);
         return;
       }
       conversations.delete(conversationId);
@@ -1705,7 +1891,6 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
       // per-entry timeout is cleared — otherwise the timer would fire
       // later and try to resolve an answerer whose agent is gone.
       drainPendingForConversation(conversationId);
-      activeTurnConversations.delete(conversationId);
       try { entry.offSession(); } catch { /* noop */ }
       try { await entry.disposeHandle(); } catch { /* noop */ }
     },
@@ -1731,6 +1916,73 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
         logger.warn(`removeSession(${conversationId}) failed: ${(err as Error).message}`);
       }
       return { removed };
+    },
+
+    // ===== 权限预设 =====
+    //
+    // 读写分两层：DB 的 permission_preset 列是「用户意图」，DSH session 的
+    // permission/preset 事件是「运行时真相」。会话首轮才懒创建，所以新对话
+    // 的选择只能先落库（见 schema.ts v20 注释）。这里的方法负责把两层对齐。
+
+    permissionPresetCatalog() {
+      const svc = presetService();
+      if (!svc) return null;
+      try {
+        // DSH 自己维护 'custom'（旋钮值与任何预设都不匹配时派生的伪预设）。
+        // 它不该出现在选择器里 —— 用户没法"选"一个不匹配的状态。只列真表项。
+        return {
+          defaultPreset: svc.defaultPreset,
+          options: svc.names.map((n) => {
+            const o = svc.optionOf(n);
+            return o.description === undefined
+              ? { value: o.value, name: o.name }
+              : { value: o.value, name: o.name, description: o.description };
+          }),
+        };
+      } catch (err) {
+        logger.warn(`permissionPresetCatalog failed: ${(err as Error).message}`);
+        return null;
+      }
+    },
+
+    currentPermissionPreset(conversationId) {
+      const svc = presetService();
+      if (!svc) return null;
+      // 只认 live session —— 新对话 / 已 dispose 的会话没有 DSH 侧的真相，
+      // 调用方应回退到 DB 里的 stored 值。
+      const session = sessionOf(conversationId);
+      if (!session) return null;
+      try {
+        return svc.current(session);
+      } catch (err) {
+        logger.warn(`currentPermissionPreset(${conversationId}) failed: ${(err as Error).message}`);
+        return null;
+      }
+    },
+
+    applyPermissionPreset(conversationId, preset) {
+      const session = sessionOf(conversationId);
+      if (!session) return false;
+      return applyPresetToSession(session, preset);
+    },
+
+    pinPermissionPreset(conversationId) {
+      // 会话刚建立：把用户在 DB 里存过的意图推给 DSH。没存过就什么都不做，
+      // 让 pinInitialPermission() 的默认值（cordis.yml defaultPreset）生效。
+      const stored = deps.conversations.get(conversationId)?.permissionPreset ?? null;
+      if (stored === null) return false;
+      const session = sessionOf(conversationId);
+      if (!session) return false;
+      // 已经是这个值就不用重复 append（set() 内部也去重，但提前返回能少一次
+      // 投影读取 + 一条 debug 日志）。
+      const svc = presetService();
+      if (svc) {
+        try {
+          if (svc.current(session) === stored) return false;
+        } catch { /* 读失败就继续走 set()，让它自己报错 */ }
+      }
+      logger.info(`pinPermissionPreset(${conversationId}): stored=${stored}`);
+      return applyPresetToSession(session, stored);
     },
 
     async dispose() {

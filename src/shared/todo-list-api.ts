@@ -274,13 +274,36 @@ export interface TodoListApi {
     /** Pop a single category's submenu (flat topbar buttons). */
     popupMenuCategory(category: '文件' | '编辑' | '视图' | '窗口' | '帮助'): Promise<IpcResponse<'app.popupMenuCategory'>>;
     /**
-     * Show a native file picker. On confirm, main reads up to `maxBytes` of
-     * the file as utf-8 text and returns `{ canceled:false, text, name, ... }`.
-     * Returns `{ canceled:true }` if the user dismisses the dialog. Returns
-     * `ok:false` with code `not_text` / `too_large` if the file is binary or
-     * over the byte limit, so the renderer can surface a clear message.
+     * Show a native file picker. On confirm, main copies the chosen file
+     * into the AI composer inbox (<rootDir>/.todo-list/dsh_workspace/inbox/)
+     * and returns `{ canceled:false, path, name, mime, size }`. The renderer
+     * never sees the file body — the AI uses DSH `read` / `read_image` to
+     * stream it. Returns `{ canceled:true }` if the user dismisses the dialog.
      */
-    pickFile(opts?: { maxBytes?: number }): Promise<IpcResponse<'app.pickFile'>>;
+    pickFile(): Promise<IpcResponse<'app.pickFile'>>;
+    /**
+     * Drop a renderer-side Blob (e.g. pasted image) into the AI composer
+     * inbox. Caller has already encoded it to a `data:` URL; main decodes
+     * the base64 payload and writes the bytes to disk, returning the same
+     * `{ path, name, mime, size }` shape as `pickFile`. `conversationId` is
+     * the currently-active AIPane conversation (sent via
+     * `todo-list:ai-conv-active`); pass `null` for drafts.
+     */
+    importBlob(args: {
+      conversationId: string | null;
+      name: string;
+      mime: string;
+      dataUrl: string;
+    }): Promise<IpcResponse<'ai.attachment.importBlob'>>;
+    /**
+     * Move paths from the `draft` index key to a real conversationId key.
+     * Called by AIPane on submit right after `pickFile`-produced
+     * attachments are about to land in the prompt. Idempotent.
+     */
+    relinkDraft(args: {
+      conversationId: string;
+      paths: string[];
+    }): Promise<IpcResponse<'ai.attachment.relinkDraft'>>;
     /** User-menu actions (bottom-left chip). */
     action(a: 'about' | 'checkUpdate' | 'quit'): Promise<IpcResponse<'app.action'>>;
     /** OS username for the bottom-left chip (no hardcoded preset identity). */
@@ -468,6 +491,16 @@ export interface TodoListApi {
   aiTools: {
     listGranted(req: { conversationId?: string }): Promise<IpcResponse<'ai.tools.listGranted'>>;
     revoke(req: { toolName: string; scope: 'always' | 'session'; conversationId?: string }): Promise<IpcResponse<'ai.tools.revoke'>>;
+  };
+  /** 会话级权限预设（沙箱模式 + 审批策略）。选择先落 conversations 行
+   *  （用户意图），有 live session 时同步推给 DSH（运行时真相）—— 会话是
+   *  首轮才懒创建的，所以新对话的选择要等 ensureAgent() 才生效。 */
+  aiPermissionPreset: {
+    /** 省略 conversationId = draft 新对话（行还没建），只回选项表。 */
+    get(req?: { conversationId?: string }): Promise<IpcResponse<'ai.permissionPreset.get'>>;
+    set(req: { conversationId: string; preset: string }): Promise<IpcResponse<'ai.permissionPreset.set'>>;
+    /** danger-full-access 的二次确认（原生 dialog，跟随系统主题）。 */
+    confirm(req: { preset: string }): Promise<IpcResponse<'ai.permissionPreset.confirm'>>;
   };
   on<E extends AppEvent>(event: E, cb: (payload: AppEventMap[E]) => void): () => void;
 }

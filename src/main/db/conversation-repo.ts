@@ -20,6 +20,8 @@
 //   sweep(maxCount) → when active count > max, hard delete the oldest
 //                     unarchived rows down to the cap. Caller responsible
 //                     for any leaked JSONL (sweep is a pure DB op).
+//   setPermissionPreset(id, preset) → store the user's permission-preset
+//                     choice (v20). Does not bump updated_at.
 //
 // Notes:
 // - updated_at is bumped on every state mutation so the sidebar can sort
@@ -58,6 +60,12 @@ export interface Conversation {
   createdAt: number;
   updatedAt: number;
   archived: boolean;
+  /** 用户为这条会话选的权限预设（read-only / workspace-write / auto /
+   *  danger-full-access）。null = 从未显式选过 → 走 cordis.yml 的
+   *  defaultPreset。见 schema.ts v20 migration 的注释：这一列是「用户
+   *  意图」，DSH session 的 permission/preset 事件才是「实际生效」，
+   *  两者在首轮 ensureAgent() 时对齐。 */
+  permissionPreset: string | null;
 }
 
 interface Row {
@@ -66,6 +74,7 @@ interface Row {
   created_at: number;
   updated_at: number;
   archived: number;
+  permission_preset: string | null;
 }
 
 function rowToConversation(r: Row): Conversation {
@@ -75,6 +84,7 @@ function rowToConversation(r: Row): Conversation {
     createdAt: r.created_at,
     updatedAt: r.updated_at,
     archived: r.archived === 1,
+    permissionPreset: r.permission_preset ?? null,
   };
 }
 
@@ -105,15 +115,15 @@ export class ConversationRepo {
       ? Math.floor(opts.offset as number)
       : 0;
     const sql = includeArchived
-      ? 'SELECT id, title, created_at, updated_at, archived FROM conversations ORDER BY updated_at DESC LIMIT ? OFFSET ?'
-      : 'SELECT id, title, created_at, updated_at, archived FROM conversations WHERE archived = 0 ORDER BY updated_at DESC LIMIT ? OFFSET ?';
+      ? 'SELECT id, title, created_at, updated_at, archived, permission_preset FROM conversations ORDER BY updated_at DESC LIMIT ? OFFSET ?'
+      : 'SELECT id, title, created_at, updated_at, archived, permission_preset FROM conversations WHERE archived = 0 ORDER BY updated_at DESC LIMIT ? OFFSET ?';
     const rows = this.db.prepare(sql).all(limit, offset) as Row[];
     return rows.map(rowToConversation);
   }
 
   get(id: string): Conversation | undefined {
     const row = this.db
-      .prepare('SELECT id, title, created_at, updated_at, archived FROM conversations WHERE id = ?')
+      .prepare('SELECT id, title, created_at, updated_at, archived, permission_preset FROM conversations WHERE id = ?')
       .get(id) as Row | undefined;
     return row ? rowToConversation(row) : undefined;
   }
@@ -133,7 +143,7 @@ export class ConversationRepo {
         'INSERT INTO conversations(id, title, created_at, updated_at, archived) VALUES (?, ?, ?, ?, 0)',
       )
       .run(id, title, now, now);
-    return { id, title, createdAt: now, updatedAt: now, archived: false };
+    return { id, title, createdAt: now, updatedAt: now, archived: false, permissionPreset: null };
   }
 
   rename(id: string, title: string): boolean {
@@ -152,6 +162,24 @@ export class ConversationRepo {
     this.db
       .prepare('UPDATE conversations SET updated_at = ? WHERE id = ?')
       .run(Date.now(), id);
+  }
+
+  /**
+   * Persist the user's permission-preset choice for this conversation.
+   *
+   * Deliberately does NOT bump updated_at: switching the preset is a
+   * configuration act, not a content mutation, so it must not reorder the
+   * sidebar (same rationale as `todo.setSelectedDoc` / the v18 migration).
+   *
+   * `preset === null` clears the choice back to "never explicitly selected"
+   * → the next turn falls back to the cordis.yml defaultPreset. Returns
+   * whether a row actually changed (false for unknown id / archived row).
+   */
+  setPermissionPreset(id: string, preset: string | null): boolean {
+    const res = this.db
+      .prepare('UPDATE conversations SET permission_preset = ? WHERE id = ?')
+      .run(preset, id);
+    return res.changes > 0;
   }
 
   archive(id: string): boolean {
@@ -200,27 +228,31 @@ export class ConversationRepo {
    * Cap enforcement: when the active (unarchived) count exceeds `maxCount`,
    * hard-delete the oldest rows by `updated_at ASC` until we're back under
    * the cap. `maxCount <= 0` means "unlimited" → no-op. Archived rows are
-   * never swept — they're "kept but hidden" by the user. Pure DB op; the
-   * on-disk JSONL of swept rows is left as a ghost (the renderer accepts
-   * this trade-off to keep `ai.conversation.create` free of a runtime-boot
-   * dependency).
+   * never swept — they're "kept but hidden" by the user. Returns the list
+   * of swept conversation ids so callers can also clean per-conv side
+   * effects (composer inbox files, etc). The on-disk JSONL of swept rows
+   * is still left as a ghost — the renderer accepts this trade-off to
+   * keep `ai.conversation.create` free of a runtime-boot dependency.
    */
-  sweep(maxCount: number): number {
-    if (!Number.isFinite(maxCount) || maxCount <= 0) return 0;
+  sweep(maxCount: number): string[] {
+    if (!Number.isFinite(maxCount) || maxCount <= 0) return [];
     const current = this.count(false); // 仅未归档
-    if (current <= maxCount) return 0;
+    if (current <= maxCount) return [];
     const overflow = current - maxCount;
-    const res = this.db
-      .prepare(
-        `DELETE FROM conversations
-         WHERE id IN (
-           SELECT id FROM conversations
-           WHERE archived = 0
-           ORDER BY updated_at ASC
-           LIMIT ?
-         )`,
+    const selectIds = this.db
+      .prepare<[number]>(
+        `SELECT id FROM conversations
+         WHERE archived = 0
+         ORDER BY updated_at ASC
+         LIMIT ?`,
       )
-      .run(overflow);
-    return res.changes;
+      .all(overflow) as Array<{ id: string }>;
+    const ids = selectIds.map((r) => r.id);
+    if (ids.length === 0) return [];
+    const placeholders = ids.map(() => '?').join(',');
+    this.db
+      .prepare(`DELETE FROM conversations WHERE id IN (${placeholders})`)
+      .run(...ids);
+    return ids;
   }
 }

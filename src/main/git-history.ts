@@ -24,6 +24,25 @@ import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
 
+/** Run `git` without flashing a console window on Windows. `git.exe` is a
+ *  console-subsystem binary, so when our Electron main process (which has no
+ *  console) spawns it via Node's `execFile`, Windows allocates a fresh console
+ *  window for each invocation. `windowsHide` is a no-op off Windows.
+ *  `encoding: 'utf8'` is set so TypeScript can pick the string-encoding
+ *  overload of `execFile`; the helper has no explicit return type so the
+ *  inferred narrow stdout/stderr type (`string`) flows through to callers. */
+function gitExec(
+  args: string[],
+  opts: { cwd?: string; timeout?: number } = {},
+) {
+  return execFileAsync('git', args, {
+    cwd: opts.cwd ?? process.cwd(),
+    timeout: opts.timeout ?? 10_000,
+    encoding: 'utf8',
+    windowsHide: true,
+  });
+}
+
 export interface GitLogEntry {
   /** Full 40-char SHA — stable across renames since we use --follow. */
   sha: string;
@@ -46,7 +65,7 @@ let gitAvailableCache: boolean | null = null;
 export async function gitAvailable(): Promise<boolean> {
   if (gitAvailableCache !== null) return gitAvailableCache;
   try {
-    await execFileAsync('git', ['--version'], { timeout: 5000 });
+    await gitExec(['--version'], { timeout: 5000 });
     gitAvailableCache = true;
   } catch {
     gitAvailableCache = false;
@@ -62,11 +81,11 @@ export async function ensureGitRepo(todosDir: string): Promise<void> {
   const gitDir = join(todosDir, '.git');
   if (!existsSync(gitDir)) {
     try {
-      await execFileAsync('git', ['init', '--initial-branch=main'], { cwd: todosDir, timeout: 10_000 });
+      await gitExec(['init', '--initial-branch=main'], { cwd: todosDir, timeout: 10_000 });
     } catch {
       // Older git may not support --initial-branch; fall back to plain init
       // and tolerate the branch hint being ignored.
-      await execFileAsync('git', ['init'], { cwd: todosDir, timeout: 10_000 });
+      await gitExec(['init'], { cwd: todosDir, timeout: 10_000 });
     }
     // Ensure a sensible user identity exists *for this repo only* (no global
     // mutation). Reading first means we don't clobber a value the user set.
@@ -80,15 +99,15 @@ export async function ensureGitRepo(todosDir: string): Promise<void> {
 
 async function ensureLocalIdentity(todosDir: string): Promise<void> {
   try {
-    const { stdout: name } = await execFileAsync('git', ['config', '--get', 'user.name'], { cwd: todosDir, timeout: 5_000 });
-    const { stdout: email } = await execFileAsync('git', ['config', '--get', 'user.email'], { cwd: todosDir, timeout: 5_000 });
+    const { stdout: name } = await gitExec(['config', '--get', 'user.name'], { cwd: todosDir, timeout: 5_000 });
+    const { stdout: email } = await gitExec(['config', '--get', 'user.email'], { cwd: todosDir, timeout: 5_000 });
     if (name.trim() && email.trim()) return;
   } catch {
     // Neither set; fall through and write defaults.
   }
   try {
-    await execFileAsync('git', ['config', 'user.name', 'AI 待办'], { cwd: todosDir, timeout: 5_000 });
-    await execFileAsync('git', ['config', 'user.email', 'todo-list@local'], { cwd: todosDir, timeout: 5_000 });
+    await gitExec(['config', 'user.name', 'AI 待办'], { cwd: todosDir, timeout: 5_000 });
+    await gitExec(['config', 'user.email', 'todo-list@local'], { cwd: todosDir, timeout: 5_000 });
   } catch {
     // Last-resort: leave the repo un-configured. Subsequent commits will
     // fail silently (we swallow errors in commitFile); the user will see
@@ -116,12 +135,11 @@ export async function commitOnSave(
   if (!existsSync(filePath)) return null;
   try {
     // Stage the file (only — leaving other working-tree changes alone).
-    await execFileAsync('git', ['add', '--', relPath], { cwd: todosDir, timeout: 10_000 });
+    await gitExec(['add', '--', relPath], { cwd: todosDir, timeout: 10_000 });
     // `--allow-empty` would defeat the no-change short-circuit, but we
     // don't want empty commits polluting the log, so use `git diff --cached
     // --quiet` to detect "nothing to commit" first.
-    const { stdout: diffCached } = await execFileAsync(
-      'git',
+    const { stdout: diffCached } = await gitExec(
       ['diff', '--cached', '--quiet', '--', relPath],
       { cwd: todosDir, timeout: 5_000 },
     ).catch((err: NodeJS.ErrnoException & { stdout?: string; stderr?: string }) => {
@@ -144,8 +162,8 @@ export async function commitOnSave(
     // explicit but only works with a path; with `git commit -- file` we
     // stage ONLY that path's diff into the commit even if other files were
     // also staged above — safe + obvious.
-    await execFileAsync('git', ['commit', '-m', message, '--', relPath], { cwd: todosDir, timeout: 10_000 });
-    const { stdout: sha } = await execFileAsync('git', ['rev-parse', 'HEAD'], { cwd: todosDir, timeout: 5_000 });
+    await gitExec(['commit', '-m', message, '--', relPath], { cwd: todosDir, timeout: 10_000 });
+    const { stdout: sha } = await gitExec(['rev-parse', 'HEAD'], { cwd: todosDir, timeout: 5_000 });
     return sha.trim();
   } catch {
     return null;
@@ -167,8 +185,7 @@ export async function getFileLog(
     // Custom format: SHA + author timestamp + subject (%s), tab-separated so
     // we don't have to worry about newlines/messages containing our separator.
     const fmt = '%H%x09%at%x09%s';
-    const { stdout } = await execFileAsync(
-      'git',
+    const { stdout } = await gitExec(
       ['log', '--follow', `--pretty=${fmt}`, '-n', String(limit), '--', relPath],
       { cwd: todosDir, timeout: 10_000 },
     );
@@ -199,8 +216,7 @@ export async function getFileAtSha(
 ): Promise<string | null> {
   if (!(await gitAvailable())) return null;
   try {
-    const { stdout } = await execFileAsync(
-      'git',
+    const { stdout } = await gitExec(
       ['show', `${sha}:${relPath}`],
       { cwd: todosDir, timeout: 10_000 },
     );
@@ -223,8 +239,7 @@ export async function restoreFileAtSha(
 ): Promise<boolean> {
   if (!(await gitAvailable())) return false;
   try {
-    const { stdout } = await execFileAsync(
-      'git',
+    const { stdout } = await gitExec(
       ['show', `${sha}:${relPath}`],
       { cwd: todosDir, timeout: 10_000 },
     );
@@ -254,8 +269,7 @@ export async function mv(
   if (!(await gitAvailable())) return false;
   if (!existsSync(join(todosDir, '.git'))) return false;
   try {
-    await execFileAsync(
-      'git',
+    await gitExec(
       ['mv', '--', fromRelPath, toRelPath],
       { cwd: todosDir, timeout: 10_000 },
     );

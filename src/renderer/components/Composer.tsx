@@ -22,6 +22,13 @@ interface PastedImage {
   blob: Blob;
   name: string;
   mime: string;
+  /** Composer 在 addBlob 时立即把字节流落盘到
+   *  <rootDir>/.todo-list/dsh_workspace/inbox/（带 convId 前缀），
+   *  写入成功后填这两个字段；submitAi 用它们代替 dataUrl 走 prompt，
+   *  prompt 体积不随截图尺寸线性增长。失败时这两个字段保持 undefined，
+   *  该 chip 在错误态下被移除。 */
+  importedPath?: string;
+  importedSize?: number;
 }
 
 /** Shape of the window event fired on submit. The AIPane listens for this
@@ -31,10 +38,13 @@ export interface ExternalAiSubmitDetail {
   /** The literal text the user typed (no image references inline — those
    *  live in `images` and the AIPane renders them as image markdown). */
   prompt: string;
-  /** Images attached to this prompt as data URLs. The AIPane embeds them
-   *  in the wire prompt as `![name](dataUrl)` so a multimodal model sees
-   *  them inline. */
-  images: { name: string; mime: string; dataUrl: string }[];
+  /** Images attached to this prompt as inbox paths. The bytes have
+   *  already been copied to <rootDir>/.todo-list/dsh_workspace/inbox/
+   *  by the time we get here; AIPane just needs the absolute path +
+   *  metadata so it can embed a `[attached: name (mime, size 字节)]\n<path>`
+   *  block in the wire prompt. The AI uses DSH `read_image` to stream
+   *  the file from disk — the prompt body stays tiny. */
+  images: { name: string; mime: string; path: string; size: number }[];
   /** Explicit source contract: the receiver must wrap this as a task-create
    * request instead of treating it as ordinary assistant chat. */
   intent: 'create-task';
@@ -55,6 +65,11 @@ export const Composer: React.FC<{
   const [images, setImages] = useState<PastedImage[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** 当前 AIPane 活跃 convId。Composer 跟 AIPane 不在同一棵 React 树
+   *  里（Composer 在中央 modal，AIPane 是侧栏），所以通过 window 上的
+   *  `todo-list:ai-conv-active` 自定义事件同步。AIPane 切换 / 新建 / 卸载
+   *  对话时都会发一次。null = AIPane 在 draft 状态或没挂载。 */
+  const currentConvIdRef = useRef<string | null>(null);
   const [form, setForm] = useState({
     title: '',
     status: 'next' as TodoStatus,
@@ -67,6 +82,18 @@ export const Composer: React.FC<{
 
   useEffect(() => {
     textareaRef.current?.focus();
+  }, []);
+
+  // 订阅 AIPane 推送的当前 convId。事件在 AIPane 每次 setCurrentId 时
+  // 触发（包括 draft 变 null），Composer 拿到后写入 ref —— 后续粘贴图片
+  // 时 importBlob 用 ref 里的 convId 写到正确的 inbox key。
+  useEffect(() => {
+    const onActive = (e: Event): void => {
+      const detail = (e as CustomEvent<{ conversationId: string | null }>).detail;
+      currentConvIdRef.current = detail?.conversationId ?? null;
+    };
+    window.addEventListener('todo-list:ai-conv-active', onActive);
+    return () => window.removeEventListener('todo-list:ai-conv-active', onActive);
   }, []);
 
   // Esc cancels; Enter submits. (Ctrl+Enter is also accepted for users who
@@ -95,12 +122,42 @@ export const Composer: React.FC<{
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [text, images, mode]);
 
+  /** 把一个 Blob 加进 images（保留 preview 用的 object URL），并立刻
+   *  异步把它写到 dsh_workspace/inbox/。落盘成功后该 chip 标 `importedPath`，
+   *  submit 时直接用这个 path 拼进 prompt —— 不再 inline dataUrl。
+   *  失败时把 chip 移除 + 错误提示，避免用户在「看似有附件其实没有」的状态
+   *  下提交。FileReader.readAsDataURL 阶段在 renderer（base64 编码）；base64
+   *  → bytes 在 main（Buffer.from(b64, 'base64')）。一张 8 MB 截图大约
+   *  11 MB base64，能扛住；几十 MB 是 future work。 */
   const addBlob = useCallback((blob: Blob, name: string): void => {
     const url = URL.createObjectURL(blob);
+    const id = crypto.randomUUID();
+    const safeName = name || 'pasted';
     setImages((prev) => [
       ...prev,
-      { id: crypto.randomUUID(), url, blob, name: name || 'pasted', mime: blob.type },
+      { id, url, blob, name: safeName, mime: blob.type },
     ]);
+    void (async () => {
+      try {
+        const dataUrl = await blobToDataUrl(blob);
+        const r = await window.todoList.app.importBlob({
+          conversationId: currentConvIdRef.current,
+          name: safeName,
+          mime: blob.type,
+          dataUrl,
+        });
+        if (!r.ok) throw new Error(r.message ?? r.code ?? '导入失败');
+        setImages((prev) =>
+          prev.map((i) =>
+            i.id === id ? { ...i, importedPath: r.data.path, importedSize: r.data.size } : i,
+          ),
+        );
+      } catch (err) {
+        URL.revokeObjectURL(url);
+        setImages((prev) => prev.filter((i) => i.id !== id));
+        setError(err instanceof Error ? err.message : String(err));
+      }
+    })();
   }, []);
 
   // Paste images directly into the textarea.
@@ -142,24 +199,28 @@ export const Composer: React.FC<{
     setSubmitting(true);
     setError(null);
     try {
-      // Convert image blobs to data URLs in parallel; this is the only
-      // blocking work between "Enter pressed" and "AI pane receives the
-      // event". The encode is cheap (sub-100ms for typical screenshots)
-      // so we don't need a streaming preview.
-      const imagePayload = await Promise.all(
-        images.map(async (img) => ({
-          name: img.name,
-          mime: img.mime,
-          dataUrl: await blobToDataUrl(img.blob),
-        })),
-      );
+      // 等待所有图片落盘完成（addBlob 是 fire-and-forget，但 submit 之前
+      // 必须保证 importedPath 都有）。若任一 chip 还没 import 完成就
+      // 报错 —— 让用户知道为什么没发出去，而不是静默丢附件。
+      const pending = images.filter((i) => !i.importedPath);
+      if (pending.length > 0) {
+        throw new Error(
+          `还有 ${pending.length} 张图片正在导入，请稍候再试`,
+        );
+      }
+      const imagePayload = images.map((i) => ({
+        name: i.name,
+        mime: i.mime,
+        path: i.importedPath!,
+        size: i.importedSize ?? i.blob.size,
+      }));
 
       const detail: ExternalAiSubmitDetail = { intent: 'create-task', prompt: trimmed, images: imagePayload };
       if (onAiSubmit) onAiSubmit(detail);
       else window.dispatchEvent(new CustomEvent<ExternalAiSubmitDetail>(AI_SUBMIT_EVENT, { detail }));
 
       // Free the object URLs we created for previews — they're not needed
-      // after we have the data URLs, and leaking them would balloon memory
+      // after the bytes are on disk, and leaking them would balloon memory
       // if the user captures a lot of images in one session.
       images.forEach((i) => URL.revokeObjectURL(i.url));
 
@@ -299,7 +360,15 @@ export const Composer: React.FC<{
         <button
           type="button"
           className="btn-primary composer__send"
-          disabled={submitting || (mode === 'ai' ? (!text.trim() && images.length === 0) : !form.title.trim())}
+          disabled={
+            submitting ||
+            (mode === 'ai'
+              ? (!text.trim() && images.length === 0) ||
+                // 任意一张图还没 importBlob 完成就按住按钮 —— 等就行，
+                // 别让用户在「看起来 ready」状态下提交空附件。
+                images.some((i) => !i.importedPath)
+              : !form.title.trim())
+          }
           onClick={() => void (mode === 'ai' ? submitAi() : submitForm())}
         >
           {submitting ? '创建中…' : mode === 'ai' ? '交给 AI 创建' : '创建任务'}

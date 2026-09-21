@@ -158,6 +158,25 @@ interface HistoryTurnLike {
   argsKnown?: boolean;
 }
 
+/** 把首位的 `/` 当成"系统命令前缀"剥掉。本应用没有 slash command,但用户
+ *  习惯从 Claude Code / 其它客户端带过来——打字输入 `/help` 时,期望的
+ *  行为是"help 这条消息发给 AI",而不是把 `/help` 当字面字符串传过去,
+ *  否则模型会困惑(以为是未实现的命令)。
+ *
+ *  规则:
+ *    - 仅剥离**首个**字符 `/`,避免误伤 URL(`https://...`)和带转义的路径
+ *    - 紧随 `/` 的 0~1 个 ASCII 空格一并吃掉,符合 `/help` / `/ help` 两种常见输入
+ *    - 中段 / 末段的 `/` 不动(那是合法文本)
+ *    - 空字符串 / 不以 `/` 开头 → 原样返回
+ *  纯函数,无副作用。runSubmit 在主路径之外再调一次兜底(capture /
+ *  externalSubmit 等不走 textarea onChange 的路径)。 */
+export function stripLeadingSlashCommand(text: string): string {
+  if (!text) return text;
+  if (text[0] !== '/') return text;
+  // 仅剥首位的 `/` + 紧随的 0~1 个 ASCII 空格
+  return text.slice(1).replace(/^ /, '');
+}
+
 /** Active HITL request — at most one of each kind visible at a time. */
 interface ActiveQuestion {
   reqId: string;
@@ -195,8 +214,9 @@ export const AIPane: React.FC<{
   // Per-conversation streaming state: which conv has an in-flight turn, and
   // its id. Stored separately from turnsByConv so events can still resolve
   // a streaming turn after the user navigated to another conversation.
-  const [streamingConvId, setStreamingConvId] = useState<string | null>(null);
-  const [streamingTurnId, setStreamingTurnId] = useState<string | null>(null);
+  const [activeStream, setActiveStream] = useState<{ conversationId: string; invocationId: string } | null>(null);
+  const streamingConvId = activeStream?.conversationId ?? null;
+  const streamingTurnId = activeStream?.invocationId ?? null;
 
   // L3-D: when DSH's session-title service fires `session/title` (and the
   // runtime listener bridges it back to the conversations table), main
@@ -214,6 +234,30 @@ export const AIPane: React.FC<{
   const [historyLoaded, setHistoryLoaded] = useState<Set<string>>(new Set());
   const [bootError, setBootError] = useState<string | null>(null);
   const [input, setInput] = useState('');
+  // 用户在输入框里以 `/` 开头会被当作"系统命令",但本应用目前**没有**任何
+  // slash command —— 输入 `/help` / `/clear` 之类实际是想跟 AI 聊。我们
+  // 在 setInput 那一层把首位的 `/` 吃掉(连同 1 个可选的紧邻空格),保证
+  // 视觉上"打什么发什么",不留尾巴。stripLeadingSlashCommand() 同步再走
+  // 一次 runSubmit 是兜底,处理 capture / externalSubmit 等不走 onChange
+  // 的路径。
+  const onInputChange = useCallback((value: string) => {
+    setInput(stripLeadingSlashCommand(value));
+  }, []);
+  // 权限预设选择器。`effective` 是 UI 显示的当前值（用户意图优先，回退到
+  // DSH 运行时真相）；`options` 来自 DSH 的 preset 表；两者都为 null/[] 时
+  // 隐藏整个控件（DSH 未 boot / 插件没挂载 —— 显示一个点了没反应的按钮
+  // 比不显示更糟）。
+  const [showPresets, setShowPresets] = useState(false);
+  const [presetState, setPresetState] = useState<{
+    effective: string;
+    options: Array<{ value: string; name: string; description?: string }>;
+  } | null>(null);
+  // draft（新对话尚未提交）时选的预设。此时 conversations 行还不存在，
+  // 没地方落库 —— 先记在这里，runSubmit 建行时一并带过去。
+  const [draftPreset, setDraftPreset] = useState<string | null>(null);
+  // 切换中的防连点 —— 切 danger-full-access 会弹原生 dialog，异步窗口里
+  // 用户可能重复点击。
+  const [presetBusy, setPresetBusy] = useState(false);
   // L3-H: search/filter for the history dropdown. Cleared on dropdown close.
   const [switcherQuery, setSwitcherQuery] = useState('');
   // 「显示更多」分页：listTotal 是后端返回的命中行数；listRemaining 是
@@ -253,6 +297,7 @@ export const AIPane: React.FC<{
   }, [conversations]);
 
   const historyRef = useRef<HTMLDivElement>(null);
+  const presetRef = useRef<HTMLDivElement>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
   const historySearchRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -343,10 +388,93 @@ export const AIPane: React.FC<{
         setShowHistory(false);
         setRowMenuId(null);
       }
+      if (showPresets && presetRef.current && !presetRef.current.contains(t)) {
+        setShowPresets(false);
+      }
     };
     document.addEventListener('mousedown', onDocClick);
     return () => document.removeEventListener('mousedown', onDocClick);
-  }, [showHistory]);
+  }, [showHistory, showPresets]);
+
+  // 拉取当前会话的权限预设 + 选项表。切换会话要重拉（预设是会话级的）；
+  // DSH 未就绪时不发 IPC（ai.permissionPreset.get 会回 ai_not_ready），
+  // 等 aiStartup 变 ready 再拉。
+  //
+  // 无 currentId（draft）也要拉：此时只回选项表 + defaultPreset，让选择器
+  // 在用户发出第一条消息之前就能用。见 AIPermissionPresetGetReq 注释。
+  useEffect(() => {
+    if (aiStartup.status !== 'ready') {
+      setPresetState(null);
+      return;
+    }
+    let alive = true;
+    void (async () => {
+      // 防御性读取：旧渲染端 / 部分测试桩可能没有这个命名空间。缺失时静默
+      // 隐藏控件，而不是抛异常炸掉整个面板。
+      const presetsApi = window.todoList?.aiPermissionPreset;
+      if (!presetsApi) {
+        setPresetState(null);
+        return;
+      }
+      const res = await presetsApi.get(
+        currentId ? { conversationId: currentId } : {},
+      );
+      if (!alive) return;
+      if (!res.ok) {
+        setPresetState(null);
+        return;
+      }
+      // options 为空 = DSH 侧插件没挂载 → 隐藏控件。
+      if (res.data.options.length === 0) {
+        setPresetState(null);
+        return;
+      }
+      // draft 时 DB 里没有行，stored 恒为 null —— 用本地记的 draftPreset
+      // 覆盖，否则用户刚选完、一重渲染就被打回 defaultPreset。
+      const effective = currentId === null && draftPreset !== null
+        ? draftPreset
+        : res.data.effective;
+      setPresetState({ effective, options: res.data.options });
+    })();
+    return () => { alive = false; };
+  }, [currentId, aiStartup.status, convVersion, draftPreset]);
+
+  /** 切换权限预设。danger-full-access 先走原生二次确认 —— 它关掉沙箱并把
+   *  审批设为 never，是不可逆的安全姿态变更（虽然随时能切回来，但切换那一
+   *  刻起 AI 就能无审批执行任意命令）。
+   *
+   *  draft（无 currentId）时只记在本地：DB 行要等 runSubmit 里
+   *  conversation.create() 才存在，没地方落库。建行后由 runSubmit 补写。 */
+  const selectPreset = useCallback(async (value: string) => {
+    if (presetBusy) return;
+    const presetsApi = window.todoList?.aiPermissionPreset;
+    if (!presetsApi) return;
+    setPresetBusy(true);
+    try {
+      if (value === 'danger-full-access') {
+        const confirm = await presetsApi.confirm({ preset: value });
+        if (!confirm.ok || !confirm.data.confirmed) return;
+      }
+      if (!currentId) {
+        // 新对话：先记住，等首轮建行时写进去。
+        setDraftPreset(value);
+        setPresetState((prev) => (prev ? { ...prev, effective: value } : prev));
+        setShowPresets(false);
+        return;
+      }
+      const res = await presetsApi.set({
+        conversationId: currentId,
+        preset: value,
+      });
+      if (!res.ok) return;
+      // 乐观更新显示值；options 不变。applied=false 表示会话还没建出来，
+      // 选择已落库、首轮生效 —— 不额外提示，因为 UI 显示的值是对的。
+      setPresetState((prev) => (prev ? { ...prev, effective: res.data.stored } : prev));
+      setShowPresets(false);
+    } finally {
+      setPresetBusy(false);
+    }
+  }, [currentId, presetBusy]);
 
   // L3-H: when the history dropdown opens, focus the search input so the
   // user can type immediately. When it closes, clear the query so the next
@@ -393,8 +521,7 @@ export const AIPane: React.FC<{
   useEffect(() => {
     if (!streamingTurnId || !streamingConvId) return;
     const projection = projectStreamTurn(events, streamingTurnId);
-    if (projection === null) return;
-    if (
+    if (projection === null) return;    if (
       projection.createdTodoId &&
       openedCreatedTodoIdRef.current !== projection.createdTodoId
     ) {
@@ -413,7 +540,7 @@ export const AIPane: React.FC<{
       return {
         ...prev,
         [streamingConvId]: list.map((t) =>
-          t.id !== streamingTurnId
+          t.id !== streamingTurnId || t.status === 'cancelled'
             ? t
             : {
                 ...t,
@@ -435,12 +562,12 @@ export const AIPane: React.FC<{
   // HITL listeners: open the question/approval card the moment main pushes the
   // request event. Correlating reply uses the reqId from the payload (not the
   // invocationId) because the answerer is keyed on reqId server-side. The
-  // request is bound to the conversation that was running the turn when it
-  // arrived (streamingConvId, falling back to currentId); the card only renders
-  // while that conversation is active, so it never bleeds into another one.
+  // Question ownership comes from main's calling Agent; older producers
+  // fall back to the locally active conversation. The card only renders
+  // while its owning conversation is active.
   useAppEvent('ai:user-question-request', (req) => {
     setQuestionError(null);
-    const convId = streamingConvId ?? currentId ?? '';
+    const convId = req.conversationId ?? streamingConvId ?? currentId ?? '';
     setActiveQuestion({
       reqId: req.reqId,
       invocationId: req.invocationId,
@@ -548,6 +675,18 @@ export const AIPane: React.FC<{
       el.removeEventListener('scroll', onScroll);
     };
   }, [recomputeActiveQuestion]);
+
+  // 通知页面其它组件（中央 Composer）当前活跃的 convId。
+  // Composer 读这个事件来决定 importBlob 该用哪个 convId 写入
+  // dsh_workspace/inbox/。集中在一处 effect 而不是散在每个
+  // setCurrentId 调用点，避免遗漏。
+  useEffect(() => {
+    window.dispatchEvent(
+      new CustomEvent('todo-list:ai-conv-active', {
+        detail: { conversationId: currentId },
+      }),
+    );
+  }, [currentId]);
 
   // Auto-follow the bottom of the conversation stream — but only when the
   // user is at (or near) the bottom. Pauses on upward wheel / touch / keyboard
@@ -716,17 +855,21 @@ export const AIPane: React.FC<{
     setAttachments([]);
     setShowHistory(false);
     setRowMenuId(null);
+    // 清掉上一个 draft 的选择，避免"上次没发出去的全自动"粘到这次。
+    setDraftPreset(null);
   }, []);
 
-  // Open the native file picker (main does dialog.showOpenDialog, reads the
-  // file as utf-8 up to a small limit) and append the result to the chip
-  // row above the textarea. Multi-pick is disabled — adding one file at a
-  // time keeps the prompt length predictable; the user can keep clicking
-  // + to add more.
+  // Open the native file picker (main copies the file into
+  // <rootDir>/.todo-list/dsh_workspace/inbox/ and returns just the
+  // absolute path + metadata) and append the result to the chip row above
+  // the textarea. Multi-pick is disabled — adding one file at a time keeps
+  // the prompt length predictable; the user can keep clicking + to add
+  // more. The file body is never loaded into renderer memory; the AI
+  // streams it later via DSH `read` / `read_image`.
   const pickAttachment = async (): Promise<void> => {
-    const r = await window.todoList.app.pickFile({ maxBytes: 256 * 1024 });
+    const r = await window.todoList.app.pickFile();
     if (!r.ok) {
-      // not_text / too_large — surface the message in the prompt itself so
+      // pick_file_failed — surface the message in the prompt itself so
       // the user knows what went wrong without leaving the pane.
       setInput((cur) => cur || `[无法附加文件：${r.message ?? r.code ?? '未知错误'}]`);
       return;
@@ -736,8 +879,7 @@ export const AIPane: React.FC<{
       path: r.data.path!,
       name: r.data.name!,
       mime: r.data.mime ?? 'application/octet-stream',
-      size: r.data.size ?? (r.data.text?.length ?? 0),
-      text: r.data.text ?? '',
+      size: r.data.size ?? 0,
     };
     setAttachments((prev) => [...prev, a]);
   };
@@ -749,6 +891,10 @@ export const AIPane: React.FC<{
     setShowHistory(false);
     setRowMenuId(null);
     if (id === currentId) return;
+    // 切换会话时清空当前 composer 的附件 chip —— 之前选的文件留在
+    // 另一会话的上下文里，跨会话混合会污染 prompt。Draft 期间的 draft
+    // 路径还会留在磁盘上，runSubmit 时主进程会 relink 到当前 convId。
+    setAttachments([]);
     setCurrentId(id);
   };
 
@@ -948,14 +1094,13 @@ export const AIPane: React.FC<{
     // 2) Clear streaming state. From here the projection useEffect
     //    bails on this turn, but that's fine — step 1 already froze
     //    the UI to a sensible final state.
-    setStreamingConvId(null);
-    setStreamingTurnId(null);
+    setActiveStream((current) => current?.invocationId === turnId ? null : current);
 
     // 3) Clear any HITL mirrors synchronously so runSubmit's gate
     //    (which checks activeApproval / activeQuestion) releases
     //    before the main-side cancel IPC round-trip completes.
-    setActiveApproval(null);
-    setActiveQuestion(null);
+    setActiveApproval((request) => request?.convId === conv ? null : request);
+    setActiveQuestion((request) => request?.convId === conv ? null : request);
 
     // 4) Tell main to actually stop the agent.
     await window.todoList.ai.cancel(conv, turnId ?? undefined);
@@ -1028,17 +1173,26 @@ export const AIPane: React.FC<{
       // multimodal model can see them — DSH's LLM adapter passes image
       // URLs through to the underlying vision-capable provider.
       prompt = override.prompt.trim();
+      // Composer 的 /command 输入已经在 onChange 阶段被归一化,这里再做
+      // 一次防御性 strip —— 走 capture / externalSubmit 等非 textarea
+      // 路径仍要保证不留尾。
+      prompt = stripLeadingSlashCommand(prompt);
       if (!prompt && override.images.length === 0) return;
+      // Composer → AIPane 图片：Composer 已经在粘贴时把字节流落盘到
+      // dsh_workspace/inbox/（带 convId 前缀），这里只持有元数据 +
+      // inbox 绝对路径。不再 inline dataUrl 进 prompt —— AI 用 DSH
+      // `read_image` 读磁盘上的 png/jpeg。
       attached = override.images.map((img) => ({
-        path: `data:${img.mime};name=${img.name}`,
+        path: img.path,
         name: img.name,
         mime: img.mime,
-        size: Math.floor((img.dataUrl.length * 3) / 4),
-        text: `[image:${img.name}]\n${img.dataUrl}`,
+        size: img.size,
       }));
     } else {
-      prompt = input.trim();
+      prompt = stripLeadingSlashCommand(input.trim());
       if (!prompt) return;
+      // 把归一化结果写回输入框,用户能看到 `/` 被吃掉,不是凭空消失
+      if (input.trim() !== prompt) setInput(prompt);
       attached = attachments;
     }
 
@@ -1057,15 +1211,56 @@ export const AIPane: React.FC<{
       setTurnsByConv((prev) => ({ ...prev, [convId!]: [] }));
       setHistoryLoaded((prev) => new Set(prev).add(convId!));
       setCurrentId(convId);
+      // 通知 Composer：当前活跃 convId 已经落地（之前是 draft），
+      // 后续粘贴图片走 importBlob 时会写到正确的 convId key。
+      window.dispatchEvent(
+        new CustomEvent('todo-list:ai-conv-active', { detail: { conversationId: convId } }),
+      );
+      // draft 期间选的预设：行刚建出来，现在有地方落库了。必须赶在
+      // runTurn 之前写完 —— main 侧 pinPermissionPreset() 是 ensureAgent()
+      // 里读 DB 的，晚一步这次对话就按 defaultPreset 跑了。
+      if (draftPreset !== null) {
+        await window.todoList.aiPermissionPreset.set({
+          conversationId: convId,
+          preset: draftPreset,
+        });
+        setDraftPreset(null);
+      }
     }
 
     if (!override) setAttachments([]);
 
+    // 把 draft 期间 pickFile 写入的「c-draft-...」路径挪到正式 convId
+    // 下，让 cleanupForConv(convId) 之后能找到并 unlink。Composer 已经
+    // 把数据写到正确的 convId key（它读了 conv-active 事件），所以
+    // 这里只对 `app.pickFile` 的产物（即 path 前缀是 c-draft- 的）调用
+    // relinkDraft —— relinkDraft 是幂等的，对非 draft 路径是 no-op。
+    if (attached.length > 0 && convId) {
+      const draftPaths = attached
+        .map((a) => a.path)
+        .filter((p) => /[/\\]c-draft-[^/\\]+$/.test(p));
+      if (draftPaths.length > 0) {
+        try {
+          await window.todoList.app.relinkDraft({
+            conversationId: convId,
+            paths: draftPaths,
+          });
+        } catch (err) {
+          // Best-effort: 索引跟不上不影响 prompt 投递 —— DSH 仍能
+          // 从磁盘读这些孤儿文件，只是删除对话时不会自动清。
+          console.warn('[runSubmit] relinkDraft failed:', err);
+        }
+      }
+    }
+
     let finalWire = prompt;
     if (attached.length > 0) {
+      // 每个附件塞一个 header + 绝对路径块。AI 看到路径后会自己调
+      // `read` / `read_image` 流式读磁盘，prompt 体积不会随附件 size
+      // 增长；DSH 的 path-guard 确保路径必须在 dsh_workspace/ 下。
       const blocks = attached.map((a) => {
         const header = `[attached: ${a.name} (${a.mime}, ${a.size} 字节)]`;
-        return `${header}\n${a.text}`;
+        return `${header}\n${a.path}`;
       });
       finalWire = `${prompt}\n\n---\n\n${blocks.join('\n\n---\n\n')}`;
     }
@@ -1103,8 +1298,7 @@ export const AIPane: React.FC<{
       clear();
     }
     openedCreatedTodoIdRef.current = null;
-    setStreamingConvId(convId);
-    setStreamingTurnId(id);
+    setActiveStream({ conversationId: convId, invocationId: id });
     // The user message has now been admitted into the target conversation's
     // list. Ask the auto-follow hook to pin to bottom on the next frame so
     // the bubble is visible — only valid because validation above passed
@@ -1136,7 +1330,7 @@ export const AIPane: React.FC<{
       return {
         ...prev,
         [convId!]: list.map((t) => {
-          if (t.id !== id) return t;
+          if (t.id !== id || t.status === 'cancelled') return t;
           if (!res.ok) {
             return { ...t, status: 'error' as const, error: res.message ?? 'AI 调用失败' };
           }
@@ -1179,8 +1373,9 @@ export const AIPane: React.FC<{
         }),
       };
     });
-    setStreamingConvId((cur) => (cur === convId ? null : cur));
-    setStreamingTurnId((cur) => (cur === id ? null : cur));
+    // A stopped request can finish after its replacement has started.
+    // Clear both identifiers together, and only for this exact invocation.
+    setActiveStream((current) => current?.invocationId === id ? null : current);
     void refreshList();
   };
 
@@ -1290,6 +1485,61 @@ export const AIPane: React.FC<{
           )}
           <div className="aipane__title-spacer" />
           <div className="aipane__actions">
+            {/* 权限预设选择器。只在 DSH 报出选项表时渲染 —— presetState
+                为 null 说明插件没挂载或 DSH 没起来，此时显示一个点了没
+                反应的控件比不显示更糟。draft（无 currentId）也渲染：用户
+                往往想先定好预设再发第一条消息，选中的值暂存在 draftPreset，
+                建行时补写。 */}
+            {presetState !== null && (
+              <div className="aipane__presets" ref={presetRef}>
+                <button
+                  type="button"
+                  className={
+                    'aipane__preset-btn'
+                    + (presetState.effective === 'danger-full-access' ? ' aipane__preset-btn--danger' : '')
+                  }
+                  onClick={() => setShowPresets((s) => !s)}
+                  disabled={presetBusy}
+                  title="AI 权限预设（沙箱模式 + 审批策略）"
+                  aria-label="AI 权限预设"
+                  aria-haspopup="listbox"
+                  aria-expanded={showPresets}
+                >
+                  <span className="aipane__preset-label">
+                    {presetState.options.find((o) => o.value === presetState.effective)?.name
+                      ?? presetState.effective}
+                  </span>
+                  <IconChevronDownOutline14 size={12} />
+                </button>
+                {showPresets && (
+                  <div className="aipane__menu aipane__menu--right aipane__preset-menu" role="listbox">
+                    <div className="aipane__menu-head">
+                      <span className="aipane__menu-head-title">权限预设</span>
+                    </div>
+                    {presetState.options.map((opt) => (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        role="option"
+                        aria-selected={opt.value === presetState.effective}
+                        className={
+                          'aipane__menu-item aipane__preset-item'
+                          + (opt.value === presetState.effective ? ' is-active' : '')
+                          + (opt.value === 'danger-full-access' ? ' aipane__preset-item--danger' : '')
+                        }
+                        disabled={presetBusy}
+                        onClick={() => void selectPreset(opt.value)}
+                      >
+                        <span className="aipane__preset-item-name">{opt.name}</span>
+                        {opt.description && (
+                          <span className="aipane__preset-item-desc">{opt.description}</span>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
             <button
               type="button"
               className="icon-btn aipane__new-btn"
@@ -1637,7 +1887,7 @@ export const AIPane: React.FC<{
                 <AIComposer
                   ref={textareaRef}
                   value={input}
-                  onChange={setInput}
+                  onChange={onInputChange}
                   attachments={attachments}
                   onRemoveAttachment={removeAttachment}
                   onPickAttachment={() => void pickAttachment()}
@@ -1724,7 +1974,7 @@ export const AIPane: React.FC<{
         <AIComposer
           ref={textareaRef}
           value={input}
-          onChange={setInput}
+          onChange={onInputChange}
           attachments={attachments}
           onRemoveAttachment={removeAttachment}
           onPickAttachment={() => void pickAttachment()}
@@ -1765,12 +2015,38 @@ function historyToTurn(h: HistoryTurnLike): Turn {
     // 只在加载历史时跑一次，不在流式热路径上。
     const userIntent: 'chat' | 'create-task' | undefined =
       h.intent ?? (decodeUserMessage(rawText).intent ?? undefined);
+    // 历史回放：把新格式的附件引用块（`[attached: name (mime, size 字节)]\n<path>`）
+    // 解析出来，挂到 `attached`，并把 user 字符串里的对应块剥掉，让 bubble
+    // 只显示用户原始输入。块之间用 `\n\n---\n\n` 分隔，所以正则匹配到
+    // 下一个 header 或文末为止。
+    const ATTACH_BLOCK = /\[attached: ([^()]+) \(([^,]+), (\d+) 字节\)\]\n([^\n]+)/g;
+    const attached: AttachedFile[] = [];
+    let userText = rawText;
+    const matches = rawText.matchAll(ATTACH_BLOCK);
+    for (const m of matches) {
+      attached.push({
+        name: m[1]!.trim(),
+        mime: m[2]!.trim(),
+        size: Number(m[3]),
+        path: m[4]!.trim(),
+      });
+    }
+    if (attached.length > 0) {
+      // 整体替换：把附件块 + 紧随其后的 `\n\n---\n\n` 分隔符一起剥掉。
+      userText = rawText
+        .replace(/\[attached: [^\n]+\n[^\n]+\n\n---\n\n?/g, '')
+        // 兜底：若历史文本格式稍变（缺 trailing separator），把孤立的
+        // header 行 + 路径行也剥掉，避免 bubble 显示重复的附件引用。
+        .replace(/\[attached: [^\n]+\n[^\n]+/g, '')
+        .trimEnd();
+    }
     return {
       id: crypto.randomUUID(),
-      user: rawText,
+      user: userText,
       userIntent,
       blocks: [],
       status: 'done',
+      ...(attached.length > 0 ? { attached } : {}),
     };
   }
   if (h.type === 'assistant') {
@@ -1822,7 +2098,7 @@ function historyToTurn(h: HistoryTurnLike): Turn {
       // right card instead of a <pre>[{"type":"text"...}]</pre> dump.
       args: parseToolArgs(h.args),
       argsKnown,
-      result: h.ok ? recoverToolResultValue(h.data) : h.error,
+      result: recoverToolResultValue(h.data, h.name) ?? h.error,
       resultKnown: Boolean(h.data != null || (h.error != null && h.error !== '')),
       presentationMeta: h.presentationMeta,
       ok,

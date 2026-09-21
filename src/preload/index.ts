@@ -149,7 +149,11 @@ const api: TodoListApi = {
   app: {
     popupMenu: () => invoke('app.popupMenu', undefined as never),
     popupMenuCategory: (category: string) => invoke('app.popupMenuCategory', { category }),
-    pickFile: (opts) => invoke('app.pickFile', opts ?? {}),
+    pickFile: () => invoke('app.pickFile', undefined as never),
+    importBlob: (args: { conversationId: string | null; name: string; mime: string; dataUrl: string }) =>
+      invoke('ai.attachment.importBlob', args),
+    relinkDraft: (args: { conversationId: string; paths: string[] }) =>
+      invoke('ai.attachment.relinkDraft', args),
     action: (action) => invoke('app.action', { action }),
     osUser: () => invoke('app.osUser', undefined as never),
     setFocus: (focus) => invoke('app.focus.set', { focus }),
@@ -251,6 +255,15 @@ const api: TodoListApi = {
   aiTools: {
     listGranted: (req) => invoke('ai.tools.listGranted', req ?? {}),
     revoke: (req) => invoke('ai.tools.revoke', req),
+  },
+  // 会话级权限预设。get 同时返回「运行时真相」(current) 和「用户意图」
+  // (stored)，UI 优先显示 stored —— 新对话还没有 DSH session，current
+  // 只能是 defaultPreset，而 stored 才是用户点过的值。draft 新对话传空
+  // 对象（行还没建），只取选项表。
+  aiPermissionPreset: {
+    get: (req?: { conversationId?: string }) => invoke('ai.permissionPreset.get', req ?? {}),
+    set: (req) => invoke('ai.permissionPreset.set', req),
+    confirm: (req) => invoke('ai.permissionPreset.confirm', req),
   },
   // Tag catalog (DB-backed since v17). All mutations broadcast
   // `app:tags-changed`; consumers should re-fetch on receipt.
