@@ -21,6 +21,7 @@
     "test:watch": "vitest",
     "test:cov": "vitest run --coverage",
     "test:packaged-dsh": "electron resources/check-packaged-dsh.cjs",
+    "probe:permission-preset": "electron resources/probe-permission-preset.cjs",
     "e2e": "playwright test",
     "assets": "node resources/build-icons.mjs",
     "copy:excalidraw-fonts": "node resources/copy-excalidraw-fonts.mjs",

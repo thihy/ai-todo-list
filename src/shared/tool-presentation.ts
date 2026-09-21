@@ -50,10 +50,15 @@ export type { ContentBlock } from '@deepseek-ai/dsh-llm';
  *  block array itself. Best-effort: a non-JSON text payload (e.g. an error
  *  message string) is returned as the plain string so `errorResult` can render
  *  it. `undefined`/empty content returns `undefined` (→ "失败" fallback). */
-export function recoverToolResultValue(content: unknown): unknown {
+export function recoverToolResultValue(content: unknown, toolName?: string): unknown {
   if (!Array.isArray(content) || content.length === 0) return undefined;
+  if (content.length > 1) {
+    return content.map(block => block?.type === 'text' && typeof block.text === 'string'
+      ? block.text : `[${block?.type ?? '未知'} 内容]`).join('\n\n');
+  }
   const first = content[0] as { type?: string; text?: string } | undefined;
   if (first?.type === 'text' && typeof first.text === 'string') {
+    if (['read', 'read_image', 'write', 'edit', 'grep', 'glob', 'bash', 'pwsh'].includes(toolName ?? '')) return first.text;
     try { return JSON.parse(first.text); } catch { return first.text; }
   }
   return content;
@@ -226,16 +231,21 @@ export function presentToolResult(
     // 投影到对应 UI card。不投影会退化成 JsonBlock（plan O6）。
     case 'read':
     case 'read_image':
+      if (typeof result === 'string' || Array.isArray(result)) return genericResult(toolName, result);
       return readResultToView(args, result);
     case 'write':
     case 'edit':
       return writeEditToView(toolName, args, result);
     case 'grep':
+      if (typeof result === 'string') return genericResult(toolName, result);
       return grepResultToView(args, result);
     case 'glob':
+      if (typeof result === 'string') return genericResult(toolName, result);
       return globResultToView(args, result);
     case 'bash':
     case 'pwsh':
+      if ((typeof result === 'string' && result.startsWith('started background job '))
+        || (typeof result === 'object' && (result as { kind?: string }).kind === 'background')) return genericResult(toolName, result);
       return bashToView(toolName, args, result);
     default:
       return genericResult(toolName, result);

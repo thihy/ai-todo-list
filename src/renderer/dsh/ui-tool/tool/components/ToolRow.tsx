@@ -25,6 +25,7 @@ import {
 import type { WebCardModelProps } from '../models/web-card-model'
 import { AskQuestionCard } from './AskQuestionCard'
 import css from './ToolRow.module.css'
+import { ToolPayloadDialog } from './ToolPayloadDialog'
 
 export interface ToolRowProps {
   t: TranslateNS<'conversation'>
@@ -63,6 +64,8 @@ export interface ToolRowProps {
   missingInputHint?: string | null | undefined
   /** Flattened result text for the expanded Output section; null/absent = no output section. */
   output?: string | null | undefined
+  /** Original result text, available even when a structured card is shown. */
+  fullOutput?: string | null | undefined
   /** Ask-user transcript card; card fields are mutually exclusive and replace text sections. */
   askQuestion?: AskQuestionCardModel | null | undefined
   /** Error first line shown as the collapsed summary on an error row; null/absent = keep `summary`. */
@@ -140,22 +143,36 @@ const JSON_TREE_LABELS: JsonTreeLabels = {
  *  swaps: a structured JsonTree when the payload is parseable JSON + JSON view
  *  is on, otherwise the plain text span. Keeping the label in place means
  *  switching views doesn't move or restyle the input/output headers. */
+function PayloadLabel({ label, onInspect }: { label: string; onInspect?: () => void }) {
+  return <span className={css.ioLabel}>{label}{onInspect && (
+    <button type="button" className={css.payloadIcon} title={`查看完整${label}`} aria-label={`查看完整${label}`} onClick={onInspect}>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5M3 3l6 6m12-6-6 6M3 21l6-6m12 6-6-6" />
+      </svg>
+    </button>
+  )}</span>
+}
+
 function IoPayload({
   label,
   text,
-  jsonView,
+  onInspect,
   error,
 }: {
   label: string
   text: string
-  jsonView: boolean
+  onInspect?: () => void
   error?: boolean
 }) {
+  const [jsonView, setJsonView] = useState(false)
   const parsed = jsonView ? tryParseJson(text) : null
   const useTree = parsed !== null && typeof parsed === 'object'
   return (
     <div className={css.ioSection}>
-      <span className={css.ioLabel}>{label}</span>
+      <span>
+        <PayloadLabel label={label} onInspect={onInspect} />
+        {tryParseJson(text) !== null && <button type="button" className={css.ioToggleBtn} aria-label={`${label}格式化 JSON`} aria-pressed={jsonView} onClick={() => setJsonView(v => !v)}>JSON</button>}
+      </span>
       {useTree ? (
         <div className={css.ioJson}>
           <JsonTree
@@ -205,6 +222,7 @@ export function ToolRow({
   showInputWithCard,
   missingInputHint,
   output,
+  fullOutput,
   askQuestion,
   errorSummary,
   terminal,
@@ -223,10 +241,9 @@ export function ToolRow({
   wireName,
 }: ToolRowProps) {
   const [expanded, setExpanded] = useState(false)
-  // JSON tree vs plain-text view for the IO card's input/output payloads. JSON
-  // is the default (both sides are JSON for our domain tools); the user can
-  // drop to plain text when a payload isn't JSON or they want the raw string.
-  const [jsonView, setJsonView] = useState(true)
+  // Text is the default: tool output may be logs, file contents, or JSON.
+  // The optional JSON view never replaces the original payload.
+  const [payload, setPayload] = useState<{ title: string; text: string } | null>(null)
   const terminalLabels = useMemo(() => terminalBlockLabels(t), [t])
   const diffLabels = useMemo(() => diffBlockLabels(t), [t])
   const readLabels = useMemo(() => readBlockLabels(t), [t])
@@ -244,6 +261,7 @@ export function ToolRow({
   const webBody = web ?? null
   const askQuestionBody = askQuestion ?? null
   const outputText = output ?? null
+  const expandableOutput = fullOutput === undefined ? outputText : fullOutput
   const card = askQuestionBody ?? terminalBody ?? diffBody ?? readBody ?? imageBody ?? searchBody ?? webBody
   // The header input section is reachable in two ways:
   //   1. `bodyRaw != null` — we know the args and can render them.
@@ -354,25 +372,25 @@ export function ToolRow({
           {showInputWithCard === true && card !== null && (bodyRaw != null || missingInputHint != null) && (
             <div className={css.bodyScroll}>
               <div className={css.ioCard}>
-                <div className={css.ioSection}>
-                  <span className={css.ioLabel}>{t('row.input')}</span>
-                  <span className={css.ioText}>
-                    {bodyRaw != null ? formatToolBody(variant, bodyRaw) : missingInputHint}
-                  </span>
-                </div>
+                <IoPayload label={t('row.input')} text={bodyRaw ?? missingInputHint ?? ''} onInspect={bodyRaw == null ? undefined : () => setPayload({ title: `${title} · 输入`, text: bodyRaw })} />
               </div>
             </div>
           )}
+          <div className={card !== null ? css.ioCard : undefined}>
+          <div className={card !== null ? css.ioSection : undefined}>
+          {card !== null && <PayloadLabel label={t('row.output')} onInspect={expandableOutput == null ? undefined : () => setPayload({ title: `${title} · 输出`, text: expandableOutput })} />}
           {askQuestionBody !== null
             ? <AskQuestionCard card={askQuestionBody} />
             : terminalBody !== null
               ? (
+                <div>
                 <TerminalBlock
                   {...terminalBody.card}
-                  maxLines={Infinity}
+                  maxLines={12}
                   labels={terminalLabels}
                   className={css.terminalBody}
                 />
+                </div>
               )
               : diffBody !== null
                 ? <DiffBlock {...diffBody.card} labels={diffLabels} maxLines={CHAT_DIFF_MAX_LINES} className={css.diffBody} />
@@ -425,25 +443,11 @@ export function ToolRow({
                             )}
                             {(cardBody !== null || outputText !== null) && (
                               <div className={css.ioCard}>
-                                <div className={css.ioToolbar} role="group" aria-label="视图切换">
-                                  <button
-                                    type="button"
-                                    className={clsx(css.ioToggleBtn, jsonView && css.ioToggleBtnActive)}
-                                    onClick={() => setJsonView(true)}
-                                    aria-pressed={jsonView}
-                                  >JSON</button>
-                                  <button
-                                    type="button"
-                                    className={clsx(css.ioToggleBtn, !jsonView && css.ioToggleBtnActive)}
-                                    onClick={() => setJsonView(false)}
-                                    aria-pressed={!jsonView}
-                                  >纯文本</button>
-                                </div>
                                 {cardBody !== null && (
                                   <IoPayload
                                     label={t('row.input')}
                                     text={cardBody}
-                                    jsonView={jsonView}
+                                    onInspect={() => setPayload({ title: `${title} · 输入`, text: bodyRaw ?? cardBody })}
                                   />
                                 )}
                                 {cardBody !== null && outputText !== null && (
@@ -453,7 +457,7 @@ export function ToolRow({
                                   <IoPayload
                                     label={t('row.output')}
                                     text={outputText}
-                                    jsonView={jsonView}
+                                    onInspect={expandableOutput == null ? undefined : () => setPayload({ title: `${title} · 输出`, text: expandableOutput })}
                                     error={state === 'error'}
                                   />
                                 )}
@@ -461,6 +465,11 @@ export function ToolRow({
                             )}
                           </>
                         )}
+          {card !== null && outputText !== null && (
+            <span className={css.ioText} data-error={state === 'error' || undefined}>{outputText}</span>
+          )}
+          </div>
+          </div>
           {inspect !== undefined && (
             <button
               type="button"
@@ -473,6 +482,7 @@ export function ToolRow({
           )}
         </div>
       </DisclosureRow>
+      {payload !== null && <ToolPayloadDialog {...payload} onClose={() => setPayload(null)} />}
     </div>
   )
 }

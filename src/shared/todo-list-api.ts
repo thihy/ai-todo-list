@@ -469,6 +469,16 @@ export interface TodoListApi {
     listGranted(req: { conversationId?: string }): Promise<IpcResponse<'ai.tools.listGranted'>>;
     revoke(req: { toolName: string; scope: 'always' | 'session'; conversationId?: string }): Promise<IpcResponse<'ai.tools.revoke'>>;
   };
+  /** 会话级权限预设（沙箱模式 + 审批策略）。选择先落 conversations 行
+   *  （用户意图），有 live session 时同步推给 DSH（运行时真相）—— 会话是
+   *  首轮才懒创建的，所以新对话的选择要等 ensureAgent() 才生效。 */
+  aiPermissionPreset: {
+    /** 省略 conversationId = draft 新对话（行还没建），只回选项表。 */
+    get(req?: { conversationId?: string }): Promise<IpcResponse<'ai.permissionPreset.get'>>;
+    set(req: { conversationId: string; preset: string }): Promise<IpcResponse<'ai.permissionPreset.set'>>;
+    /** danger-full-access 的二次确认（原生 dialog，跟随系统主题）。 */
+    confirm(req: { preset: string }): Promise<IpcResponse<'ai.permissionPreset.confirm'>>;
+  };
   on<E extends AppEvent>(event: E, cb: (payload: AppEventMap[E]) => void): () => void;
 }
 

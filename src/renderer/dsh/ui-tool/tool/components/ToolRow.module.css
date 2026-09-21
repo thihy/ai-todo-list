@@ -409,3 +409,69 @@
   clip: rect(0 0 0 0);
   white-space: nowrap;
 }
+.payloadHeader {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 6px 4px;
+}
+
+.payloadHeader button {
+  font: inherit;
+  font-size: 12px;
+  padding: 5px 10px;
+  border: 1px solid var(--dsw-alias-border-l2, #888);
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-base, #fff);
+  color: var(--dsw-alias-label-primary, #222);
+  cursor: pointer;
+}
+
+.payloadIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  margin-left: 6px;
+  padding: 0;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  vertical-align: middle;
+  cursor: pointer;
+}
+.payloadIcon:hover { background: var(--dsw-alias-interactive-bg-hover-solid); }
+.payloadIcon:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
+.ioToggleBtn[aria-pressed='true'] { background: var(--dsw-alias-interactive-bg-hover-solid); }
+
+.payloadDialog {
+  width: min(1000px, 90vw);
+  max-width: 90vw;
+  height: min(760px, 85vh);
+  max-height: 85vh;
+  padding: 16px;
+  border: 1px solid var(--dsw-alias-border-l2, #888);
+  border-radius: 12px;
+  background: var(--dsw-alias-bg-base, #fff);
+  color: var(--dsw-alias-label-primary, #222);
+}
+
+.payloadDialog[open] { display: flex; flex-direction: column; }
+.payloadDialog::backdrop { background: rgb(0 0 0 / 45%); }
+.payloadHeader strong { flex: 1; min-width: 140px; }
+.payloadText {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  white-space: pre;
+  tab-size: 4;
+  padding: 12px;
+  font: 13px/1.6 Consolas, monospace;
+  border: 1px solid var(--dsw-alias-border-l2, #888);
+  border-radius: 6px;
+  user-select: text;
+}
+.payloadFooter { font-size: 12px; opacity: .7; }

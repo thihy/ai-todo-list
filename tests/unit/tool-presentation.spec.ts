@@ -13,6 +13,7 @@ import {
   presentToolResult,
   presentToolCall,
   summarizeToolCall,
+  recoverToolResultValue,
 } from '../../src/shared/tool-presentation';
 import {
   readResultToView,
@@ -21,6 +22,41 @@ import {
   globResultToView,
   bashToView,
 } from '../../src/shared/tool-presentation-helpers';
+
+describe('actual DSH rendered result content', () => {
+  it.each(['read', 'read_image', 'grep', 'glob'])('%s preserves its text envelope', name => {
+    const text = '<path>C:\\work\\a.txt</path>\n<content>\n1: hello\n</content>';
+    const result = recoverToolResultValue([{ type: 'text', text }], name);
+    expect(presentToolResult(name, {}, result, true)).toMatchObject({ card: 'generic', content: [{ type: 'text', text }] });
+  });
+  it('keeps JSON-looking shell output verbatim and domain JSON structured', () => {
+    const content = [{ type: 'text', text: '{"answer":42}' }];
+    expect(recoverToolResultValue(content, 'pwsh')).toBe('{"answer":42}');
+    expect(recoverToolResultValue(content, 'todo_get')).toEqual({ answer: 42 });
+  });
+  it('retains every text block and identifies non-text results', () => {
+    expect(recoverToolResultValue([{ type: 'text', text: 'first' }, { type: 'text', text: 'second' }, { type: 'image' }]))
+      .toBe('first\n\nsecond\n\n[image 内容]');
+  });
+  it('preserves stderr and timeout while deriving terminal exit status', () => {
+    expect(bashToView('pwsh', {}, 'output\n[stderr]\nerror\n[timed out after 1000ms]\n[exit code: 1]'))
+      .toMatchObject({ output: 'output\n[stderr]\nerror\n[timed out after 1000ms]', exitCode: 1 });
+    expect(bashToView('bash', {}, 'partial\n[killed by signal: SIGTERM]'))
+      .toMatchObject({ output: 'partial', signal: 'SIGTERM' });
+  });
+  it('supports canonical shell stdout/stderr envelopes', () => {
+    expect(bashToView('pwsh', {}, { stdout: { text: 'out' }, stderr: { text: 'err' }, exitCode: 2 }))
+      .toMatchObject({ output: 'out\n[stderr]\nerr', exitCode: 2 });
+  });
+  it('uses the real edit parameter names', () => {
+    expect(writeEditToView('edit', { file_path: 'a', old_string: 'before', new_string: 'after' }, 'Successfully edited'))
+      .toMatchObject({ diffs: [{ path: 'a', oldText: 'before', newText: 'after' }] });
+  });
+  it('keeps Windows drive letters in grep matches', () => {
+    expect(grepResultToView({}, { output: 'C:\\work\\a.txt:12:hello: world' }))
+      .toMatchObject({ files: [{ path: 'C:\\work\\a.txt', matches: [{ lineNumber: 12, line: 'hello: world' }] }] });
+  });
+});
 
 // ─── presentToolResult routing ──────────────────────────────────────────────
 

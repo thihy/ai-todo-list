@@ -245,6 +245,9 @@ export interface AIConversation {
    *  toward the conversation "depth"). Same lazy-compute caveat as
    *  lastMessagePreview. */
   messageCount?: number;
+  /** 用户为这条会话选的权限预设。null = 从未显式选过，走 cordis.yml 的
+   *  defaultPreset。见 ConversationRepo.permissionPreset 的注释。 */
+  permissionPreset?: string | null;
 }
 
 export interface AIConversationListReq {
@@ -261,6 +264,59 @@ export interface AIConversationListRes {
   /** 当前页之后还剩多少条未加载。`remaining > 0` ⇒ 还有可加载的页。 */
   remaining: number;
 }
+
+/** 一个可选的权限预设，供 AIPane 的选择器渲染。`value` 是 DSH 侧的表键
+ *  （read-only / workspace-write / auto / danger-full-access，或 DSH 自己
+ *  派生的 `custom`）。name / description 来自 cordis.yml 的 presets 表，
+ *  没写 label 时回退到 value。 */
+export interface AIPermissionPresetOption {
+  value: string;
+  name: string;
+  description?: string;
+}
+
+/** 读一条会话当前生效的权限预设；`conversationId` 缺省时只取选项表。
+ *
+ *  为什么要支持无会话：新对话（draft）在首轮提交前**根本没有 DB 行**
+ *  —— `startNewDraft()` 只把 currentId 置空，行是 runSubmit 里
+ *  `conversation.create()` 才建的。而用户恰恰会在还没发消息时就想先选好
+ *  预设（"这次我要让它全自动跑"）。没有这条无会话分支，draft 状态下 UI
+ *  连选项表都拿不到，选择器只能隐藏 —— 那就等于把这个能力藏起来了。
+ *
+ *  `current` 是**运行时真相**（DSH session 里折叠出的 preset），`stored`
+ *  是**用户意图**（conversations.permission_preset 列）。两者在首轮
+ *  ensureAgent() 之前会分叉：新对话没有 live session，current 只能报
+ *  cordis.yml 的 defaultPreset，而 stored 已经是用户点过的值。UI 应当
+ *  优先显示 stored，因为它代表用户最后一次明确的选择。 */
+export interface AIPermissionPresetGetReq { conversationId?: string }
+export interface AIPermissionPresetGetRes {
+  /** DSH 侧解析出的当前预设（含 'custom'）；无 live session 时为 null。 */
+  current: string | null;
+  /** 用户在 DB 里存的意图；从未选过为 null。 */
+  stored: string | null;
+  /** 该会话实际生效的值 —— stored ?? current ?? defaultPreset。 */
+  effective: string;
+  /** cordis.yml 的 defaultPreset，UI 用它做「未选择」的兜底展示。 */
+  defaultPreset: string;
+  /** 全部可选项（DSH 的表 + 派生出的 custom，若适用）。 */
+  options: AIPermissionPresetOption[];
+}
+
+export interface AIPermissionPresetSetReq {
+  conversationId: string;
+  preset: string;
+}
+export interface AIPermissionPresetSetRes {
+  /** 落库后的用户意图值。 */
+  stored: string;
+  /** 是否已经推给 live session（false = 会话尚未建立，等首轮 pin）。 */
+  applied: boolean;
+}
+
+/** danger-full-access 的二次确认（原生 dialog，跟随系统主题）。
+ *  与 ai.conversation.confirmDelete 同一模式。 */
+export interface AIPermissionPresetConfirmReq { preset: string }
+export interface AIPermissionPresetConfirmRes { confirmed: boolean }
 
 export interface AIConversationCreateReq { title?: string }
 export interface AIConversationCreateRes { conversation: AIConversation }
@@ -569,6 +625,13 @@ export interface IpcRegistry {
   'ai.conversation.deleteMany': IpcChannel<AIConversationDeleteManyReq, IpcResult<AIConversationDeleteManyRes>>;
   'ai.conversation.confirmDeleteMany': IpcChannel<AIConversationConfirmDeleteManyReq, IpcResult<AIConversationConfirmDeleteManyRes>>;
   'ai.conversation.history': IpcChannel<AIConversationHistoryReq, IpcResult<AIConversationHistoryRes>>;
+
+  // ----- 权限预设（OPENSPEC §ai-assistant 自动预设委托 shell 审批） -----
+  // 会话级的沙箱模式 + 审批策略。选择先落 conversations 行（用户意图），
+  // 有 live session 时同步推给 DSH（运行时真相）。见 schema.ts v20 注释。
+  'ai.permissionPreset.get': IpcChannel<AIPermissionPresetGetReq, IpcResult<AIPermissionPresetGetRes>>;
+  'ai.permissionPreset.set': IpcChannel<AIPermissionPresetSetReq, IpcResult<AIPermissionPresetSetRes>>;
+  'ai.permissionPreset.confirm': IpcChannel<AIPermissionPresetConfirmReq, IpcResult<AIPermissionPresetConfirmRes>>;
 
   'permission.prompt': IpcChannel<PermissionPromptReq, IpcResult<void>>;
   'permission.respond': IpcChannel<{ response: PermissionResponse }, IpcResult<void>>;

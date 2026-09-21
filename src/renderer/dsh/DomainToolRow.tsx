@@ -39,6 +39,7 @@ import { classifyTool } from './ui-tool/tool/models/tool-call-model'
 import { webCardModelFromMeta, type WebCardModelProps } from './ui-tool/tool/models/web-card-model'
 import { conversationT as t } from './conversation-locale'
 import { presentToolCall, presentToolResult, summarizeToolCall } from '../tool-presentation'
+import type { TerminalCardModel } from './ui-tool/tool/models/terminal-card-model'
 
 /** Variant leading icons (figma table), verbatim from GenericToolCard — all
  *  glyphs render at 14 inside the 16px leading box. */
@@ -230,8 +231,10 @@ export const DomainToolRow: React.FC<{
 }> = ({ toolName, args, argsKnown, result, presentationMeta, ok, state, running }) => {
   const callView = useMemo(() => presentToolCall(toolName, args), [toolName, args])
   const resultView = useMemo(
-    () => presentToolResult(toolName, args, result, ok),
-    [toolName, args, result, ok],
+    (): ToolResultView => result == null
+      ? { card: 'generic', content: [{ type: 'text', text: state === 'running' || running ? '等待工具返回…' : '未记录输出' }] }
+      : presentToolResult(toolName, args, result, ok),
+    [toolName, args, result, ok, state, running],
   )
   // ToolRow state mapping. The explicit `state` from the projection is the
   // authoritative source — only fall back to the legacy heuristics when
@@ -274,6 +277,16 @@ export const DomainToolRow: React.FC<{
     [toolName, args, presentationMeta, ok],
   )
   const cards = useMemo(() => toCardModels(resultView, args, argsKnown, ok, web), [resultView, args, argsKnown, ok, web])
+  const shellArgs = args as { command?: string; script?: string; workdir?: string; description?: string } | null;
+  const terminal: TerminalCardModel | null = resultView.card === 'terminal' ? {
+    card: { output: resultView.output ?? '', exitCode: resultView.exitCode, signal: resultView.signal, running: rowState === 'running', cwd: shellArgs?.workdir },
+    copy: { kind: 'shell', command: shellArgs?.command ?? shellArgs?.script ?? '', description: shellArgs?.description },
+  } : null;
+  if (terminal && rowState === 'ok' && (terminal.card.signal || (terminal.card.exitCode !== undefined && terminal.card.exitCode !== 0))) rowState = 'error';
+  // Mutation receipts are distinct from the diff, which is derived from input.
+  const receipt = (toolName === 'write' || toolName === 'edit') && result != null && ok
+    ? typeof result === 'string' ? result : JSON.stringify(result, null, 2)
+    : null;
   const summary = useMemo(() => summarizeToolCall(toolName, args, result, ok), [toolName, args, result, ok])
   // Tool IDENTITY: the visible title is the friendly call label ("安排到今天")
   // from `presentToolCall` → titleFor. The raw wire name (`todo.planForToday`)
@@ -318,8 +331,10 @@ export const DomainToolRow: React.FC<{
       read={cards.read}
       search={cards.search}
       web={cards.web}
+      terminal={terminal}
       bodyRaw={cards.bodyRaw}
-      output={cards.output}
+      output={terminal ? null : receipt ?? cards.output}
+      fullOutput={result == null ? null : typeof result === 'string' ? result : JSON.stringify(result, null, 2)}
       errorSummary={cards.errorSummary}
       showInputWithCard={showInputWithCard}
       missingInputHint={argsKnown ? undefined : '未记录输入'}

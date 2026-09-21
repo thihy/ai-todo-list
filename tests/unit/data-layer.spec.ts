@@ -3,7 +3,7 @@ import Database from 'better-sqlite3';
 import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { openDb } from '../../src/main/db/schema';
+import { openDb, LATEST_SCHEMA_VERSION } from '../../src/main/db/schema';
 import { TodoRepo } from '../../src/main/db/todo-repo';
 import { MarkdownStore } from '../../src/main/files/markdown';
 import * as paths from '../../src/main/files/paths';
@@ -413,7 +413,10 @@ describe('TodoRepo + MarkdownStore', () => {
       const meta = migrated.db
         .prepare<[], { version: number }>('SELECT MAX(version) as version FROM schema_meta')
         .get();
-      expect(meta?.version).toBe(19);
+      // 断言"迁移跑到了最新"而不是硬编码某个版本号 —— 这个测试关心的是
+      // v13 库能一路升到 head 且数据完好，不是 head 恰好是几。硬编码会让
+      // 每次加 migration 都得改这里（之前就是这么过期的）。
+      expect(meta?.version).toBe(LATEST_SCHEMA_VERSION);
 
       const repo14 = new TodoRepo(migrated.db);
       const all = repo14.list();

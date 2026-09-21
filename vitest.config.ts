@@ -4,7 +4,8 @@ import { resolve } from 'node:path';
 export default defineConfig({
   test: {
     environment: 'node',
-    include: ['tests/unit/**/*.spec.ts'],
+    include: ['tests/unit/**/*.spec.ts', 'tests/unit/**/*.spec.tsx'],
+    server: { deps: { inline: ['@deepseek-ai/dsh-client-ui-primitives'] } },
     coverage: {
       provider: 'v8',
       reporter: ['text', 'html', 'lcov'],

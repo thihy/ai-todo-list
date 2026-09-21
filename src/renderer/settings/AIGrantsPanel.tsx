@@ -119,7 +119,7 @@ export function AIGrantsPanel({ activeConversationId }: AIGrantsPanelProps): JSX
     <div className="aigrants-panel">
       <h3 className="aigrants-panel__title">AI 工具授权</h3>
       <p className="aigrants-panel__hint">
-        这些工具已获得「始终允许」或「本次会话允许」授权。撤销后，下次 AI 调用此工具时会重新弹出授权卡片。
+        按工具名授权已停用。下方仅展示旧记录，均不再生效，可撤销清理。需要审批的操作仍逐次确认。
       </p>
       {error && <div className="aigrants-panel__error">{error}</div>}
       {empty && <div className="aigrants-panel__empty">暂无授权工具。</div>}

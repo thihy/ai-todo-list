@@ -134,21 +134,30 @@
   name: '@deepseek-ai/dsh-permission-presets'
   config:
     defaultPreset: auto
+    # name / description 是给**选择器 UI** 用的展示字段 —— 缺省时
+    # permission-presets 会回落到 raw key（"read-only" 这种机器串），
+    # 所以四项都要写。文案跟应用其余部分一样用中文。
     presets:
       read-only:
         sandbox: read-only
         approval: ask
+        name: 只读
+        description: 只能读取文件，任何写入或命令执行都要逐次审批。
       workspace-write:
         sandbox: workspace-write
         approval: ask
+        name: 工作区可写
+        description: 可在工作区内读写文件，越界操作逐次审批。
       auto:
         sandbox: workspace-write
         approval: ask
         name: Auto
-        description: Workspace-sandboxed execution with automatic review and one-shot approval for wider access.
+        description: 工作区内自动执行；越界访问自动审查并一次性审批。
       danger-full-access:
         sandbox: danger-full-access
         approval: never
+        name: 完全访问
+        description: 关闭沙箱且不再审批 —— AI 可执行任意命令，请谨慎使用。
 
 # Durable on-disk session store: one JSONL log per session, optionally
 # Zstandard-compressed (default). Injects `sessions` (the in-memory

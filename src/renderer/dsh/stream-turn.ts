@@ -81,6 +81,7 @@ interface ToolEntry {
   args: unknown;
   argsKnown: boolean;
   result: unknown;
+  resultContent?: unknown;
   resultKnown: boolean;
   presentationMeta?: unknown;
   ok: boolean;
@@ -157,6 +158,7 @@ export function projectStreamTurn(
       toolEntryByCallId.set(callId, entry);
     }
     entry.name = typeof d.name === 'string' ? d.name : '';
+    if (entry.resultKnown && entry.resultContent !== undefined) entry.result = recoverToolResultValue(entry.resultContent, entry.name);
     entry.args = parseToolArgs(d.arguments);
     // argsKnown only when we actually saw a non-empty name. An empty string
     // would be a degenerate tool call we don't want to pretend was valid.
@@ -185,7 +187,7 @@ export function projectStreamTurn(
     const callId = rawCallId != null ? String(rawCallId) : '';
     const block = d.message?.content?.[0];
     const ok = !block?.isError;
-    const result = recoverToolResultValue(block?.content);
+    const result = recoverToolResultValue(block?.content, callId ? toolEntryByCallId.get(callId)?.name : undefined);
     const presentationMeta = d.meta;
     // DSH uses 'cancelled:' prefix to mark user-stopped runs (main injects
     // this from the cancel path). Mirror DomainToolRow's detection so the
@@ -218,6 +220,7 @@ export function projectStreamTurn(
       toolEntryByCallId.set(callId, entry);
     }
     entry.result = result;
+    entry.resultContent = block?.content;
     entry.resultKnown = true;
     entry.presentationMeta = presentationMeta;
     entry.ok = ok;

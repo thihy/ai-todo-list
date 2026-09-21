@@ -812,12 +812,38 @@ const MIGRATIONS: ReadonlyArray<{ version: number; sql: string }> = [
       END;
     `,
   },
+  {
+    version: 20,
+    // 每会话的权限预设（read-only / workspace-write / auto /
+    // danger-full-access）。DB 行是「用户意图」的持久层，DSH session 是
+    // 「实际生效」的运行时层 —— 两者生命周期不同，这是本列存在的理由：
+    //
+    //   - DSH session 是**首轮才懒创建**的（loadHistory() 不建 agent，
+    //     见 dsh-runtime.ts 的 resumeOrCreate 注释）。用户在新对话里还没
+    //     发消息时切预设，DSH 侧根本没有 session 可以承接这次选择。
+    //   - 会话 JSONL 是 DSH 的私产，我们只读不写；不能把 UI 状态塞进去。
+    //
+    // 所以选择先落在 conversations 行上（新对话也能立刻选、立刻显示），
+    // 等首轮 ensureAgent() 建出 live session 时再 pin 进去。null = 用户
+    // 从未显式选过 → 走 cordis.yml 的 defaultPreset（当前是 auto）。
+    //
+    // 可空 ADD COLUMN 是安全的：无索引 / 无触发器 / 无 FTS 引用，存量行
+    // 全部为 NULL（语义即「未选择」）。
+    sql: `
+      ALTER TABLE conversations ADD COLUMN permission_preset TEXT;
+    `,
+  },
 ];
 
 export interface DbHandle {
   db: Database.Database;
   close(): void;
 }
+
+/** 迁移链的头部版本 —— `openDb()` 跑完后 schema_meta 里的值。
+ *  测试用它断言"升到了最新"而不硬编码数字（否则每加一条 migration 都得
+ *  改测试，之前就是这么过期的）。 */
+export const LATEST_SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1]!.version;
 
 export function openDb(filePath: string): DbHandle {
   mkdirSync(dirname(filePath), { recursive: true });

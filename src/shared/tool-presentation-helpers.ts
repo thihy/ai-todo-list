@@ -81,13 +81,13 @@ export function writeEditToView(toolName: 'write' | 'edit', args: unknown, resul
     ?? 'unknown';
   const newText = toolName === 'write'
     ? stringField(args, 'content') ?? ''
-    : stringField(result, 'newText') ?? stringField(args, 'new_text') ?? '';
+    : stringField(result, 'newText') ?? stringField(args, 'new_string') ?? stringField(args, 'new_text') ?? '';
   // DSH write / edit both run under host approval — we don't have the old
   // text handy on the wire (the tools return success envelopes). Render as
   // a single all-additions diff so the user sees what landed. DiffBlock
   // accepts `oldText: null` and treats the whole new content as a replace.
   const oldText = stringField(result, 'oldText')
-    ?? (toolName === 'edit' ? stringField(args, 'old_text') ?? null : null);
+    ?? (toolName === 'edit' ? stringField(args, 'old_string') ?? stringField(args, 'old_text') ?? null : null);
   const diff: FileDiff = { path: filePath, oldText, newText };
   return {
     card: 'diff',
@@ -110,20 +110,18 @@ export function grepResultToView(args: unknown, result: unknown): ToolResultView
   // first-seen order via insertion into the map.
   const groups = new Map<string, { lineNumber: number; line: string }[]>();
   for (const raw of lines) {
-    const firstColon = raw.indexOf(':');
-    const secondColon = firstColon === -1 ? -1 : raw.indexOf(':', firstColon + 1);
+    const match = /^(.*?):(\d+):(.*)$/.exec(raw);
     let file: string;
     let lineNum: number;
     let text: string;
-    if (firstColon === -1 || secondColon === -1) {
+    if (!match) {
       file = path || '(unknown)';
       lineNum = 1;
       text = raw;
     } else {
-      file = raw.slice(0, firstColon);
-      const parsed = Number.parseInt(raw.slice(firstColon + 1, secondColon), 10);
-      lineNum = Number.isFinite(parsed) ? parsed : 1;
-      text = raw.slice(secondColon + 1);
+      file = match[1];
+      lineNum = Number(match[2]);
+      text = match[3];
     }
     const arr = groups.get(file) ?? [];
     arr.push({ lineNumber: lineNum, line: text });
@@ -175,15 +173,30 @@ export function globResultToView(args: unknown, result: unknown): ToolResultView
  *  so the UI primitive can show the exit-status chip. */
 export function bashToView(toolName: 'bash' | 'pwsh', args: unknown, result: unknown): ToolResultView {
   const command = stringField(args, 'command') ?? stringField(args, 'script') ?? '';
+  if (typeof result === 'string') {
+    const signal = /\n\[killed by signal: ([^\]\n]+)\]$/.exec(result);
+    const exit = /\n\[exit code: (\d+)\]$/.exec(result);
+    const marker = signal ?? exit;
+    return {
+      card: 'terminal', title: `${toolName} · ${truncate(command, 60)}`,
+      output: marker ? result.slice(0, marker.index) : result,
+      ...(signal ? { signal: signal[1] } : { exitCode: exit ? Number(exit[1]) : 0 }),
+    };
+  }
+  const envelope = result as { stdout?: unknown; stderr?: unknown; timedOut?: boolean; timeoutMs?: number } | null;
   const stdout = stringField(result, 'output')
     ?? stringField(result, 'stdout')
+    ?? stringField(envelope?.stdout, 'text')
     ?? '';
+  const stderr = stringField(result, 'stderr') ?? stringField(envelope?.stderr, 'text') ?? '';
+  const output = stdout + (stderr ? `\n[stderr]\n${stderr}` : '')
+    + (envelope?.timedOut ? `\n[timed out after ${envelope.timeoutMs}ms]` : '');
   const exitCode = numberField(result, 'exitCode');
   const signal = stringField(result, 'signal');
   return {
     card: 'terminal',
     title: `${toolName === 'bash' ? 'bash' : 'pwsh'} · ${truncate(command, 60)}`,
-    ...(stdout !== '' ? { output: stdout } : {}),
+    ...(output !== '' ? { output } : {}),
     ...(typeof exitCode === 'number' ? { exitCode } : {}),
     ...(signal ? { signal } : {}),
   };

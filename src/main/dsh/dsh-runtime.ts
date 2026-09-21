@@ -188,6 +188,17 @@ export interface DshRuntime {
    *  递归删除 <DSH_SESSIONS_ROOT>/<project>/<id>/。DB 行由 ConversationRepo
    *  负责，本函数只管日志。对未知 id 安全，返回静默。 */
   removeSession(conversationId: string): Promise<{ removed: boolean }>;
+  /** 读权限预设的选项表 + 默认值。DSH 未 boot 时返回 null（UI 应隐藏选择器）。 */
+  permissionPresetCatalog(): PermissionPresetCatalog | null;
+  /** 读某条会话**运行时**生效的预设。会话没有 live agent（新对话 / 已
+   *  dispose）时返回 null —— 调用方应回退到 DB 里的 stored 值。 */
+  currentPermissionPreset(conversationId: string): string | null;
+  /** 把预设推给 live session。会话尚未建立时返回 false（调用方只需落库，
+   *  等首轮 ensureAgent() 时由 pinPermissionPreset() 补上）。 */
+  applyPermissionPreset(conversationId: string, preset: string): boolean;
+  /** 会话首次建立时把 DB 里的用户意图 pin 进 DSH session。由
+   *  ensureAgent() 在 agent 就绪后调用；无 stored 值则 no-op。 */
+  pinPermissionPreset(conversationId: string): boolean;
   /** STARTUP-DSH-001: orphan-migration facade built from the live
    *  runtime's `sessionPersistence` ctx service. Null when the
    *  persistence plugin didn't register (caller must skip migration
@@ -196,6 +207,13 @@ export interface DshRuntime {
    *  instead of booting a second `todo-list-migrate` context. */
   persistence: OrphanMigrationFacade | null;
   dispose(): Promise<void>;
+}
+
+/** 权限预设的选项表快照，来自 DSH 的 permissionPresets 服务。 */
+export interface PermissionPresetCatalog {
+  /** cordis.yml 的 defaultPreset —— 新会话的初值。 */
+  defaultPreset: string;
+  options: Array<{ value: string; name: string; description?: string }>;
 }
 
 let runtimePromise: Promise<DshRuntime | null> | null = null;
@@ -314,6 +332,21 @@ export interface AgentsFacade {
 export interface ResumeLogger {
   warn: (msg: string) => void;
   info: (msg: string) => void;
+}
+
+/**
+ * `@deepseek-ai/dsh-permission-presets` 暴露的服务面（我们用到的那部分）。
+ *
+ * 只声明公开方法 —— `apply` 在 0.1.5-rc.2 里是 private，外部拿不到，也正
+ * 因为如此我们只能走 `set()`（见 applyPresetToSession 的注释）。
+ */
+export interface PermissionPresetServiceLike {
+  readonly names: readonly string[];
+  readonly defaultPreset: string;
+  current(session: unknown): string;
+  resolve(name: string): { sandbox: string; approval: string; name?: string; description?: string };
+  optionOf(name: string): { value: string; name: string; description?: string };
+  set(session: unknown, name: string): void;
 }
 
 /** resumeOrCreate 的依赖。打包好让 helper 保持纯净，可单独单测。 */
@@ -1213,11 +1246,37 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
   //   ask   → 同样短路，走插件自己的 reason。
   // 非 auto 预设（read-only / workspace-write / danger-full-access）维持
   // 原有的强制 ask 行为，审批契约不变。
+  // permissionPresets 服务的类型化访问器。DSH 未 boot / 插件没挂载时返回
+  // null，调用方各自决定回退策略（审批闸门 fail-closed 到强制 ask；UI 则
+  // 隐藏选择器）。抽成模块级 helper 是因为下面的 runtime API 也要用它。
+  const presetService = (): PermissionPresetServiceLike | null => {
+    try {
+      const svc = (ctx as unknown as { permissionPresets?: PermissionPresetServiceLike })
+        .permissionPresets;
+      return svc ?? null;
+    } catch {
+      return null;
+    }
+  };
+
+  // 取一条会话的 live Session。走 ctx.sessions.get()（公开 API）而不是从
+  // agent handle 上摸 `.session`：agent 的 handle 类型是我们自己声明的最小
+  // 形状，不含 session；而 dsh-session 的 store 是 agent 创建时注册进去的，
+  // 拿到的是同一个对象。会话没建过 agent 时返回 undefined。
+  const sessionOf = (conversationId: string): unknown => {
+    try {
+      const sessions = (ctx as unknown as {
+        sessions?: { get(id: string): unknown };
+      }).sessions;
+      return sessions?.get(conversationId);
+    } catch {
+      return undefined;
+    }
+  };
+
   const currentPermissionPreset = (exec: ToolExecution): string | undefined => {
     try {
-      const svc = (ctx as unknown as {
-        permissionPresets?: { current(session: unknown): string };
-      }).permissionPresets;
+      const svc = presetService();
       const session = exec.agent?.session;
       if (!svc || !session) return undefined;
       return svc.current(session);
@@ -1226,7 +1285,36 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
       logger.warn(`permissionPresets.current failed: ${(err as Error).message}`);
       return undefined;
     }
-  };  ctx.on('tools/pre-execute', (
+  };
+
+  // 把 DB 里的用户意图推给 DSH session。
+  //
+  // 走 svc.set(session, name) 而不是插件自己 /permission 命令那条
+  // apply(session, name, policy => ctx.approval.setPolicy(agent, policy))：
+  //   - apply 是 private，外部拿不到；
+  //   - setPolicy() 会 agent.inject() 一条合成 user message（"The approval
+  //     policy changed..."），而我们的 foldHistory 会把 source.kind ===
+  //     'plugin' 之外的 user/message 渲染成用户气泡 —— 那条系统通知会变成
+  //     用户自己说的话，是明确的坏 UX。
+  //
+  // set() 的语义已足够：它 append permission/preset 事件并按需写
+  // sandbox/mode + approval/policy。三个投影都是懒折叠的，而系统提示词的
+  // approval/sandbox context 是**每轮重渲染的函数**（读 effectivePolicy /
+  // resolve），所以下一轮模型自然看到新策略，不需要注入消息。
+  const applyPresetToSession = (session: unknown, preset: string): boolean => {
+    const svc = presetService();
+    if (!svc) return false;
+    try {
+      svc.set(session, preset);
+      logger.info(`permissionPresets.set ${preset}`);
+      return true;
+    } catch (err) {
+      logger.warn(`permissionPresets.set(${preset}) failed: ${(err as Error).message}`);
+      return false;
+    }
+  };
+
+  ctx.on('tools/pre-execute', (
     exec: ToolExecution,
     next: () => Promise<PreToolDecision>,
   ): Promise<PreToolDecision> => {
@@ -1424,6 +1512,15 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
       dormant: true,
     };
     conversations.set(conversationId, entry);
+    // 会话首次建立：把用户在 DB 里存过的权限预设推给 DSH。必须在 agent
+    // 就绪之后（session 已注册进 ctx.sessions）才能跑。无 stored 值 → no-op，
+    // 让 permission-presets 插件的 pinInitialPermission() 用 defaultPreset。
+    try {
+      runtime.pinPermissionPreset(conversationId);
+    } catch (err) {
+      // 预设 pin 失败不该挡住对话本身 —— 用户顶多回到默认预设。
+      logger.warn(`pinPermissionPreset(${conversationId}) threw: ${(err as Error).message}`);
+    }
     return entry;
   }
 
@@ -1734,6 +1831,73 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
         logger.warn(`removeSession(${conversationId}) failed: ${(err as Error).message}`);
       }
       return { removed };
+    },
+
+    // ===== 权限预设 =====
+    //
+    // 读写分两层：DB 的 permission_preset 列是「用户意图」，DSH session 的
+    // permission/preset 事件是「运行时真相」。会话首轮才懒创建，所以新对话
+    // 的选择只能先落库（见 schema.ts v20 注释）。这里的方法负责把两层对齐。
+
+    permissionPresetCatalog() {
+      const svc = presetService();
+      if (!svc) return null;
+      try {
+        // DSH 自己维护 'custom'（旋钮值与任何预设都不匹配时派生的伪预设）。
+        // 它不该出现在选择器里 —— 用户没法"选"一个不匹配的状态。只列真表项。
+        return {
+          defaultPreset: svc.defaultPreset,
+          options: svc.names.map((n) => {
+            const o = svc.optionOf(n);
+            return o.description === undefined
+              ? { value: o.value, name: o.name }
+              : { value: o.value, name: o.name, description: o.description };
+          }),
+        };
+      } catch (err) {
+        logger.warn(`permissionPresetCatalog failed: ${(err as Error).message}`);
+        return null;
+      }
+    },
+
+    currentPermissionPreset(conversationId) {
+      const svc = presetService();
+      if (!svc) return null;
+      // 只认 live session —— 新对话 / 已 dispose 的会话没有 DSH 侧的真相，
+      // 调用方应回退到 DB 里的 stored 值。
+      const session = sessionOf(conversationId);
+      if (!session) return null;
+      try {
+        return svc.current(session);
+      } catch (err) {
+        logger.warn(`currentPermissionPreset(${conversationId}) failed: ${(err as Error).message}`);
+        return null;
+      }
+    },
+
+    applyPermissionPreset(conversationId, preset) {
+      const session = sessionOf(conversationId);
+      if (!session) return false;
+      return applyPresetToSession(session, preset);
+    },
+
+    pinPermissionPreset(conversationId) {
+      // 会话刚建立：把用户在 DB 里存过的意图推给 DSH。没存过就什么都不做，
+      // 让 pinInitialPermission() 的默认值（cordis.yml defaultPreset）生效。
+      const stored = deps.conversations.get(conversationId)?.permissionPreset ?? null;
+      if (stored === null) return false;
+      const session = sessionOf(conversationId);
+      if (!session) return false;
+      // 已经是这个值就不用重复 append（set() 内部也去重，但提前返回能少一次
+      // 投影读取 + 一条 debug 日志）。
+      const svc = presetService();
+      if (svc) {
+        try {
+          if (svc.current(session) === stored) return false;
+        } catch { /* 读失败就继续走 set()，让它自己报错 */ }
+      }
+      logger.info(`pinPermissionPreset(${conversationId}): stored=${stored}`);
+      return applyPresetToSession(session, stored);
     },
 
     async dispose() {

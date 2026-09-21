@@ -13,7 +13,7 @@
 import { register, okResult, failResult } from './router';
 import type { DshHandle } from '../dsh/types';
 import { resolveEndpoint, healthCheck } from '../dsh/endpoints';
-import { getDshRuntime, peekDshRuntime, answerUserQuestion, answerUserApproval, grantSessionTool, revokeSessionTool, listSessionGranted, type DshRuntimeDeps } from '../dsh/dsh-runtime';
+import { getDshRuntime, peekDshRuntime, answerUserQuestion, answerUserApproval, revokeSessionTool, listSessionGranted, type DshRuntimeDeps } from '../dsh/dsh-runtime';
 import { costForUsage } from '../dsh/pricing';
 import { SettingsStore } from '../settings/store';
 import { BrowserWindow, dialog } from 'electron';
@@ -421,6 +421,91 @@ export function registerAiHandlers(dsh: DshHandle): void {
     }
   });
 
+  // ----- 权限预设（会话级沙箱模式 + 审批策略） -----
+  //
+  // 双层模型：conversations.permission_preset 是「用户意图」，DSH session
+  // 的 permission/preset 事件是「运行时真相」。会话首轮才懒创建，所以新对话
+  // 的选择只能先落库，等 ensureAgent() 建出 session 时由
+  // runtime.pinPermissionPreset() 补上。见 schema.ts v20 migration 注释。
+  //
+  // DSH 未 boot 时 catalog 返回 null —— 渲染端据此隐藏选择器，而不是显示
+  // 一个点了没反应的控件。
+
+  register('ai.permissionPreset.get', async (_e, req) => {
+    if (!deps) return failResult('ai_not_ready', 'DSH not initialised');
+    const rt = peekDshRuntime();
+    const catalog = rt?.permissionPresetCatalog() ?? null;
+    // 无 conversationId = draft 新对话（行还没建）。只回选项表 + 默认值，
+    // 让 UI 能先把选择器渲染出来。见 AIPermissionPresetGetReq 的注释。
+    if (!req?.conversationId) {
+      return okResult({
+        current: null,
+        stored: null,
+        effective: catalog?.defaultPreset ?? 'auto',
+        defaultPreset: catalog?.defaultPreset ?? 'auto',
+        options: catalog?.options ?? [],
+      });
+    }
+    const conv = deps.conversations.get(req.conversationId);
+    if (!conv) return failResult('unknown_conversation', `no conversation row for ${req.conversationId}`);
+    const stored = conv.permissionPreset ?? null;
+    const current = rt?.currentPermissionPreset(req.conversationId) ?? null;
+    // 未选过 → 用 DSH 的 defaultPreset 兜底；DSH 也没起来就报 'auto'
+    // （cordis.yml 的实际配置值），让 UI 至少有个可显示的状态。
+    const effective = stored ?? current ?? catalog?.defaultPreset ?? 'auto';
+    return okResult({
+      current,
+      stored,
+      effective,
+      defaultPreset: catalog?.defaultPreset ?? 'auto',
+      options: catalog?.options ?? [],
+    });
+  });
+
+  register('ai.permissionPreset.set', async (_e, req) => {
+    if (!deps) return failResult('ai_not_ready', 'DSH not initialised');
+    if (!req?.conversationId) return failResult('bad_request', 'conversationId required');
+    if (!req?.preset) return failResult('bad_request', 'preset required');
+    const conv = deps.conversations.get(req.conversationId);
+    if (!conv) return failResult('unknown_conversation', `no conversation row for ${req.conversationId}`);
+    // 预设名必须是 DSH 表里的真项 —— 拒绝 'custom'（派生伪预设，用户没法
+    // "选"它）和任何拼写错误，避免把一个 DSH 侧会 throw 的值写进 DB。
+    const rt = peekDshRuntime();
+    const catalog = rt?.permissionPresetCatalog() ?? null;
+    if (catalog && !catalog.options.some((o) => o.value === req.preset)) {
+      return failResult('unknown_preset', `unknown preset "${req.preset}"`);
+    }
+    // 先落库（用户意图），再推给 live session（运行时真相）。顺序很重要：
+    // 即便 apply 失败（会话还没建），意图也已经存下来了，首轮会补上。
+    const stored = deps.conversations.setPermissionPreset(req.conversationId, req.preset);
+    if (!stored) return failResult('set_failed', 'conversation row not updated');
+    const applied = rt?.applyPermissionPreset(req.conversationId, req.preset) ?? false;
+    return okResult({ stored: req.preset, applied });
+  });
+
+  register('ai.permissionPreset.confirm', async (_e, req) => {
+    try {
+      if (!req?.preset) return failResult('bad_request', 'preset required');
+      const win = BrowserWindow.getFocusedWindow() ?? undefined;
+      const result = await dialog.showMessageBox(win as never, {
+        type: 'warning',
+        buttons: ['取消', '仍然切换'],
+        defaultId: 0,
+        cancelId: 0,
+        title: '切换到完全访问',
+        message: '允许 AI 无审批执行任意命令？',
+        detail:
+          '「完全访问」会关闭沙箱并把审批策略设为 never —— AI 可以在本机任意路径'
+          + '读写文件、执行任意命令，且不再逐次征求你的同意。\n\n'
+          + '仅在明确知道自己在做什么时使用。切换回其他预设即可恢复审批。',
+        noLink: true,
+      });
+      return okResult({ confirmed: result.response === 1 });
+    } catch (err) {
+      return failResult('confirm_failed', (err as Error).message);
+    }
+  });
+
   // 批量硬删：删多行 DB + 各自 JSONL 日志（沿用 L3-G 模式）。
   // 与 ai.conversation.delete 不同的点：
   //   1) DB 走单条 IN(...) SQL，事务原子；
@@ -769,28 +854,9 @@ export function registerAiHandlers(dsh: DshHandle): void {
   //   - ai.tools.revoke({ toolName, scope, conversationId? })
   //       从 settings 或 session Map 删一条授权；下一次同工具的 approval
   //       请求会重新落到 PendingApprovalCard。
-  register('ai.userApproval.grantAlways', async (_e, req: { reqId: string; toolName: string }) => {
-    if (!deps) return failResult('ai_not_ready', 'DSH not initialised');
-    if (!req?.toolName || !req?.reqId) {
-      return failResult('bad_request', 'toolName and reqId are required');
-    }
-    const prev = deps.settings.get().aiGrantedTools;
-    // 写持久化表（settings.patch 自动 persist）；不影响其他工具的授权
-    deps.settings.patch({ aiGrantedTools: { ...prev, [req.toolName]: 'always' } });
-    // 直接 resolve 当前 waterfall，渲染端不需要再调一次 allow-once
-    const settled = answerUserApproval(req.reqId, 'allow-once');
-    return okResult({ ok: true, reqId: req.reqId, persisted: true, settled });
-  });
-
-  register('ai.userApproval.grantSession', async (_e, req: { reqId: string; toolName: string; conversationId: string }) => {
-    if (!deps) return failResult('ai_not_ready', 'DSH not initialised');
-    if (!req?.toolName || !req?.reqId || !req?.conversationId) {
-      return failResult('bad_request', 'toolName, reqId and conversationId are required');
-    }
-    grantSessionTool(req.conversationId, req.toolName);
-    const settled = answerUserApproval(req.reqId, 'allow-once');
-    return okResult({ ok: true, reqId: req.reqId, persisted: false, settled });
-  });
+  // Keep old IPC names fail-closed for stale renderer instances.
+  register('ai.userApproval.grantAlways', async () => failResult('tool_grants_disabled', '不再支持按工具名授权，请审批本次操作。'));
+  register('ai.userApproval.grantSession', async () => failResult('tool_grants_disabled', '不再支持按工具名授权，请审批本次操作。'));
 
   register('ai.tools.listGranted', async (_e, req: { conversationId?: string }) => {
     if (!deps) return failResult('ai_not_ready', 'DSH not initialised');

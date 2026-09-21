@@ -195,8 +195,9 @@ export const AIPane: React.FC<{
   // Per-conversation streaming state: which conv has an in-flight turn, and
   // its id. Stored separately from turnsByConv so events can still resolve
   // a streaming turn after the user navigated to another conversation.
-  const [streamingConvId, setStreamingConvId] = useState<string | null>(null);
-  const [streamingTurnId, setStreamingTurnId] = useState<string | null>(null);
+  const [activeStream, setActiveStream] = useState<{ conversationId: string; invocationId: string } | null>(null);
+  const streamingConvId = activeStream?.conversationId ?? null;
+  const streamingTurnId = activeStream?.invocationId ?? null;
 
   // L3-D: when DSH's session-title service fires `session/title` (and the
   // runtime listener bridges it back to the conversations table), main
@@ -214,6 +215,21 @@ export const AIPane: React.FC<{
   const [historyLoaded, setHistoryLoaded] = useState<Set<string>>(new Set());
   const [bootError, setBootError] = useState<string | null>(null);
   const [input, setInput] = useState('');
+  // 权限预设选择器。`effective` 是 UI 显示的当前值（用户意图优先，回退到
+  // DSH 运行时真相）；`options` 来自 DSH 的 preset 表；两者都为 null/[] 时
+  // 隐藏整个控件（DSH 未 boot / 插件没挂载 —— 显示一个点了没反应的按钮
+  // 比不显示更糟）。
+  const [showPresets, setShowPresets] = useState(false);
+  const [presetState, setPresetState] = useState<{
+    effective: string;
+    options: Array<{ value: string; name: string; description?: string }>;
+  } | null>(null);
+  // draft（新对话尚未提交）时选的预设。此时 conversations 行还不存在，
+  // 没地方落库 —— 先记在这里，runSubmit 建行时一并带过去。
+  const [draftPreset, setDraftPreset] = useState<string | null>(null);
+  // 切换中的防连点 —— 切 danger-full-access 会弹原生 dialog，异步窗口里
+  // 用户可能重复点击。
+  const [presetBusy, setPresetBusy] = useState(false);
   // L3-H: search/filter for the history dropdown. Cleared on dropdown close.
   const [switcherQuery, setSwitcherQuery] = useState('');
   // 「显示更多」分页：listTotal 是后端返回的命中行数；listRemaining 是
@@ -253,6 +269,7 @@ export const AIPane: React.FC<{
   }, [conversations]);
 
   const historyRef = useRef<HTMLDivElement>(null);
+  const presetRef = useRef<HTMLDivElement>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
   const historySearchRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -343,10 +360,93 @@ export const AIPane: React.FC<{
         setShowHistory(false);
         setRowMenuId(null);
       }
+      if (showPresets && presetRef.current && !presetRef.current.contains(t)) {
+        setShowPresets(false);
+      }
     };
     document.addEventListener('mousedown', onDocClick);
     return () => document.removeEventListener('mousedown', onDocClick);
-  }, [showHistory]);
+  }, [showHistory, showPresets]);
+
+  // 拉取当前会话的权限预设 + 选项表。切换会话要重拉（预设是会话级的）；
+  // DSH 未就绪时不发 IPC（ai.permissionPreset.get 会回 ai_not_ready），
+  // 等 aiStartup 变 ready 再拉。
+  //
+  // 无 currentId（draft）也要拉：此时只回选项表 + defaultPreset，让选择器
+  // 在用户发出第一条消息之前就能用。见 AIPermissionPresetGetReq 注释。
+  useEffect(() => {
+    if (aiStartup.status !== 'ready') {
+      setPresetState(null);
+      return;
+    }
+    let alive = true;
+    void (async () => {
+      // 防御性读取：旧渲染端 / 部分测试桩可能没有这个命名空间。缺失时静默
+      // 隐藏控件，而不是抛异常炸掉整个面板。
+      const presetsApi = window.todoList?.aiPermissionPreset;
+      if (!presetsApi) {
+        setPresetState(null);
+        return;
+      }
+      const res = await presetsApi.get(
+        currentId ? { conversationId: currentId } : {},
+      );
+      if (!alive) return;
+      if (!res.ok) {
+        setPresetState(null);
+        return;
+      }
+      // options 为空 = DSH 侧插件没挂载 → 隐藏控件。
+      if (res.data.options.length === 0) {
+        setPresetState(null);
+        return;
+      }
+      // draft 时 DB 里没有行，stored 恒为 null —— 用本地记的 draftPreset
+      // 覆盖，否则用户刚选完、一重渲染就被打回 defaultPreset。
+      const effective = currentId === null && draftPreset !== null
+        ? draftPreset
+        : res.data.effective;
+      setPresetState({ effective, options: res.data.options });
+    })();
+    return () => { alive = false; };
+  }, [currentId, aiStartup.status, convVersion, draftPreset]);
+
+  /** 切换权限预设。danger-full-access 先走原生二次确认 —— 它关掉沙箱并把
+   *  审批设为 never，是不可逆的安全姿态变更（虽然随时能切回来，但切换那一
+   *  刻起 AI 就能无审批执行任意命令）。
+   *
+   *  draft（无 currentId）时只记在本地：DB 行要等 runSubmit 里
+   *  conversation.create() 才存在，没地方落库。建行后由 runSubmit 补写。 */
+  const selectPreset = useCallback(async (value: string) => {
+    if (presetBusy) return;
+    const presetsApi = window.todoList?.aiPermissionPreset;
+    if (!presetsApi) return;
+    setPresetBusy(true);
+    try {
+      if (value === 'danger-full-access') {
+        const confirm = await presetsApi.confirm({ preset: value });
+        if (!confirm.ok || !confirm.data.confirmed) return;
+      }
+      if (!currentId) {
+        // 新对话：先记住，等首轮建行时写进去。
+        setDraftPreset(value);
+        setPresetState((prev) => (prev ? { ...prev, effective: value } : prev));
+        setShowPresets(false);
+        return;
+      }
+      const res = await presetsApi.set({
+        conversationId: currentId,
+        preset: value,
+      });
+      if (!res.ok) return;
+      // 乐观更新显示值；options 不变。applied=false 表示会话还没建出来，
+      // 选择已落库、首轮生效 —— 不额外提示，因为 UI 显示的值是对的。
+      setPresetState((prev) => (prev ? { ...prev, effective: res.data.stored } : prev));
+      setShowPresets(false);
+    } finally {
+      setPresetBusy(false);
+    }
+  }, [currentId, presetBusy]);
 
   // L3-H: when the history dropdown opens, focus the search input so the
   // user can type immediately. When it closes, clear the query so the next
@@ -413,7 +513,7 @@ export const AIPane: React.FC<{
       return {
         ...prev,
         [streamingConvId]: list.map((t) =>
-          t.id !== streamingTurnId
+          t.id !== streamingTurnId || t.status === 'cancelled'
             ? t
             : {
                 ...t,
@@ -435,12 +535,12 @@ export const AIPane: React.FC<{
   // HITL listeners: open the question/approval card the moment main pushes the
   // request event. Correlating reply uses the reqId from the payload (not the
   // invocationId) because the answerer is keyed on reqId server-side. The
-  // request is bound to the conversation that was running the turn when it
-  // arrived (streamingConvId, falling back to currentId); the card only renders
-  // while that conversation is active, so it never bleeds into another one.
+  // Question ownership comes from main's calling Agent; older producers
+  // fall back to the locally active conversation. The card only renders
+  // while its owning conversation is active.
   useAppEvent('ai:user-question-request', (req) => {
     setQuestionError(null);
-    const convId = streamingConvId ?? currentId ?? '';
+    const convId = req.conversationId ?? streamingConvId ?? currentId ?? '';
     setActiveQuestion({
       reqId: req.reqId,
       invocationId: req.invocationId,
@@ -716,6 +816,8 @@ export const AIPane: React.FC<{
     setAttachments([]);
     setShowHistory(false);
     setRowMenuId(null);
+    // 清掉上一个 draft 的选择，避免"上次没发出去的全自动"粘到这次。
+    setDraftPreset(null);
   }, []);
 
   // Open the native file picker (main does dialog.showOpenDialog, reads the
@@ -948,14 +1050,13 @@ export const AIPane: React.FC<{
     // 2) Clear streaming state. From here the projection useEffect
     //    bails on this turn, but that's fine — step 1 already froze
     //    the UI to a sensible final state.
-    setStreamingConvId(null);
-    setStreamingTurnId(null);
+    setActiveStream((current) => current?.invocationId === turnId ? null : current);
 
     // 3) Clear any HITL mirrors synchronously so runSubmit's gate
     //    (which checks activeApproval / activeQuestion) releases
     //    before the main-side cancel IPC round-trip completes.
-    setActiveApproval(null);
-    setActiveQuestion(null);
+    setActiveApproval((request) => request?.convId === conv ? null : request);
+    setActiveQuestion((request) => request?.convId === conv ? null : request);
 
     // 4) Tell main to actually stop the agent.
     await window.todoList.ai.cancel(conv, turnId ?? undefined);
@@ -1057,6 +1158,16 @@ export const AIPane: React.FC<{
       setTurnsByConv((prev) => ({ ...prev, [convId!]: [] }));
       setHistoryLoaded((prev) => new Set(prev).add(convId!));
       setCurrentId(convId);
+      // draft 期间选的预设：行刚建出来，现在有地方落库了。必须赶在
+      // runTurn 之前写完 —— main 侧 pinPermissionPreset() 是 ensureAgent()
+      // 里读 DB 的，晚一步这次对话就按 defaultPreset 跑了。
+      if (draftPreset !== null) {
+        await window.todoList.aiPermissionPreset.set({
+          conversationId: convId,
+          preset: draftPreset,
+        });
+        setDraftPreset(null);
+      }
     }
 
     if (!override) setAttachments([]);
@@ -1103,8 +1214,7 @@ export const AIPane: React.FC<{
       clear();
     }
     openedCreatedTodoIdRef.current = null;
-    setStreamingConvId(convId);
-    setStreamingTurnId(id);
+    setActiveStream({ conversationId: convId, invocationId: id });
     // The user message has now been admitted into the target conversation's
     // list. Ask the auto-follow hook to pin to bottom on the next frame so
     // the bubble is visible — only valid because validation above passed
@@ -1136,7 +1246,7 @@ export const AIPane: React.FC<{
       return {
         ...prev,
         [convId!]: list.map((t) => {
-          if (t.id !== id) return t;
+          if (t.id !== id || t.status === 'cancelled') return t;
           if (!res.ok) {
             return { ...t, status: 'error' as const, error: res.message ?? 'AI 调用失败' };
           }
@@ -1179,8 +1289,9 @@ export const AIPane: React.FC<{
         }),
       };
     });
-    setStreamingConvId((cur) => (cur === convId ? null : cur));
-    setStreamingTurnId((cur) => (cur === id ? null : cur));
+    // A stopped request can finish after its replacement has started.
+    // Clear both identifiers together, and only for this exact invocation.
+    setActiveStream((current) => current?.invocationId === id ? null : current);
     void refreshList();
   };
 
@@ -1290,6 +1401,61 @@ export const AIPane: React.FC<{
           )}
           <div className="aipane__title-spacer" />
           <div className="aipane__actions">
+            {/* 权限预设选择器。只在 DSH 报出选项表时渲染 —— presetState
+                为 null 说明插件没挂载或 DSH 没起来，此时显示一个点了没
+                反应的控件比不显示更糟。draft（无 currentId）也渲染：用户
+                往往想先定好预设再发第一条消息，选中的值暂存在 draftPreset，
+                建行时补写。 */}
+            {presetState !== null && (
+              <div className="aipane__presets" ref={presetRef}>
+                <button
+                  type="button"
+                  className={
+                    'aipane__preset-btn'
+                    + (presetState.effective === 'danger-full-access' ? ' aipane__preset-btn--danger' : '')
+                  }
+                  onClick={() => setShowPresets((s) => !s)}
+                  disabled={presetBusy}
+                  title="AI 权限预设（沙箱模式 + 审批策略）"
+                  aria-label="AI 权限预设"
+                  aria-haspopup="listbox"
+                  aria-expanded={showPresets}
+                >
+                  <span className="aipane__preset-label">
+                    {presetState.options.find((o) => o.value === presetState.effective)?.name
+                      ?? presetState.effective}
+                  </span>
+                  <IconChevronDownOutline14 size={12} />
+                </button>
+                {showPresets && (
+                  <div className="aipane__menu aipane__menu--right aipane__preset-menu" role="listbox">
+                    <div className="aipane__menu-head">
+                      <span className="aipane__menu-head-title">权限预设</span>
+                    </div>
+                    {presetState.options.map((opt) => (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        role="option"
+                        aria-selected={opt.value === presetState.effective}
+                        className={
+                          'aipane__menu-item aipane__preset-item'
+                          + (opt.value === presetState.effective ? ' is-active' : '')
+                          + (opt.value === 'danger-full-access' ? ' aipane__preset-item--danger' : '')
+                        }
+                        disabled={presetBusy}
+                        onClick={() => void selectPreset(opt.value)}
+                      >
+                        <span className="aipane__preset-item-name">{opt.name}</span>
+                        {opt.description && (
+                          <span className="aipane__preset-item-desc">{opt.description}</span>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
             <button
               type="button"
               className="icon-btn aipane__new-btn"
@@ -1822,7 +1988,7 @@ function historyToTurn(h: HistoryTurnLike): Turn {
       // right card instead of a <pre>[{"type":"text"...}]</pre> dump.
       args: parseToolArgs(h.args),
       argsKnown,
-      result: h.ok ? recoverToolResultValue(h.data) : h.error,
+      result: recoverToolResultValue(h.data, h.name) ?? h.error,
       resultKnown: Boolean(h.data != null || (h.error != null && h.error !== '')),
       presentationMeta: h.presentationMeta,
       ok,
