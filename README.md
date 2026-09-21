@@ -8,7 +8,7 @@
 
 > An AI-native desktop TODO list built on top of DeepSeek Harness (DSH) — the agent runtime is the real `@deepseek-ai/dsh-*@0.1.5-rc.2` stack running in-process inside a Cordis container, not a shim. Capture fast, organize freely, write Markdown notes, sketch on Excalidraw, and ask the assistant directly — all inside one Electron app.
 
-![status](https://img.shields.io/badge/status-RC_1.0.0--rc5-yellow)
+![status](https://img.shields.io/badge/status-RC_1.0.0--rc6-yellow)
 ![electron](https://img.shields.io/badge/electron-33-47848F)
 ![dsh](https://img.shields.io/badge/DSH-0.1.5--rc.2-blue)
 
@@ -166,7 +166,7 @@ MIT — see [LICENSE](./LICENSE).
 > 一个 AI 原生的桌面待办应用，构建于 DeepSeek Harness（DSH）之上——agent 运行时就是真正的 `@deepseek-ai/dsh-*@0.1.5-rc.2`，通过 Cordis 容器在 Electron 主进程内运行，没有 shim、没有子进程、没有 stdio 桥。
 > 快速捕获、自由组织、写 Markdown 笔记、在 Excalidraw 上手绘、直接向助手提问——全部在同一个 Electron 应用内完成。
 
-![status](https://img.shields.io/badge/status-RC_1.0.0--rc5-yellow)
+![status](https://img.shields.io/badge/status-RC_1.0.0--rc6-yellow)
 ![electron](https://img.shields.io/badge/electron-33-47848F)
 ![dsh](https://img.shields.io/badge/DSH-0.1.5--rc.2-blue)
 

@@ -4,6 +4,34 @@ All notable changes to todo-list are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0-rc6] - 2026-09-21
+
+User-visible changes since `1.0.0-rc5`. Theme: DSH AI assistant graduates from a chat surface into a workspace-aware agent — fs / shell tools under a sandbox, configurable permission presets, and attachments that no longer bloat the session log.
+
+### Added
+
+- **DSH AI assistant gains fs + shell tools.** The agent can now read, write, search and execute inside `<rootDir>/.todo-list/dsh_workspace/`, with a path-guard that hard-rejects any attempt to escape the workspace. A `permissions` cap system gates destructive operations.
+- **Permission presets.** The AI pane surfaces a preset selector (`auto` / `standard` / `restrictive` / …) so the user picks the safety knob before the session starts. Default preset is `auto` (powered by `@nanmicoder/dsh-auto-mode`).
+- **Tool call description cards.** Tool invocations now render the model's intent (one-line summary) in the AIPane, so the user knows *why* before approving.
+- **"加入今日" toggle in the task detail panel.** Mirrors the list-row glyph; clicking it flips the task's `planned_for` to today (or back) without going back to the list.
+- **Runtime log-level switch.** Settings → 日志 now toggles the level (`debug` / `info` / `warn` / `error`) without a restart; effective immediately via a logger re-init.
+- **AI composer attachments via workspace paths.** Files picked from the `+` button (or pasted into the central Composer) are copied into `<rootDir>/.todo-list/dsh_workspace/inbox/` with a `c-<convId>-<ulid>-<basename>` filename and a sidecar JSON index; the prompt embeds the absolute path instead of the file bytes. No more 256 KiB hard cap, no more `text-only` filter — any MIME, any size, any binary.
+- **AI-side full-chain logging.** HTTP / turn / stream / chunk / failure all log to `${userData}/todo-list.log` so a stuck turn can be reconstructed from the log alone.
+
+### Changed
+
+- **AI composer session log volume drops sharply.** Per-attachment prompt bytes go from O(file size) to O(filename) — a 5 MB screenshot that used to add ~7 MB to `session.jsonl.zstd` now adds ~80 bytes (one path reference + header).
+- **AIPane "Stop" semantics.** Stop now reliably cancels the in-flight turn rather than freezing the previous turn mid-tool.
+
+### Fixed
+
+- **AIPane stuck on Stop during a pending user question.** The user-questions / user-approval signal handler now correctly tears down pending listeners so Stop no longer hangs.
+- **Boot crash from a circular-import TDZ in the new logger.** The async/await pattern that briefly shadowed the top-level import is removed.
+- **Tool failures now stop the wheel** instead of silently looping, so the user gets a chance to recover rather than watching it retry.
+- **Markdown editor view mode + font size restored** after the document reopens.
+- **Task row active state** now shows a visible left-border accent (was rendering as `transparent` against dark backgrounds).
+- **Updater ESM-mode `require` bug** and 5 pre-existing test flakes resolved.
+
 ## [1.0.0-rc5] - 2026-09-17
 
 Aggregate entry capturing every user-visible change since the 0.1.0
