@@ -119,6 +119,7 @@ const RUNTIME_CHANNEL_KEYS = [
   'app.focus.set',
   'app.focus.get',
   'app.openTaskDir',
+  'app.openLogDir',
   'app.setTitleBarOverlay',
   'app.startup.get',
   // UX-01 — AI retry. { component: 'ai' } → { accepted, reason? }.

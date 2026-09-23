@@ -7,7 +7,7 @@ import { existsSync } from 'node:fs';
 import { shell } from 'electron';
 import { okResult, failResult, register } from './router';
 import { getFocus, setFocus } from '../app-context';
-import { logger } from '../logger';
+import { LOG_DIR, logger } from '../logger';
 
 export interface AppHandlersDeps {
   /** Resolve the per-task directory for a given TODO id. Post-refactor every
@@ -63,5 +63,28 @@ export function registerAppFocusHandlers(deps: AppHandlersDeps): void {
     }
   });
 
-  logger.info('App handlers registered (focus + openTaskDir)');
+  // Open the userData directory (parent of todo-list.log) so the user can
+  // grab the log file (and the SQLite DB, sessions cache, etc.) before
+  // filing a bug report. `shell.openPath` resolves the dir to the OS
+  // file manager on Windows (Explorer) and macOS (Finder); returns a
+  // non-empty error string when the platform refuses (e.g. dir deleted
+  // between intent and click — extremely rare).
+  register('app.openLogDir', async () => {
+    const target = LOG_DIR;
+    try {
+      const errMsg = await shell.openPath(target);
+      if (errMsg) {
+        const message = `Failed to open log dir: ${target} (${errMsg})`;
+        logger.warn(`openLogDir: ${message}`);
+        return failResult('open_failed', message);
+      }
+      return okResult({ path: target });
+    } catch (err) {
+      const message = `Failed to open log dir: ${target} (${(err as Error).message})`;
+      logger.warn(`openLogDir: ${message}`);
+      return failResult('open_failed', message);
+    }
+  });
+
+  logger.info('App handlers registered (focus + openTaskDir + openLogDir)');
 }

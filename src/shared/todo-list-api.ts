@@ -316,6 +316,10 @@ export interface TodoListApi {
     getFocus(): Promise<IpcResponse<'app.focus.get'>>;
     /** Open the task's on-disk documents directory in the OS file manager. */
     openTaskDir(todoId: string): Promise<IpcResponse<'app.openTaskDir'>>;
+    /** Open the app log directory (userData — the parent of todo-list.log)
+     *  in the OS file manager. Useful for grabbing the log file before
+     *  filing a bug report. */
+    openLogDir(): Promise<IpcResponse<'app.openLogDir'>>;
     /** Dim / restore the frameless titleBarOverlay so the native min/max/close
      *  glyphs blend with a modal backdrop. See ipc-schema.ts. */
     setTitleBarOverlay(opts: { dim: boolean }): Promise<IpcResponse<'app.setTitleBarOverlay'>>;

@@ -1210,6 +1210,23 @@ const AboutPane: React.FC<PaneProps> = ({ data, patch }) => {
     }
   };
 
+  // Open the userData directory (parent of todo-list.log) so the user
+  // can grab the log file before filing a bug report. The button is
+  // intentionally always-enabled: shell.openPath on a missing dir
+  // surfaces the failure via the toast, no pre-flight check needed.
+  const onOpenLogDir = async (): Promise<void> => {
+    setError(null);
+    setNotice(null);
+    try {
+      const res = await window.todoList.app.openLogDir();
+      if (!res.ok) {
+        setError(`打开日志目录失败：${res.message ?? res.code ?? '未知错误'}`);
+      }
+    } catch (err) {
+      setError(`打开日志目录失败：${(err as Error).message}`);
+    }
+  };
+
   // Auto-updater — fetch the latest known status once when the
   // pane mounts, then keep the local copy in sync with the two
   // `app:update-*` events main emits on the background
@@ -1353,6 +1370,18 @@ const AboutPane: React.FC<PaneProps> = ({ data, patch }) => {
           onClick={() => void onExport()}
         >
           {busy ? '生成中…' : '导出诊断包…'}
+        </button>
+      </Field>
+      <Field
+        label="日志目录"
+        hint="应用日志（todo-list.log）与 SQLite 数据库都在这里。遇到问题时方便附在 bug 报告里。"
+      >
+        <button
+          type="button"
+          className="btn-secondary"
+          onClick={() => void onOpenLogDir()}
+        >
+          打开日志目录
         </button>
       </Field>
       {notice && <div className="notice">{notice}</div>}

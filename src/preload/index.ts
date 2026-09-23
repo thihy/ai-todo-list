@@ -159,6 +159,7 @@ const api: TodoListApi = {
     setFocus: (focus) => invoke('app.focus.set', { focus }),
     getFocus: () => invoke('app.focus.get', undefined as never),
     openTaskDir: (todoId) => invoke('app.openTaskDir', { todoId }),
+    openLogDir: () => invoke('app.openLogDir', undefined as never),
     setTitleBarOverlay: (opts: { dim: boolean }) => invoke('app.setTitleBarOverlay', opts),
     /** Snapshot query — current core + ai startup state. Renderer MUST call
      *  this once before subscribing to `app:startup` so it doesn't miss a

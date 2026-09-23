@@ -800,6 +800,13 @@ export interface IpcRegistry {
   // task-scoped attachments. No-op (with `not_found`) if the task has no
   // directory on disk yet.
   'app.openTaskDir': IpcChannel<{ todoId: string }, IpcResult<{ path: string }>>;
+
+  // Open the app log directory in the OS file manager. The log file
+  // (`todo-list.log`) lives at `<userData>/todo-list.log`; we open the
+  // parent directory so the user can also see the SQLite DB, sessions
+  // cache, and any rotated log siblings — all of which are useful to
+  // attach to a bug report.
+  'app.openLogDir': IpcChannel<undefined, IpcResult<{ path: string }>>;
   // Renderer → main: dim / restore the frameless titleBarOverlay so the
   // native min/max/close glyphs match a modal's dimmed client area. The
   // overlay is rendered by Chromium OUTSIDE the renderer's webContents, so
