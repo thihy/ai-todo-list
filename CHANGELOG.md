@@ -4,6 +4,18 @@ All notable changes to todo-list are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0-rc7] - 2026-09-23
+
+User-visible changes since `1.0.0-rc6`. Theme: ship-blocking packaging fix (DSH runtime was failing to boot from the packaged installer because 12 transitive DSH peer packages were never copied into `app.asar`), plus a small "open log dir" affordance for bug reporting.
+
+### Added
+
+- **「打开日志目录」button in 设置 → 关于.** Sits right below the existing "导出诊断包" button. Opens the `userData` directory (the parent of `todo-list.log`, which also contains the SQLite db and sessions cache) in the OS file manager via a new `app.openLogDir` IPC. One click instead of guessing the path.
+
+### Fixed
+
+- **DSH runtime boot failed after install with eight `Cannot find package '@deepseek-ai/...'` errors.** Root cause: `electron-builder` only copies packages listed under `package.json → dependencies` into `app.asar`; transitive resolution only matters for *resolution*, not for *packing*. The concrete DSH sandbox / fs / shell / subprocess / spill packages were on disk (and most made it into the asar), but their abstract peer packages — `dsh-sandbox`, `dsh-fs`, `dsh-shell`, `dsh-subprocess`, `dsh-spill` — and the concrete `dsh-pwsh-local` backend (referenced by `dsh-pwsh-sandbox`'s static import but never declared in its `package.json` deps) were not. Promoting all 12 to direct dependencies fixes it; no network resolution needed since they were already in the pnpm store. Log evidence in `%AppData%\AI待办\todo-list.log`: `failed to import loader entry fs-sandbox (@deepseek-ai/dsh-fs-sandbox): Cannot find package '@deepseek-ai/dsh-fs' imported from ...\dsh-fs-local\lib\index.js` (and 7 sibling variants).
+
 ## [1.0.0-rc6] - 2026-09-21
 
 User-visible changes since `1.0.0-rc5`. Theme: DSH AI assistant graduates from a chat surface into a workspace-aware agent — fs / shell tools under a sandbox, configurable permission presets, and attachments that no longer bloat the session log.
