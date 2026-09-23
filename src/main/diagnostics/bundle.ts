@@ -17,7 +17,7 @@ import { statSync, existsSync, readFileSync, openSync, readSync, closeSync } fro
 import { join } from 'node:path';
 import { SCHEMA_VERSION } from '../db/schema';
 import { startupState } from '../startup-state';
-import { logger } from '../logger';
+import { LOG_PATH, logger } from '../logger';
 import type { SettingsStore } from '../settings/store';
 import type Database from 'better-sqlite3';
 import type { TodoStatus } from '../../shared/todo-types';
@@ -141,7 +141,7 @@ function defaultDirSize(p: string): number | null {
  *  absolute paths / emails / api-key-shaped blobs. Returns at most
  *  LOG_TAIL_LINES lines, oldest-first within the slice. */
 function readLogTail(): string[] {
-  const path = join(app.getPath('userData'), 'todo-list.log');
+  const path = LOG_PATH;
   if (!existsSync(path)) return [];
   let raw: string;
   try {
