@@ -48,6 +48,16 @@ export interface ExternalAiSubmitDetail {
   /** Explicit source contract: the receiver must wrap this as a task-create
    * request instead of treating it as ordinary assistant chat. */
   intent: 'create-task';
+  /** Correlation id minted by the source (floating pet / capture window).
+   *  AIPane threads it into `ai.ask` so the subsequent `ai:stream` events
+   *  carry the same id and the source can filter them for its own progress
+   *  display. `undefined` falls back to `crypto.randomUUID()` in AIPane. */
+  invocationId?: string;
+  /** When `true`, the source wants to be notified via `ai:stream` events
+   *  (e.g. the floating pet renders its own progress). When `false` the
+   *  source is fire-and-forget (e.g. the capture window). Defaults to
+   *  `true` so absence is the "opt in" form. */
+  notifySource?: boolean;
 }
 
 /** Fired on `window` when the user presses Enter (or clicks 发送给 AI 助手).

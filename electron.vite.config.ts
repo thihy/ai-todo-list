@@ -61,6 +61,7 @@ export default defineConfig({
         input: {
           index: resolve('src/renderer/index.html'),
           capture: resolve('src/renderer/capture.html'),
+          pet: resolve('src/renderer/pet.html'),
         },
       },
     },

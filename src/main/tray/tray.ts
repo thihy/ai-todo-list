@@ -7,18 +7,32 @@ export class TrayController {
   private tray: Tray | null = null;
   private onCapture: () => void = () => {};
   private onPauseClipboard: () => void = () => {};
+  private onTogglePet: () => void = () => {};
   private clipboardPaused = false;
+  private petEnabled = false;
 
   constructor(private iconPath: string) {}
 
-  setHandlers(onCapture: () => void, onPauseClipboard: () => void): void {
+  setHandlers(
+    onCapture: () => void,
+    onPauseClipboard: () => void,
+    onTogglePet: () => void,
+  ): void {
     this.onCapture = onCapture;
     this.onPauseClipboard = onPauseClipboard;
+    this.onTogglePet = onTogglePet;
     this.refreshMenu();
   }
 
   setClipboardPaused(paused: boolean): void {
     this.clipboardPaused = paused;
+    this.refreshMenu();
+  }
+
+  /** Sync the pet toggle label without re-creating the menu. Called
+   *  from settings.pet patches via the main wiring. */
+  setPetEnabled(enabled: boolean): void {
+    this.petEnabled = enabled;
     this.refreshMenu();
   }
 
@@ -28,6 +42,10 @@ export class TrayController {
       { label: 'AI待办', enabled: false },
       { type: 'separator' },
       { label: '快速捕获  Ctrl+Shift+T', click: () => this.onCapture() },
+      {
+        label: this.petEnabled ? '隐藏悬浮宠物' : '显示悬浮宠物',
+        click: () => this.onTogglePet(),
+      },
       { type: 'separator' },
       { label: '显示主窗口', click: () => this.focusInbox() },
       { type: 'separator' },

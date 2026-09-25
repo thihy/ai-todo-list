@@ -121,6 +121,18 @@ export interface PersistedSettings {
    *  默认 `info`；用户可在 Settings → 通用 → 日志级别 切换，立即生效。
    *  接受 `LogLevel` 字面量；非法值在 load() 里回退到 `info`。 */
   logLevel: LogLevel;
+  /** Desktop floating pet. The pet is a transparent always-on-top
+   *  BrowserWindow the user drags content onto; main routes drops
+   *  through the composer inbox and broadcasts `app:external-ai-submit`
+   *  for the main window's AIPane. `enabled` defaults to false so the
+   *  pet only appears for users who opted in via Settings or tray.
+   *  `x` / `y` persist the last dragged position; `null` falls back to
+   *  the default (right edge, slightly above mid-screen). */
+  pet: {
+    enabled: boolean;
+    x: number | null;
+    y: number | null;
+  };
 }
 
 const DEFAULTS: PersistedSettings = {
@@ -149,6 +161,7 @@ const DEFAULTS: PersistedSettings = {
   aiGrantedTools: {},
   dshWorkspaceDir: null,
   logLevel: 'info',
+  pet: { enabled: false, x: null, y: null },
 };
 
 /** Accept the literal string set; unknown / missing → 'info'. Used by load() to
@@ -156,6 +169,18 @@ const DEFAULTS: PersistedSettings = {
  *  `verbose` before this build shipped). */
 function normaliseLogLevel(raw: unknown): LogLevel {
   return raw === 'debug' || raw === 'info' || raw === 'warn' || raw === 'error' ? raw : 'info';
+}
+
+/** Normalise the pet settings block. Old config.json (pre-pet) has no
+ *  `pet` key — spread gives us `undefined` and we coerce to defaults.
+ *  Garbage values (non-boolean enabled, NaN coords) also fall back to
+ *  defaults so a corrupted config can't permanently hide the pet. */
+function normalisePet(raw: unknown): PersistedSettings['pet'] {
+  const obj = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<string, unknown>;
+  const enabled = obj.enabled === true;
+  const x = typeof obj.x === 'number' && Number.isFinite(obj.x) ? obj.x : null;
+  const y = typeof obj.y === 'number' && Number.isFinite(obj.y) ? obj.y : null;
+  return { enabled, x, y };
 }
 
 /** Default data root when the user has not picked a directory. */
@@ -179,6 +204,9 @@ export class SettingsStore {
   /** Stable config path — always in userData, never inside the data dir. */
   private path: string;
   private cache: PersistedSettings;
+  /** Listener for in-process subscribers (e.g. PetController applying
+   *  the enabled toggle without round-tripping through the IPC). */
+  private onPatchListeners: Array<(next: PersistedSettings) => void> = [];
 
   constructor(dir?: string) {
     // Config is read during bootstrap before any window or DB exists; we must
@@ -187,6 +215,17 @@ export class SettingsStore {
     const userData = dir ?? safeUserDataDir();
     this.path = join(userData, CONFIG_FILENAME);
     this.cache = this.load();
+  }
+
+  /** Subscribe to in-process patch events. Returns the unsubscribe
+   *  function. Listeners fire synchronously inside `patch()` after
+   *  the new cache is committed. */
+  onPatch(listener: (next: PersistedSettings) => void): () => void {
+    this.onPatchListeners.push(listener);
+    return () => {
+      const i = this.onPatchListeners.indexOf(listener);
+      if (i >= 0) this.onPatchListeners.splice(i, 1);
+    };
   }
 
   private load(): PersistedSettings {
@@ -206,6 +245,8 @@ export class SettingsStore {
       merged.taskAppearanceCustomPresets = normalizeCustomPresets(raw.taskAppearanceCustomPresets);
       // logLevel：损坏字面量 / 缺失字段都回退到 'info'，不让 logger 阈值被脏值卡住。
       merged.logLevel = normaliseLogLevel(raw.logLevel);
+      // pet：旧 config.json 没这个字段。损坏值（NaN / 字符串）→ 默认隐藏、默认位置。
+      merged.pet = normalisePet(raw.pet);
       return merged;
     } catch {
       return {
@@ -295,6 +336,9 @@ export class SettingsStore {
       autoUpdate: v.autoUpdate,
       maxConversations: v.maxConversations,
       aiGrantedTools: { ...v.aiGrantedTools },
+      // 悬浮宠物：把完整结构透传给渲染端；SettingsModal 的 「启用 /
+      // 重置位置」控件就靠这两个字段。
+      pet: { enabled: v.pet.enabled, x: v.pet.x, y: v.pet.y },
       // 显示解析后的默认路径（dataDir + /dsh_workspace），让 settings UI 知道
       // 当前实际生效的位置。`dshWorkspaceDir: null` 的语义是"未覆盖"，
       // 但 UI 不该把 null 展示成"未配置"——它仍有一个默认根。
@@ -326,12 +370,18 @@ export class SettingsStore {
     return this.cache;
   }
 
-  patch(patch: Partial<PersistedSettings>): PersistedSettings {
-    const next: PersistedSettings = { ...this.cache, ...patch };
+  patch(patch: Partial<Omit<PersistedSettings, 'pet'>> & { pet?: Partial<PersistedSettings['pet']> }): PersistedSettings {
+    const next: PersistedSettings = {
+      ...this.cache,
+      ...patch,
+      pet: { ...this.cache.pet, ...(patch.pet ?? {}) },
+    };
     // Never let streaming default override true if patch omits it
     if (patch.streaming === undefined && DEFAULTS.streaming) next.streaming = DEFAULTS.streaming;
     // logLevel：渲染端可能发来非法字面量（IPC 边界外），归一化后再写。
     next.logLevel = normaliseLogLevel(next.logLevel);
+    // pet：归一化 NaN / 缺失值，避免脏值卡住 enabled toggle。
+    next.pet = normalisePet(next.pet);
     this.cache = next;
     this.persist();
     // 把新阈值同步到 logger 单例——立即生效，下一行 logger.debug / info 就用新阈值。
@@ -340,6 +390,17 @@ export class SettingsStore {
       logger.setThreshold(next.logLevel);
       logger.info(`settings: logLevel=${next.logLevel} (effective immediately)`);
     });
+    // 通知 in-process 订阅者（PetController applyEnabled 等）。
+    for (const listener of this.onPatchListeners) {
+      try {
+        listener(next);
+      } catch (err) {
+        // 订阅者不能阻塞 patch 主流程；记录但不抛出。
+        void import('../logger').then(({ logger }) =>
+          logger.warn(`settings.onPatch listener failed: ${(err as Error).message}`),
+        );
+      }
+    }
     return this.cache;
   }
 

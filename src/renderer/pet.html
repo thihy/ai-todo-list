@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' data: blob:; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>悬浮宠物</title>
+    <style>
+      /* 复位浏览器默认样式：body 默认 8px margin 会让内容撑出视口，
+         再叠加 overflow: visible 就出滚动条 —— 132px 的悬浮窗里
+         一条滚动条特别显眼。 */
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: transparent;
+      }
+      #root {
+        width: 100%;
+        height: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      /* 拖拽高亮时 Chromium 会在根元素上画一圈默认的 drag highlight，
+         这里统一交给 Pet.tsx 的 CSS 控制。 */
+      * {
+        -webkit-user-drag: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="./pet.tsx"></script>
+  </body>
+</html>

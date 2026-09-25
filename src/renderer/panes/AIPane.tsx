@@ -1281,7 +1281,7 @@ export const AIPane: React.FC<{
         },
       ]);
 
-    const id = crypto.randomUUID();
+    const id = override?.invocationId ?? crypto.randomUUID();
     setTurnsByConv((prev) => ({
       ...prev,
       [convId!]: [
@@ -1387,7 +1387,7 @@ export const AIPane: React.FC<{
       const detail = (e as CustomEvent<ExternalAiSubmitDetail>).detail;
       if (!detail) return;
       if (detail.intent !== 'create-task') return;
-      void runSubmit({ intent: detail.intent, prompt: detail.prompt, images: detail.images });
+      void runSubmit(detail);
     };
     window.addEventListener(AI_SUBMIT_EVENT, onExternalSubmit);
     return () => window.removeEventListener(AI_SUBMIT_EVENT, onExternalSubmit);
@@ -1417,11 +1417,22 @@ export const AIPane: React.FC<{
     }
     // 2) Otherwise pick up a fresh external submission from App.
     if (!externalSubmit) return;
+    // SINGLE-FLIGHT CONSISTENCY: when the inline textarea is busy
+    // (streaming / HITL pending), drop the new submission into the
+    // same pendingExternalSubmit queue as dshNotReady so it gets a
+    // retry once the in-flight turn settles. Previously the busy
+    // branches returned silently and the submit was lost until the
+    // user manually re-sent. The drain effect above re-runs as soon
+    // as streamingTurnId / activeQuestion / activeApproval clear.
     if (
       streamingTurnId !== null ||
       activeQuestion?.convId === currentId ||
       activeApproval?.convId === currentId
-    ) return;
+    ) {
+      setPendingExternalSubmit(externalSubmit);
+      onExternalSubmitConsumed?.();
+      return;
+    }
     if (dshNotReady) {
       setPendingExternalSubmit(externalSubmit);
       onExternalSubmitConsumed?.();
