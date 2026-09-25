@@ -1,17 +1,14 @@
 // 备忘录详情页 —— 路由 #/memo/:id 渲染这里。
 //
-// 与 TodoEditorPane 同构（任务列表 → 详情面板），但内容只是一个
-// markdown blob（memo.content），没有 task_documents 那套 progress /
-// note / spec 子文档。编辑面板 = 单 textarea + 预览切换；编辑即自动保存
-// （debounce），Cmd/Ctrl+S 强制保存。右侧 / 底部是附件区 + 整理动作面板。
+// 早期版本有过 markdown 编辑 / 分屏 / 预览三档（用 MarkdownText 渲染
+// GFM/KaTeX/Shiki），但「随手丢碎片」的定位不需要格式。改成无衬线
+// 舒适字体 + 行高的纯文本 textarea：像手机备忘录 / OneNote 快捷笔记，
+// 保留回车换行，**不**解析任何标记。编辑即自动保存（debounce），
+// Cmd/Ctrl+S 强制保存。右侧 / 底部是附件区 + 整理动作面板。
 //
-// 布局选择：与 TodoEditorPane 共享一个简单的「标题栏 + 内容区」框架，
-// 内容区分左右两栏 —— 左侧 markdown 编辑 / 预览，右侧操作面板
-// （来源、附件、三个整理动作）。
-
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+// 布局选择：与 TodoEditorPane 共享一个简单的「标题栏 + 内容区」框架。
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useMemoEntry } from '../hooks/useTodoListApi';
-import { MarkdownText, type MarkdownLabels } from '@deepseek-ai/dsh-client-ui-primitives';
 import type { Memo, ULID } from '../../shared/todo-types';
 import { IconClose, IconCheck } from '../components/icons';
 
@@ -23,7 +20,6 @@ export const MemoDetail: React.FC<{
   const [draft, setDraft] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [view, setView] = useState<'edit' | 'preview' | 'split'>('split');
   // 加载 / id 切换时把 draft 重置为最新 content（如果还没开始改）。
   useEffect(() => {
     if (memo) setDraft(memo.content);
@@ -54,6 +50,15 @@ export const MemoDetail: React.FC<{
       if (saveTimer.current !== null) window.clearTimeout(saveTimer.current);
     };
   }, [draft, dirty, performSave]);
+
+  // 进入一次详情 = 用户「读过」一次。打开详情时自动把 read_at
+  // 写为 Date.now()。失败静默 —— 不影响编辑；广播会自然地把列表里的
+  // 「未读」高亮推掉。memo.readAt 已是 number 时 effect early-return,
+  // 不会重复发请求。
+  useEffect(() => {
+    if (!memo || memo.readAt) return;
+    void window.todoList.memo.markRead(memo.id, true);
+  }, [memo?.id, memo?.readAt]);
 
   // Cmd/Ctrl-S 强制保存（不等 debounce）。
   useEffect(() => {
@@ -142,39 +147,16 @@ export const MemoDetail: React.FC<{
             {saving ? '保存中…' : error ? <span className="memo-detail__error">{error}</span> : dirty ? '未保存' : <span className="memo-detail__saved"><IconCheck size={11} /> 已保存</span>}
           </span>
         </div>
-        <div className="memo-detail__view-toggle" role="tablist">
-          {(['edit', 'split', 'preview'] as const).map((v) => (
-            <button
-              key={v}
-              type="button"
-              role="tab"
-              aria-selected={view === v}
-              className={`memo-detail__view-btn${view === v ? ' is-active' : ''}`}
-              onClick={() => setView(v)}
-            >
-              {VIEW_LABEL[v]}
-            </button>
-          ))}
-        </div>
-      </header>
+        </header>
 
       <div className="memo-detail__body">
-        <div className="memo-detail__editor">
-          {(view === 'edit' || view === 'split') && (
-            <textarea
-              className="memo-detail__textarea"
-              value={draft ?? ''}
-              onChange={(e) => setDraft(e.target.value)}
-              placeholder="输入备忘录内容…"
-              spellCheck={false}
-            />
-          )}
-          {(view === 'preview' || view === 'split') && (
-            <div className="memo-detail__preview">
-              <MemoMarkdownPreview source={draft ?? ''} />
-            </div>
-          )}
-        </div>
+        <textarea
+          className="memo-detail__textarea"
+          value={draft ?? ''}
+          onChange={(e) => setDraft(e.target.value)}
+          placeholder="输入备忘录内容…"
+          spellCheck={false}
+        />
 
         <aside className="memo-detail__sidebar">
           <section className="memo-detail__panel">
@@ -283,37 +265,8 @@ const SOURCE_TITLE: Record<Memo['source'], string> = {
   manual: '备忘录',
 };
 
-const VIEW_LABEL: Record<'edit' | 'split' | 'preview', string> = {
-  edit: '编辑',
-  split: '分屏',
-  preview: '预览',
-};
-
 function formatTime(ms: number): string {
   const d = new Date(ms);
   const pad = (n: number): string => String(n).padStart(2, '0');
   return `${d.getMonth() + 1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
-
-// ---- inline preview wrapper ------------------------------------------------
-// MarkdownText handles GFM / KaTeX / Shiki; we just provide empty-state copy
-// and the standard code-block labels. Same shape as MarkdownEditor's Preview
-// (line 604) — duplicated here so MemoDetail can stand alone without dragging
-// the editor + its toolbar/menubar.
-
-const MEMO_PREVIEW_LABELS: MarkdownLabels = {
-  code: { copyLabel: '复制', copiedLabel: '已复制' },
-  footnotes: '脚注',
-};
-
-const MemoMarkdownPreview: React.FC<{ source: string }> = ({ source }) => {
-  const empty = useMemo(() => source.trim() === '', [source]);
-  if (empty) {
-    return <div className="md-preview md-preview--empty">（无内容可预览）</div>;
-  }
-  return (
-    <div className="md-preview">
-      <MarkdownText text={source} labels={MEMO_PREVIEW_LABELS} />
-    </div>
-  );
-};

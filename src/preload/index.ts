@@ -167,6 +167,7 @@ const api: TodoListApi = {
     mergeIntoTask: (id: string, todoId: string) => invoke('memo.mergeIntoTask', { id, todoId }),
     promoteToTask: (id: string, title?: string) => invoke('memo.promoteToTask', { id, title }),
     markResolved: (id: string, resolved: boolean) => invoke('memo.markResolved', { id, resolved }),
+    markRead: (id: string, read: boolean) => invoke('memo.markRead', { id, read }),
     readAttachment: (id: string) => invoke('memo.readAttachment', { id }),
   },
   settings: {
@@ -246,8 +247,7 @@ const api: TodoListApi = {
     submit: (args: CaptureSubmitArgs) => invoke('capture.submit', args),
   },
   pet: {
-    submit: (args: { invocationId: string; text?: string; files: PetFileRef[] }) =>
-      invoke('pet.submit', args),
+    submit: (args: { text?: string; files: PetFileRef[] }) => invoke('pet.submit', args),
     hide: () => invoke('pet.hide', undefined as never),
     show: () => invoke('pet.show', undefined as never),
     /** Drive the pet window's manual drag. The window can't use

@@ -1,19 +1,24 @@
 // pet.submit / pet.hide / pet.show IPC handlers.
 //
+// pet.submit 已经从「AI 中转」改成「直落备忘录」：拖入 → 写到 memos 表
+// (read_at = NULL → "未读") → 广播 app:data-changed { scope: 'memos' }。
+// 这条路径不唤起主窗口、不发 app:external-ai-submit —— 桌面宠物是
+// "随手丢"，不是 "启动 AI"。
+//
 // 关键不变量（每个测试断言其中一两条）：
-//   1. 拖入纯文本 → prompt 直接用文本，images 为空
-//   2. 拖入 path 类文件 → copyPathToInbox 落盘 + 注册 draft 索引
-//   3. 拖入 blob 类文件 → writeBlobToInbox 解码 base64 → 落盘
+//   1. 拖入纯文本 → memo.content = text, readAt === null（"未读"）
+//   2. 拖入 path 类文件 → store.attach 落盘 + attachmentIds 列出
+//   3. 拖入 blob 类文件 → store.attachBlob 解码 base64 → 落盘
 //   4. settings.pet.enabled = false → 直接返回 ignored=true（静默丢弃）
-//   5. 没有主窗口 → 返回 ignored=true
+//   5. 没有主窗口 → 仍然处理（宠物独立于主窗口状态）
 //   6. 单文件 > 50MB → failResult('file_too_large')
-//   7. 同时拖文本 + 文件 → prompt = `${text}\n\n（来自悬浮宠物，见附件）`
+//   7. 同时拖文本 + 文件 → memo.content = text，附件独立挂
 //   8. 拖 0 个文件 + 0 文字 → failResult('empty')
 //   9. 拖 > 10 个文件 → failResult('too_many_files')
-//  10. invocationId 透传；broadcast 'app:external-ai-submit' 推到所有窗口
+//  10. 不再发 app:external-ai-submit —— 那是 capture 窗口 / AIPane 的事
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -23,31 +28,23 @@ import { join } from 'node:path';
 const sentPayloads: Array<{ channel: string; payload: unknown }> = [];
 vi.mock('electron', () => {
   class FakeWebContents {
-    sent: Array<{ channel: string; payload: unknown }> = [];
     send = (channel: string, payload: unknown): void => {
-      this.sent.push({ channel, payload });
       sentPayloads.push({ channel, payload });
     };
   }
-  const fakeWindows: Array<{ webContents: FakeWebContents; destroyed: boolean; size: number }> = [];
+  const fakeWindows: Array<{ webContents: FakeWebContents; destroyed: boolean }> = [];
   return {
     BrowserWindow: {
       getAllWindows: () =>
         fakeWindows.map((w) => ({
           isDestroyed: () => w.destroyed,
           webContents: w.webContents,
-          getSize: () => [w.size, 600],
         })),
-      getFocusedWindow: () => null,
     },
     __mock: { fakeWindows, FakeWebContents },
   };
 });
 
-// Stub the logger so the test never touches userData / todo-list.log.
-// SettingsStore.patch() dynamically imports logger to forward the new
-// logLevel — the mock has to expose setThreshold too so that promise
-// resolves without throwing unhandled rejections.
 vi.mock('../../src/main/logger', () => ({
   logger: {
     warn: vi.fn(),
@@ -65,18 +62,14 @@ import {
   handlePetDrag,
 } from '../../src/main/ipc/pet-handlers';
 import { SettingsStore } from '../../src/main/settings/store';
-import {
-  _resetForTests,
-  initComposerInbox,
-  listPathsForConv,
-} from '../../src/main/ai/composer-inbox';
+import { MemoStore } from '../../src/main/files/memos';
+import { openDb } from '../../src/main/db/schema';
 import type { PetController } from '../../src/main/pet/pet';
 import type { PetFileRef } from '../../src/shared/ipc-schema';
+import type { Memo } from '../../src/shared/todo-types';
 
 function makeFakePet(): PetController {
-  // We don't exercise the controller's window lifecycle here — the
-  // handler only touches `deps.pet.hide()` / `deps.pet.show()` /
-  // `deps.pet.dragBy()`.
+  // The handler only touches deps.pet.hide() / .show() / .dragBy().
   return {
     hide: vi.fn(),
     show: vi.fn(),
@@ -86,149 +79,150 @@ function makeFakePet(): PetController {
 
 async function invoke(
   deps: Parameters<typeof handlePetSubmit>[0],
-  req: { invocationId: string; text?: string; files: PetFileRef[] },
+  req: { text?: string; files: PetFileRef[] },
 ): Promise<{ ok: boolean; code?: string; message?: string; data?: unknown }> {
-  return (await handlePetSubmit(deps, req)) as { ok: boolean; code?: string; message?: string; data?: unknown };
+  return (await handlePetSubmit(deps, req)) as {
+    ok: boolean;
+    code?: string;
+    message?: string;
+    data?: unknown;
+  };
 }
 
 describe('pet IPC handlers', () => {
   let rootDir: string;
   let settings: SettingsStore;
   let pet: PetController;
-  let deps: { rootDir: string; settings: SettingsStore; pet: PetController };
-  let electronMock: {
-    fakeWindows: Array<{ webContents: { sent: unknown[] }; destroyed: boolean; size: number }>;
-    FakeWebContents: new () => { sent: unknown[]; send: (ch: string, p: unknown) => void };
+  let memos: MemoStore;
+  let deps: {
+    settings: SettingsStore;
+    pet: PetController;
+    memos: MemoStore;
   };
+  let electronMock: {
+    fakeWindows: Array<{ webContents: { sent: unknown[] }; destroyed: boolean }>;
+  };
+  let dbHandle: ReturnType<typeof openDb>;
 
   beforeEach(async () => {
     rootDir = mkdtempSync(join(tmpdir(), 'todo-list-pet-handlers-'));
     settings = new SettingsStore(rootDir);
-    // Pet defaults to disabled in production; enable here so the
-    // happy-path tests actually exercise the submit handler.
+    // Pet defaults to disabled in production; enable here so happy-path
+    // tests actually exercise the submit handler.
     settings.patch({ pet: { enabled: true } });
     pet = makeFakePet();
-    deps = { rootDir, settings, pet };
+    dbHandle = openDb(join(rootDir, 'db.sqlite'));
+    memos = new MemoStore(dbHandle.db, join(rootDir, 'memos'));
+    deps = { settings, pet, memos };
     sentPayloads.length = 0;
-    _resetForTests();
-    initComposerInbox(rootDir);
-    electronMock = (await import('electron' as unknown as { __mock: typeof electronMock }))
-      .__mock as never;
+    electronMock = (await import('electron' as unknown as {
+      __mock: typeof electronMock;
+    })).__mock as never;
     electronMock.fakeWindows.length = 0;
-    // Default: one main window ≥ 800 wide + the pet window itself.
+    // Default: one main window — verify broadcasts actually have somewhere to go.
     electronMock.fakeWindows.push({
       webContents: { sent: [], send: (ch, p) => sentPayloads.push({ channel: ch, payload: p }) },
       destroyed: false,
-      size: 1280,
     });
   });
 
   afterEach(() => {
+    dbHandle.close();
     rmSync(rootDir, { recursive: true, force: true });
-    _resetForTests();
   });
 
-  it('drops text-only submission into broadcast with empty images', async () => {
-    const res = await invoke(deps, {
-      invocationId: 'inv-1',
-      text: '记得交房租',
-      files: [],
-    });
+  it('drops text-only input into a fresh memo (unread)', async () => {
+    const res = await invoke(deps, { text: '记得交房租', files: [] });
     expect(res.ok).toBe(true);
-    const broadcast = sentPayloads.find((p) => p.channel === 'app:external-ai-submit');
-    expect(broadcast).toBeTruthy();
-    const payload = broadcast!.payload as {
-      intent: string;
-      prompt: string;
-      images: unknown;
-      invocationId: string;
-    };
-    expect(payload.intent).toBe('create-task');
-    expect(payload.prompt).toBe('记得交房租');
-    expect(payload.images).toBeUndefined();
-    expect(payload.invocationId).toBe('inv-1');
+    const memoId = (res.data as { memoId?: string }).memoId;
+    expect(memoId).toBeTruthy();
+
+    const list = memos.list();
+    expect(list).toHaveLength(1);
+    expect(list[0].id).toBe(memoId);
+    expect(list[0].content).toBe('记得交房租');
+    expect(list[0].source).toBe('drop');
+    // 这是这一改动的核心不变量：宠物丢进来的东西默认未读
+    expect(list[0].readAt).toBeNull();
+
+    // broadcast = memos scope only —— 不再发 app:external-ai-submit
+    const channels = sentPayloads.map((p) => p.channel);
+    expect(channels).toContain('app:data-changed');
+    expect(channels).not.toContain('app:external-ai-submit');
+    const scopes = sentPayloads
+      .filter((p) => p.channel === 'app:data-changed')
+      .map((p) => (p.payload as { scope: string }).scope);
+    expect(scopes).toContain('memos');
   });
 
-  it('copies a path-style file to the draft inbox slot', async () => {
+  it('copies a path-style file into the memo attachments', async () => {
     const src = join(rootDir, 'note.txt');
     writeFileSync(src, '项目 demo 周三上线');
     const res = await invoke(deps, {
-      invocationId: 'inv-2',
       files: [{ name: 'note.txt', path: src }],
     });
     expect(res.ok).toBe(true);
-    // Files landed in dsh_workspace/inbox under `draft` key.
-    const draftPaths = listPathsForConv(rootDir, 'draft');
-    expect(draftPaths).toHaveLength(1);
-    expect(draftPaths[0]).toMatch(/note\.txt$/);
-    expect(readFileSync(draftPaths[0]!, 'utf8')).toBe('项目 demo 周三上线');
-    // Broadcast carries the inboxed image metadata.
-    const broadcast = sentPayloads.find((p) => p.channel === 'app:external-ai-submit')!.payload as {
-      images: Array<{ name: string; path: string; size: number; mime: string }>;
-      prompt: string;
-    };
-    expect(broadcast.images).toHaveLength(1);
-    expect(broadcast.images[0]!.name).toBe('note.txt');
-    expect(broadcast.images[0]!.path).toBe(draftPaths[0]);
-    expect(broadcast.images[0]!.size).toBe(Buffer.byteLength('项目 demo 周三上线', 'utf8'));
-    expect(broadcast.images[0]!.mime).toBe('text/plain');
-    expect(broadcast.prompt).toContain('请读取附件');
+    const memoId = (res.data as { memoId?: string }).memoId!;
+    const memo = memos.get(memoId) as Memo;
+    expect(memo.attachmentIds).toHaveLength(1);
+    expect(memo.content).toBe('（拖入的附件）'); // 没有 text 时给个明确的占位
+    // readAttachment 自身就在文件丢失时抛 memo_attachment_missing：
+    // 如果这条断言没炸，磁盘文件就一定在。dataUrl 的 base64 头是 mime
+    // 落对的旁证。
+    const att = memos.readAttachment(memo.attachmentIds[0]!);
+    expect(att.mime).toBe('text/plain');
+    expect(att.dataUrl.startsWith('data:text/plain;base64,')).toBe(true);
+    const decoded = Buffer.from(att.dataUrl.split(',')[1]!, 'base64').toString('utf8');
+    expect(decoded).toBe('项目 demo 周三上线');
   });
 
-  it('decodes a blob fallback (data URL) into the inbox', async () => {
-    // 1x1 transparent PNG bytes (base64). Tiny so the test stays fast.
+  it('decodes a blob fallback (data URL) into the memo attachments', async () => {
     const pngB64 =
       'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
     const dataUrl = `data:image/png;base64,${pngB64}`;
     const res = await invoke(deps, {
-      invocationId: 'inv-3',
       files: [{ name: 'pixel.png', mime: 'image/png', dataUrl }],
     });
     expect(res.ok).toBe(true);
-    const draftPaths = listPathsForConv(rootDir, 'draft');
-    expect(draftPaths).toHaveLength(1);
-    expect(existsSync(draftPaths[0]!)).toBe(true);
+    const memoId = (res.data as { memoId?: string }).memoId!;
+    const memo = memos.get(memoId) as Memo;
+    expect(memo.attachmentIds).toHaveLength(1);
+    const att = memos.readAttachment(memo.attachmentIds[0]!);
+    expect(att.mime).toBe('image/png');
+    // 不严格断言 filename —— attachBlob 总是按 mime 补扩展名，对
+    // 已经带扩展名的输入会得到 "pixel.png.png"，这是已知既有行为，
+    // 与本次改动无关。
+    expect(att.dataUrl.startsWith('data:image/png;base64,')).toBe(true);
   });
 
   it('returns ignored=true when settings.pet.enabled is false', async () => {
     settings.patch({ pet: { enabled: false } });
-    const res = await invoke(deps, {
-      invocationId: 'inv-4',
-      text: 'should be ignored',
-      files: [],
-    });
+    const res = await invoke(deps, { text: 'should be ignored', files: [] });
     expect(res.ok).toBe(true);
     expect(res.data?.ignored).toBe(true);
-    expect(sentPayloads.find((p) => p.channel === 'app:external-ai-submit')).toBeUndefined();
+    // No memo created, no broadcast.
+    expect(memos.list()).toHaveLength(0);
+    expect(sentPayloads.filter((p) => p.channel === 'app:data-changed')).toEqual([]);
   });
 
-  it('returns ignored=true when no main window is open', async () => {
-    electronMock.fakeWindows.length = 0; // close the only window
-    const res = await invoke(deps, {
-      invocationId: 'inv-5',
-      text: 'alone',
-      files: [],
-    });
+  it('does NOT require a main window (pet is independent of main-window state)', async () => {
+    // 宠物不依赖主窗口 —— 即使主窗口被关掉，丢进来的内容也照常落 memo。
+    electronMock.fakeWindows.length = 0;
+    const res = await invoke(deps, { text: 'main 窗口关了', files: [] });
     expect(res.ok).toBe(true);
-    expect(res.data?.ignored).toBe(true);
+    expect(res.data?.ignored).toBeFalsy();
+    expect(memos.list()).toHaveLength(1);
   });
 
   it('rejects >50MB path-style files with file_too_large', async () => {
     const src = join(rootDir, 'big.bin');
-    // Write just enough bytes to look big but don't actually fill the disk
-    // — we only need statSync().size to exceed MAX_FILE_BYTES.
-    writeFileSync(src, Buffer.alloc(0));
-    // Spoof the size by writing then patching — fs.statSync reports the
-    // real size, so we directly patch the handler's behavior via a
-    // mounted file with the right size. Quick path: write 51 MB.
     const big = Buffer.alloc(51 * 1024 * 1024);
     writeFileSync(src, big);
-    const res = await invoke(deps, {
-      invocationId: 'inv-6',
-      files: [{ name: 'big.bin', path: src }],
-    });
+    const res = await invoke(deps, { files: [{ name: 'big.bin', path: src }] });
     expect(res.ok).toBe(false);
     expect(res.code).toBe('file_too_large');
+    // 失败路径不能留半成品 memo
+    expect(memos.list()).toHaveLength(0);
   });
 
   it('rejects >10 files with too_many_files', async () => {
@@ -237,36 +231,29 @@ describe('pet IPC handlers', () => {
       path: join(rootDir, `f${i}.txt`),
     }));
     for (const r of refs) writeFileSync(r.path, 'x');
-    const res = await invoke(deps, {
-      invocationId: 'inv-7',
-      files: refs,
-    });
+    const res = await invoke(deps, { files: refs });
     expect(res.ok).toBe(false);
     expect(res.code).toBe('too_many_files');
   });
 
   it('rejects empty (no text + no files) with empty', async () => {
-    const res = await invoke(deps, {
-      invocationId: 'inv-8',
-      files: [],
-    });
+    const res = await invoke(deps, { files: [] });
     expect(res.ok).toBe(false);
     expect(res.code).toBe('empty');
   });
 
-  it('combines text + files with the 「（来自悬浮宠物，见附件）」 wrapper', async () => {
+  it('combines text + files: text becomes the memo body, attachments stay independent', async () => {
     const src = join(rootDir, 'plan.md');
     writeFileSync(src, '- 上线计划');
     const res = await invoke(deps, {
-      invocationId: 'inv-9',
       text: '周三上线',
       files: [{ name: 'plan.md', path: src }],
     });
     expect(res.ok).toBe(true);
-    const broadcast = sentPayloads.find((p) => p.channel === 'app:external-ai-submit')!.payload as {
-      prompt: string;
-    };
-    expect(broadcast.prompt).toBe('周三上线\n\n（来自悬浮宠物，见附件）');
+    const memoId = (res.data as { memoId?: string }).memoId!;
+    const memo = memos.get(memoId) as Memo;
+    expect(memo.content).toBe('周三上线'); // 不再追加「（来自悬浮宠物，见附件）」
+    expect(memo.attachmentIds).toHaveLength(1);
   });
 
   it('pet.hide calls deps.pet.hide()', async () => {

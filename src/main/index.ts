@@ -652,7 +652,7 @@ function bootstrap(): void {
     // a restart. See src/main/pet/pet.ts.
     const pet = new PetController({ settings, getMainWindow: () => main });
     pet.applyEnabled();
-    registerPetHandlers({ rootDir, settings, pet });
+    registerPetHandlers({ settings, pet, memos });
     // Settings UI / tray toggle → instant lifecycle sync (no restart).
     settings.onPatch((next) => {
       pet.applyEnabled();

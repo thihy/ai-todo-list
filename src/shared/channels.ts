@@ -78,6 +78,7 @@ const RUNTIME_CHANNEL_KEYS = [
   'memo.mergeIntoTask',
   'memo.promoteToTask',
   'memo.markResolved',
+  'memo.markRead',
   'memo.readAttachment',
   'ai.cancel',
   'ai.ask',

@@ -57,6 +57,7 @@ import {
   handleMemoCreate,
   handleMemoIngest,
   handleMemoList,
+  handleMemoMarkRead,
   handleMemoMerge,
   handleMemoPromote,
   handleMemoResolve,
@@ -348,5 +349,40 @@ describe('memo organize handlers', () => {
       .map((p) => (p.payload as { scope: string }).scope);
     expect(scopes).toContain('memos');
     expect(scopes.length).toBeGreaterThanOrEqual(2);
+  });
+
+  describe('④ 未读 / 已读 (memo.markRead)', () => {
+    it('stamps read_at on a freshly created memo and broadcasts', () => {
+      const created = handleMemoCreate(deps, { content: '宠物刚丢进来的' });
+      const memo = (created as { data: Memo }).data;
+      expect(memo.readAt).toBeNull();
+
+      sentPayloads.length = 0;
+      const res = handleMemoMarkRead(deps, { id: memo.id, read: true });
+      expect(res.ok).toBe(true);
+      expect(typeof (res as { data: Memo }).data.readAt).toBe('number');
+      // Broadcast: detail page mounts after this and useDataVersion(['memos'])
+      // auto-refreshes, removing the unread highlight from the list.
+      const scopes = sentPayloads
+        .filter((p) => p.channel === 'app:data-changed')
+        .map((p) => (p.payload as { scope: string }).scope);
+      expect(scopes).toEqual(['memos']);
+    });
+
+    it('clears read_at back to NULL when read=false', () => {
+      const created = handleMemoCreate(deps, { content: '撤回已读' });
+      const memo = (created as { data: Memo }).data;
+      handleMemoMarkRead(deps, { id: memo.id, read: true });
+      const cleared = handleMemoMarkRead(deps, { id: memo.id, read: false });
+      expect((cleared as { data: Memo }).data.readAt).toBeNull();
+    });
+
+    it('returns null without broadcasting for an unknown id', () => {
+      sentPayloads.length = 0;
+      const res = handleMemoMarkRead(deps, { id: '01NOSUCHMEMO', read: true });
+      expect(res).toEqual({ ok: true, data: null });
+      // No broadcast — the row wasn't touched, no UI needs to refresh.
+      expect(sentPayloads.filter((p) => p.channel === 'app:data-changed')).toEqual([]);
+    });
   });
 });

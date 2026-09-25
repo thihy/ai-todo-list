@@ -222,6 +222,11 @@ export interface MemoPromoteReq {
 }
 export interface MemoPromoteRes { todoId: ULID }
 export interface MemoResolveReq { id: ULID; resolved: boolean }
+/** 「已读/未读」翻转。`read=true` 写入当前时间，`read=false` 撤销（写
+ *  回 null）。与 resolved 正交：resolved 控制是否出现在主列表，readAt 只
+ *  是视觉层级 + 排序。MemoDetail 打开一次自动 markRead(true) —— 用户没
+ *  主动点的概念。 */
+export interface MemoMarkReadReq { id: ULID; read: boolean }
 
 // ----- ai.* -----
 
@@ -678,6 +683,7 @@ export interface IpcRegistry {
   'memo.mergeIntoTask': IpcChannel<MemoMergeReq, IpcResult<{ todoId: ULID }>>;
   'memo.promoteToTask': IpcChannel<MemoPromoteReq, IpcResult<MemoPromoteRes>>;
   'memo.markResolved': IpcChannel<MemoResolveReq, IpcResult<Memo | null>>;
+  'memo.markRead': IpcChannel<MemoMarkReadReq, IpcResult<Memo | null>>;
   'memo.readAttachment': IpcChannel<MemoIdReq, IpcResult<InboxReadRes>>;
 
   'ai.cancel': IpcChannel<AIStreamCancelReq, IpcResult<{ ok: boolean }>>;
@@ -807,17 +813,17 @@ export interface IpcRegistry {
   'capture.submit': IpcChannel<{ title: string; markdown?: string }, IpcResult<{ id: ULID }>>;
 
   // Desktop floating pet. The pet renderer is a separate BrowserWindow
-  // (frame:false, transparent, always-on-top) that drops content into
-  // the composer inbox, then broadcasts `app:external-ai-submit` for
-  // the main window's AIPane to handle. The IPC contract here only
-  // covers the inbox + broadcast pipeline.
+  // (frame:false, transparent, always-on-top) that drops content straight
+  // into the memos table (read_at = NULL → "未读") and broadcasts
+  // `app:data-changed { scope: 'memos' }` so the main window's MemoSection
+  // re-fetches. There is no AI relay and no main-window focus — the pet
+  // is "随手丢", not "启动 AI".
   'pet.submit': IpcChannel<
     {
-      invocationId: string;
       text?: string;
       files: PetFileRef[];
     },
-    IpcResult<{ ignored?: boolean }>
+    IpcResult<{ ignored?: boolean; memoId?: string }>
   >;
   'pet.hide': IpcChannel<undefined, IpcResult<void>>;
   'pet.show': IpcChannel<undefined, IpcResult<void>>;

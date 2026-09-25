@@ -40,6 +40,7 @@ interface MemoRow {
   source: MemoSource;
   todo_id: string | null;
   resolved_at: number | null;
+  read_at: number | null;
   created_at: number;
   updated_at: number;
 }
@@ -66,6 +67,7 @@ export interface MemoPatch {
   content?: string;
   todoId?: ULID | null;
   resolvedAt?: number | null;
+  readAt?: number | null;
 }
 
 export class MemoStore {
@@ -75,14 +77,16 @@ export class MemoStore {
     private memosDir: string,
   ) {}
 
-  /** 列表按创建时间倒序（新的在上）。`includeResolved` 默认 false —— 列表
-   *  默认只显示待整理的条目，已整理的折叠进「已整理」小节。 */
+  /** 列表按创建时间倒序（新的在上）；未读条目置顶（与"已读"两层视觉
+   *  分开）。`(read_at IS NULL)` 在 SQLite 里返回 0/1，DESC 让未读（1）
+   *  排前。`includeResolved` 默认 false —— 列表默认只显示待整理的条目，
+   *  已整理的折叠进「已整理」小节。 */
   list(includeResolved = false): Memo[] {
     const rows = this.db
       .prepare<[], MemoRow>(
         includeResolved
-          ? 'SELECT * FROM memos ORDER BY created_at DESC, id DESC'
-          : 'SELECT * FROM memos WHERE resolved_at IS NULL ORDER BY created_at DESC, id DESC',
+          ? 'SELECT * FROM memos ORDER BY (read_at IS NULL) DESC, created_at DESC, id DESC'
+          : 'SELECT * FROM memos WHERE resolved_at IS NULL ORDER BY (read_at IS NULL) DESC, created_at DESC, id DESC',
       )
       .all();
     return rows.map((r) => this.hydrate(r));
@@ -131,6 +135,10 @@ export class MemoStore {
       sets.push('resolved_at = ?');
       params.push(patch.resolvedAt);
     }
+    if (patch.readAt !== undefined) {
+      sets.push('read_at = ?');
+      params.push(patch.readAt);
+    }
     if (sets.length > 0) {
       const now = Date.now();
       sets.push('updated_at = ?');
@@ -141,11 +149,26 @@ export class MemoStore {
         .run(...params);
     }
     const after = this.get(id);
-    // Only re-mirror when the body changed. A todo_id / resolved_at bump
-    // doesn't alter memo.md, and rewriting it on every organize action would
-    // churn the file projection for nothing.
+    // Only re-mirror when the body changed. A todo_id / resolved_at / read_at
+    // bump doesn't alter memo.md, and rewriting it on every organize action
+    // would churn the file projection for nothing.
     if (after && patch.content !== undefined) this.writeProjection(after);
     return after;
+  }
+
+  /** 「已读/未读」翻转。`read=true` → 写入 `Date.now()`；`read=false`
+   *  → 写回 NULL（撤销）。这条路径只动 read_at 字段，不动 memo.md，
+   *  所以**不**重写文件投影 —— 跟 `update({ resolvedAt })` 同一种取舍：
+   *  投影无变化时不值得 churn 文件系统。未读状态可反复翻转（用户打开
+   *  详情 → 标已读；想再当作"新条目"重新浮出来 → 标回未读）。 */
+  markRead(id: ULID, read: boolean): Memo | null {
+    const before = this.get(id);
+    if (!before) return null;
+    const now = Date.now();
+    this.db
+      .prepare('UPDATE memos SET read_at = ?, updated_at = ? WHERE id = ?')
+      .run(read ? now : null, now, id);
+    return this.get(id);
   }
 
   /** Delete the row (+ attachment rows via FK cascade) and the whole
@@ -256,6 +279,7 @@ export class MemoStore {
       source: row.source,
       todoId: row.todo_id,
       resolvedAt: row.resolved_at,
+      readAt: row.read_at,
       attachmentIds,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
@@ -282,6 +306,7 @@ export class MemoStore {
             source: memo.source,
             todoId: memo.todoId,
             resolvedAt: memo.resolvedAt,
+            readAt: memo.readAt,
             createdAt: memo.createdAt,
             updatedAt: memo.updatedAt,
           },

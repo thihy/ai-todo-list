@@ -165,8 +165,9 @@ const MemoRow: React.FC<{
     <li
       role="button"
       tabIndex={0}
-      className={`task-row memo-row${active ? ' is-active' : ''}`}
+      className={`task-row memo-row${active ? ' is-active' : ''}${!memo.readAt ? ' is-unread' : ''}`}
       data-source={memo.source}
+      data-unread={!memo.readAt ? 'true' : 'false'}
       onClick={() => onSelect(memo.id)}
       onKeyDown={(e) => {
         if (e.key === 'Enter') onSelect(memo.id);

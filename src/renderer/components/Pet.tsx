@@ -7,11 +7,12 @@
 // React because they have to talk to Electron. The character only
 // needs to be told which mood to display.
 //
-// Pipeline: dragover → submitting → thinking → done | hitl-pending
-// | error. ai:stream events are correlated by invocationId so the
-// pet can show real-time feedback WITHOUT focusing the main window.
-// State is carried by Shishi's own visuals, NOT by a text label. The
-// whole 132×132 body is the drop target; the aura behind is the
+// Pipeline (post memo-direct): dragover → submitting → done | error.
+// pet.submit drops straight into the `memos` table (read_at = NULL
+// → "未读"); no AI relay, no main-window focus. The pipeline is
+// intentionally short — the pet is "随手丢", not "启动 AI"。State is
+// carried by Shishi's own visuals, NOT by a text label. The whole
+// 96×96 body is the drop target; the aura behind is the
 // "drop here" hint and is our only decoration outside the SVG.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -20,31 +21,10 @@ import { readDropPayload } from '../utils/drop';
 import type { ShishiState } from './shishi-pet.js';
 import { shishiPetSvg } from './shishi-pet.js';
 
-type PetState =
-  | 'idle'
-  | 'dragover'
-  | 'submitting'
-  | 'thinking'
-  | 'done'
-  | 'hitl-pending'
-  | 'error';
-
-interface SessionState {
-  invocationId: string;
-  phase: 'submitting' | 'thinking' | 'done' | 'hitl' | 'error';
-  createdTitle: string | null;
-  errorMsg: string | null;
-}
+type PetState = 'idle' | 'dragover' | 'submitting' | 'done' | 'error';
 
 const DONE_DISMISS_MS = 4500;
 const ERROR_DISMISS_MS = 6000;
-
-function randomId(): string {
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-    return crypto.randomUUID();
-  }
-  return `pet-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-}
 
 /** Map our pipeline state to Shishi's five built-in states. */
 function shishiStateFor(state: PetState): ShishiState {
@@ -56,27 +36,24 @@ function shishiStateFor(state: PetState): ShishiState {
       // Captured: pouch-glow + success rays. Submitting = "got it",
       // done = "all done!". Both share the celebration visual.
       return 'captured';
-    case 'thinking':
-      return 'sorting';
-    case 'hitl-pending':
-      // Sleeping body, but the reminder dot stays lit — exactly the
-      // "I'm not pushing, but I haven't forgotten" posture Shishi was
-      // designed for.
-      return 'sleeping';
     case 'idle':
     case 'error':
     default:
-      // No built-in error pose. Calmed body + text caption in the UI
-      // is the clearest fallback.
+      // No built-in error pose. Calmed body + the data-state attrs
+      // surface the error in our own inline caption.
       return 'idle';
   }
 }
 
 export const Pet = () => {
   const [state, setState] = useState<PetState>('idle');
-  const [session, setSession] = useState<SessionState | null>(null);
-  const sessionRef = useRef<SessionState | null>(null);
-  sessionRef.current = session;
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  // Ref to the .pet root so setPointerCapture has a stable element
+  // even if React's synthetic-event currentTarget quirks ever misalign
+  // (e.g. pooled events). Without a real capture target, pointermove
+  // events drift to whatever's under the cursor and the drag stalls.
+  const rootRef = useRef<HTMLDivElement | null>(null);
 
   // --- drag & drop -----------------------------------------------------
   const [dragCount, setDragCount] = useState(0);
@@ -102,19 +79,32 @@ export const Pet = () => {
   // Drag-enter fires on every child under the cursor; drag-leave fires
   // for each child you cross. With nested children (.pet__body /
   // .pet__mascot / <svg>) the counter can stall > 0 if Chromium omits a
-  // leave event along the path, leaving the pet stuck in dragover. The
-  // children already have pointer-events: none so the drop target stays
-  // .pet; this timeout is the safety net for any other counter drift.
+  // leave event along the path, leaving the pet stuck in dragover (and
+  // blocking the window-drag handler). The children already have
+  // pointer-events: none so the drop target stays .pet; this single
+  // timer is the safety net for any other counter drift.
+  //
+  // The timer is held in a ref (not useEffect) so successive dragenter
+  // events don't reset it — otherwise an enter/leave mismatch leaves
+  // the counter pinned > 0 forever. We arm once on first enter and
+  // disarm when the counter returns to 0.
+  const dragOverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     if (dragCount === 0) {
       setState((s) => (s === 'dragover' ? 'idle' : s));
+      if (dragOverTimer.current) {
+        clearTimeout(dragOverTimer.current);
+        dragOverTimer.current = null;
+      }
       return;
     }
-    const t = setTimeout(() => {
-      setDragCount(0);
-      setState((s) => (s === 'dragover' ? 'idle' : s));
-    }, 4000);
-    return () => clearTimeout(t);
+    if (!dragOverTimer.current) {
+      dragOverTimer.current = setTimeout(() => {
+        dragOverTimer.current = null;
+        setDragCount(0);
+        setState((s) => (s === 'dragover' ? 'idle' : s));
+      }, 1500);
+    }
   }, [dragCount]);
 
   // --- window dragging -------------------------------------------------
@@ -139,7 +129,10 @@ export const Pet = () => {
       movingWindow.current = true;
       lastPt.current = { x: e.screenX, y: e.screenY };
       void window.todoList.pet.drag({ phase: 'start' });
-      (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+      // Use the ref-backed root, not e.currentTarget — synthetic events
+      // are reliable today but a stable element removes any ambiguity
+      // (e.g. on edge cases where currentTarget is nullified mid-dispatch).
+      rootRef.current?.setPointerCapture?.(e.pointerId);
     },
     [isDragging],
   );
@@ -158,113 +151,58 @@ export const Pet = () => {
     if (!movingWindow.current) return;
     movingWindow.current = false;
     void window.todoList.pet.drag({ phase: 'end' });
-    (e.currentTarget as HTMLElement).releasePointerCapture?.(e.pointerId);
+    rootRef.current?.releasePointerCapture?.(e.pointerId);
   }, []);
 
   // --- submit ----------------------------------------------------------
+  // pet.submit drops straight into memos (read_at = NULL → "未读");
+  // no AI relay, no main-window focus. submit/done are the same
+  // captured visual; done auto-dismisses after DONE_DISMISS_MS.
   const onDrop = useCallback(async (e: React.DragEvent) => {
     e.preventDefault();
     setDragCount(0);
     const dt = e.dataTransfer;
     if (!dt) {
       setState('error');
-      setSession({ invocationId: '', phase: 'error', createdTitle: null, errorMsg: '未识别到拖入内容' });
+      setErrorMsg('未识别到拖入内容');
       return;
     }
 
-    // 共享 drop-payload 抽取逻辑（桌面宠物 / AI 输入框 / 备忘录三处一致）：
-    //   - text/plain 优先，text/uri-list 兜底（地址栏拖链接）
-    //   - 磁盘来源的文件用 webUtils.getPathForFile；web 来源（浏览器里
-    //     拖出的图）退化成 data: URL
     let payload: { text: string; files: PetFileRef[] };
     try {
       payload = await readDropPayload(dt);
     } catch (err) {
       setState('error');
-      setSession({ invocationId: '', phase: 'error', createdTitle: null, errorMsg: (err as Error).message });
+      setErrorMsg((err as Error).message);
       return;
     }
     if (!payload.text && payload.files.length === 0) {
       setState('error');
-      setSession({ invocationId: '', phase: 'error', createdTitle: null, errorMsg: '请拖入文件或文本' });
+      setErrorMsg('请拖入文件或文本');
       return;
     }
 
-    const invocationId = randomId();
     setState('submitting');
-    setSession({ invocationId, phase: 'submitting', createdTitle: null, errorMsg: null });
+    setErrorMsg(null);
 
     const res = await window.todoList.pet.submit({
-      invocationId,
       text: payload.text || undefined,
       files: payload.files,
     });
     if (!res.ok) {
       setState('error');
-      setSession({
-        invocationId,
-        phase: 'error',
-        createdTitle: null,
-        errorMsg: res.message ?? res.code ?? '提交失败',
-      });
+      setErrorMsg(res.message ?? res.code ?? '提交失败');
       return;
     }
-    // AIPane has the submission queued; streaming starts shortly. Flip to
-    // thinking so there's immediate feedback.
-    setState('thinking');
-    setSession((s) => (s ? { ...s, phase: 'thinking' } : s));
+    setState('done');
   }, []);
-
-  // --- ai:stream correlation -------------------------------------------
-  useEffect(() => {
-    const sid = session?.invocationId;
-    if (!sid) return;
-    const targetId = sid;
-    const off = window.todoList.on('ai:stream', (evt) => {
-      if (!('invocationId' in evt)) return;
-      if ((evt as { invocationId?: string }).invocationId !== targetId) return;
-      const t = (evt as { type: string }).type;
-      if (t === 'done') {
-        setState('done');
-        setSession((s) => (s ? { ...s, phase: 'done', createdTitle: null, errorMsg: null } : s));
-      } else if (t === 'error') {
-        setState('error');
-        setSession((s) =>
-          s ? { ...s, phase: 'error', errorMsg: (evt as { error?: string }).error ?? 'AI 调用失败' } : s,
-        );
-      } else {
-        // Any stream event means the turn is live.
-        setState((s) => (s === 'thinking' ? s : 'thinking'));
-      }
-    });
-    return off;
-  }, [session?.invocationId]);
-
-  // HITL: a question or approval landed for OUR turn.
-  useEffect(() => {
-    const sid = session?.invocationId;
-    if (!sid) return;
-    const targetId = sid;
-    const offQ = window.todoList.on('ai:user-question-request', (req) => {
-      if (req.invocationId !== targetId) return;
-      setState('hitl-pending');
-    });
-    const offA = window.todoList.on('ai:user-approval-request', (req) => {
-      if (req.invocationId !== targetId) return;
-      setState('hitl-pending');
-    });
-    return () => {
-      offQ();
-      offA();
-    };
-  }, [session?.invocationId]);
 
   // Auto-dismiss terminal states.
   useEffect(() => {
     if (state !== 'done' && state !== 'error') return;
     const t = setTimeout(() => {
       setState('idle');
-      setSession(null);
+      setErrorMsg(null);
     }, state === 'done' ? DONE_DISMISS_MS : ERROR_DISMISS_MS);
     return () => clearTimeout(t);
   }, [state]);
@@ -291,6 +229,7 @@ export const Pet = () => {
   return (
     <div
       className="pet"
+      ref={rootRef}
       onDragEnter={onDragEnter}
       onDragOver={onDragOver}
       onDragLeave={onDragLeave}
@@ -304,7 +243,7 @@ export const Pet = () => {
         width: '100%',
         height: '100%',
         // Clip the aura's blur and any sub-pixel overflow so Chromium
-        // never grows a scrollbar in this 132px window.
+        // never grows a scrollbar in this 96px window.
         overflow: 'hidden',
         position: 'relative',
         display: 'flex',
@@ -324,12 +263,43 @@ export const Pet = () => {
           dangerouslySetInnerHTML={{
             __html: shishiPetSvg({
               state: shishiStateFor(state),
-              size: 132,
+              size: 96,
               label: '拾拾',
             }),
           }}
         />
       </div>
+
+      {/* Error caption — short, position-absolute at the bottom of the
+          96px window so the SVG keeps its center stage. pointer-events
+          none because the user should still be able to drag the pet from
+          the caption area. pointerdown on the caption bubbles up to .pet
+          (currentTarget = .pet) just fine. */}
+      {state === 'error' && errorMsg ? (
+        <div
+          className="pet__caption"
+          style={{
+            position: 'absolute',
+            bottom: 4,
+            left: 4,
+            right: 4,
+            fontSize: 9,
+            lineHeight: 1.15,
+            color: '#b34141',
+            background: 'rgba(255,255,255,0.92)',
+            padding: '2px 4px',
+            borderRadius: 3,
+            textAlign: 'center',
+            pointerEvents: 'none',
+            overflow: 'hidden',
+            display: '-webkit-box',
+            WebkitLineClamp: 2,
+            WebkitBoxOrient: 'vertical',
+          }}
+        >
+          {errorMsg}
+        </div>
+      ) : null}
 
       <style>{`
         .pet__body, .pet__mascot, .pet__mascot svg { pointer-events: none; }

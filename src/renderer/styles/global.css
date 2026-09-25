@@ -4055,6 +4055,20 @@ a:hover {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* 未读视觉 —— 宠物丢进来的 / 用户从没打开过详情的 memo。
+   data-unread 是一等公民，CSS 选择器与 React 的 data-attr 完全对齐，
+   所以即使 className 在 source chip 上覆盖失败（不影响根 <li>）视觉
+   仍然成立。左侧 3px 高亮 + preview 加粗 + 软背景三层叠加，
+   "扫一眼" 就能看出哪些 memo 还没看过。 */
+.memo-row[data-unread="true"] {
+  box-shadow: inset 3px 0 0 var(--accent-primary);
+  background: var(--accent-primary-soft);
+}
+.memo-row[data-unread="true"] .memo-row__preview {
+  font-weight: 600;
+  color: var(--fg-primary);
+}
 .memo-row__source {
   display: inline-flex;
   align-items: center;
@@ -4268,28 +4282,6 @@ a:hover {
 .memo-detail__error {
   color: var(--color-danger, #c53030);
 }
-.memo-detail__view-toggle {
-  display: flex;
-  gap: 2px;
-  padding: 2px;
-  background: var(--bg-secondary, var(--bg-hover));
-  border-radius: 4px;
-  width: fit-content;
-}
-.memo-detail__view-btn {
-  padding: 4px 12px;
-  background: transparent;
-  border: none;
-  border-radius: 3px;
-  color: var(--fg-muted);
-  font-size: 11px;
-  cursor: pointer;
-}
-.memo-detail__view-btn.is-active {
-  background: var(--bg-primary);
-  color: var(--fg-primary);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
-}
 .memo-detail__body {
   flex: 1;
   display: flex;
@@ -4305,21 +4297,17 @@ a:hover {
   flex: 1;
   width: 100%;
   height: 100%;
-  padding: 16px;
+  padding: 20px 24px;
   background: var(--bg-primary);
   border: none;
   color: var(--fg-primary);
-  font-family: var(--font-mono, ui-monospace, monospace);
-  font-size: 13px;
-  line-height: 1.6;
+  /* 像手机备忘录 / OneNote 快捷笔记 —— 无衬线、舒适字号、宽行高，
+     去掉 monospace 的"代码编辑器"质感；回车换行默认就保留。 */
+  font-family: var(--font-sans, -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif);
+  font-size: 15px;
+  line-height: 1.75;
   resize: none;
   outline: none;
-}
-.memo-detail__preview {
-  flex: 1;
-  padding: 16px;
-  overflow-y: auto;
-  border-left: 1px solid var(--border-default);
 }
 .memo-detail__sidebar {
   flex-shrink: 0;

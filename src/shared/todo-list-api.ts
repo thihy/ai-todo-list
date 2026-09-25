@@ -339,6 +339,10 @@ export interface TodoListApi {
     promoteToTask(id: string, title?: string): Promise<IpcResponse<'memo.promoteToTask'>>;
     /** 整理动作③：标记为纯记录 —— 留在备忘录但折叠进「已整理」，不再打扰。 */
     markResolved(id: string, resolved: boolean): Promise<IpcResponse<'memo.markResolved'>>;
+    /** 「已读/未读」翻转。MemoDetail 进入一次会自动 markRead(true)；撤销
+     *  走 markRead(id, false)。与 markResolved 正交 —— readAt 只影响视觉
+     *  层级 + 排序，不影响是否出现在主列表。 */
+    markRead(id: string, read: boolean): Promise<IpcResponse<'memo.markRead'>>;
     /** 读一个附件的字节为 data: URL（渲染层永远拿不到绝对路径）。 */
     readAttachment(id: string): Promise<IpcResponse<'memo.readAttachment'>>;
   };
@@ -470,19 +474,16 @@ export interface TodoListApi {
     submit(args: CaptureSubmitArgs): Promise<IpcResponse<'capture.submit'>>;
   };
   /** Desktop floating pet window. The pet is a transparent frameless
-   *  always-on-top BrowserWindow the user drags content onto; main
-   *  routes the drop through the composer inbox and broadcasts
-   *  `app:external-ai-submit` for the main window's AIPane to handle. */
+   *  always-on-top BrowserWindow the user drags content onto; the drop
+   *  lands directly in `memos` (read_at = NULL → "未读") — no AI relay,
+   *  no main-window focus. The pet only needs to render the captured/
+   *  done/error feedback for the dropped item. */
   pet: {
-    /** Hand off a drop. `invocationId` lets the pet renderer correlate
-     *  subsequent `ai:stream` events so it can show progress. Returns
-     *  `{ ignored: true }` when pet is disabled (no window to receive
-     *  the drop) or when the main window is missing. */
-    submit(args: {
-      invocationId: string;
-      text?: string;
-      files: PetFileRef[];
-    }): Promise<IpcResponse<'pet.submit'>>;
+    /** Hand off a drop. Returns `{ ignored: true }` when pet is disabled
+     *  (settings.pet.enabled = false). On success returns
+     *  `{ ignored: false, memoId }`; the renderer doesn't use memoId but
+     *  it helps in main-process logs and unit tests. */
+    submit(args: { text?: string; files: PetFileRef[] }): Promise<IpcResponse<'pet.submit'>>;
     /** Programmatically hide the pet window without destroying it.
      *  Idempotent. */
     hide(): Promise<IpcResponse<'pet.hide'>>;

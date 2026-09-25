@@ -113,6 +113,7 @@ export function registerMemoHandlers(deps: MemoHandlerDeps): void {
   register('memo.mergeIntoTask', (_e, req) => handleMemoMerge(deps, req));
   register('memo.promoteToTask', (_e, req) => handleMemoPromote(deps, req));
   register('memo.markResolved', (_e, req) => handleMemoResolve(deps, req));
+  register('memo.markRead', (_e, req) => handleMemoMarkRead(deps, req));
   register('memo.readAttachment', (_e, req) => handleMemoReadAttachment(deps, req));
   logger.info('memo.* handlers registered');
 }
@@ -248,6 +249,21 @@ export function handleMemoResolve(
     return okResult(memo);
   } catch (err) {
     return failResult('memo_resolve_failed', (err as Error).message);
+  }
+}
+
+/** 「已读/未读」翻转。读操作成功则广播，让列表刷新排序（未读置顶）。 */
+export function handleMemoMarkRead(
+  deps: MemoHandlerDeps,
+  req: { id: string; read: boolean },
+): IpcResult<Memo | null> {
+  try {
+    const memo = deps.memos.markRead(req.id, req.read);
+    if (!memo) return okResult(null);
+    broadcastDataChanged();
+    return okResult(memo);
+  } catch (err) {
+    return failResult('memo_mark_read_failed', (err as Error).message);
   }
 }
 

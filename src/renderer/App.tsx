@@ -41,8 +41,8 @@ const DrawingPane = React.lazy(() =>
   import('./panes/DrawingPane').then((m) => ({ default: m.DrawingPane })),
 );
 // MemoDetail — split off the entry chunk for the same reason as
-// TodoEditorPane: MemoMarkdownPreview pulls MarkdownText + DSH
-// primitives, which are not needed for the cold start task-list shell.
+// TodoEditorPane: it imports its own subtree (icon set etc.) which is
+// not needed for the cold start task-list shell.
 const MemoDetail = React.lazy(() =>
   import('./panes/MemoDetail').then((m) => ({ default: m.MemoDetail })),
 );

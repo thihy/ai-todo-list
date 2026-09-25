@@ -33,10 +33,47 @@ describe('schema v21 migration (memos)', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it('reports LATEST_SCHEMA_VERSION as 21', () => {
-    // 迁移链的 head 就是 v21。硬编码在这里是有意的：它就是"备忘录
-    // 迁移进 head 了"这件事的断言本身。
-    expect(LATEST_SCHEMA_VERSION).toBe(21);
+  it('reports LATEST_SCHEMA_VERSION as 22', () => {
+    // 迁移链的 head 就是 v22（v21 = memos 表，v22 = memos.read_at）。
+    // 硬编码在这里是有意的：它就是"v22 = 未读/已读列进 head 了"
+    // 这件事的断言本身。
+    expect(LATEST_SCHEMA_VERSION).toBe(22);
+  });
+
+  it('v22 migration adds the read_at column to existing memos', () => {
+    // Seed a v21-shaped DB (without read_at), then re-open through the
+    // production pipeline and assert the column is present and the existing
+    // rows survive with read_at = NULL (the "未读" default).
+    const first = openDb(dbPath);
+    try {
+      first.db
+        .prepare(
+          `INSERT INTO memos (id, content, preview, source, todo_id, resolved_at, created_at, updated_at)
+           VALUES ('01MEMOV2100000000000000', '遗留 memo', '遗留 memo', 'drop', NULL, NULL, 1, 1)`,
+        )
+        .run();
+    } finally {
+      first.close();
+    }
+
+    const second = openDb(dbPath);
+    try {
+      const cols = second.db
+        .prepare<[], { name: string }>("PRAGMA table_info(memos)")
+        .all()
+        .map((r) => r.name);
+      expect(cols).toContain('read_at');
+
+      const row = second.db
+        .prepare<[string], { content: string; read_at: number | null }>(
+          'SELECT content, read_at FROM memos WHERE id = ?',
+        )
+        .get('01MEMOV2100000000000000');
+      expect(row?.content).toBe('遗留 memo');
+      expect(row?.read_at).toBeNull();
+    } finally {
+      second.close();
+    }
   });
 
   it('creates the memos + memo_attachments tables on a fresh DB', () => {

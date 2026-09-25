@@ -7,7 +7,7 @@ const { ulid } = ulidPkg;
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 
-export const SCHEMA_VERSION = 21;
+export const SCHEMA_VERSION = 22;
 
 const MIGRATIONS: ReadonlyArray<{ version: number; sql: string }> = [
   {
@@ -882,6 +882,26 @@ const MIGRATIONS: ReadonlyArray<{ version: number; sql: string }> = [
         FOREIGN KEY (memo_id) REFERENCES memos(id) ON DELETE CASCADE
       );
       CREATE INDEX idx_memo_attach_memo ON memo_attachments(memo_id);
+    `,
+  },
+  {
+    version: 22,
+    // 备忘录「未读/已读」时间戳。宠物悬浮球的 drop 现在直接落 memo
+    // （不再走 AI），所以"这条 memo 是新进来的还没看"是用户判断
+    // "该整理什么"的唯一线索。
+    //
+    //   NULL       = 未读（drop 完默认状态，列表里高亮置顶）
+    //   非 NULL    = 首次进入详情页的 epoch ms（用户在 MemoDetail 里被
+    //                标记，之后用户再回到列表就能区分哪些已经看过）
+    //
+    // 与 resolved_at 完全正交：resolved 是"待整理 vs 已整理"，read_at
+    // 是"看过 vs 没看过"；前者参与 list() 的 WHERE 过滤，后者只决定
+    // 视觉高亮 + 排序权重。可空 ADD COLUMN 是安全的：memos 表没有
+    // FTS 引用 / self-UPDATE 触发器，零回归面。索引给排序兜底（大库
+    // `ORDER BY (read_at IS NULL) DESC` 走不到既有的 created_at 索引)。
+    sql: `
+      ALTER TABLE memos ADD COLUMN read_at INTEGER;
+      CREATE INDEX idx_memos_read ON memos(read_at);
     `,
   },
 ];

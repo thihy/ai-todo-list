@@ -144,6 +144,45 @@ describe('MemoStore', () => {
     store.removeAttachment(att.id);
     expect(store.get(memo.id)?.attachmentIds).toEqual([]);
   });
+
+  it('new memos default to unread (readAt === null)', () => {
+    const memo = store.create('宠物丢进来的', 'drop');
+    expect(memo.readAt).toBeNull();
+    expect(store.get(memo.id)?.readAt).toBeNull();
+  });
+
+  it('markRead(true) writes read_at, markRead(false) writes NULL', () => {
+    const memo = store.create('先读再撤', 'drop');
+    expect(memo.readAt).toBeNull();
+
+    const stamped = store.markRead(memo.id, true);
+    expect(stamped).not.toBeNull();
+    expect(typeof stamped?.readAt).toBe('number');
+    expect((stamped?.readAt ?? 0) > Date.now() - 5_000).toBe(true);
+    expect(store.get(memo.id)?.readAt).toBe(stamped?.readAt);
+
+    const cleared = store.markRead(memo.id, false);
+    expect(cleared?.readAt).toBeNull();
+    expect(store.get(memo.id)?.readAt).toBeNull();
+  });
+
+  it('markRead on an unknown id returns null (no row to update)', () => {
+    expect(store.markRead('01NOSUCHMEMO', true)).toBeNull();
+  });
+
+  it('list() puts unread memos ahead of read memos (same createdAt tiebreaker)', () => {
+    // 强制 created_at 一致以便走 read 排序而不是 createdAt 排序
+    const t0 = Date.now();
+    handle.db.prepare('UPDATE memos SET created_at = ?').run(t0);
+    const a = store.create('已读 A', 'drop');
+    const b = store.create('未读 B', 'drop');
+    handle.db.prepare('UPDATE memos SET created_at = ? WHERE id = ?').run(t0, a.id);
+    handle.db.prepare('UPDATE memos SET created_at = ? WHERE id = ?').run(t0, b.id);
+    store.markRead(a.id, true);
+    // 同样已 resolved 的不该冒头
+    const ordered = store.list().map((m) => m.id);
+    expect(ordered.indexOf(b.id)).toBeLessThan(ordered.indexOf(a.id));
+  });
 });
 
 describe('derivePreview', () => {

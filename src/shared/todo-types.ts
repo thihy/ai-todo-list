@@ -261,6 +261,11 @@ export interface Memo {
   /** 「已整理」时间戳。null = 待整理（列表默认只显示这些）。用户点
    *  「标记为记录」后打戳，条目折叠进「已整理」小节但不被删除。 */
   resolvedAt: number | null;
+  /** 「已读」时间戳。null = 未读（新建默认；列表里高亮 + 置顶）。
+   *  进入详情页一次后被 markRead 写为首次查看时间。撤销（设回 null）
+   *  走 memo.markRead({ read: false })。与 resolvedAt 正交：resolved
+   *  控制是否出现在主列表，readAt 只控制视觉层级 + 排序。 */
+  readAt: number | null;
   attachmentIds: ULID[];
   createdAt: number;
   updatedAt: number;

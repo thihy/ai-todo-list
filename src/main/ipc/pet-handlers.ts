@@ -1,17 +1,11 @@
 // IPC handlers for the desktop floating pet.
 //
-// pet.submit: validate dropped files → drop them into the composer
-// inbox (convId=null so they land under the `draft` index key —
-// AIPane.runSubmit calls `relinkDraft` on its end to move them under
-// the real conversationId once it allocates one) → build an
-// ExternalAiSubmitDetail → broadcast `app:external-ai-submit` to all
-// windows. The main window's App.tsx subscriber routes the payload
-// into its AIPane via `pendingAiCreate` + opens the panel.
-//
-// The pet window itself doesn't submit to ai.ask directly because that
-// would duplicate the AIPane submission pipeline (relinkDraft,
-// conversationId allocation, history threading, etc.). Reusing
-// AIPane keeps the single source of truth for "how a turn starts".
+// pet.submit: validate dropped files → drop them straight into the memos
+// table (read_at = NULL → "未读"). This replaces the old AI-submit relay:
+// the pet is a "随手丢" surface, not a "启动 AI" trigger. The
+// `app:external-ai-submit` pipeline (composer inbox + AIPane.runSubmit) is
+// still wired and used by the capture window — only the pet entry point
+// has changed.
 //
 // pet.hide / pet.show are convenience toggles exposed via the pet's
 // context menu and the tray menu item.
@@ -22,15 +16,16 @@ import { basename, extname } from 'node:path';
 import { okResult, failResult, register } from './router';
 import type { IpcResult, PetFileRef } from '../../shared/ipc-schema';
 import type { PetDragArgs } from '../../shared/todo-list-api';
-import * as composerInbox from '../ai/composer-inbox';
+import type { MemoStore } from '../files/memos';
 import type { PetController } from '../pet/pet';
 import type { SettingsStore } from '../settings/store';
 import { logger } from '../logger';
 
 export interface PetHandlerDeps {
-  rootDir: string;
   settings: SettingsStore;
   pet: PetController;
+  /** 直落到备忘录，所以必须注入 MemoStore。同一份验证逻辑也走这里。 */
+  memos: MemoStore;
 }
 
 const MAX_FILES = 10;
@@ -87,16 +82,7 @@ function mimeFromExt(ext: string): string {
   return map[ext.toLowerCase()] ?? 'application/octet-stream';
 }
 
-function decodeDataUrl(dataUrl: string): { mime: string; bytes: Buffer } {
-  const m = /^data:([^;,]+)?(?:;base64)?,(.*)$/s.exec(dataUrl);
-  if (!m) throw new Error('dataUrl 格式不正确');
-  const mime = m[1] || 'application/octet-stream';
-  const b64 = m[2] ?? '';
-  return { mime, bytes: Buffer.from(b64, 'base64') };
-}
-
 export interface PetSubmitRequest {
-  invocationId: string;
   text?: string;
   files: PetFileRef[];
 }
@@ -108,27 +94,22 @@ export function registerPetHandlers(deps: PetHandlerDeps): void {
   register('pet.drag', async (_e, req) => handlePetDrag(deps, req));
 }
 
-/** pet.submit handler. Validates dropped files, copies them into the
- *  composer inbox (convId=null → 'draft' key), then broadcasts
- *  `app:external-ai-submit` to every renderer. Exported so unit
- *  tests can call it directly without going through the IPC router
- *  (which requires a live electron ipcMain). */
+/** pet.submit —— 直接落备忘录（read_at = NULL → "未读"）。
+ *
+ *  校验：text 截 50KB，文件 ≤ 10 个、单文件 ≤ 50MB（与 memo 入口的上限
+ *  一致）。校验通过后调 `MemoStore.create` + `attach`/`attachBlob`，附件
+ *  落盘到 `{dataDir}/memos/{id}/attachments/` 而不是 `composer-inbox/`。
+ *  返回 `{ ignored: true }` 当 pet 被禁用（settings 关闭或主窗口缺失）。
+ *  这条路径**不**唤起主窗口、不发 `app:external-ai-submit` —— 桌面宠物是
+ *  "随手丢"，主窗口要的是「静默接收」。 */
 export async function handlePetSubmit(
   deps: PetHandlerDeps,
   req: PetSubmitRequest,
-): Promise<IpcResult<{ ignored?: boolean }>> {
+): Promise<IpcResult<{ ignored?: boolean; memoId?: string }>> {
   try {
-    // Disabled toggle → drop is silently ignored. This is the
-    // path taken if a stale pet window is somehow still alive
-    // when settings.pet.enabled flips to false.
+    // Disabled toggle → drop is silently ignored. Stale pet windows can
+    // outlive settings.pet.enabled flipping to false on rare races.
     if (!deps.settings.get().pet.enabled) {
-      return okResult({ ignored: true });
-    }
-    // No main window → nothing to dispatch to. Same code path as
-    // disabled — ignored rather than failed so the pet doesn't
-    // show an error toast every time the main window is briefly
-    // mid-restart.
-    if (!BrowserWindow.getAllWindows().some((w) => !w.isDestroyed() && w.getSize()[0] >= 800)) {
       return okResult({ ignored: true });
     }
 
@@ -140,10 +121,9 @@ export async function handlePetSubmit(
       return failResult('empty', '请至少拖入一个文件或输入文字');
     }
 
-    const images: Array<{ name: string; mime: string; path: string; size: number }> = [];
+    // 预校验单文件大小/可读性，避免 attach 半拷贝才发现问题。
     for (const f of req.files) {
       if ('path' in f) {
-        // Disk-OS copy — copied from `path`.
         let size: number;
         try {
           size = statSync(f.path).size;
@@ -156,72 +136,36 @@ export async function handlePetSubmit(
         if (size > MAX_FILE_BYTES) {
           return failResult('file_too_large', `文件 ${f.name} 超过 50MB 上限`);
         }
-        const ext = extname(f.path || f.name);
-        const mime = mimeFromExt(ext);
-        const result = await composerInbox.copyPathToInbox(
-          deps.rootDir,
-          f.path,
-          basename(f.name),
-          mime,
-          null,
-        );
-        images.push({ name: result.name, mime: result.mime, path: result.path, size: result.size });
-      } else {
-        // Web-OS blob fallback — decoded from data URL.
-        let decoded: { mime: string; bytes: Buffer };
-        try {
-          decoded = decodeDataUrl(f.dataUrl);
-        } catch (err) {
-          return failResult(
-            'bad_data_url',
-            `文件 ${f.name} 数据格式不正确: ${(err as Error).message}`,
-          );
-        }
-        if (decoded.bytes.byteLength > MAX_FILE_BYTES) {
-          return failResult('file_too_large', `文件 ${f.name} 超过 50MB 上限`);
-        }
-        const mime = f.mime || decoded.mime;
-        const result = await composerInbox.writeBlobToInbox(
-          deps.rootDir,
-          basename(f.name),
-          mime,
-          decoded.bytes,
-          null,
-        );
-        images.push({ name: result.name, mime: result.mime, path: result.path, size: result.size });
+      } else if (f.size != null && f.size > MAX_FILE_BYTES) {
+        return failResult('file_too_large', `文件 ${f.name} 超过 50MB 上限`);
       }
     }
 
-    // Build the user-visible prompt. Three shapes:
-    //   - files only: "（从桌面悬浮宠物拖入的内容）请读取附件识别待办并创建任务。"
-    //   - text only:  verbatim (no extra wrapper)
-    //   - both:       text + 「（见附件）」
-    let prompt: string;
-    if (images.length > 0 && text) {
-      prompt = `${text}\n\n（来自悬浮宠物，见附件）`;
-    } else if (images.length > 0) {
-      prompt = '（从桌面悬浮宠物拖入的内容）请读取附件识别其中的待办事项并创建任务。';
-    } else {
-      prompt = text;
+    // 内容：纯文本原样；有附件无文本 → 一个明确的占位让用户看到「这是我拖进来的」。
+    const content = text || (req.files.length > 0 ? '（拖入的附件）' : '');
+    const memo = deps.memos.create(content, 'drop');
+    for (const f of req.files) {
+      const name = basename(f.name);
+      if ('path' in f) {
+        const mime = mimeFromExt(extname(f.path || f.name));
+        deps.memos.attach(memo.id, f.path, mime);
+      } else {
+        const mime = f.mime || mimeFromExt(extname(f.name));
+        deps.memos.attachBlob(memo.id, f.dataUrl, name, mime);
+      }
     }
+    // 附件挂上后重投影 + 重读，让 memo.json 快照带上 attachmentIds。
+    deps.memos.writeProjection(deps.memos.get(memo.id)!);
+    const finalMemo = deps.memos.get(memo.id)!;
 
-    const detail = {
-      intent: 'create-task' as const,
-      prompt,
-      images: images.length > 0 ? images : undefined,
-      invocationId: req.invocationId,
-      notifySource: true,
-    };
-
-    // Broadcast to every renderer. The pet itself listens too so it
-    // can render progress in its own UI; the main window picks it
-    // up via App.tsx and routes into AIPane.
+    // 广播：所有窗口（主窗口的 MemoSection、主窗口的 memo 统计区）刷新。
     for (const w of BrowserWindow.getAllWindows()) {
-      if (w.isDestroyed()) continue;
-      w.webContents.send('app:external-ai-submit', detail);
+      if (!w.isDestroyed()) w.webContents.send('app:data-changed', { scope: 'memos' });
     }
-    logger.info(`pet.submit: dispatched (files=${images.length}, text=${text.length} chars)`);
-    return okResult({ ignored: false });
+    logger.info(
+      `pet.submit: stored memo (id=${finalMemo.id}, files=${req.files.length}, text=${text.length} chars)`,
+    );
+    return okResult({ ignored: false, memoId: finalMemo.id });
   } catch (err) {
     return failResult('pet_submit_failed', (err as Error).message);
   }

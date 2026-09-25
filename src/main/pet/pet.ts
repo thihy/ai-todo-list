@@ -1,7 +1,9 @@
 // Desktop floating pet. A transparent always-on-top frameless window
-// the user drags content onto; main routes the drop through the composer
-// inbox and broadcasts `app:external-ai-submit` for the main window's
-// AIPane to take over. Mirrors `src/main/shortcuts/capture.ts` in shape
+// the user drags content onto; main drops the payload straight into the
+// `memos` table (read_at = NULL → "未读") and broadcasts
+// `app:data-changed { scope: 'memos' }`. The pet is "随手丢" surface,
+// not an AI-launch trigger: drops never focus the main window or
+// open the AIPane. Mirrors `src/main/shortcuts/capture.ts` in shape
 // (small standalone BrowserWindow controller) but is driven by
 // settings.pet.enabled + a tray toggle rather than a hotkey.
 //
@@ -23,8 +25,8 @@ import type { PetDragArgs } from '../../shared/todo-list-api';
 import { logger } from '../logger';
 
 const PET_PRELOAD = join(__dirname, '../preload/index.cjs');
-const PET_WIDTH = 132;
-const PET_HEIGHT = 132;
+const PET_WIDTH = 96;
+const PET_HEIGHT = 96;
 const DEFAULT_RIGHT_OFFSET = 24;
 const DEFAULT_VERTICAL_FRACTION = 0.35;
 
