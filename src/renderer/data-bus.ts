@@ -10,7 +10,7 @@
 import { useSyncExternalStore } from 'react';
 import type { DataScope } from '../shared/todo-list-api';
 
-const SCOPES: readonly DataScope[] = ['todos', 'content', 'drawings', 'conversations', 'tags'];
+const SCOPES: readonly DataScope[] = ['todos', 'content', 'drawings', 'conversations', 'tags', 'memos'];
 const scopeVersions = new Map<DataScope, number>(SCOPES.map((s) => [s, 0]));
 const subscribers = new Set<() => void>();
 

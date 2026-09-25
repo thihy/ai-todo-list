@@ -233,6 +233,46 @@ export interface SearchHit {
   score: number;
 }
 
+// ----- 备忘录 (schema v21) -----
+//
+// 拖入的碎片可能是一段记录、某个任务的进展、也可能是一个新任务 —— 拖的
+// 那一刻无法预知是哪一种。所以碎片先进 `memos`（零成本），用户随后交互
+// 整理：并入某个任务 / 变成新任务 / 标记为纯记录。
+//
+// Memo 刻意不是 Todo：一条「一段记录」被迫选 status + priority 是错的
+// 建模，而且碎片不该混进任务列表 / 统计 / 今日驾驶舱。详见 schema.ts 的
+// v21 migration 注释。
+
+/** 碎片是怎么进来的。用于 UI 角标 + 给 AI 的上下文提示，不影响任何行为
+ *  分支 —— 用户可以从任何来源把任何内容整理成任何形态。 */
+export type MemoSource = 'drop' | 'clipboard' | 'capture' | 'manual';
+
+export interface Memo {
+  id: ULID;
+  /** Markdown 正文，用户可编辑。DB 是权威；memo.md 是用户可见的投影。 */
+  content: string;
+  /** 列表行展示用的摘要，由 content 首行派生（见 MemoStore.derivePreview）。
+   *  不由用户直接编辑 —— 这一点很关键，见 paths.ts 的 memoDir 注释。 */
+  preview: string;
+  source: MemoSource;
+  /** 整理后挂到的任务。null = 未整理或已标记为纯记录。任务被删时由
+   *  ON DELETE SET NULL 置空 —— 碎片是用户自己的内容，不随任务消失。 */
+  todoId: ULID | null;
+  /** 「已整理」时间戳。null = 待整理（列表默认只显示这些）。用户点
+   *  「标记为记录」后打戳，条目折叠进「已整理」小节但不被删除。 */
+  resolvedAt: number | null;
+  attachmentIds: ULID[];
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface MemoAttachment {
+  id: ULID;
+  memoId: ULID;
+  filePath: string;
+  mime: string;
+  createdAt: number;
+}
 export interface InboxAttachment {
   id: ULID;
   todoId: ULID;

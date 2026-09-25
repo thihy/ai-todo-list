@@ -67,6 +67,18 @@ const RUNTIME_CHANNEL_KEYS = [
   'inbox.list',
   'inbox.read',
   'inbox.remove',
+  // 备忘录 (schema v21)。拖入碎片 → memo.ingest（带 targetTodoId 则直接
+  // 并入该任务）；整理动作为 mergeIntoTask / promoteToTask / markResolved。
+  'memo.list',
+  'memo.get',
+  'memo.create',
+  'memo.update',
+  'memo.remove',
+  'memo.ingest',
+  'memo.mergeIntoTask',
+  'memo.promoteToTask',
+  'memo.markResolved',
+  'memo.readAttachment',
   'ai.cancel',
   'ai.ask',
   'ai.health',
@@ -109,6 +121,13 @@ const RUNTIME_CHANNEL_KEYS = [
   'tag.applyCleanup',
   'tag.reactivate',
   'capture.submit',
+  // Desktop floating pet (frameless always-on-top window). The pet
+  // drops content into the composer inbox and broadcasts
+  // `app:external-ai-submit` for the main window's AIPane.
+  'pet.submit',
+  'pet.hide',
+  'pet.show',
+  'pet.drag',
   'app.popupMenu',
   'app.popupMenuCategory',
   'app.pickFile',

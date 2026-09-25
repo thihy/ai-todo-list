@@ -7,7 +7,7 @@ const { ulid } = ulidPkg;
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 
-export const SCHEMA_VERSION = 19;
+export const SCHEMA_VERSION = 21;
 
 const MIGRATIONS: ReadonlyArray<{ version: number; sql: string }> = [
   {
@@ -831,6 +831,57 @@ const MIGRATIONS: ReadonlyArray<{ version: number; sql: string }> = [
     // 全部为 NULL（语义即「未选择」）。
     sql: `
       ALTER TABLE conversations ADD COLUMN permission_preset TEXT;
+    `,
+  },
+  {
+    version: 21,
+    // 备忘录 (memos) —— 拖入碎片的落点。
+    //
+    // 拖进来的东西可能是一段记录、某个任务的进展、也可能是一个新任务；
+    // 拖的那一刻无法预知是哪一种。所以碎片先进这里（零成本），用户随后
+    // 交互整理：并入某个任务 / 变成新任务 / 标记为纯记录。
+    //
+    // 为什么是独立表而不是复活 todos.status='inbox'：
+    //   - 碎片不该污染任务列表 / 统计 / 今日驾驶舱 —— 一条「一段记录」被
+    //     迫选状态+优先级是错的建模。
+    //   - 「未整理」与「已整理」是备忘录自己的生命周期（resolved_at），
+    //     不是一个任务状态。
+    //   - v1 的 inbox 状态已被迁移删除过一次，复活会与那段历史打架。
+    //
+    // 纯新增表 + 索引：不触碰 todos / FTS 触发器 / 任何既有列，零回归面。
+    //
+    // resolved_at：用户点「标记为记录」后打的时间戳。列表默认只显示
+    // resolved_at IS NULL 的条目，标记过的折叠进「已整理」小节。null =
+    // 待整理 —— 这就是备忘录的「收件箱」语义（但它不是任务状态）。
+    //
+    // todo_id：整理后挂到哪个任务。ON DELETE SET NULL —— 任务被删后 memo
+    // 不该跟着消失（碎片是用户自己的内容，不该被任务生命周期牵连）。
+    sql: `
+      CREATE TABLE memos (
+        id TEXT PRIMARY KEY,
+        content TEXT NOT NULL DEFAULT '',
+        preview TEXT NOT NULL DEFAULT '',
+        source TEXT NOT NULL DEFAULT 'drop'
+          CHECK (source IN ('drop','clipboard','capture','manual')),
+        todo_id TEXT,
+        resolved_at INTEGER,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        FOREIGN KEY (todo_id) REFERENCES todos(id) ON DELETE SET NULL
+      );
+      CREATE INDEX idx_memos_created ON memos(created_at DESC);
+      CREATE INDEX idx_memos_todo ON memos(todo_id);
+      CREATE INDEX idx_memos_resolved ON memos(resolved_at);
+
+      CREATE TABLE memo_attachments (
+        id TEXT PRIMARY KEY,
+        memo_id TEXT NOT NULL,
+        file_path TEXT NOT NULL,
+        mime TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        FOREIGN KEY (memo_id) REFERENCES memos(id) ON DELETE CASCADE
+      );
+      CREATE INDEX idx_memo_attach_memo ON memo_attachments(memo_id);
     `,
   },
 ];

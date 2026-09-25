@@ -7,6 +7,8 @@ import type {
   DrawingMeta,
   GitHistoryEntry,
   InboxAttachment,
+  Memo,
+  MemoSource,
   ProgressLogEntry,
   SearchHit,
   TagDef,
@@ -167,6 +169,59 @@ export interface InboxAttachBlobReq {
 export interface InboxListReq { todoId: ULID }
 export interface InboxReadRes { dataUrl: string; mime: string; filename: string }
 export interface InboxIdReq { id: ULID }
+
+// ----- memo.* -----
+//
+// 备忘录 (schema v21)。拖入的碎片先落这里 —— 拖的那一刻无法预知它是一段
+// 记录、某个任务的进展、还是一个新任务，所以三种可能都必须能存在。用户
+// 随后交互整理：
+//
+//   memo.mergeIntoTask  并入已有任务（正文追加进 progress 文档）
+//   memo.promoteToTask  变成新任务
+//   memo.markResolved   标记为纯记录（留在备忘录，折叠进「已整理」）
+//
+// memo.ingest 是拖拽专用的快路径：一次调用完成「建 memo（可选）」+ 附件
+// 落盘，带 targetTodoId 时直接并入该任务，省掉一次往返。
+
+/** 一个被拖进来的文件。形状与 PetFileRef 相同 —— 磁盘来源带 path，
+ *  web 来源（浏览器里拖出的图）带 dataUrl。 */
+export type MemoFileRef =
+  | { name: string; path: string }
+  | { name: string; mime: string; dataUrl: string; size?: number };
+
+export interface MemoListReq {
+  /** 默认 false = 只看待整理的（resolved_at IS NULL）。true = 全部。 */
+  includeResolved?: boolean;
+}
+export interface MemoIdReq { id: ULID }
+export interface MemoCreateReq {
+  content: string;
+  source?: MemoSource;
+  files?: MemoFileRef[];
+}
+export interface MemoUpdateReq { id: ULID; content: string }
+/** 拖拽快路径：落盘一个 memo（带 targetTodoId 时直接并入该任务）。 */
+export interface MemoIngestReq {
+  content: string;
+  source?: MemoSource;
+  files?: MemoFileRef[];
+  /** 非空 = 碎片直接并入这个任务（等价于 create + mergeIntoTask 一次做完）。 */
+  targetTodoId?: ULID | null;
+}
+export interface MemoIngestRes {
+  /** 并入已有任务时 = 目标任务；仅落 memo 时 = null。 */
+  todoId: ULID | null;
+  /** 碎片被整理掉时是它的 id；被并入任务时为 null（内容已进任务）。 */
+  memoId: ULID | null;
+}
+export interface MemoMergeReq { id: ULID; todoId: ULID }
+export interface MemoPromoteReq {
+  id: ULID;
+  /** 新任务标题。省略时用 memo 的 preview。 */
+  title?: string;
+}
+export interface MemoPromoteRes { todoId: ULID }
+export interface MemoResolveReq { id: ULID; resolved: boolean }
 
 // ----- ai.* -----
 
@@ -432,6 +487,10 @@ export interface SettingsSetReq {
   // AI 助手「对话列表」容量上限：未归档对话超过此数时，ai.conversation.create
   // 会自动物理删除最老的。0 = 不限。默认 100。
   maxConversations?: number;
+  // 桌面悬浮宠物。子字段按 present 透传，store.patch() 与现有值深合并
+  // —— 所以只发 { enabled } 不会把 x/y 位置清掉，「重置位置」只发
+  // { x: null, y: null } 也不会动 enabled。
+  pet?: { enabled?: boolean; x?: number | null; y?: number | null };
 }
 export interface SettingsGetRes extends AISettings {
   captureHotkey: string;
@@ -466,6 +525,9 @@ export interface SettingsGetRes extends AISettings {
   /** AI 助手「对话列表」容量上限。0 = 不限。默认 100。
    *  See PersistedSettings#maxConversations. */
   maxConversations: number;
+  /** 桌面悬浮宠物：enabled 是总开关；x / y 是当前持久化的窗口位置
+   *  （用户拖动后由 PetController 防抖写回）。null = 走默认位置。 */
+  pet: { enabled: boolean; x: number | null; y: number | null };
 }
 export interface SettingsChooseDataDirRes {
   /** Chosen path, or null if the user cancelled the dialog. */
@@ -519,6 +581,22 @@ export interface CleanupPreview {
   unused: CleanupPreviewUnused[];
   similar: CleanupPreviewSimilarGroup[];
 }
+
+/** One dropped file in a pet.submit IPC call. Either `path` (real
+ *  on-disk path obtained via `webUtils.getPathForFile`) OR `dataUrl`
+ *  (Blob fallback for web-originated drops) must be present. Mirrors
+ *  the renderer-side `PetFileRef` in `shared/todo-list-api.ts`. */
+export type PetFileRef =
+  | { name: string; path: string }
+  | { name: string; mime: string; dataUrl: string; size?: number };
+
+/** A step of the pet window's manual drag. Mirrors `PetDragArgs` in
+ *  `shared/todo-list-api.ts` (duplicated for the same reason as
+ *  `PetFileRef` above — this module must not import from there). */
+export type PetDragArgs =
+  | { phase: 'start' }
+  | { phase: 'move'; dx: number; dy: number }
+  | { phase: 'end' };
 
 export interface CleanupActions {
   /** Names to mark retired_at (and only those — historical task
@@ -590,6 +668,17 @@ export interface IpcRegistry {
   'inbox.list': IpcChannel<InboxListReq, IpcResult<InboxAttachment[]>>;
   'inbox.read': IpcChannel<InboxIdReq, IpcResult<InboxReadRes>>;
   'inbox.remove': IpcChannel<InboxIdReq, IpcResult<null>>;
+
+  'memo.list': IpcChannel<MemoListReq, IpcResult<Memo[]>>;
+  'memo.get': IpcChannel<MemoIdReq, IpcResult<Memo | null>>;
+  'memo.create': IpcChannel<MemoCreateReq, IpcResult<Memo>>;
+  'memo.update': IpcChannel<MemoUpdateReq, IpcResult<Memo | null>>;
+  'memo.remove': IpcChannel<MemoIdReq, IpcResult<void>>;
+  'memo.ingest': IpcChannel<MemoIngestReq, IpcResult<MemoIngestRes>>;
+  'memo.mergeIntoTask': IpcChannel<MemoMergeReq, IpcResult<{ todoId: ULID }>>;
+  'memo.promoteToTask': IpcChannel<MemoPromoteReq, IpcResult<MemoPromoteRes>>;
+  'memo.markResolved': IpcChannel<MemoResolveReq, IpcResult<Memo | null>>;
+  'memo.readAttachment': IpcChannel<MemoIdReq, IpcResult<InboxReadRes>>;
 
   'ai.cancel': IpcChannel<AIStreamCancelReq, IpcResult<{ ok: boolean }>>;
   'ai.ask': IpcChannel<AIAskReq, IpcResult<AIAskRes>>;
@@ -716,6 +805,26 @@ export interface IpcRegistry {
 
   // Capture window submit. Renderer hands us a title + optional body markdown.
   'capture.submit': IpcChannel<{ title: string; markdown?: string }, IpcResult<{ id: ULID }>>;
+
+  // Desktop floating pet. The pet renderer is a separate BrowserWindow
+  // (frame:false, transparent, always-on-top) that drops content into
+  // the composer inbox, then broadcasts `app:external-ai-submit` for
+  // the main window's AIPane to handle. The IPC contract here only
+  // covers the inbox + broadcast pipeline.
+  'pet.submit': IpcChannel<
+    {
+      invocationId: string;
+      text?: string;
+      files: PetFileRef[];
+    },
+    IpcResult<{ ignored?: boolean }>
+  >;
+  'pet.hide': IpcChannel<undefined, IpcResult<void>>;
+  'pet.show': IpcChannel<undefined, IpcResult<void>>;
+  // Manual window drag. The pet can't use `-webkit-app-region: drag`
+  // because an app-region drag is routed to the OS as a native window move
+  // and never delivers HTML5 drop events, which would kill the drop target.
+  'pet.drag': IpcChannel<PetDragArgs, IpcResult<void>>;
 
   // Pop the native application menu at the cursor (title-bar 菜单 button).
   'app.popupMenu': IpcChannel<undefined, IpcResult<void>>;
@@ -946,6 +1055,7 @@ export interface BackupManifest {
     conversations: number;
     tags: number;
     inboxAttachments: number;
+    memos: number;
   };
   /** Which top-level subdirectories were copied. Each entry is the
    *  basename only (e.g. 'todos'), never an absolute path. */
@@ -953,6 +1063,7 @@ export interface BackupManifest {
     todos: boolean;
     drawings: boolean;
     attachments: boolean;
+    memos: boolean;
     dshSessions: false;
   };
   /** Total bytes written per section. Sum = total backup size. */
@@ -961,6 +1072,7 @@ export interface BackupManifest {
     todos: number;
     drawings: number;
     attachments: number;
+    memos: number;
     total: number;
   };
 }

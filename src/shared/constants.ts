@@ -43,6 +43,10 @@ export const DRAWINGS_SUBDIR = 'drawings';
 export const THUMBS_SUBDIR = 'thumbs';
 export const ATTACHMENTS_SUBDIR = 'inbox-attachments';
 export const TRASH_SUBDIR = 'trash';
+/** 备忘录目录 —— 拖入碎片的落点（schema v21）。与 todos/ 同级：碎片不属于
+ *  任何任务，所以不进某个任务目录。每个 memo 一个子目录
+ *  `{id6}-{slug}/`，内含 memo.md / memo.json / attachments/。 */
+export const MEMOS_SUBDIR = 'memos';
 /** AI 助手文件系统 + shell 工具的根目录。AI 的 read/read_image/write/edit/
  *  grep/glob 在 <dataDir>/<DSH_WORKSPACE_SUBDIR>/ 下运作（host 在
  *  tools/pre-execute 监听器里强制校验路径越界）；bash/pwsh 由 DSH sandbox

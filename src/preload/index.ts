@@ -2,7 +2,7 @@
 // Renderer accesses everything via window.todoList.* (see shared/todo-list-api.ts).
 // Sandboxed: no direct Node, no ipcRenderer without allowlisting.
 
-import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
+import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'electron';
 import { isKnownChannel } from '../shared/channels';
 import type {
   IpcChannelName,
@@ -20,7 +20,11 @@ import type {
   InboxReadArgs,
   InboxRemoveArgs,
   SettingsPatchArgs,
+  PetFileRef,
+  PetDragArgs,
 } from '../shared/todo-list-api';
+import type { MemoSource } from '../shared/todo-types';
+import type { MemoFileRef } from '../shared/ipc-schema';
 
 // Cached at module load: list of channels whose response is a `void` (none for now).
 // Each call passes channel + payload; renderer never sees ipcRenderer directly.
@@ -71,6 +75,12 @@ const APP_EVENTS: AppEvent[] = [
   'ai:user-approval-timeout',
   'ai:user-approval-request',
   'ai:user-approval-cancelled',
+  // External AI submit relay — fired by main when the floating pet /
+  // capture window finishes inboxing attachments. The main window
+  // listener pushes the payload into AIPane's pendingExternalSubmit
+  // and opens the panel; the source window uses the same event name
+  // for its own ai:stream correlation.
+  'app:external-ai-submit',
 ];
 
 function onAppEvent<E extends AppEvent>(
@@ -140,6 +150,24 @@ const api: TodoListApi = {
     list: (args: InboxListArgs) => invoke('inbox.list', args),
     read: (args: InboxReadArgs) => invoke('inbox.read', args),
     remove: (args: InboxRemoveArgs) => invoke('inbox.remove', args),
+  },
+  memo: {
+    list: (includeResolved?: boolean) => invoke('memo.list', { includeResolved }),
+    get: (id: string) => invoke('memo.get', { id }),
+    create: (args: { content: string; source?: MemoSource; files?: MemoFileRef[] }) =>
+      invoke('memo.create', args),
+    update: (id: string, content: string) => invoke('memo.update', { id, content }),
+    remove: (id: string) => invoke('memo.remove', { id }),
+    ingest: (args: {
+      content: string;
+      source?: MemoSource;
+      files?: MemoFileRef[];
+      targetTodoId?: string | null;
+    }) => invoke('memo.ingest', args),
+    mergeIntoTask: (id: string, todoId: string) => invoke('memo.mergeIntoTask', { id, todoId }),
+    promoteToTask: (id: string, title?: string) => invoke('memo.promoteToTask', { id, title }),
+    markResolved: (id: string, resolved: boolean) => invoke('memo.markResolved', { id, resolved }),
+    readAttachment: (id: string) => invoke('memo.readAttachment', { id }),
   },
   settings: {
     get: () => invoke('settings.get', undefined as never),
@@ -216,6 +244,26 @@ const api: TodoListApi = {
   },
   capture: {
     submit: (args: CaptureSubmitArgs) => invoke('capture.submit', args),
+  },
+  pet: {
+    submit: (args: { invocationId: string; text?: string; files: PetFileRef[] }) =>
+      invoke('pet.submit', args),
+    hide: () => invoke('pet.hide', undefined as never),
+    show: () => invoke('pet.show', undefined as never),
+    /** Drive the pet window's manual drag. The window can't use
+     *  `-webkit-app-region: drag` because that region never delivers
+     *  HTML5 drop events. */
+    drag: (args: PetDragArgs) => invoke('pet.drag', args),
+  },
+  /** Sandbox-compatible File→path resolution. Electron 32+ removed
+   *  `File.path`; the explicit `webUtils.getPathForFile` is the
+   *  supported replacement and works inside a sandboxed preload. */
+  pathForFile: (file: File): string => {
+    try {
+      return webUtils.getPathForFile(file) ?? '';
+    } catch {
+      return '';
+    }
   },
   ai: {
     // AI uses streaming via app events rather than invoke; main pushes to ai:stream.

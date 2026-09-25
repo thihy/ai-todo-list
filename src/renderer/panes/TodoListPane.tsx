@@ -30,6 +30,7 @@ import { IconCalendar, IconChevronDown, IconCollapseBar, IconDrawing, IconInboxE
 import { todayDateKey } from '../components/PlanGuideModal';
 import TodayGlyph from '../components/TodayGlyph';
 import { DEFAULT_TASK_APPEARANCE, type TaskAppearance } from '../../shared/task-appearance';
+import { MemoSection } from '../components/MemoSection';
 
 export const TodoListPane: React.FC<{
   width: number;
@@ -37,11 +38,15 @@ export const TodoListPane: React.FC<{
   sort: SortKey;
   selectedId: string | null;
   onSelect: (id: string) => void;
+  /** Memo 行选中 — 区别于任务选中（跳到 #/memo/<id>，不是 #/todo/<id>）。
+   *  缺省时 fallback 到 onSelect，让旧的调用点（测试 / 不关心 memo 的场景）
+   *  不破。 */
+  onSelectMemo?: (id: string) => void;
   onOpenSettings: () => void;
   onCompose: () => void;
   onCollapse?: () => void;
   toastBus: ToastBus;
-}> = ({ width, filter, sort, selectedId, onSelect, onOpenSettings, onCompose, onCollapse, toastBus }) => {
+}> = ({ width, filter, sort, selectedId, onSelect, onSelectMemo, onOpenSettings, onCompose, onCollapse, toastBus }) => {
   const repoFilter = filterToRepoFilter(filter);
   const { data, loading, refresh } = useTodos(repoFilter);
   // 任务优先级配色 —— mode=custom 时把 colors 注入 CSS 自定义属性；
@@ -441,6 +446,18 @@ export const TodoListPane: React.FC<{
                     </ul>
                   </div>
                 </section>
+              )}
+
+              {/* === 第三段：备忘录 ===
+                  拖进来的碎片暂存区（既不属于「今日待办」也不属于「全部任务」）。
+                  按用户原话：就在今日任务、全部任务的下面。
+                  归档 / 回收站视图不展示 —— 这些场景下的任务列表语义与
+                  碎片无关，混在一起只会让恢复路径更难找。 */}
+              {!archivedView && !deletedView && (
+                <MemoSection
+                  selectedId={selectedId}
+                  onSelect={onSelectMemo ?? onSelect}
+                />
               )}
             </>
           )}

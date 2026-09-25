@@ -163,6 +163,32 @@ const GeneralPane: React.FC<PaneProps> = ({ data, patch }) => (
         <option value="dark">深色</option>
       </select>
     </Field>
+    {/* 桌面悬浮宠物 —— 默认关闭。打开后会出现在主屏右下偏上，可拖动
+        到任意位置；把任意文件 / 文本 / 图片拖到它上面就能识别并创建
+        任务，主窗口会在后台静默处理，宠物自己显示进度。也可在系统
+        托盘菜单里随时切换显示。 */}
+    <Field
+      label="悬浮宠物"
+      hint="把文件 / 文本 / 图片拖到悬浮宠物上，自动识别并创建任务。默认关闭；启用后可拖动到任意位置，托盘菜单可随时切换。"
+    >
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+        <label className="toggle">
+          <input
+            type="checkbox"
+            checked={data.pet?.enabled ?? false}
+            onChange={(e) => void patch({ pet: { enabled: e.target.checked } })}
+          />
+          <span>启用悬浮宠物</span>
+        </label>
+        <button
+          type="button"
+          className="btn"
+          onClick={() => void patch({ pet: { x: null, y: null } })}
+        >
+          重置位置
+        </button>
+      </div>
+    </Field>
     {/* 日志级别：默认 info。需要抓 stop-stuck / LLM 交互现场时切到 debug，
         所有 [LLM ...] chunk / TTFB / abort 都会立刻写入 todo-list.log。
         切换后立即生效，无需重启。 */}
@@ -781,7 +807,7 @@ const DataPane: React.FC<PaneProps & { chooseDataDir: () => Promise<string | nul
           themselves. */}
       <Field
         label="数据备份"
-        hint="立即创建一份 SQLite + 任务 / 绘图 / 附件的快照到一个新文件夹。不包含 AI 会话日志（可在下次使用时重新生成）。恢复与删除将在下一版本提供。"
+        hint="立即创建一份 SQLite + 任务 / 绘图 / 附件 / 备忘录的快照到一个新文件夹。不包含 AI 会话日志（可在下次使用时重新生成）。恢复与删除将在下一版本提供。"
       >
         <div className="row">
           <button

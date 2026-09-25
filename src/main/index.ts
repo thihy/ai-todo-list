@@ -10,6 +10,7 @@ import { installRouter, okResult, failResult, register } from './ipc/router';
 import { registerTodoHandlers } from './ipc/todo-handlers';
 import { registerContentHandlers } from './ipc/content-handlers';
 import { registerDocumentHandlers } from './ipc/document-handlers';
+import { registerMemoHandlers } from './ipc/memo-handlers';
 import { registerDiagnosticsHandlers } from './ipc/diagnostics-handler';
 import { registerHealthHandlers } from './ipc/health-handler';
 import { registerUpdaterHandlers } from './ipc/updater-handler';
@@ -29,10 +30,13 @@ import { MarkdownStore } from './files/markdown';
 import { DrawingStore } from './files/drawings';
 import { DocumentStore } from './files/documents';
 import { InboxStore } from './files/inbox';
+import { MemoStore } from './files/memos';
 import * as composerInbox from './ai/composer-inbox';
 import { SettingsStore } from './settings/store';
 import { CaptureController } from './shortcuts/capture';
 import { TrayController } from './tray/tray';
+import { PetController } from './pet/pet';
+import { registerPetHandlers } from './ipc/pet-handlers';
 import { ClipboardWatcher } from './clipboard/watcher';
 import { installAutoUpdater } from './updater/updater';
 import { installAppMenu, showAbout, popupCategory } from './menu';
@@ -42,6 +46,7 @@ import {
   TODOS_SUBDIR,
   DRAWINGS_SUBDIR,
   ATTACHMENTS_SUBDIR,
+  MEMOS_SUBDIR,
   DSH_WORKSPACE_SUBDIR,
   APP_PRODUCT_NAME,
   APP_USER_MODEL_ID,
@@ -212,6 +217,9 @@ function bootstrap(): void {
     const todosDir = join(rootDir, TODOS_SUBDIR);
     const drawingsDir = join(rootDir, DRAWINGS_SUBDIR);
     const attachmentsDir = join(rootDir, ATTACHMENTS_SUBDIR);
+    // 备忘录：拖入碎片的落点。碎片不属于任何任务，所以与 todos/ 平级，
+    // 不挂 resolveTaskDir（对比 InboxStore —— 它的附件归属明确是某个任务）。
+    const memosDir = join(rootDir, MEMOS_SUBDIR);
     // AI 助手文件系统 / shell 工具的工作区（DSH sandbox-policy 的 workspaceRoot
     // + host `tools/pre-execute` 路径校验的目标）。在 attachmentsDir 之后一并
     // 创建；DSH_WORKSPACE_ROOT env 在 boot DSH container 之前再设置（见下）。
@@ -219,6 +227,7 @@ function bootstrap(): void {
     mkdirSync(todosDir, { recursive: true });
     mkdirSync(drawingsDir, { recursive: true });
     mkdirSync(attachmentsDir, { recursive: true });
+    mkdirSync(memosDir, { recursive: true });
     mkdirSync(dshWorkspaceDir, { recursive: true });
     // Composer inbox lives under the DSH workspace so AI `read` /
     // `read_image` can find it without sandbox policy edits.
@@ -276,6 +285,7 @@ function bootstrap(): void {
     const drawings = new DrawingStore(handle.db, drawingsDir, resolveTaskDir);
     const docs = new DocumentStore(handle.db);
     const inbox = new InboxStore(handle.db, attachmentsDir, todosDir, resolveTaskDir);
+    const memos = new MemoStore(handle.db, memosDir);
     mark('file-stores-constructed');
 
     // UX-01 — the IPC handler receives an object so it can dereference
@@ -314,6 +324,7 @@ function bootstrap(): void {
     registerDocumentHandlers(docs, resolveTaskDir, todosDir);
     registerLinkHandlers();
     registerInboxHandlers(inbox);
+    registerMemoHandlers({ memos, docs, todos: repo, inbox, resolveTaskDir });
     registerTagHandlers(tagRepo);
 
     // attachment://<id> → serve the inbox_attachments file bytes. Registered
@@ -634,6 +645,20 @@ function bootstrap(): void {
     capture.setHotkey(settings.get().captureHotkey);
     capture.registerHotkey();
 
+    // Desktop floating pet. Window lifecycle is driven by the
+    // `pet.enabled` setting + tray toggle + settings modal — boot
+    // honors the persisted preference. Position is also persisted
+    // (settings.pet.{x,y}) so the user's last placement survives
+    // a restart. See src/main/pet/pet.ts.
+    const pet = new PetController({ settings, getMainWindow: () => main });
+    pet.applyEnabled();
+    registerPetHandlers({ rootDir, settings, pet });
+    // Settings UI / tray toggle → instant lifecycle sync (no restart).
+    settings.onPatch((next) => {
+      pet.applyEnabled();
+      tray.setPetEnabled(next.pet.enabled);
+    });
+
     const isDev = !app.isPackaged;
     const trayIconPath = isDev
       ? join(__dirname, '../../resources/tray.png')
@@ -656,7 +681,9 @@ function bootstrap(): void {
         clipboard.setPaused(!clipboard.isPaused());
         tray.setClipboardPaused(clipboard.isPaused());
       },
+      () => pet.toggle(),
     );
+    tray.setPetEnabled(settings.get().pet.enabled);
     tray.install();
 
     // Chinese application menu (menu bar auto-hidden — press Alt to reveal).
@@ -711,6 +738,7 @@ function bootstrap(): void {
 
     app.on('before-quit', () => {
       capture.destroy();
+      pet.destroy();
       tray.destroy();
       handle.close();
     });
@@ -890,6 +918,14 @@ function registerSettingsHandlers(
     // message (it carries apiKey / customProviders.apiKey); the renderer
     // already has a typed SettingsPatchError to fall back on.
     try {
+      // 只把 present 的子字段挑出来；store.patch() 再与现有值深合并。
+      const petPatch = req.pet
+        ? {
+            ...(req.pet.enabled !== undefined ? { enabled: req.pet.enabled } : {}),
+            ...(req.pet.x !== undefined ? { x: req.pet.x } : {}),
+            ...(req.pet.y !== undefined ? { y: req.pet.y } : {}),
+          }
+        : undefined;
       store.patch({
         ...(req.provider ? { provider: req.provider } : {}),
         ...(req.model ? { model: req.model } : {}),
@@ -912,6 +948,10 @@ function registerSettingsHandlers(
         ...(req.taskAppearance !== undefined ? { taskAppearance: req.taskAppearance } : {}),
         ...(req.taskAppearanceCustomPresets !== undefined ? { taskAppearanceCustomPresets: req.taskAppearanceCustomPresets } : {}),
         ...(typeof req.autoUpdate === 'boolean' ? { autoUpdate: req.autoUpdate } : {}),
+        // 悬浮宠物：三个子字段可独立 patch（设置里只发 enabled，
+        // 「重置位置」只发 x/y=null），所以挑出 present 的那些透传。
+        // store.patch() 会把 pet 与现有值深合并。
+        ...(petPatch ? { pet: petPatch } : {}),
       });
       if (req.customProviders) {
         store.mergeCustomProviders(req.customProviders);

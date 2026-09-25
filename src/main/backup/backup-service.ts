@@ -54,6 +54,7 @@ import { logger } from '../logger';
 const TODOS_SUBDIR = 'todos';
 const DRAWINGS_SUBDIR = 'drawings';
 const ATTACHMENTS_SUBDIR = 'attachments';
+const MEMOS_SUBDIR = 'memos';
 const DSH_SESSIONS_SUBDIR = 'dsh-sessions';
 
 export interface CreateBackupOptions {
@@ -113,8 +114,8 @@ function readSchemaVersion(db: Database.Database): number {
 export function buildManifest(opts: {
   rootDir: string;
   db: Database.Database;
-  sections: { db: number; todos: number; drawings: number; attachments: number };
-  includeSections: { todos: boolean; drawings: boolean; attachments: boolean };
+  sections: { db: number; todos: number; drawings: number; attachments: number; memos: number };
+  includeSections: { todos: boolean; drawings: boolean; attachments: boolean; memos: boolean };
 }): BackupManifest {
   const todosRow = opts.db
     .prepare<[], { c: number }>("SELECT COUNT(*) AS c FROM todos WHERE deleted_at IS NULL")
@@ -141,6 +142,16 @@ export function buildManifest(opts: {
   } catch {
     // inbox_attachments table may be empty / pre-feature; inboxCount stays 0
   }
+  // memos table is v21+; a pre-v21 DB has no such table → memoCount stays 0.
+  let memoCount = 0;
+  try {
+    const memoRow = opts.db
+      .prepare<[], { c: number }>('SELECT COUNT(*) AS c FROM memos')
+      .get();
+    memoCount = memoRow?.c ?? 0;
+  } catch {
+    // table missing (pre-v21 DB) — memoCount stays 0
+  }
   return {
     schemaVersion: readSchemaVersion(opts.db),
     generatedAt: new Date().toISOString(),
@@ -153,11 +164,13 @@ export function buildManifest(opts: {
       conversations: convRow?.c ?? 0,
       tags: tagCount,
       inboxAttachments: inboxCount,
+      memos: memoCount,
     },
     sections: {
       todos: opts.includeSections.todos,
       drawings: opts.includeSections.drawings,
       attachments: opts.includeSections.attachments,
+      memos: opts.includeSections.memos,
       // Explicit literal — the field is a discriminator for restore to
       // know whether session logs need to be replayed vs recreated
       // empty. MVP-1 always skips them, but the field stays in the
@@ -169,11 +182,13 @@ export function buildManifest(opts: {
       todos: opts.sections.todos,
       drawings: opts.sections.drawings,
       attachments: opts.sections.attachments,
+      memos: opts.sections.memos,
       total:
         opts.sections.db +
         opts.sections.todos +
         opts.sections.drawings +
-        opts.sections.attachments,
+        opts.sections.attachments +
+        opts.sections.memos,
     },
   };
 }
@@ -253,6 +268,12 @@ export async function createBackup(opts: CreateBackupOptions): Promise<CreateBac
       join(rootDir, ATTACHMENTS_SUBDIR),
       join(backupPath, ATTACHMENTS_SUBDIR),
     );
+    // 备忘录的磁盘投影（memo.md / memo.json / attachments/）。DB 行本来
+    // 就随 sqlite 备份走了，这里补的是用户能在文件管理器里直接翻的那份。
+    const memosBytes = copySectionIfExists(
+      join(rootDir, MEMOS_SUBDIR),
+      join(backupPath, MEMOS_SUBDIR),
+    );
     // DSH sessions are deliberately not copied — see file header.
 
     const includeSections = {
@@ -263,6 +284,7 @@ export async function createBackup(opts: CreateBackupOptions): Promise<CreateBac
       todos: existsSync(join(rootDir, TODOS_SUBDIR)),
       drawings: existsSync(join(rootDir, DRAWINGS_SUBDIR)),
       attachments: existsSync(join(rootDir, ATTACHMENTS_SUBDIR)),
+      memos: existsSync(join(rootDir, MEMOS_SUBDIR)),
     };
 
     const manifest = buildManifest({
@@ -273,6 +295,7 @@ export async function createBackup(opts: CreateBackupOptions): Promise<CreateBac
         todos: todosBytes,
         drawings: drawingsBytes,
         attachments: attachmentsBytes,
+        memos: memosBytes,
       },
       includeSections,
     });
@@ -292,7 +315,8 @@ export async function createBackup(opts: CreateBackupOptions): Promise<CreateBac
 
     logger.info(
       `backup: wrote ${backupPath} (db=${dbSize}B todos=${todosBytes}B ` +
-        `drawings=${drawingsBytes}B attachments=${attachmentsBytes}B) in ${Date.now() - t0}ms`,
+        `drawings=${drawingsBytes}B attachments=${attachmentsBytes}B memos=${memosBytes}B) ` +
+        `in ${Date.now() - t0}ms`,
     );
 
     return { path: backupPath, manifest };

@@ -40,6 +40,12 @@ const StatsPane = React.lazy(() =>
 const DrawingPane = React.lazy(() =>
   import('./panes/DrawingPane').then((m) => ({ default: m.DrawingPane })),
 );
+// MemoDetail — split off the entry chunk for the same reason as
+// TodoEditorPane: MemoMarkdownPreview pulls MarkdownText + DSH
+// primitives, which are not needed for the cold start task-list shell.
+const MemoDetail = React.lazy(() =>
+  import('./panes/MemoDetail').then((m) => ({ default: m.MemoDetail })),
+);
 // Lazy-load DocumentsView: it statically pulls MarkdownEditor + the mermaid
 // dependency tree, which is heavy and only needed in the fullscreen-doc route.
 // Splitting it off the entry chunk keeps cold start on the todo-list shell.
@@ -65,8 +71,11 @@ function deriveView(route: Route): View {
       return 'stats';
     case 'todo-drawing':
       return 'drawing';
+    // memo / settings / ai 等路由也复用 list 视图骨架 —— 详情区右侧渲染
+    // MemoDetail 即可，task list 那一栏还在；只有 stats / drawing 才是
+    // 真正的整页切换。
     default:
-      return 'list'; // home, list, todo, settings, ai
+      return 'list'; // home, list, todo, memo, settings, ai
   }
 }
 
@@ -260,6 +269,25 @@ export const App: React.FC = () => {
     }
   });
 
+  // External AI submit (floating pet / capture window → main). Main
+  // copies any dropped files into the composer inbox, then broadcasts
+  // this event so the main window's AIPane can take over. We also
+  // expand the AI panel — the user already took an explicit "drag
+  // onto the pet" gesture, so silently hiding the progress behind a
+  // collapsed panel would feel broken. The source window uses the
+  // same event for ai:stream correlation, but it isn't itself pushed
+  // here as a new submit; the pet renderer mounts its own listener.
+  useAppEvent('app:external-ai-submit', (detail) => {
+    // The shared AppEvent payload (todo-list-api.ts) has `images`
+    // optional — pet text-only drops send no files. The Composer's
+    // own ExternalAiSubmitDetail requires `images` as a non-optional
+    // array (it iterates it unconditionally). Coerce so the two
+    // shapes meet.
+    const coerced = { ...detail, images: detail.images ?? [] } as ExternalAiSubmitDetail;
+    setPendingAiCreate(coerced);
+    setAiOpen(true);
+  });
+
   // 'settings' is a modal: open it when the route matches (deep link / menu).
   useEffect(() => {
     if (route.name === 'settings') setSettingsOpen(true);
@@ -398,6 +426,7 @@ export const App: React.FC = () => {
                     sort={listSort}
                     selectedId={selectedId}
                     onSelect={(id) => navigate(routeToHash({ name: 'todo', id }))}
+                    onSelectMemo={(id) => navigate(routeToHash({ name: 'memo', id }))}
                     onOpenSettings={() => setSettingsOpen(true)}
                     onCompose={() => setComposing(true)}
                     onCollapse={toggleList}
@@ -424,19 +453,27 @@ export const App: React.FC = () => {
                   </button>
                 )}
                 {listOpen && <PaneDivider onDrag={(dx) => setListWidth(listWidth + dx)} />}
-                <TaskDetail
-                  todoId={selectedId}
-                  composing={composing}
-                  onCloseCompose={() => setComposing(false)}
-                  onAiSubmit={(detail) => {
-                    setPendingAiCreate(detail);
-                    setAiOpen(true);
-                  }}
-                  navigate={navigate}
-                  onFullscreen={(todoId) => setFullscreenTodoId(todoId)}
-                  selectedDocId={selectedDocId}
-                  onSelectDoc={onSelectDoc}
-                />
+                {route.name === 'memo' ? (
+                  <div className="task-detail">
+                    <Suspense fallback={<div className="ai-panel__loading" role="status" aria-live="polite">加载备忘录…</div>}>
+                      <MemoDetail memoId={route.id} navigate={navigate} />
+                    </Suspense>
+                  </div>
+                ) : (
+                  <TaskDetail
+                    todoId={selectedId}
+                    composing={composing}
+                    onCloseCompose={() => setComposing(false)}
+                    onAiSubmit={(detail) => {
+                      setPendingAiCreate(detail);
+                      setAiOpen(true);
+                    }}
+                    navigate={navigate}
+                    onFullscreen={(todoId) => setFullscreenTodoId(todoId)}
+                    selectedDocId={selectedDocId}
+                    onSelectDoc={onSelectDoc}
+                  />
+                )}
               </div>
             )}
             {view === 'stats' && (

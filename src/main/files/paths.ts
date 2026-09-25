@@ -137,3 +137,45 @@ export function attachmentFile(taskDir: string, uuidName: string): string {
 export function todoJsonPath(taskDir: string): string {
   return join(taskDir, 'todo.json');
 }
+
+// ---------- 备忘录 (schema v21) ----------
+//
+// 布局：
+//   {dataDir}/memos/{ulid6}-{slug}/
+//     memo.md
+//     memo.json
+//     attachments/{attachmentId}-{name}
+//
+// 与 TaskDirectoryStore 的关键差异（务必读完再改）：
+// 任务目录的「id → 目录名」关联**持久化在 todos.storage_dir**，因为任务
+// 会被改名，目录必须保持稳定（AGENTS.md 非目标事项 2/4）。memo 没有改名
+// 语义 —— preview 由 content 首行派生，用户改的是 content 而不是
+// preview，所以目录名可以每次从 id + preview 现算，不会漂移。
+//
+// 如果将来给 memo 加了「重命名」功能，就必须像 TaskDirectoryStore 一样
+// 把目录名 hoist 进 DB（或加一个 rename 钩子），否则改完名旧目录会变成
+// 孤儿。
+
+/** 备忘片段落目录。slug 只为可读性；id 前 6 位保证唯一。 */
+export function memoDir(memosDir: string, id: string, preview: string): string {
+  const dir = join(memosDir, `${id.slice(0, 6)}-${slugify(preview || '备忘')}`);
+  mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+/** 备忘录正文投影（Markdown）。 */
+export function memoFile(memoDirPath: string): string {
+  return join(memoDirPath, 'memo.md');
+}
+
+/** 备忘录元数据快照（DB 才是真相，文件是备份）。 */
+export function memoJsonPath(memoDirPath: string): string {
+  return join(memoDirPath, 'memo.json');
+}
+
+/** 备忘录附件路径：memoDir/attachments/{id}-{name}，按需创建子目录。 */
+export function memoAttachmentFile(memoDirPath: string, idName: string): string {
+  const dir = join(memoDirPath, 'attachments');
+  mkdirSync(dir, { recursive: true });
+  return join(dir, idName);
+}

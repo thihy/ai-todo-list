@@ -11,6 +11,7 @@ import type { Todo, TodoFilter, SearchHit, TodoStats } from '../../shared/todo-t
 import type { ContentVersionEntry, GitHistoryEntry, ProgressLogEntry } from '../../shared/todo-types';
 import type { TaskDocument } from '../../shared/todo-types';
 import type { DrawingMeta, DrawingScene, InboxAttachment } from '../../shared/todo-types';
+import type { Memo } from '../../shared/todo-types';
 import type { AIModel, AIStreamEvent } from '../../shared/ai-types';
 import type { SettingsGetRes, TagCatalogRow, TagCatalogEntry, StartupComponentState } from '../../shared/ipc-schema';
 import { useDataVersion } from '../data-bus';
@@ -723,4 +724,58 @@ export function useStartupAiState(): UseStartupAiState {
   }, []);
 
   return { state, retry };
+}
+
+// ----- 备忘录 (memo.*) -----
+//
+// 备忘录是「拖进来的碎片」的落点：拖的那一刻无法预知它是记录 / 某个任务的
+// 进展 / 一个新任务，所以先落这里，用户随后整理（并入任务 / 变成新任务 /
+// 标记为纯记录）。
+
+/** 备忘录列表。`includeResolved` 默认 false —— 只看待整理的；已整理的
+ *  折叠在列表底部的小节里，由调用方按需再拉一次 includeResolved。 */
+export function useMemos(includeResolved = false): {
+  data: Memo[];
+  loading: boolean;
+  refresh: () => Promise<void>;
+} {
+  const [data, setData] = useState<Memo[]>([]);
+  const [loading, setLoading] = useState(true);
+  // Main broadcasts scope 'memos' after every organize action, so any window
+  // that mutates a memo (including the AI, later) refetches without a
+  // manual reload.
+  const dataVersion = useDataVersion(['memos']);
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    const res = await window.todoList.memo.list(includeResolved);
+    setData(unwrap(res, [] as Memo[]));
+    setLoading(false);
+  }, [includeResolved]);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh, dataVersion]);
+
+  return { data, loading, refresh };
+}
+
+/** 单条备忘录（详情页用）。`id` 为 null 时不拉 —— 选择清空时详情页要
+ *  立刻回到空态，而不是闪一下上一条的内容。 */
+export function useMemoEntry(id: string | null): { memo: Memo | null; loading: boolean } {
+  const [memo, setMemo] = useState<Memo | null>(null);
+  const [loading, setLoading] = useState(false);
+  const dataVersion = useDataVersion(['memos']);
+  useEffect(() => {
+    if (!id) {
+      setMemo(null);
+      return;
+    }
+    setLoading(true);
+    window.todoList.memo.get(id).then((res) => {
+      setMemo(unwrap(res, null as Memo | null));
+      setLoading(false);
+    });
+  }, [id, dataVersion]);
+  return { memo, loading };
 }

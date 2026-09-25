@@ -27,7 +27,9 @@ import type { ProgressLogEntry } from './todo-types';
 import type { DocumentVersionEntry, TaskDocument } from './todo-types';
 import type { DrawingMeta, DrawingScene } from './todo-types';
 import type { TagDef } from './todo-types';
+import type { MemoSource } from './todo-types';
 import type { TaskAppearance, TaskAppearanceCustomPreset } from './task-appearance';
+import type { MemoFileRef } from './ipc-schema';
 
 // --- App events pushed from main ---
 
@@ -63,12 +65,16 @@ export type AppEvent =
   // answer channels above). The renderer clears `activeApproval` /
   // `activeQuestion` on receipt so the runSubmit gate releases.
   | 'ai:user-question-cancelled'
-  | 'ai:user-approval-cancelled';
+  | 'ai:user-approval-cancelled'
+  // External AI submit (e.g. desktop floating pet / capture window) →
+  // main window. The renderer picks this up, opens AIPane, and feeds
+  // the payload into the existing runSubmit pipeline.
+  | 'app:external-ai-submit';
 
 /** Coarse-grained scope of a data mutation, so the renderer can re-fetch only
  *  the stores that actually changed (e.g. the AI's todo.create tool mutating
  *  the DB in the main process). */
-export type DataScope = 'todos' | 'content' | 'drawings' | 'conversations' | 'tags';
+export type DataScope = 'todos' | 'content' | 'drawings' | 'conversations' | 'tags' | 'memos';
 
 export interface AppEventMap {
   'app:todo-created': { id: string };
@@ -100,6 +106,13 @@ export interface AppEventMap {
   'ai:user-approval-timeout': { reqId: string };
   'ai:user-approval-request': UserApprovalRequest;
   'ai:user-approval-cancelled': { reqId: string };
+  /** External AI submit relay — fired by main when the desktop floating
+   *  pet / capture window finishes inboxing attachments. The main window
+   *  pushes this into `pendingAiCreate` and opens AIPane. `invocationId`
+   *  correlates the subsequent `ai:stream` events so the source window
+   *  (e.g. the pet) can render progress while the main window stays
+   *  silent in the background. */
+  'app:external-ai-submit': ExternalAiSubmitDetail;
 }
 
 // Renderer-side arg shapes. Match the IPC channel request types but with
@@ -108,6 +121,38 @@ export interface CaptureSubmitArgs {
   title: string;
   markdown?: string;
 }
+
+/** Detail payload for the `app:external-ai-submit` event. Mirrors the
+ *  AIPanel `externalSubmit` contract — the main window forwards it
+ *  directly to AIPane.runSubmit(). `invocationId` is minted by the
+ *  source (floating pet / capture window) so it can filter the
+ *  subsequent `ai:stream` events and render progress in its own UI
+ *  while the main window sits silently in the background. */
+export interface ExternalAiSubmitDetail {
+  intent: 'create-task' | 'chat';
+  prompt: string;
+  images?: Array<{ name: string; mime: string; path: string; size: number }>;
+  invocationId: string;
+  /** When the source is the floating pet, the renderer wants to be
+   *  notified (via ai:stream filter) for its own progress display. The
+   *  capture window passes `false`. Defaults to true when absent. */
+  notifySource?: boolean;
+}
+
+/** One dropped file in a pet.submit call. Either `path` (real on-disk
+ *  path obtained via `webUtils.getPathForFile`) OR `dataUrl` (Blob
+ *  fallback for web-originated drops) must be present. */
+export type PetFileRef =
+  | { name: string; path: string }
+  | { name: string; mime: string; dataUrl: string; size?: number };
+
+/** A step of the pet window's manual drag. `start` snapshots the window
+ *  position, `move` applies an incremental screen-space delta, `end`
+ *  commits. Deltas rather than absolute coordinates so the renderer never
+ *  needs to know where the window is. The authoritative copy lives in
+ *  ipc-schema (that module can't import from here), so re-export it. */
+export type { PetDragArgs } from './ipc-schema';
+import type { PetDragArgs } from './ipc-schema';
 
 export interface InboxAttachArgs {
   id: string;
@@ -163,6 +208,12 @@ export interface SettingsPatchArgs {
    *  诊断日志（用于 stop-stuck 排障）；默认 `info`。切换后立即生效，
    *  无需重启。 */
   logLevel?: 'debug' | 'info' | 'warn' | 'error';
+  /** Desktop floating pet. `enabled` toggles the window; `x` / `y`
+   *  override the default position (last user position persists across
+   *  restarts). Pass `null` to fall back to the default placement.
+   *  All fields optional so a single toggle patch doesn't have to
+   *  carry x/y. */
+  pet?: { enabled?: boolean; x?: number | null; y?: number | null };
 }
 
 // --- TodoListApi ---
@@ -262,6 +313,34 @@ export interface TodoListApi {
     list(args: InboxListArgs): Promise<IpcResponse<'inbox.list'>>;
     read(args: InboxReadArgs): Promise<IpcResponse<'inbox.read'>>;
     remove(args: InboxRemoveArgs): Promise<IpcResponse<'inbox.remove'>>;
+  };
+  /** 备忘录 —— 拖入碎片的落点。碎片进来时无法预知是记录/任务进展/新任务，
+   *  所以先落这里，用户随后交互整理（见 memo.* 的 schema 注释）。 */
+  memo: {
+    /** 默认只返回待整理的（resolved_at IS NULL）；`true` 返回全部。 */
+    list(includeResolved?: boolean): Promise<IpcResponse<'memo.list'>>;
+    get(id: string): Promise<IpcResponse<'memo.get'>>;
+    create(args: { content: string; source?: MemoSource; files?: MemoFileRef[] }): Promise<
+      IpcResponse<'memo.create'>
+    >;
+    update(id: string, content: string): Promise<IpcResponse<'memo.update'>>;
+    remove(id: string): Promise<IpcResponse<'memo.remove'>>;
+    /** 拖拽快路径。`targetTodoId` 为 null/省略时只落 memo；给了就直接
+     *  并入那个任务（正文追加进 progress 文档、附件转移），少一次往返。 */
+    ingest(args: {
+      content: string;
+      source?: MemoSource;
+      files?: MemoFileRef[];
+      targetTodoId?: string | null;
+    }): Promise<IpcResponse<'memo.ingest'>>;
+    /** 整理动作①：正文追加进目标任务的 progress 文档，附件转过去，删 memo。 */
+    mergeIntoTask(id: string, todoId: string): Promise<IpcResponse<'memo.mergeIntoTask'>>;
+    /** 整理动作②：变成新任务，正文作为该任务的进展，附件转过去，删 memo。 */
+    promoteToTask(id: string, title?: string): Promise<IpcResponse<'memo.promoteToTask'>>;
+    /** 整理动作③：标记为纯记录 —— 留在备忘录但折叠进「已整理」，不再打扰。 */
+    markResolved(id: string, resolved: boolean): Promise<IpcResponse<'memo.markResolved'>>;
+    /** 读一个附件的字节为 data: URL（渲染层永远拿不到绝对路径）。 */
+    readAttachment(id: string): Promise<IpcResponse<'memo.readAttachment'>>;
   };
   settings: {
     get(): Promise<IpcResponse<'settings.get'>>;
@@ -390,6 +469,40 @@ export interface TodoListApi {
   capture: {
     submit(args: CaptureSubmitArgs): Promise<IpcResponse<'capture.submit'>>;
   };
+  /** Desktop floating pet window. The pet is a transparent frameless
+   *  always-on-top BrowserWindow the user drags content onto; main
+   *  routes the drop through the composer inbox and broadcasts
+   *  `app:external-ai-submit` for the main window's AIPane to handle. */
+  pet: {
+    /** Hand off a drop. `invocationId` lets the pet renderer correlate
+     *  subsequent `ai:stream` events so it can show progress. Returns
+     *  `{ ignored: true }` when pet is disabled (no window to receive
+     *  the drop) or when the main window is missing. */
+    submit(args: {
+      invocationId: string;
+      text?: string;
+      files: PetFileRef[];
+    }): Promise<IpcResponse<'pet.submit'>>;
+    /** Programmatically hide the pet window without destroying it.
+     *  Idempotent. */
+    hide(): Promise<IpcResponse<'pet.hide'>>;
+    /** Programmatically show the pet window. Idempotent. */
+    show(): Promise<IpcResponse<'pet.show'>>;
+    /** Drive the pet window's manual drag. The pet implements dragging
+     *  itself rather than using `-webkit-app-region: drag`, because an
+     *  app-region drag is handled by the OS as a native window move and
+     *  swallows HTML5 drop events.
+     *
+     *  `start` captures the window's current position; each `move` applies
+     *  an incremental screen-space delta; `end` commits the final position. */
+    drag(args: PetDragArgs): Promise<IpcResponse<'pet.drag'>>;
+  };
+  /** Resolve the on-disk absolute path for a `File` obtained from a
+   *  drop event. In Electron 32+, `file.path` was removed for security;
+   *  we instead expose the sandbox-compatible `webUtils.getPathForFile`.
+   *  Returns an empty string when the file came from the web (no path
+   *  on the user's machine); callers fall back to a Blob read. */
+  pathForFile(file: File): string;
   ai: {
     health(): Promise<IpcResponse<'ai.health'>>;
     models(): Promise<IpcResponse<'ai.models'>>;
@@ -531,3 +644,5 @@ export type { DocumentVersionEntry, TaskDocument };
 export type { DrawingMeta, DrawingScene };
 export type { AIModel, AIProvider, AICustomProtocol, CustomProviderInput, CustomProviderView, AIStreamEvent, PermissionRequest, UserQuestionRequest, UserQuestionAnswer, UserQuestionItem, UserQuestionOption, UserQuestionAnswerItem, UserApprovalRequest, UserApprovalAnswer };
 export type { IpcChannelName, IpcRequest, IpcResponse };
+export type { Memo, MemoAttachment } from './todo-types';
+export type { MemoFileRef } from './ipc-schema';

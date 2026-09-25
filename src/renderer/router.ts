@@ -9,6 +9,7 @@ export type Route =
   | { name: 'list'; filter: ListFilter; sort: SortKey }
   | { name: 'todo'; id: string }
   | { name: 'todo-drawing'; id: string; drawingId?: string }
+  | { name: 'memo'; id: string }
   | { name: 'settings' }
   | { name: 'stats' }
   | { name: 'ai' };
@@ -44,6 +45,9 @@ export function parseHash(hash: string): Route {
       }
       return { name: 'todo', id };
     }
+    // 备忘录：碎片从列表进详情页，和 todo 同构（一个 id 一个详情）。
+    case 'memo':
+      return { name: 'memo', id: rest[0] };
     case 'settings':
       return { name: 'settings' };
     case 'stats':
@@ -81,6 +85,8 @@ export function routeToHash(r: Route): string {
       return `#/todo/${r.id}`;
     case 'todo-drawing':
       return r.drawingId ? `#/todo/${r.id}/drawing/${r.drawingId}` : `#/todo/${r.id}/drawing`;
+    case 'memo':
+      return `#/memo/${r.id}`;
     case 'settings':
       return '#/settings';
     case 'stats':
