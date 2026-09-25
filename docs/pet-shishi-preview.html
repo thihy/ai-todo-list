@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>拾拾 Shishi · 预览</title>
+<style>
+  :root { --desk:#e9eaee; --ink:#2b2f36; --muted:#7b818c; }
+  * { box-sizing:border-box; }
+  body { margin:0; padding:32px 28px 56px; background:var(--desk); color:var(--ink);
+    font:14px/1.6 "Segoe UI","Microsoft YaHei",system-ui,sans-serif; }
+  h1 { font-size:20px; margin:0 0 4px; }
+  h2 { font-size:14px; margin:36px 0 12px; color:var(--muted); font-weight:600; letter-spacing:.04em; }
+  .stage { display:flex; align-items:center; justify-content:center; height:240px; }
+  .stage.real { height:152px; }
+  table { border-collapse:separate; border-spacing:8px; }
+  th { font-size:11px; color:var(--muted); font-weight:600; padding:0 0 2px; text-align:left; }
+  td.label { font-size:12px; padding-right:6px; white-space:nowrap; vertical-align:middle; }
+  td.cell { background:#f5f6f8; border:1px solid #d6d9df; border-radius:10px;
+    width:90px; height:90px; text-align:center; vertical-align:middle; padding:0; }
+</style>
+</head>
+<body>
+
+<h1>拾拾 Shishi · 五种状态</h1>
+
+<h2>主形象（待机）</h2>
+<div class="stage" id="hero"></div>
+
+<h2>真实尺寸 132px</h2>
+<div class="stage real" id="real"></div>
+
+<h2>五种状态 × 68px</h2>
+<table id="moods"></table>
+
+<script type="module">
+  import { shishiPetSvg } from './shishi-pet.js';
+  const STATES = ['idle', 'receiving', 'captured', 'sorting', 'sleeping'];
+  const LABELS = { idle:'待机', receiving:'接收', captured:'已收好', sorting:'整理中', sleeping:'休息提醒' };
+
+  document.getElementById('hero').innerHTML = shishiPetSvg({ state: 'idle', size: 220, label: '拾拾' });
+  document.getElementById('real').innerHTML = shishiPetSvg({ state: 'idle', size: 132, label: '拾拾 132px' });
+
+  document.getElementById('moods').innerHTML =
+    STATES.map((s) => `<tr><td class="label">${LABELS[s]}</td><td class="cell">${shishiPetSvg({ state: s, size: 72 })}</td></tr>`).join('');
+</script>
+</body>
+</html>
