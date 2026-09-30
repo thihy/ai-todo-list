@@ -28,7 +28,12 @@ npm-debug.log*
 .DS_Store
 Thumbs.db
 .vscode/
+.vs/
 .idea/
+
+# Local dev scripts (not part of the app)
+check.ps1
+scripts/cdp.mjs
 
 # CodeGraph
 .codegraph/
