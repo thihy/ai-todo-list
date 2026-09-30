@@ -127,12 +127,12 @@ export const TodoListPane: React.FC<{
   // 已删除 view: the quick-recovery bin. Rows here are soft-deleted; the
   // per-row action is 恢复 (clear deleted_at on the subtree), not delete.
   const deletedView = filter.kind === 'deleted';
-  // 今日 view: 仅显示「今日待办」section（「今日非今日」「全部任务」section
+  // 今日 view: 仅显示「今日待办」section（「后续待办」「全部待办」section
   // 隐藏）。来自左侧 Sidebar 切换。等价于把上半区作为唯一视图。
   const todayView = filter.kind === 'today';
-  // 非今日 view: 仅显示「非今日任务」section，其他两个隐藏。
+  // 后续待办 view: 仅显示「后续待办」section，其他两个隐藏。
   const nonTodayView = filter.kind === 'non-today';
-  // 单 section view = 今天 或 非今日；这两个 view 跳过「全部任务」section
+  // 单 section view = 今天 或 后续待办；这两个 view 跳过「全部待办」section
   // 因为它会重复列出上面两个 section 的内容。
   const singleSectionView = todayView || nonTodayView;
   const onRestore = useCallback(async (id: string) => {
@@ -232,7 +232,7 @@ export const TodoListPane: React.FC<{
   const togglePeerExpanded = useCallback((id: string) => {
     setPeerCollapseMap((prev) => ({ ...prev, [id]: !(prev[id] ?? false) }));
   }, []);
-  // Section-level 折叠 —— 「今日待办」「非今日任务」「全部任务」三个 <section>
+  // Section-level 折叠 —— 「今日待办」「后续待办」「全部待办」三个 <section>
   // 各自独立的折叠状态；VSCode 风格：点击 header 切换，chevron 旋转 90°，列表
   // 用 grid-template-rows 平滑收起。默认展开 —— 不主动隐藏用户预期可见的内容。
   // 状态留在组件内（与 expandMap 同生命周期）；持久化不是这次范围。
@@ -244,10 +244,10 @@ export const TodoListPane: React.FC<{
     () => (shownSet.size === 0 ? [] : sortTodos(data.filter((t) => !t.parentId && shownSet.has(t.id)), sort)),
     [data, shownSet, sort],
   );
-  // —— 中区「非今日任务」派生 ——
+  // —— 中区「后续待办」派生 ——
   // 根任务自身非今日（plannedFor !== todayKey，包括 null 和未来/过去日期）才会
-  // 进入中区。下半区「全部任务」仍会重复展示这些根任务 —— 这与今日任务在
-  // 「今日待办」与「全部任务」重复出现的策略一致：用户能从下半区看到完整列表，
+  // 进入中区。下半区「全部待办」仍会重复展示这些根任务 —— 这与今日任务在
+  // 「今日待办」与「全部待办」重复出现的策略一致：用户能从下半区看到完整列表，
   // 再通过中区快速定位"今天不做的"任务。子任务跟随父任务进入中区（TaskBranch
   // 递归展开），通过 shownSet 让祖先行展示今日图标 —— 即便父任务非今日，子任务
   // 里也可能存在今日项。
@@ -367,7 +367,7 @@ export const TodoListPane: React.FC<{
             <>
               {/* === 上半区：今日待办 === */}
               {/* 只有 active 列表才显示今日区；归档视图只显示归档行。单 section
-                  view（非今日）下也隐藏今日区，避免重复。 */}
+                  view（后续待办）下也隐藏今日区，避免重复。 */}
               {!archivedView && plannedRoots.length > 0 && !nonTodayView && (
                 <section className="planned-section" aria-label="今日待办">
                   <button
@@ -416,14 +416,14 @@ export const TodoListPane: React.FC<{
                 </section>
               )}
 
-              {/* === 中区：非今日任务 === */}
-              {/* 把下半区「全部任务」里的非今日根任务提到这里单独成 section，方便
-                  定位非今日任务；今日根任务仍保留在「全部任务」section。复用下半区
+              {/* === 中区：后续待办 === */}
+              {/* 把下半区「全部待办」里的非今日根任务提到这里单独成 section，方便
+                  定位后续待办；今日根任务仍保留在「全部待办」section。复用下半区
                   的 expandMap + shownSet，所以子任务的折叠状态、今日图标与下半区
                   同步 —— 不会出现"上/中区展开、下半区折叠"的视觉割裂。单 section
                   view（今日）下隐藏中区。 */}
               {!archivedView && nonTodayRoots.length > 0 && !todayView && (
-                <section className="non-today-section" aria-label="非今日任务">
+                <section className="non-today-section" aria-label="后续待办">
                   <button
                     type="button"
                     className="non-today-section__header section-toggle"
@@ -432,7 +432,7 @@ export const TodoListPane: React.FC<{
                     onClick={() => setNonTodaySectionCollapsed((v) => !v)}
                   >
                     <IconChevronDown size={14} className="section-toggle__chevron" />
-                    <span className="non-today-section__title">非今日任务</span>
+                    <span className="non-today-section__title">后续待办</span>
                     <span className="non-today-section__count">{nonTodayRoots.length}</span>
                   </button>
                   <div
@@ -471,13 +471,13 @@ export const TodoListPane: React.FC<{
                 </section>
               )}
 
-              {/* === 下半区：全部任务 === */}
+              {/* === 下半区：全部待办 === */}
               {/* 下半区展示完整任务树，已被安排到今日的子任务在该任务行有今日图标
                   标识（不影响任务本身是否还"完整"出现在下半区 —— 用户可以从下半区
                   直接看到所有任务，再叠加判断哪些今天要做）。单 section view（今日
-                  / 非今日）下隐藏下半区，避免和上半/中区重复。 */}
+                  / 后续待办）下隐藏下半区，避免和上半/中区重复。 */}
               {rootTasks.length > 0 && !singleSectionView && (
-                <section className="other-section" aria-label="全部任务">
+                <section className="other-section" aria-label="全部待办">
                   <button
                     type="button"
                     className="other-section__header section-toggle"
@@ -486,7 +486,7 @@ export const TodoListPane: React.FC<{
                     onClick={() => setOtherSectionCollapsed((v) => !v)}
                   >
                     <IconChevronDown size={14} className="section-toggle__chevron" />
-                    <span className="other-section__title">{archivedView ? '归档' : '全部任务'}</span>
+                    <span className="other-section__title">{archivedView ? '归档' : '全部待办'}</span>
                     <span className="other-section__count">{rootTasks.length}</span>
                   </button>
                   <div
