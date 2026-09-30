@@ -132,9 +132,11 @@ export const TodoListPane: React.FC<{
   const todayView = filter.kind === 'today';
   // 后续待办 view: 仅显示「后续待办」section，其他两个隐藏。
   const nonTodayView = filter.kind === 'non-today';
-  // 单 section view = 今天 或 后续待办；这两个 view 跳过「全部待办」section
-  // 因为它会重复列出上面两个 section 的内容。
-  const singleSectionView = todayView || nonTodayView;
+  // 全部 view: 仅显示「全部待办」section —— 隐藏「今日待办」和「后续待办」。
+  // Sidebar 的「全部」语义就是"不分组的完整列表"，此时上面两个分组 section
+  // 只会把它再按今日/非今日拆开重复一遍（每条任务都会出现两次），反而干扰
+  // 浏览。根任务在「全部待办」里已全部列出，不丢任何信息。
+  const allView = filter.kind === 'all';
   const onRestore = useCallback(async (id: string) => {
     await window.todoList.todo.restore(id);
     await refresh();
@@ -367,8 +369,8 @@ export const TodoListPane: React.FC<{
             <>
               {/* === 上半区：今日待办 === */}
               {/* 只有 active 列表才显示今日区；归档视图只显示归档行。单 section
-                  view（后续待办）下也隐藏今日区，避免重复。 */}
-              {!archivedView && plannedRoots.length > 0 && !nonTodayView && (
+                  view（后续待办 / 全部）下也隐藏今日区，避免重复。 */}
+              {!archivedView && plannedRoots.length > 0 && !nonTodayView && !allView && (
                 <section className="planned-section" aria-label="今日待办">
                   <button
                     type="button"
@@ -421,8 +423,8 @@ export const TodoListPane: React.FC<{
                   定位后续待办；今日根任务仍保留在「全部待办」section。复用下半区
                   的 expandMap + shownSet，所以子任务的折叠状态、今日图标与下半区
                   同步 —— 不会出现"上/中区展开、下半区折叠"的视觉割裂。单 section
-                  view（今日）下隐藏中区。 */}
-              {!archivedView && nonTodayRoots.length > 0 && !todayView && (
+                  view（今日 / 全部）下隐藏中区。 */}
+              {!archivedView && nonTodayRoots.length > 0 && !todayView && !allView && (
                 <section className="non-today-section" aria-label="后续待办">
                   <button
                     type="button"
@@ -474,9 +476,9 @@ export const TodoListPane: React.FC<{
               {/* === 下半区：全部待办 === */}
               {/* 下半区展示完整任务树，已被安排到今日的子任务在该任务行有今日图标
                   标识（不影响任务本身是否还"完整"出现在下半区 —— 用户可以从下半区
-                  直接看到所有任务，再叠加判断哪些今天要做）。单 section view（今日
-                  / 后续待办）下隐藏下半区，避免和上半/中区重复。 */}
-              {rootTasks.length > 0 && !singleSectionView && (
+                  直接看到所有任务，再叠加判断哪些今天要做）。「全部」视图下它是
+                  唯一的 section；今日 / 后续待办视图则隐藏，避免和上半/中区重复。 */}
+              {rootTasks.length > 0 && !todayView && !nonTodayView && (
                 <section className="other-section" aria-label="全部待办">
                   <button
                     type="button"
