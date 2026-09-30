@@ -82,7 +82,7 @@ function removeTab(tab: Tab, after: () => void): void {
   void window.todoList.drawing.delete(tab.id).then(after);
 }
 
-const DocEditor: React.FC<{ doc: TaskDocument }> = ({ doc }) => {
+const DocEditor: React.FC<{ todoId: string; doc: TaskDocument }> = ({ todoId, doc }) => {
   const { content, version, save, saving, error } = useDocument(doc.id);
 
   switch (doc.kind) {
@@ -91,6 +91,7 @@ const DocEditor: React.FC<{ doc: TaskDocument }> = ({ doc }) => {
       return (
         <MarkdownEditor
           docId={doc.id}
+          todoId={todoId}
           value={content}
           version={version}
           onSave={save}
@@ -453,7 +454,7 @@ export const DocumentsView: React.FC<{
       <div className="docs-workspace__editor">
         {selected ? (
           selected.kind === 'document' ? (
-            <DocEditor key={selected.doc.id} doc={selected.doc} />
+            <DocEditor key={selected.doc.id} todoId={todoId} doc={selected.doc} />
           ) : (
             <DrawingView key={selected.id} todoId={todoId} drawingId={selected.id} />
           )

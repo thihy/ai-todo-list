@@ -196,12 +196,18 @@ function loadMdView(): MdView {
 
 export const MarkdownEditor: React.FC<{
   docId: string;
+  /** The task this document belongs to. Needed for image paste so the editor
+   *  can drop the uploaded attachment into `{todosDir}/{slug}/attachments/`.
+   *  When omitted (legacy callers), image paste is a no-op — the existing
+   *  documents get the same default behaviour they had before this field
+   *  existed. */
+  todoId?: string;
   value: string;
   version: number | null;
   onSave: (markdown: string) => Promise<void>;
   saving: boolean;
   error: string | null;
-}> = ({ docId, value, version, onSave, saving, error }) => {
+}> = ({ docId, todoId, value, version, onSave, saving, error }) => {
   const [md, setMd] = useState(value);
   const [view, setView] = useState<MdView>(loadMdView);
   const setViewPersisted = useCallback((next: MdView): void => {
@@ -225,9 +231,18 @@ export const MarkdownEditor: React.FC<{
   );
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  // 跟踪当前正文 —— applyEdit 之后立即同步。异步上传完成后要做
+  // 「占位 → attachment://<id>」替换时，闭包里的 md 早已过期（用户
+  // 可能又改了正文，或前面那张图的 replaceRange 还没 commit），用
+  // 这个 ref 拿最新值做 indexOf 才对得上。
+  const mdRef = useRef<string>(value);
+  useEffect(() => {
+    mdRef.current = md;
+  }, [md]);
   // Apply an edit and restore the textarea's selection on the next paint so
   // the user sees it where the transform put it.
   const applyEdit = useCallback((next: EditResult): void => {
+    mdRef.current = next.value;
     setMd(next.value);
     requestAnimationFrame(() => {
       const ta = textareaRef.current;
@@ -375,6 +390,110 @@ export const MarkdownEditor: React.FC<{
     }
   };
 
+  // 粘贴图片 → 走 inbox.attachBlob 落到任务的 attachments/，并把图片引用
+  // 插入到当前光标位置。插入格式 `![pasted-YYYYMMDD-HHMMSS](attachment://<id>)`，
+  // 协议 attachment:// 已在 main 注册，<img> 预览能直接渲染字节流。
+  //
+  // 行为细节：
+  //   - 只处理 ClipboardItem.kind === 'file' && type.startsWith('image/') 的项；
+  //     文本粘贴走 textarea 默认行为不变。
+  //   - 多个图片同时粘贴，按当前顺序依次在光标处插入，每张一行。
+  //   - 上传在 fire-and-forget 异步任务里跑：先插入占位 `![...](attachment://pending/<key>)`，
+  //     落盘成功后替换为真实 id，失败则把占位行换成错误提示。
+  //   - 没有 todoId 的旧调用方不接 paste（保持原有行为）。
+  const [pasteError, setPasteError] = useState<string | null>(null);
+
+  // 6 秒后自动清掉粘贴错误提示，避免一直挂在工具栏挡视线。文件已经按
+  // 占位回退/错误注释的形式留在正文里 —— 提示只是一个瞬时信号。
+  useEffect(() => {
+    if (!pasteError) return;
+    const t = window.setTimeout(() => setPasteError(null), 6_000);
+    return () => window.clearTimeout(t);
+  }, [pasteError]);
+
+  const insertTextAtCursor = useCallback((text: string): void => {
+    const ta = textareaRef.current;
+    if (!ta) return;
+    const start = ta.selectionStart;
+    const end = ta.selectionEnd;
+    const next = md.slice(0, start) + text + md.slice(end);
+    const caret = start + text.length;
+    applyEdit({ value: next, selectionStart: caret, selectionEnd: caret });
+  }, [md, applyEdit]);
+
+  const replaceRange = useCallback((find: string, replacement: string): void => {
+    // 替换首次出现的 `find` 字符串（占位行），并把光标落在替换末尾。
+    //
+    // 调用方经常是异步上传结束后的回调 —— 那时 React 状态 md 早已被其他
+    // 路径更新过（用户继续输入、Ctrl+B 加粗、或前面那张图先完成替换）。
+    // 用 mdRef 读最新的正文做 indexOf，才能保证多图并发上传时各自的占位
+    // 都被精准替换，而不是被一次替换覆盖成同一个 id。
+    const current = mdRef.current;
+    const idx = current.indexOf(find);
+    if (idx === -1) return;
+    const end = idx + find.length;
+    const next = current.slice(0, idx) + replacement + current.slice(end);
+    const caret = idx + replacement.length;
+    applyEdit({ value: next, selectionStart: caret, selectionEnd: caret });
+  }, [applyEdit]);
+
+  const onPaste = useCallback((e: React.ClipboardEvent<HTMLTextAreaElement>): void => {
+    const items = e.clipboardData?.items;
+    if (!items || !todoId) return;
+    const images: File[] = [];
+    for (const it of items) {
+      if (it.kind === 'file' && it.type.startsWith('image/')) {
+        const file = it.getAsFile();
+        if (file) images.push(file);
+      }
+    }
+    if (images.length === 0) return;
+    e.preventDefault();
+
+    // 给每张图一个 stable placeholder key（"paste-<timestamp>-<index>"），
+    // 上传完成后用这个 key 精准替换。同一秒内多张也安全 —— index 不同。
+    const ts = Date.now();
+    const placeholders: string[] = [];
+    for (let i = 0; i < images.length; i++) {
+      const key = `paste-${ts}-${i}`;
+      const alt = `pasted-${formatStamp(ts)}-${i + 1}`;
+      placeholders.push(`![${alt}](attachment://pending/${key})`);
+    }
+    // 块间留空行，避免和正文挤在一起
+    const block = images.length === 1 ? placeholders[0]! : placeholders.join('\n\n');
+    insertTextAtCursor(block);
+
+    // 真正的上传：每张图一个独立 promise，互不阻塞。
+    //
+    // 注意：替换占位时直接读 mdRef（applyEdit 同步更新），而不是闭包里的 md
+    // 状态 —— 上传是 fire-and-forget，等 promise resolve 时闭包里的 md 早已
+    // 不是最新值（中间还可能有用户继续打字触发的 setMd，或前面那张图的
+    // replaceRange 已经替换完）。读 mdRef 才是用户当前看到的正文。
+    images.forEach((file, i) => {
+      const key = `paste-${ts}-${i}`;
+      const placeholder = `![${`pasted-${formatStamp(ts)}-${i + 1}`}](attachment://pending/${key})`;
+      void (async () => {
+        try {
+          const dataUrl = await blobToDataUrl(file);
+          const res = await window.todoList.inbox.attachBlob({
+            todoId,
+            dataUrl,
+            filename: file.name || 'pasted.png',
+            mime: file.type,
+          });
+          if (!res.ok) throw new Error(res.message ?? res.code ?? '上传失败');
+          const id = res.data.id;
+          replaceRange(placeholder, `![${`pasted-${formatStamp(ts)}-${i + 1}`}](attachment://${id})`);
+        } catch (err) {
+          // 落盘失败：把占位行换成一行可见错误提示，方便用户定位是哪张坏了。
+          const msg = err instanceof Error ? err.message : String(err);
+          setPasteError(`粘贴图片失败：${msg}`);
+          replaceRange(placeholder, `> ⚠️ 图片上传失败：${msg}`);
+        }
+      })();
+    });
+  }, [todoId, insertTextAtCursor, replaceRange]);
+
   return (
     <div className="md-editor">
       {/* Format toolbar only — the 编辑/预览/分屏 mode switch was moved
@@ -447,6 +566,7 @@ export const MarkdownEditor: React.FC<{
         )}
         <span className="md-editor__spacer" />
         {saving && <span className="md-editor__status">保存中…</span>}
+        {pasteError && <span className="md-editor__status md-editor__status--error">{pasteError}</span>}
         {error && <span className="md-editor__status md-editor__status--error">{error}</span>}
       </div>
 
@@ -459,6 +579,7 @@ export const MarkdownEditor: React.FC<{
             value={md}
             onChange={(e) => setMd(e.target.value)}
             onKeyDown={onTextareaKeyDown}
+            onPaste={onPaste}
             spellCheck={false}
           />
         )}
@@ -616,3 +737,31 @@ const Preview: React.FC<{ markdown: string }> = ({ markdown }) => {
     </div>
   );
 };
+
+/** Compact local timestamp used as the alt text for pasted images
+ *  (`pasted-YYYYMMDD-HHMMSS-i`). Pure formatting — no locale dependence on
+ *  toLocaleString because we want a stable ASCII alt regardless of system
+ *  language, so the markdown stays diff-friendly and the test suite is
+ *  deterministic. */
+function formatStamp(ts: number): string {
+  const d = new Date(ts);
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mi = String(d.getMinutes()).padStart(2, '0');
+  const ss = String(d.getSeconds()).padStart(2, '0');
+  return `${yyyy}${mm}${dd}-${hh}${mi}${ss}`;
+}
+
+/** Encode a Blob into a base64 data: URL. Mirrors the helper in
+//  Composer.tsx — kept local here to avoid a cross-component coupling for a
+//  five-line FileReader dance. */
+function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result));
+    r.onerror = () => reject(r.error);
+    r.readAsDataURL(blob);
+  });
+}
