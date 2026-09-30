@@ -8,6 +8,13 @@
 //   - `.task-list-panel__body`  — the column's content (currently the
 //     TodoListPane: its own add-task header + scrollable task list).
 //
+// WIDTH: `width` is applied HERE as an inline style, not on the inner
+// TodoListPane. This element is the flex child of .master-detail, so it is
+// what the PaneDivider drag actually resizes. If the width lived on the
+// inner pane instead, the pane would resize inside a fixed-width wrapper
+// and the wrapper's `overflow: hidden` would clip the change — the drag
+// would update state but nothing on screen would move.
+//
 // Layout: flex column, height: 100% of its parent (.app-body). The body
 // uses flex:1 so it absorbs the remaining space, with the brand
 // (flex:none) anchoring the top. (The user-avatar chip moved out of this
@@ -18,10 +25,11 @@ import React from 'react';
 import { IconBell, IconCollapseBar, IconSearch } from '../components/icons';
 
 export const TaskListPanel: React.FC<{
+  width: number;
   onCollapse?: () => void;
   children: React.ReactNode;
-}> = ({ onCollapse, children }) => (
-  <aside className="task-list-panel" aria-label="任务列表">
+}> = ({ width, onCollapse, children }) => (
+  <aside className="task-list-panel" aria-label="任务列表" style={{ width }}>
     <header className="task-list-panel__brand">
       <div className="task-list-panel__brand-tools">
         <button

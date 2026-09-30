@@ -31,14 +31,13 @@ import TodayGlyph from '../components/TodayGlyph';
 import { DEFAULT_TASK_APPEARANCE, type TaskAppearance } from '../../shared/task-appearance';
 
 export const TodoListPane: React.FC<{
-  width: number;
   filter: ListFilter;
   sort: SortKey;
   selectedId: string | null;
   onSelect: (id: string) => void;
   onCompose: () => void;
   toastBus: ToastBus;
-}> = ({ width, filter, sort, selectedId, onSelect, onCompose, toastBus }) => {
+}> = ({ filter, sort, selectedId, onSelect, onCompose, toastBus }) => {
   const repoFilter = filterToRepoFilter(filter);
   const { data, loading, refresh } = useTodos(repoFilter);
   // 任务优先级配色 —— mode=custom 时把 colors 注入 CSS 自定义属性；
@@ -275,13 +274,15 @@ export const TodoListPane: React.FC<{
   }, [data, deletedView]);
   const isEmpty = !loading && data.length === 0;
   return (
-    <section className={`task-list${taskAppearance?.mode === 'custom' ? ' task-list--custom' : ''}`} aria-label="任务列表" style={taskListStyle(taskAppearance, width)}>
-      {/* This pane renders ONLY the task-list body. The sidebar chrome —
-          top brand tools row (notification / search / collapse) and the
-          bottom user-avatar footer — lives in layout/Sidebar.tsx, which
-          wraps this pane in App. Keeping chrome out of here makes the
-          list column itself a pure content region, while the wrapper owns
-          the bands that frame it. */}
+    <section className={`task-list${taskAppearance?.mode === 'custom' ? ' task-list--custom' : ''}`} aria-label="任务列表" style={taskListStyle(taskAppearance)}>
+      {/* This pane renders ONLY the task-list body. The column's chrome —
+          top brand tools row (notification / search / collapse), the
+          resizable width, and the right border — live in
+          layout/TaskListPanel.tsx, which wraps this pane in App. Width in
+          particular MUST stay on the wrapper: it is the flex child that
+          the PaneDivider drag resizes, and this pane just stretches to
+          fill it. Keeping chrome out of here makes the list column a pure
+          content region while the wrapper owns the bands that frame it. */}
       <header className="task-list__header">
         <button type="button" className="task-list__add-btn" onClick={onCompose}>
           <PlusGlyph /> 新建任务
@@ -1438,14 +1439,15 @@ function filterToRepoFilter(f: ListFilter): Parameters<typeof window.todoList.to
  *  - mode === 'custom' 时另外附加 `task-list--custom` className，让覆盖
  *    规则（hover / active / done / cancelled / blocked 的 fg 边框与
  *    outline）只作用于 custom 模式；theme 模式仍走 hover 用 --bg-hover、
- *    active 用 --bg-active + accent 左边框的默认行为。 */
+ *    active 用 --bg-active + accent 左边框的默认行为。
+ *
+ *  这里不设 width：列宽由 TaskListPanel 的 inline style 提供（它才是
+ *  .master-detail 的 flex child），本 section 只负责 stretch 填满。 */
 function taskListStyle(
   appearance: TaskAppearance | undefined,
-  width: number,
 ): React.CSSProperties {
   const c = appearance?.colors ?? DEFAULT_TASK_APPEARANCE.colors;
   return {
-    width,
     // CSS 自定义属性键在 React 里用 camelCase，对应 CSS 里的 kebab-case；
     // 我们在 CSS 里直接写 kebab-case 字符串键（TS 在 cast 里允许任意键）。
     ['--task-prio-very-low-bg' as never]: c['very-low'].background,

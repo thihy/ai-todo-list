@@ -686,16 +686,16 @@ a:hover {
  *     fused with the Topbar above into one continuous chrome band)
  *   - .task-list-panel__body   (middle: the TodoListPane — add-task header +
  *     scrollable task list — owns its own internal chrome)
- *   - .task-list-panel__footer (REMOVED — avatar moved to Sidebar rail)
  *
- * The wrapper itself carries NO content styling; it just sets the column
- * width, the border against the master-detail area, and the flex scaffold
- * for the three chrome bands. Width matches the old master-detail list
- * width (var(--sidebar-w) === 220px in the legacy nav config but the
- * current layout overrides this via inline style on the inner pane — see
- * TodoListPane's taskListStyle(). */
+ * WIDTH LIVES HERE, NOT ON .task-list. This wrapper is the flex child of
+ * .master-detail, so it is the element the PaneDivider drag actually
+ * resizes — App passes the persisted `listWidth` as an inline style.
+ * A hardcoded width here (or an inline width left on the inner .task-list)
+ * makes the drag a no-op: the inner pane resizes inside a fixed-width
+ * wrapper and `overflow: hidden` clips the difference, so the user drags
+ * and nothing moves. Keep the CSS width unset so the inline value wins.
+ */
 .task-list-panel {
-  width: 340px;
   flex: none;
   display: flex;
   flex-direction: column;
@@ -2777,12 +2777,14 @@ a:hover {
 
 /* The task-list pane fills the .task-list-panel__body column. Width and
  * the right border belong to .task-list-panel now (see
- * layout/TaskListPanel.tsx), so this section only owns the list's
- * internal flex scaffold: header (add-task + collapse-all) on top,
- * scrollable body filling the remainder. */
+ * layout/TaskListPanel.tsx) — the pane stretches to that width rather
+ * than declaring its own, so a PaneDivider drag moves the whole column.
+ * This section only owns the list's internal flex scaffold: header
+ * (add-task + collapse-all) on top, scrollable body filling the rest. */
 .task-list {
   flex: 1;
   min-height: 0;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   position: relative;
