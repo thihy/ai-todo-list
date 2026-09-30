@@ -15,6 +15,8 @@ export type Route =
 
 export type ListFilter =
   | { kind: 'all' }
+  | { kind: 'today' }
+  | { kind: 'non-today' }
   | { kind: 'archived' }
   | { kind: 'deleted' }
   | { kind: 'status'; status: string }
@@ -57,6 +59,8 @@ export function parseHash(hash: string): Route {
 
 function parseFilter(s: string): ListFilter {
   if (!s) return { kind: 'all' };
+  if (s === 'today') return { kind: 'today' };
+  if (s === 'non-today') return { kind: 'non-today' };
   if (s === 'archived') return { kind: 'archived' };
   if (s === 'deleted') return { kind: 'deleted' };
   if (s.startsWith('status/')) return { kind: 'status', status: s.slice('status/'.length) };
@@ -94,6 +98,10 @@ function filterToPath(f: ListFilter): string {
   switch (f.kind) {
     case 'all':
       return '';
+    case 'today':
+      return 'today';
+    case 'non-today':
+      return 'non-today';
     case 'archived':
       return 'archived';
     case 'deleted':

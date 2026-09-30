@@ -1,12 +1,13 @@
 // App shell. The main area is a master-detail layout: task list (left) +
 // task detail (right); the resident AI panel sits further right and collapses
 // to a rail. Settings is a modal (not a route pane), opened from the bottom-left
-// user chip or the 菜单 button. The Sidebar is gone — view switching lives in
-// the title-bar 过滤 popover, and quick actions in the 菜单 / user menu.
+// user chip or the 菜单 button. View switching (今日 / 非今日 / 全部) lives in
+// the task-list pane's own header tabs — no separate Sidebar rail.
 
 import React, { useEffect, useState, useCallback, Suspense } from 'react';
 import { ErrorBoundary } from './ErrorBoundary';
 import { Topbar } from './layout/Topbar';
+import { ActivityBar } from './layout/ActivityBar';
 import { Statusbar } from './layout/Statusbar';
 import { AIPanel } from './layout/AIPanel';
 import { useToastBus } from './components/Toast';
@@ -368,6 +369,7 @@ export const App: React.FC = () => {
           onSelectSort={selectSort}
         />
         <div className="app-body">
+          <ActivityBar listFilter={listFilter} onSelectFilter={selectFilter} />
           <main className={`app-main${view === 'list' ? ' is-master' : ''}`}>
             {view === 'list' && showFullscreen && selectedId && (
               <FullscreenDoc

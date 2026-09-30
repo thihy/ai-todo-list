@@ -556,6 +556,78 @@ a:hover {
   color: var(--fg-on-accent);
 }
 
+/* ===== Activity Bar ===== */
+
+/* VSCode Activity Bar 风格：~48px 宽，只显示图标，点击切换主视图。
+   高度填满 .app-body（flex: 1）—— 比 Sidebar 的 .sidebar__spacer 自适应
+   简单很多，因为这里没有底部设置入口需要顶到底。
+   背景用 bg-surface-elev（更深浅灰），与右侧主区 bg-canvas 形成层次
+   —— Activity Bar 是 "chrome"，主区是 "内容"，视觉权重分开。 */
+
+.activity-bar {
+  width: 48px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: var(--space-sm) 0;
+  background: var(--bg-surface-elev);
+  border-right: 1px solid var(--border-default);
+  gap: 4px;
+}
+
+.activity-bar__item {
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  border-radius: 8px;
+  /* 默认色 = fg-secondary（深灰），比 fg-muted 对比度高，让图标"看得到"——
+     fg-muted 偏灰白，在浅灰背景上几乎消失。 */
+  color: var(--fg-secondary);
+  cursor: pointer;
+  position: relative;
+  padding: 0;
+  transition: background-color .12s ease, color .12s ease;
+}
+
+.activity-bar__item:hover {
+  background: var(--bg-hover);
+  color: var(--fg-primary);
+}
+
+.activity-bar__item:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: -2px;
+}
+
+.activity-bar__item.is-active {
+  color: var(--accent-primary);
+  background: var(--bg-active);
+}
+
+/* VSCode 风格：选中态在图标左侧加一根 accent 竖条，作为位置指示器。
+   用 ::before 绝对定位，避免影响 item 的布局尺寸。 */
+.activity-bar__item.is-active::before {
+  content: '';
+  position: absolute;
+  left: -10px;
+  top: 8px;
+  bottom: 8px;
+  width: 2px;
+  background: var(--accent-primary);
+  border-radius: 0 2px 2px 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .activity-bar__item {
+    transition: none;
+  }
+}
+
 /* ===== Sidebar ===== */
 
 .sidebar {
