@@ -25,7 +25,7 @@ import { ToastHost } from '../components/Toast';
 import type { ToastBus } from '../components/Toast';
 import type { Todo, TodoStatus, ULID } from '../../shared/todo-types';
 import { StatusSelect } from '../components/StatusSelect';
-import { IconCalendar, IconChevronDown, IconCollapseBar, IconDrawing, IconInboxEmpty, IconTrash } from '../components/icons';
+import { IconCalendar, IconCollapseBar, IconDrawing, IconInboxEmpty, IconTrash } from '../components/icons';
 import { todayDateKey } from '../components/PlanGuideModal';
 import TodayGlyph from '../components/TodayGlyph';
 import { DEFAULT_TASK_APPEARANCE, type TaskAppearance } from '../../shared/task-appearance';
@@ -245,13 +245,11 @@ export const TodoListPane: React.FC<{
   const togglePeerExpanded = useCallback((id: string) => {
     setPeerCollapseMap((prev) => ({ ...prev, [id]: !(prev[id] ?? false) }));
   }, []);
-  // Section-level 折叠 —— 「今日待办」「后续待办」「全部待办」三个 <section>
-  // 各自独立的折叠状态；VSCode 风格：点击 header 切换，chevron 旋转 90°，列表
-  // 用 grid-template-rows 平滑收起。默认展开 —— 不主动隐藏用户预期可见的内容。
-  // 状态留在组件内（与 expandMap 同生命周期）；持久化不是这次范围。
-  const [plannedSectionCollapsed, setPlannedSectionCollapsed] = useState(false);
-  const [nonTodaySectionCollapsed, setNonTodaySectionCollapsed] = useState(false);
-  const [otherSectionCollapsed, setOtherSectionCollapsed] = useState(false);
+  // 曾经这里有「今日待办」「后续待办」「全部待办」三个 section 各自的折叠
+  // state。现已移除：这三个视图本来就由 Sidebar 的 今日 / 后续待办 / 全部
+  // 三个入口切换，列表内再提供一套折叠是对同一件事做两次控制 —— 而且它
+  // 更糟：用户能点掉自己唯一的内容区，却看不到任何"为什么变空了"的线索
+  // （Sidebar 上那个入口仍然是激活态）。切换视图请用 Sidebar。
   // 上半区要展示的根任务 = shownSet 里 parentId === null 的任务，按 sort 排序。
   const plannedRoots = useMemo(
     () => (shownSet.size === 0 ? [] : sortTodos(data.filter((t) => !t.parentId && shownSet.has(t.id)), sort)),
@@ -383,22 +381,15 @@ export const TodoListPane: React.FC<{
                   view（后续待办 / 全部）下也隐藏今日区，避免重复。 */}
               {!archivedView && plannedRoots.length > 0 && !nonTodayView && !allView && (
                 <section className="planned-section" aria-label="今日待办">
-                  <button
-                    type="button"
-                    className="planned-section__header section-toggle"
-                    aria-expanded={!plannedSectionCollapsed}
-                    aria-controls="planned-section-list"
-                    onClick={() => setPlannedSectionCollapsed((v) => !v)}
-                  >
-                    <IconChevronDown size={14} className="section-toggle__chevron" />
+                  {/* 分组标题是静态的，不是折叠开关 —— 视图切换由 Sidebar 的
+                      今日 / 后续待办 / 全部三个入口负责，列表内再挂一套折叠
+                      就是对同一件事做两次控制，还多出一个能把自己藏起来、
+                      用户却不知道为什么内容消失的状态。 */}
+                  <div className="planned-section__header">
                     <span className="planned-section__title">今日待办</span>
                     <span className="planned-section__count">{plannedSet.size}</span>
-                  </button>
-                  <div
-                    id="planned-section-list"
-                    className={`section-collapse${plannedSectionCollapsed ? ' is-collapsed' : ''}`}
-                    aria-hidden={plannedSectionCollapsed}
-                  >
+                  </div>
+                  <div id="planned-section-list" className="section-collapse">
                     <ul className="planned-section__list">
                       {plannedRoots.map((t) => (
                         <PlannedBranch
@@ -437,22 +428,11 @@ export const TodoListPane: React.FC<{
                   view（今日 / 全部）下隐藏中区。 */}
               {!archivedView && nonTodayRoots.length > 0 && !todayView && !allView && (
                 <section className="non-today-section" aria-label="后续待办">
-                  <button
-                    type="button"
-                    className="non-today-section__header section-toggle"
-                    aria-expanded={!nonTodaySectionCollapsed}
-                    aria-controls="non-today-section-list"
-                    onClick={() => setNonTodaySectionCollapsed((v) => !v)}
-                  >
-                    <IconChevronDown size={14} className="section-toggle__chevron" />
+                  <div className="non-today-section__header">
                     <span className="non-today-section__title">后续待办</span>
                     <span className="non-today-section__count">{nonTodayRoots.length}</span>
-                  </button>
-                  <div
-                    id="non-today-section-list"
-                    className={`section-collapse${nonTodaySectionCollapsed ? ' is-collapsed' : ''}`}
-                    aria-hidden={nonTodaySectionCollapsed}
-                  >
+                  </div>
+                  <div id="non-today-section-list" className="section-collapse">
                     <ul className="non-today-section__list task-list__root-tasks">
                       {nonTodayRoots.map((t) => (
                         <TaskBranch
@@ -491,22 +471,11 @@ export const TodoListPane: React.FC<{
                   唯一的 section；今日 / 后续待办视图则隐藏，避免和上半/中区重复。 */}
               {rootTasks.length > 0 && !todayView && !nonTodayView && (
                 <section className="other-section" aria-label="全部待办">
-                  <button
-                    type="button"
-                    className="other-section__header section-toggle"
-                    aria-expanded={!otherSectionCollapsed}
-                    aria-controls="other-section-list"
-                    onClick={() => setOtherSectionCollapsed((v) => !v)}
-                  >
-                    <IconChevronDown size={14} className="section-toggle__chevron" />
+                  <div className="other-section__header">
                     <span className="other-section__title">{archivedView ? '归档' : '全部待办'}</span>
                     <span className="other-section__count">{rootTasks.length}</span>
-                  </button>
-                  <div
-                    id="other-section-list"
-                    className={`section-collapse${otherSectionCollapsed ? ' is-collapsed' : ''}`}
-                    aria-hidden={otherSectionCollapsed}
-                  >
+                  </div>
+                  <div id="other-section-list" className="section-collapse">
                     <ul className="other-section__list task-list__root-tasks">
                       {rootTasks.map((t) => (
                         <TaskBranch

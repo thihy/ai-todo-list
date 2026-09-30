@@ -4049,71 +4049,12 @@ a:hover {
   flex-direction: column;
   padding: 0 0 var(--space-md);
 }
-.planned-section__header,
-.other-section__header,
-.non-today-section__header {
-  display: flex;
-  align-items: center;
-  gap: var(--space-xs);
-  /* Slightly more vertical padding now that the title sits at 15px /
-   * 700 鈥?without the bump the heading crowds the chevron and the
-   * count chip. Keeps the same horizontal rhythm so the section dividers
-   * line up with the brand-header padding above. */
-  padding: var(--space-md) var(--space-md) var(--space-sm);
-  border: none;
-  border-bottom: 1px solid var(--border-subtle);
-  margin: 0 0 var(--space-xs);
-  background: transparent;
-  width: 100%;
-  text-align: left;
-  font: inherit;
-  color: inherit;
-  cursor: pointer;
-  border-radius: 6px;
-  transition: background-color .12s;
-}
-.planned-section__header:hover,
-.other-section__header:hover,
-.non-today-section__header:hover {
-  background: var(--bg-hover);
-}
-.planned-section__header:focus-visible,
-.other-section__header:focus-visible,
-.non-today-section__header:focus-visible {
-  outline: 2px solid var(--accent-primary);
-  outline-offset: -2px;
-}
-.section-toggle__chevron {
-  flex-shrink: 0;
-  color: var(--fg-muted);
-  transition: transform .15s ease;
-  transform-origin: center;
-}
-/* VSCode 椋庢牸锛氭姌鍙犳椂 chevron 鏃嬭浆 -90掳锛堟寚鍙筹級銆傚睍寮€鏃舵鍚戯紙鎸囦笅锛夈€?*/
-.planned-section__header[aria-expanded="false"] .section-toggle__chevron,
-.other-section__header[aria-expanded="false"] .section-toggle__chevron,
-.non-today-section__header[aria-expanded="false"] .section-toggle__chevron {
-  transform: rotate(-90deg);
-}
-/* 鎶樺彔瀹瑰櫒 鈥斺€?grid-template-rows: 0fr / 1fr 鐨勭幇浠ｅ姩鐢绘妧宸э紝
-   涓嶄緷璧?max-height 浼扮畻锛屽彲瀵逛换鎰忛珮搴﹀唴瀹瑰钩婊戞敹璧枫€?*/
+/* Section 内容容器。折叠能力已随 Sidebar 视图切换移除（见
+   TodoListPane 的 SectionCollapsed 注释），这里只保留一个块级容器，
+   之所以不直接把 <ul> 挂到 <section> 上，是为了不动
+   `.planned-section__list` 等已有选择器的层级关系。 */
 .section-collapse {
-  display: grid;
-  grid-template-rows: 1fr;
-  transition: grid-template-rows .15s ease;
-}
-.section-collapse.is-collapsed {
-  grid-template-rows: 0fr;
-}
-.section-collapse > * {
-  overflow: hidden;
-  min-height: 0;
-}
-@media (prefers-reduced-motion: reduce) {
-  .section-collapse,
-  .section-toggle__chevron {
-    transition: none;
-  }
+  display: block;
 }
 .planned-section__title,
 .other-section__title,
