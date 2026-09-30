@@ -35,10 +35,15 @@ export const TodoListPane: React.FC<{
   sort: SortKey;
   selectedId: string | null;
   onSelect: (id: string) => void;
+  /** 子任务创建成功后拿到新任务 id。**只用于列表高亮，不跳转** ——
+   *  行内子任务输入框刻意保留焦点以支持连续创建，跳到详情会打断它。 */
+  onSubtaskCreated?: (id: string) => void;
+  /** AI 通过 todo_create 建完任务后拿到新任务 id —— 这次**要**跳转详情。 */
+  onAiCreated?: (id: string) => void;
   onCompose: () => void;
   onCollapse?: () => void;
   toastBus: ToastBus;
-}> = ({ filter, sort, selectedId, onSelect, onCompose, onCollapse, toastBus }) => {
+}> = ({ filter, sort, selectedId, onSelect, onSubtaskCreated, onAiCreated, onCompose, onCollapse, toastBus }) => {
   const repoFilter = filterToRepoFilter(filter);
   const { data, loading, refresh } = useTodos(repoFilter);
   // 任务优先级配色 —— mode=custom 时把 colors 注入 CSS 自定义属性；
@@ -47,12 +52,15 @@ export const TodoListPane: React.FC<{
   const taskAppearance = settings?.taskAppearance;
 
   // Auto-refresh when a new todo is created elsewhere (capture window, AI).
+  // 主进程在 AI 走 todo_create 建完任务后会推 app:todo-created { id }，
+  // 这里除了刷新列表，还把 id 抛给 App 去跳转 + 选中新建的任务。
   useEffect(() => {
-    const off = window.todoList.on('app:todo-created', () => {
+    const off = window.todoList.on('app:todo-created', (payload) => {
       void refresh();
+      if (payload?.id) onAiCreated?.(payload.id);
     });
     return off;
-  }, [refresh]);
+  }, [refresh, onAiCreated]);
 
   // Expand/collapse state is lifted here (not per-TaskBranch) so the
   // collapse-all / expand-all header buttons can drive the whole tree.
@@ -115,9 +123,12 @@ export const TodoListPane: React.FC<{
       // 都看不到。refresh 重新拉 data，children ul 同步出现。
       setExpandMap((prev) => ({ ...prev, [parentId]: true }));
       await refresh();
+      // 高亮新建的子任务：用户立刻能看到它落在哪。但**不跳转** ——
+      // 行内输入框保留着焦点供连续创建，跳走会把输入流打断。
+      onSubtaskCreated?.(res.data.id);
       return true;
     },
-    [refresh],
+    [refresh, onSubtaskCreated],
   );
 
   // In the 归档 view the per-row hover button restores (un-archives) instead

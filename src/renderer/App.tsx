@@ -296,6 +296,14 @@ export const App: React.FC = () => {
 
   const view = deriveView(route);
   const selectedId = route.name === 'todo' ? route.id : null;
+  // 列表高亮（≠ 路由选中）。子任务在行内创建后需要"看得见自己刚建的
+  // 那一行"，但**不能**跳转 —— 行内输入框刻意保留焦点以便连续创建，
+  // 跳走会打断这个输入流。所以高亮走独立的 state，不改 hash。
+  //
+  // 路由选中优先：只要用户点开了某个任务详情，就以路由为准，清掉高亮，
+  // 免得同时出现"高亮的是 A、详情是 B"这种自相矛盾的画面。
+  const [highlightId, setHighlightId] = useState<string | null>(null);
+  const listHighlightId = selectedId ?? highlightId;
   const showFullscreen = view === 'list' && fullscreenTodoId !== null && selectedId === fullscreenTodoId;
 
   // Per-task selected-doc tab: in-memory map wins (session override). The
@@ -406,8 +414,18 @@ export const App: React.FC = () => {
                     <TodoListPane
                       filter={listFilter}
                       sort={listSort}
-                      selectedId={selectedId}
-                      onSelect={(id) => navigate(routeToHash({ name: 'todo', id }))}
+                      selectedId={listHighlightId}
+                      onSelect={(id) => {
+                        // 用户点了某一行 → 详情以路由为准，同时清掉纯高亮态。
+                        setHighlightId(null);
+                        navigate(routeToHash({ name: 'todo', id }));
+                      }}
+                      onSubtaskCreated={setHighlightId}
+                      onAiCreated={(id) => {
+                        // AI 建完任务：跳转详情 + 选中它（与主表单新建一致）。
+                        setHighlightId(null);
+                        navigate(routeToHash({ name: 'todo', id }));
+                      }}
                       onCompose={() => setComposing(true)}
                       onCollapse={toggleList}
                       toastBus={toast}
