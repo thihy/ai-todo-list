@@ -4,27 +4,28 @@
 // 中央详情区挤到不可用。原来只有 usePaneWidths 做**列宽缩放**，但缩放
 // 到 MIN 之后就卡住了 —— 再窄下去三栏仍然并排，详情区被压到不可读。
 //
-// 策略：宽度不足时按"重要性递减"依次收起次要面板。
-//   AI 助手先收 —— 它是增强，不是主干；没有它所有任务功能照常可用。
-//   任务列表后收 —— 它是主从布局的 master，主干的一部分。
-//   详情区永不自动收起 —— 它是当前正在工作的内容。
+// 策略：宽度不足时按"重要性递减"依次折叠次要面板为 rail。
+//   AI 助手先折叠 —— 它是增强，不是主干；没有它所有任务功能照常可用。
+//   任务列表后折叠 —— 它是主从布局的 master，主干的一部分。
+//   详情区永不折叠 —— 它是当前正在工作的内容。
+//
+// AI 助手和任务列表本身都设计成"可折叠成 rail"的形态（手动折叠按钮
+// 就是这个语义），所以"响应式自动折叠"等价于"响应式替用户按了一次折
+// 叠按钮"：面板永远存在（不会消失），只是状态从展开变为折叠成 rail。
+// 这比"窄窗口下整块面板消失"更连贯 —— 用户能看到折叠态的入口，
+// 拉宽窗口就自然展开。
 //
 // 双向对称：窗口变宽时按相反顺序恢复（先恢复任务列表，再恢复 AI 助手）。
-// 顺序反过来是有讲究的：先让用户找回 master，再把 AI 加回来，这样每一
-// 步恢复的都是"我刚才在做的事"。
 //
-// 关键约束：这是**自动**降级，不是覆盖用户意图。用户手动关掉的 AI 面板
-// 在窗口变宽时不应该被自动打开 —— 所以用 `prefersAi` / `prefersList`
-// 记录"用户希望它开着"，响应式只在这个前提为真时才允许展开。这样两种
-// 情况都能正确处理：
-//   - 用户没动过面板（prefers = true）→ 完全交给响应式决定。
-//   - 用户手动关了（prefers = false）→ 响应式不碰它。
+// 关键约束：响应式不能覆盖用户意图。用户手动关掉的 AI 面板（prefersAi
+// = false），不该因为窗口变宽就被自动打开 —— 用户主动折叠是一个持久
+// 偏好，与响应式临时建议无关。
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
-/** 收起 AI 助手的宽度阈值。低于它 → AI 先折叠。 */
+/** 收起 AI 助手的宽度阈值。低于它 → AI 自动折叠成 rail。 */
 export const BREAKPOINT_AI = 1080;
-/** 收起任务列表的宽度阈值。低于它 → 任务列表也折叠。 */
+/** 收起任务列表的宽度阈值。低于它 → 任务列表也折叠成 rail。 */
 export const BREAKPOINT_LIST = 820;
 
 /** 三种布局形态。数值越大，可用栏位越多。 */
@@ -32,36 +33,38 @@ export type ResponsiveTier = 'single' | 'list' | 'full';
 
 export interface ResponsiveLayout {
   tier: ResponsiveTier;
-  /** 最终是否渲染 AI 面板（响应式与用户意图的交集）。 */
-  aiVisible: boolean;
-  /** 最终是否渲染任务列表。 */
-  listVisible: boolean;
+  /** AI 面板是否处于**展开**态（占据 384px 内容）。false = 折叠成 rail。 */
+  aiOpen: boolean;
+  /** 任务列表是否处于**展开**态。false = 折叠成 rail。 */
+  listOpen: boolean;
 }
 
 /**
- * 纯函数：给定视口宽度 + 用户的展开意图，算出该显示哪些面板。
- * 抽成纯函数是为了能直接单测，不用起 DOM。
+ * 纯函数：给定视口宽度 + 用户的展开意图，算出 AI / 列表应该展开还是
+ * 折叠成 rail。
  *
- * @param viewportW 视口宽度（px）
- * @param prefersAi 用户是否希望 AI 助手展开（手动关过则为 false）
- * @param prefersList 用户是否希望任务列表展开
+ * 语义：
+ *   - prefersAi=true && 宽度够 → 展开
+ *   - prefersAi=true && 宽度不够 → 折叠（响应式自动折叠 = rail）
+ *   - prefersAi=false → 折叠（用户主动关了，不论窗口宽度）
+ *
+ * 抽成纯函数是为了能直接单测，不用起 DOM。
  */
 export function computeResponsiveLayout(
   viewportW: number,
   prefersAi: boolean,
   prefersList: boolean,
 ): ResponsiveLayout {
-  // 宽度够 → 两边都尊重用户意图。
-  if (viewportW >= BREAKPOINT_AI) {
-    return { tier: 'full', aiVisible: prefersAi, listVisible: prefersList };
-  }
-  // 中等宽度：AI 让位，任务列表保留。
-  if (viewportW >= BREAKPOINT_LIST) {
-    return { tier: 'list', aiVisible: false, listVisible: prefersList };
-  }
-  // 很窄：只剩详情区。任务列表同样尊重用户意图 —— 用户主动关过就别
-  // 替他打开。
-  return { tier: 'single', aiVisible: false, listVisible: false };
+  const widthFitsAi = viewportW >= BREAKPOINT_AI;
+  const widthFitsList = viewportW >= BREAKPOINT_LIST;
+
+  // "展开" = 用户希望展开 且 宽度足够。两个条件缺一就折叠成 rail。
+  const aiOpen = prefersAi && widthFitsAi;
+  const listOpen = prefersList && widthFitsList;
+
+  const tier: ResponsiveTier = widthFitsAi ? 'full' : widthFitsList ? 'list' : 'single';
+
+  return { tier, aiOpen, listOpen };
 }
 
 /** 跟踪视口宽度（rAF 合并高频 resize），配合上面的纯函数产出布局决策。 */
@@ -98,76 +101,48 @@ export function useResponsiveLayout(
 /**
  * 把"用户手动切换"和"响应式自动折叠"合并成单一入口。
  *
- * 为什么需要它：App 里 aiOpen / listOpen 同时被两种东西驱动 —— 用户点
- * 顶栏/面板的按钮（手动），以及响应式（自动）。如果直接各自 setState，
- * 会出现"响应式刚把 AI 收起来，用户手动开一下，宽度没变，下个 resize
- * 又收起"的抖动。这里保证：手动切换只改 `prefers*`，可见性始终由
- * computeResponsiveLayout 推导。
+ * 持久化的是 `prefers*`（用户意图）而不是 `aiOpen`（响应式结果）——
+ * 否则窗口一窄就把 "AI 开着" 存成 false，下次在宽窗口启动时 AI
+ * 莫名其妙是关的。
+ *
+ * toggleAi / toggleList 是更高层的"用户点了一下折叠/展开按钮"语义：
+ * 切换的是 prefers*。AI 和列表行为对称。
  */
 export function usePaneVisibility(initialAi: boolean, initialList: boolean) {
   const [prefersAi, setPrefersAi] = useState(initialAi);
   const [prefersList, setPrefersList] = useState(initialList);
-  // 记录"上一次自动折叠"的用户意图，窗口变宽时用它恢复。
-  const aiBeforeCollapse = useRef<boolean | null>(null);
-  const listBeforeCollapse = useRef<boolean | null>(null);
 
   const layout = useResponsiveLayout(prefersAi, prefersList);
 
-  // 响应式自动收起的面板，记录它"折叠前"用户的意图。
-  useEffect(() => {
-    if (layout.aiVisible) {
-      aiBeforeCollapse.current = null;
-    } else if (aiBeforeCollapse.current === null) {
-      aiBeforeCollapse.current = prefersAi;
-    }
-  }, [layout.aiVisible, prefersAi]);
-
-  useEffect(() => {
-    if (layout.listVisible) {
-      listBeforeCollapse.current = null;
-    } else if (listBeforeCollapse.current === null) {
-      listBeforeCollapse.current = prefersList;
-    }
-  }, [layout.listVisible, prefersList]);
-
-  // 手动点开一个正被自动折叠的面板时，把它从"自动"转为"用户要开"，
-  // 这样后续 resize 不会立刻又把它收掉。
-  const openAi = useCallback(() => {
-    aiBeforeCollapse.current = null;
-    setPrefersAi(true);
-  }, []);
-
   const toggleAi = useCallback(() => {
-    setPrefersAi((v) => {
-      // 手动点开一个正被自动折叠的面板时，把它从"自动"转为"用户要开"，
-      // 这样后续 resize 不会立刻又把它收掉。
-      if (!v && aiBeforeCollapse.current) aiBeforeCollapse.current = null;
-      return !v;
-    });
+    setPrefersAi((v) => !v);
   }, []);
 
   const toggleList = useCallback(() => {
-    setPrefersList((v) => {
-      if (!v && listBeforeCollapse.current) listBeforeCollapse.current = null;
-      return !v;
-    });
+    setPrefersList((v) => !v);
+  }, []);
+
+  // openAi / openList 用于"明确表达要开"的场景（如 'ai' route 跳转、
+  // AI 新建任务后跳转的辅助展开）。即便窗口窄也强制设置偏好为开 —
+  // 实际是否展开仍由 computeResponsiveLayout 结合宽度决定。
+  const openAi = useCallback(() => {
+    setPrefersAi(true);
+  }, []);
+  const openList = useCallback(() => {
+    setPrefersList(true);
   }, []);
 
   return {
     ...layout,
     prefersAi,
     prefersList,
-    // 面板是被响应式收掉的（而非用户手动关的）。UI 用它决定是渲染
-    // 展开把手还是彻底不渲染。
-    aiAutoCollapsed: !layout.aiVisible && prefersAi,
-    listAutoCollapsed: !layout.listVisible && prefersList,
-    // setPrefersAi 保持原始 setState 语义（可直接吃布尔值），额外给一个
-    // openAi 处理"从自动折叠中转成用户意图"的语义。两者都稳定引用，可安全
-    // 放进 useEffect 依赖。
+    // setPrefersAi / setPrefersList 保持原始 setState 语义（可直接吃
+    // 布尔值）。toggleAi / toggleList 是更高层的"点了一下按钮"语义。
     setPrefersAi,
     setPrefersList,
-    openAi,
     toggleAi,
     toggleList,
+    openAi,
+    openList,
   };
 }

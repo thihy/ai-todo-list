@@ -59,6 +59,32 @@ import { IconFullscreenExit } from './components/icons';
 
 const AI_OPEN_KEY = 'todo-list.aiOpen';
 const LIST_OPEN_KEY = 'todo-list.listOpen';
+const MIGRATION_KEY = 'todo-list.responsiveLayout.migrated.v1';
+
+/**
+ * 一次性迁移：旧版响应式布局的折叠语义是"整个面板消失"，用户以为是
+ * "关闭"功能，localStorage 大量被存成 "0"。新版折叠 = 折叠成 rail
+ * （可逆状态，有视觉入口），默认应该是展开。这两个语义不能直接迁移，
+ * 否则老用户启动后看到 AI 和列表始终是折叠态，体验很差。
+ *
+ * 这个函数本身幂等：标记位 `MIGRATION_KEY` 保证只迁移一次。已迁移过
+ * 的用户继续按新语义持久化自己的折叠偏好（手动折叠 = 持久偏好）。
+ *
+ * 关键：迁移函数必须在 useEffect 里调用（而不是模块顶层），因为 React
+ * Fast Refresh 会保留组件 state —— 如果迁移只在模块顶层跑，state 还
+ * 是 false，useEffect 又会把 false 写回 localStorage，迁移等于没做。
+ */
+function runLegacyCollapseMigration(): boolean {
+  try {
+    if (localStorage.getItem(MIGRATION_KEY) === '1') return false;
+    localStorage.removeItem(AI_OPEN_KEY);
+    localStorage.removeItem(LIST_OPEN_KEY);
+    localStorage.setItem(MIGRATION_KEY, '1');
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 type View = 'list' | 'stats' | 'drawing';
 
@@ -234,17 +260,29 @@ export const App: React.FC = () => {
   // 手动与自动的可见性统一交给 usePaneVisibility：它内部把"用户意图"
   // （prefers*）和"响应式降级"（按视口宽度）合成最终的 aiVisible /
   // listVisible。直接用 aiVisible / listVisible 渲染，不要用 prefers*。
+  // AI 助手和任务列表都设计成"可折叠成 rail"的形态，所以响应式自动
+  // 折叠 = 面板永远渲染（要么展开，要么折叠成 rail）。usePaneVisibility
+  // 把"用户意图"和"响应式自动折叠"合成最终的 aiOpen / listOpen。
   const {
-    aiVisible: aiOpen,
-    listVisible: listOpen,
+    aiOpen,
+    listOpen,
     prefersAi,
     prefersList,
-    aiAutoCollapsed,
-    listAutoCollapsed,
+    setPrefersAi,
+    setPrefersList,
     openAi,
     toggleAi,
     toggleList,
   } = usePaneVisibility(initialAiOpen, initialListOpen);
+
+  // 旧折叠语义迁移：必须在 useEffect 里跑，而不是模块顶层 —— Fast Refresh
+  // 保留 state，模块顶层迁移后 useEffect 会把旧 state (false) 又写回
+  // localStorage。useEffect 里迁移并显式重置 state 才能真正生效。
+  useEffect(() => {
+    if (!runLegacyCollapseMigration()) return;
+    setPrefersAi(true);
+    setPrefersList(true);
+  }, []);
 
   // 持久化的是**用户意图**而不是响应式结果 —— 否则窗口一窄就把
   // "AI 开着"存成 false，下次在宽窗口启动时 AI 莫名其妙是关的。
@@ -444,7 +482,9 @@ export const App: React.FC = () => {
                       toastBus={toast}
                     />
                   </TaskListPanel>
-                ) : listAutoCollapsed ? null : (
+                ) : (
+                  // 列表折叠成 rail（不论是响应式自动折叠还是用户手动折叠）。
+                  // 面板永远渲染，不会消失 —— 响应式自动折叠与手动折叠语义统一。
                   <button
                     type="button"
                     className="task-list-rail"
@@ -498,7 +538,6 @@ export const App: React.FC = () => {
           {aiOpen && <PaneDivider onDrag={(dx) => setAiWidth(aiWidth - dx)} />}
           <AIPanel
             open={aiOpen}
-            autoCollapsed={aiAutoCollapsed}
             width={aiWidth}
             onToggle={toggleAi}
             externalSubmit={pendingAiCreate}
