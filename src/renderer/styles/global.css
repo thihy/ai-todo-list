@@ -275,13 +275,12 @@ a:hover {
 
 /* ===== Topbar (also the frameless title bar) ===== */
 
-/* The topbar and the task-list panel's brand header (`.task-list-panel__brand`) now share
- * the same visual band 鈥?same surface, no seam, no border between them.
- * The topbar is intentionally *transparent* and has no bottom border; the
- * sidebar header directly underneath carries the surface color and the
- * left/right padding that would otherwise have been split across both
- * elements. Net effect: a single light band spanning the top of the
- * window 鈥?Codex-style "fused chrome". */
+/* The topbar and the Sidebar rail (left nav column) share the same
+ * --chrome-bg surface so the two read as one continuous band wrapping the
+ * window's top-left corner. The topbar drops its bottom border for that
+ * reason. The task-list column is deliberately NOT part of this band: its
+ * own header (`.task-list__header`, the 新建任务 row) uses bg-surface, so
+ * the list column reads as content rather than chrome. */
 .topbar {
   height: var(--topbar-h);
   flex: none;
@@ -681,11 +680,10 @@ a:hover {
 
 /* ===== Task list panel (chrome wrapper around TodoListPane) ===== */
 
-/* The TaskListPanel wrapper owns the left master column's chrome bands:
- *   - .task-list-panel__brand  (top: notification / search / collapse tools,
- *     fused with the Topbar above into one continuous chrome band)
- *   - .task-list-panel__body   (middle: the TodoListPane — add-task header +
- *     scrollable task list — owns its own internal chrome)
+/* The TaskListPanel wrapper is a layout shell, not a chrome owner: it only
+ * supplies the resizable column width, the right border, and the vertical
+ * flex scaffold. The add-task row and its tool cluster (通知 / 搜索 / 收起 /
+ * 全部展开折叠) live inside the TodoListPane it wraps.
  *
  * WIDTH LIVES HERE, NOT ON .task-list. This wrapper is the flex child of
  * .master-detail, so it is the element the PaneDivider drag actually
@@ -703,55 +701,6 @@ a:hover {
   background: var(--bg-surface);
   border-right: 1px solid var(--border-default);
   overflow: hidden;
-}
-
-/* Top chrome band — sits flush against the Topbar above (same --chrome-bg,
- * no seam between them). Padding matches the Topbar's vertical rhythm so
- * the two read as one band when stacked. The brand mark + product name
- * live in the Topbar; this row only hosts list-scoped affordances
- * (notification / search / collapse). The bottom border separates the
- * tools row from the add-task row inside the body. */
-.task-list-panel__brand {
-  -webkit-app-region: no-drag;
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: var(--space-sm);
-  padding: 0 var(--space-sm);
-  min-height: var(--topbar-h);
-  background: var(--chrome-bg, var(--bg-surface));
-  border-bottom: 1px solid var(--chrome-border, var(--border-subtle));
-}
-
-.task-list-panel__brand-tools {
-  -webkit-app-region: no-drag;
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  margin-left: auto;
-}
-
-.task-list-panel__brand-tool {
-  width: 30px;
-  height: 30px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid transparent;
-  background: transparent;
-  color: var(--fg-secondary);
-  border-radius: 6px;
-  cursor: pointer;
-  transition: background 0.12s ease, color 0.12s ease;
-}
-.task-list-panel__brand-tool:hover {
-  background: var(--chrome-hover, rgba(0, 0, 0, 0.06));
-  color: var(--fg-primary);
-}
-.task-list-panel__brand-tool:focus-visible {
-  outline: 2px solid var(--accent, #10b981);
-  outline-offset: -2px;
 }
 
 /* Body shell — flex:1 so it absorbs the remaining height in the column,

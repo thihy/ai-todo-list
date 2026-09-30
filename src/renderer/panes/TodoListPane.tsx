@@ -25,7 +25,7 @@ import { ToastHost } from '../components/Toast';
 import type { ToastBus } from '../components/Toast';
 import type { Todo, TodoStatus, ULID } from '../../shared/todo-types';
 import { StatusSelect } from '../components/StatusSelect';
-import { IconCalendar, IconChevronDown, IconDrawing, IconInboxEmpty, IconTrash } from '../components/icons';
+import { IconCalendar, IconChevronDown, IconCollapseBar, IconDrawing, IconInboxEmpty, IconTrash } from '../components/icons';
 import { todayDateKey } from '../components/PlanGuideModal';
 import TodayGlyph from '../components/TodayGlyph';
 import { DEFAULT_TASK_APPEARANCE, type TaskAppearance } from '../../shared/task-appearance';
@@ -36,8 +36,9 @@ export const TodoListPane: React.FC<{
   selectedId: string | null;
   onSelect: (id: string) => void;
   onCompose: () => void;
+  onCollapse?: () => void;
   toastBus: ToastBus;
-}> = ({ filter, sort, selectedId, onSelect, onCompose, toastBus }) => {
+}> = ({ filter, sort, selectedId, onSelect, onCompose, onCollapse, toastBus }) => {
   const repoFilter = filterToRepoFilter(filter);
   const { data, loading, refresh } = useTodos(repoFilter);
   // 任务优先级配色 —— mode=custom 时把 colors 注入 CSS 自定义属性；
@@ -275,27 +276,29 @@ export const TodoListPane: React.FC<{
   const isEmpty = !loading && data.length === 0;
   return (
     <section className={`task-list${taskAppearance?.mode === 'custom' ? ' task-list--custom' : ''}`} aria-label="任务列表" style={taskListStyle(taskAppearance)}>
-      {/* This pane renders ONLY the task-list body. The column's chrome —
-          top brand tools row (notification / search / collapse), the
-          resizable width, and the right border — live in
-          layout/TaskListPanel.tsx, which wraps this pane in App. Width in
-          particular MUST stay on the wrapper: it is the flex child that
-          the PaneDivider drag resizes, and this pane just stretches to
-          fill it. Keeping chrome out of here makes the list column a pure
-          content region while the wrapper owns the bands that frame it. */}
+      {/* This pane owns the column's visible chrome. The resizable width and
+          the right border live on the TaskListPanel shell that wraps it —
+          width in particular MUST stay on the wrapper, because that is the
+          flex child the PaneDivider drag resizes; this section just
+          stretches to fill it. */}
       <header className="task-list__header">
         <button type="button" className="task-list__add-btn" onClick={onCompose}>
           <PlusGlyph /> 新建任务
         </button>
-        {branchIds.size > 0 && (
-          <div className="task-list__tools">
-            {/* Single toggle replaces the old expand-all / collapse-all pair.
+        {/* Tool cluster on the right of 新建任务. Only 收起 lives here — the
+            通知 / 搜索 buttons that used to sit in the old 44px
+            `.task-list-panel__brand` band are gone: both are already in the
+            Topbar, so a second copy in the column was pure duplication.
+            Dropping that band also reclaims 44px of vertical space. */}
+        <div className="task-list__tools">
+          {branchIds.size > 0 && (
+            /* Single toggle replaces the old expand-all / collapse-all pair.
                 Glyph + label swap with state: when the tree is fully expanded
                 the icon points to the action that FOLDS everything (collapse),
                 and vice versa. aria-pressed communicates the current "all
                 expanded" state for assistive tech; the visual glyph + title
                 text describe the action, not the state, so the user reads it
-                as an actionable control. */}
+                as an actionable control. */
             <button
               type="button"
               className="task-list__tool-btn"
@@ -306,8 +309,19 @@ export const TodoListPane: React.FC<{
             >
               {allExpanded ? <CollapseAllGlyph /> : <ExpandAllGlyph />}
             </button>
-          </div>
-        )}
+          )}
+          {onCollapse && (
+            <button
+              type="button"
+              className="task-list__tool-btn"
+              onClick={onCollapse}
+              title="收起任务列表"
+              aria-label="收起任务列表"
+            >
+              <IconCollapseBar />
+            </button>
+          )}
+        </div>
       </header>
 
       <div className="task-list__body">

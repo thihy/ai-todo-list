@@ -75,7 +75,7 @@ function mountPanel(initialWidth: number): { setWidth: (w: number) => void; getW
       // 结构与 App.tsx 的 master-detail 一致：panel 是 flex child，
       // divider 是它的兄弟，TodoListPane 挂在 panel 的 body 里。
       <div className="master-detail">
-        <TaskListPanel width={w} onCollapse={() => {}}>
+        <TaskListPanel width={w}>
           <section className="task-list">
             <div className="task-list__header" />
             <div className="task-list__body" />
@@ -139,7 +139,7 @@ describe('真实 TodoListPane 不再自带宽度', () => {
   // 把 width 写回 <section> —— 而那正是 bug 的另一半。这里挂真组件。
   async function mountReal(width: number): Promise<void> {
     const Harness: React.FC = () => (
-      <TaskListPanel width={width} onCollapse={() => {}}>
+      <TaskListPanel width={width}>
         <TodoListPane
           filter={{ kind: 'all' }}
           sort="alpha"
@@ -178,7 +178,7 @@ describe('真实 TodoListPane 不再自带宽度', () => {
     // 反向锁定：TaskListPanel 的 width 变化不应传导到内层 section
     const before = container.querySelector<HTMLElement>('.task-list')!.style.cssText;
     await act(async () => { root!.render(
-      React.createElement(TaskListPanel, { width: 500, onCollapse: () => {} },
+      React.createElement(TaskListPanel, { width: 500 },
         React.createElement(TodoListPane as never, {
           filter: { kind: 'all' }, sort: 'alpha', selectedId: null,
           onSelect: () => {}, onCompose: () => {}, toastBus,

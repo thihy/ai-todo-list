@@ -402,13 +402,14 @@ export const App: React.FC = () => {
                   // to live here has moved out into the left Sidebar rail
                   // (see layout/Sidebar.tsx) — that rail is the proper
                   // home for it.
-                  <TaskListPanel width={listWidth} onCollapse={toggleList}>
+                  <TaskListPanel width={listWidth}>
                     <TodoListPane
                       filter={listFilter}
                       sort={listSort}
                       selectedId={selectedId}
                       onSelect={(id) => navigate(routeToHash({ name: 'todo', id }))}
                       onCompose={() => setComposing(true)}
+                      onCollapse={toggleList}
                       toastBus={toast}
                     />
                   </TaskListPanel>
