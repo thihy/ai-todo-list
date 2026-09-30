@@ -753,7 +753,12 @@ function createMainWindow(): BrowserWindow {
   const win = new BrowserWindow({
     width: 1280,
     height: 800,
-    minWidth: 960,
+    // 最小宽度必须小于响应式断点 BREAKPOINT_LIST（820），否则窗口拖
+    // 不到那个宽度，任务列表的"自动折叠成 rail"永远触发不到。
+    // 720 留出：sidebar(220) + list-rail(40) + ai-rail(40) + detail-min(360)
+    // ≈ 660 + 余量，刚好能让两个面板都折叠成 rail、详情区保留最低可读
+    // 宽度。继续往下会让详情区被压到不可用。
+    minWidth: 720,
     minHeight: 600,
     show: false,
     // Initial window background. Must match the renderer's bg-canvas
