@@ -31,7 +31,7 @@ import {
   IconSave,
   IconStrike,
 } from './icons';
-import { MarkdownText, type MarkdownLabels } from '@deepseek-ai/dsh-client-ui-primitives';
+import { MarkdownText, type MarkdownLabels, type MarkdownPathImages } from '@deepseek-ai/dsh-client-ui-primitives';
 import { HistoryPopover } from './HistoryPopover';
 
 /** A textarea + value transform, returning the new value and selection. */
@@ -728,12 +728,66 @@ const Preview: React.FC<{ markdown: string }> = ({ markdown }) => {
   // fall back to a no-render placeholder when there's nothing to render so
   // the editor chrome stays in place (saves a render cycle per keystroke).
   const empty = useMemo(() => markdown.trim() === '', [markdown]);
+
+  // 收集正文中所有 `attachment://<id>` 图片引用，去重 —— 切换 tab / 切预览
+  // 视图都会触发 Preview 重渲，cache 命中就不再走 inbox.read。MarkdownText
+  // 自己的协议白名单只放 http(s)/blob/data，自定义 attachment: 直接喂给
+  // 它会被打回 alt 文本，所以我们用 pathImages.resolve 把 attachment://<id>
+  // 翻译成 data:image/<mime>;base64,...，让它走白名单。
+  const attachmentIds = useMemo(() => {
+    const out = new Set<string>();
+    const re = /attachment:\/\/([A-Za-z0-9_-]+)/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(markdown)) !== null) out.add(m[1]!);
+    return Array.from(out);
+  }, [markdown]);
+
+  const [dataUrls, setDataUrls] = useState<Record<string, string>>({});
+
+  // 拉 missing 的 id。每个 id 调 inbox.read 拿 data URL（InboxStore.read
+  // 内部把字节读成 base64 data: URL 返回，渲染端永不接触绝对路径）。
+  // 顺序无关：每张图自己一个 await，全部完成后合并 setState。并发请求
+  // 用单次 Promise.all 合并，避免 race 把较早的 setState 覆盖。
+  useEffect(() => {
+    const pending = attachmentIds.filter((id) => !(id in dataUrls));
+    if (pending.length === 0) return;
+    let cancelled = false;
+    void (async () => {
+      const fetched = await Promise.all(
+        pending.map(async (id) => {
+          const r = await window.todoList.inbox.read({ id });
+          return { id, dataUrl: r.ok ? r.data.dataUrl : null };
+        }),
+      );
+      if (cancelled) return;
+      const updates: Record<string, string> = {};
+      let hadAny = false;
+      for (const { id, dataUrl } of fetched) {
+        if (dataUrl !== null) { updates[id] = dataUrl; hadAny = true; }
+      }
+      if (hadAny) setDataUrls((prev) => ({ ...prev, ...updates }));
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [attachmentIds]);
+
+  // 稳定引用 —— MarkdownText memo 把 pathImages 当依赖，每次新对象都会让
+  // 它整文档重渲一次。dataUrls 是 state 引用，但 pathImages 本身用
+  // useMemo 跟它绑定，整体变化粒度 = dataUrls 变化（一个 id 落盘完成后）。
+  const pathImages = useMemo<MarkdownPathImages>(() => ({
+    resolve(value: string): string | undefined {
+      const m = /^attachment:\/\/([A-Za-z0-9_-]+)$/.exec(value);
+      if (!m) return undefined;
+      return dataUrls[m[1]!];
+    },
+  }), [dataUrls]);
+
   if (empty) {
     return <div className="md-preview md-preview--empty">（无内容可预览）</div>;
   }
   return (
     <div className="md-preview">
-      <MarkdownText text={markdown} labels={PREVIEW_LABELS} />
+      <MarkdownText text={markdown} labels={PREVIEW_LABELS} pathImages={pathImages} />
     </div>
   );
 };

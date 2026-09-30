@@ -23,11 +23,32 @@ import {
 vi.mock('../../src/renderer/components/HistoryPopover', () => ({
   HistoryPopover: () => null,
 }));
-// MarkdownText 来自 dsh-client-ui-primitives；mock 成空 div 避免在 happy-dom
-// 里拉 mermaid / shiki 等运行时。
+// MarkdownText 来自 dsh-client-ui-primitives；mock 成「保留 text +
+// pathImages.resolve(url) 后的结果」两个字段，方便断言 pathImages 钩子
+// 真的把 attachment://<id> 翻译成了 data: URL。避免在 happy-dom 里拉
+// mermaid / shiki 等运行时。
+type CapturedPathImages = {
+  resolve: (value: string) => string | undefined;
+} | undefined;
+let captured: { text: string; resolved: Record<string, string | undefined> };
 vi.mock('@deepseek-ai/dsh-client-ui-primitives', () => ({
-  MarkdownText: ({ text }: { text: string }) =>
-    React.createElement('div', { 'data-testid': 'preview' }, text),
+  MarkdownText: ({
+    text,
+    pathImages,
+  }: {
+    text: string;
+    pathImages?: CapturedPathImages;
+  }) => {
+    const resolved: Record<string, string | undefined> = {};
+    const re = /attachment:\/\/([A-Za-z0-9_-]+)/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(text)) !== null) {
+      const id = m[1]!;
+      resolved[id] = pathImages?.resolve(`attachment://${id}`);
+    }
+    captured = { text, resolved };
+    return React.createElement('div', { 'data-testid': 'preview' }, text);
+  },
 }));
 
 import { MarkdownEditor } from '../../src/renderer/components/MarkdownEditor';
@@ -35,14 +56,23 @@ import { MarkdownEditor } from '../../src/renderer/components/MarkdownEditor';
 let root: Root;
 let container: HTMLDivElement;
 let attachBlob: ReturnType<typeof vi.fn>;
+let inboxRead: ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
   (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   container = document.createElement('div');
   document.body.append(container);
   attachBlob = vi.fn();
-  (window as unknown as { todoList: { inbox: { attachBlob: typeof attachBlob } } }).todoList = {
-    inbox: { attachBlob },
+  inboxRead = vi.fn();
+  (window as unknown as {
+    todoList: {
+      inbox: {
+        attachBlob: typeof attachBlob;
+        read: typeof inboxRead;
+      };
+    };
+  }).todoList = {
+    inbox: { attachBlob, read: inboxRead },
   };
 });
 
@@ -224,5 +254,54 @@ describe('MarkdownEditor image paste', () => {
     // 没 image 项 → attachBlob 不该被调；textarea 内容不变
     expect(attachBlob).not.toHaveBeenCalled();
     expect(getTextarea().value).toBe('hi ');
+  });
+
+  it('预览：attachment://<id> 经 pathImages 翻译成 data: URL（MarkdownText 协议白名单放行）', async () => {
+    // inbox.read 返回 data URL —— InboxStore.read 内部把字节编成 base64
+    // data: URL 返回。这条契约保证 Preview 端永远拿不到绝对路径。
+    inboxRead.mockImplementation(({ id }: { id: string }) =>
+      Promise.resolve({ ok: true, data: { dataUrl: `data:image/png;base64,AA${id}`, mime: 'image/png', filename: `${id}.png` } }),
+    );
+
+    // 初始 markdown 直接写「已替换好的图片行」，绕开 paste 异步上传的不确定性
+    // —— 这条测试只关心 Preview 翻译路径，不重复测 paste 主路径。
+    mountEditor('![shot](attachment://abc-1)', 'todo-preview');
+
+    // 切到「预览」视图（默认就是 'write'，需要点一下 status bar 切到
+    // 'preview' 才能让 Preview 挂载并发起 inbox.read）。
+    await act(async () => {
+      const previewBtn = container.querySelector<HTMLButtonElement>(
+        '.editor-statusbar__view-btn:nth-child(2)',
+      );
+      previewBtn?.click();
+      // 让 Preview useEffect 跑起来 + Promise.all inbox.read 全部 resolve
+      await new Promise((r) => setTimeout(r, 0));
+      await new Promise((r) => setTimeout(r, 0));
+      await new Promise((r) => setTimeout(r, 0));
+    });
+
+    // pathImages.resolve 真的把 attachment://abc-1 翻译成了 data: URL
+    expect(inboxRead).toHaveBeenCalledWith({ id: 'abc-1' });
+    expect(captured).toBeDefined();
+    expect(captured.resolved['abc-1']).toBe('data:image/png;base64,AAabc-1');
+  });
+
+  it('预览：inbox.read 失败时 pathImages 命中不了，markdown 图片行退化成 alt 文本', async () => {
+    inboxRead.mockResolvedValue({ ok: false, code: 'inbox_read_failed', message: '文件丢失' });
+
+    mountEditor('![shot](attachment://missing)', 'todo-x');
+    await act(async () => {
+      const previewBtn = container.querySelector<HTMLButtonElement>(
+        '.editor-statusbar__view-btn:nth-child(2)',
+      );
+      previewBtn?.click();
+      await new Promise((r) => setTimeout(r, 0));
+      await new Promise((r) => setTimeout(r, 0));
+      await new Promise((r) => setTimeout(r, 0));
+    });
+
+    // 返回 undefined → MarkdownText 走 alt 文本占位（mock 把 resolved[id]
+    // 设成 undefined 就是这个语义）
+    expect(captured.resolved['missing']).toBeUndefined();
   });
 });
