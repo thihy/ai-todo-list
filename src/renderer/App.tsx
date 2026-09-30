@@ -51,6 +51,7 @@ const DocumentsView = React.lazy(() =>
 import { PaneDivider } from './components/PaneDivider';
 import { IconCheck, IconChevronRight } from './components/icons';
 import { usePaneWidths } from './hooks/usePaneWidths';
+import { usePaneVisibility } from './hooks/useResponsiveLayout';
 import { parseHash, routeToHash, type Route, type ListFilter, type SortKey } from './router';
 import { useAppEvent, useTodo, useSettings } from './hooks/useTodoListApi';
 import { emitDataChanged } from './data-bus';
@@ -91,19 +92,16 @@ export const App: React.FC = () => {
   // toggle snapped the user back to the first tab of the same task. Keyed
   // by todoId so multiple open tasks keep their own selection.
   const [selectedDocByTodo, setSelectedDocByTodo] = useState<Record<string, string>>({});
-  const [aiOpen, setAiOpen] = useState<boolean>(() => {
+  // 面板展开的**初始**用户意图（从 localStorage 读）。实际可见性由下面
+  // 的 usePaneVisibility 结合视口宽度推导 —— 这里只提供冷启动的起点。
+  const [initialAiOpen] = useState<boolean>(() => {
     try {
       return localStorage.getItem(AI_OPEN_KEY) !== '0';
     } catch {
       return true;
     }
   });
-  // Task list open state — mirrors AI's aiOpen. Open by default; user can
-  // collapse the master column to a thin rail (just like the AI panel does)
-  // when the detail pane is the focus. Persisted so the layout survives
-  // restart. The rail itself is a flex sibling with a single expand button,
-  // not a magic-bar — the affordance is the [|] icon.
-  const [listOpen, setListOpen] = useState<boolean>(() => {
+  const [initialListOpen] = useState<boolean>(() => {
     try {
       return localStorage.getItem(LIST_OPEN_KEY) !== '0';
     } catch {
@@ -233,23 +231,40 @@ export const App: React.FC = () => {
     return () => window.removeEventListener('keydown', onKey);
   }, [fullscreenTodoId]);
 
+  // 手动与自动的可见性统一交给 usePaneVisibility：它内部把"用户意图"
+  // （prefers*）和"响应式降级"（按视口宽度）合成最终的 aiVisible /
+  // listVisible。直接用 aiVisible / listVisible 渲染，不要用 prefers*。
+  const {
+    aiVisible: aiOpen,
+    listVisible: listOpen,
+    prefersAi,
+    prefersList,
+    aiAutoCollapsed,
+    listAutoCollapsed,
+    openAi,
+    toggleAi,
+    toggleList,
+  } = usePaneVisibility(initialAiOpen, initialListOpen);
+
+  // 持久化的是**用户意图**而不是响应式结果 —— 否则窗口一窄就把
+  // "AI 开着"存成 false，下次在宽窗口启动时 AI 莫名其妙是关的。
   useEffect(() => {
     try {
-      localStorage.setItem(AI_OPEN_KEY, aiOpen ? '1' : '0');
+      localStorage.setItem(AI_OPEN_KEY, prefersAi ? '1' : '0');
     } catch {
       // ignore storage errors
     }
-  }, [aiOpen]);
+  }, [prefersAi]);
 
   useEffect(() => {
     try {
-      localStorage.setItem(LIST_OPEN_KEY, listOpen ? '1' : '0');
+      localStorage.setItem(LIST_OPEN_KEY, prefersList ? '1' : '0');
     } catch {
       // ignore storage errors
     }
-  }, [listOpen]);
+  }, [prefersList]);
 
-  useAppEvent('app:toggle-ai', () => setAiOpen((v) => !v));
+  useAppEvent('app:toggle-ai', () => toggleAi());
   useAppEvent('app:navigate', ({ route }) => {
     if (route) location.hash = route.startsWith('#') ? route : `#/${route}`;
   });
@@ -277,14 +292,12 @@ export const App: React.FC = () => {
 
   // 'ai' route opens the panel but keeps the main area on the list.
   useEffect(() => {
-    if (route.name === 'ai') setAiOpen(true);
-  }, [route]);
+    if (route.name === 'ai') openAi();
+  }, [route, openAi]);
 
   const navigate = useCallback((to: string) => {
     location.hash = to;
   }, []);
-  const toggleAi = useCallback(() => setAiOpen((v) => !v), []);
-  const toggleList = useCallback(() => setListOpen((v) => !v), []);
   const selectFilter = useCallback((f: ListFilter) => {
     setListFilter(f);
     location.hash = routeToHash({ name: 'list', filter: f, sort: listSort });
@@ -431,7 +444,7 @@ export const App: React.FC = () => {
                       toastBus={toast}
                     />
                   </TaskListPanel>
-                ) : (
+                ) : listAutoCollapsed ? null : (
                   <button
                     type="button"
                     className="task-list-rail"
@@ -458,7 +471,7 @@ export const App: React.FC = () => {
                   onCloseCompose={() => setComposing(false)}
                   onAiSubmit={(detail) => {
                     setPendingAiCreate(detail);
-                    setAiOpen(true);
+                    openAi();
                   }}
                   navigate={navigate}
                   onFullscreen={(todoId) => setFullscreenTodoId(todoId)}
@@ -485,6 +498,7 @@ export const App: React.FC = () => {
           {aiOpen && <PaneDivider onDrag={(dx) => setAiWidth(aiWidth - dx)} />}
           <AIPanel
             open={aiOpen}
+            autoCollapsed={aiAutoCollapsed}
             width={aiWidth}
             onToggle={toggleAi}
             externalSubmit={pendingAiCreate}

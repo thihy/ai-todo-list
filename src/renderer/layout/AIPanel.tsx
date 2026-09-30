@@ -20,9 +20,15 @@ export const AIPanel: React.FC<{
   open: boolean;
   width: number;
   onToggle: () => void;
+  /** 面板是被**响应式自动折叠**的（窗口太窄），而非用户手动收起。
+   *  自动折叠时直接不渲染任何东西 —— 连那条 40px 的 rail 都省掉：
+   *  窄窗口下每一像素都金贵，而用户想把 AI 叫回来时把窗口拉宽即可，
+   *  不需要一条常驻的把手。手动收起才保留 rail。 */
+  autoCollapsed?: boolean;
   externalSubmit?: ExternalAiSubmitDetail | null;
   onExternalSubmitConsumed?: () => void;
-}> = ({ open, width, onToggle, externalSubmit, onExternalSubmitConsumed }) => {
+}> = ({ open, width, onToggle, autoCollapsed = false, externalSubmit, onExternalSubmitConsumed }) => {
+  if (autoCollapsed && !open) return null;
   return (
     <aside
       className={`ai-panel${open ? ' is-open' : ''}`}
