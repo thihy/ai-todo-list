@@ -19,6 +19,7 @@ import type {
   InboxListArgs,
   InboxReadArgs,
   InboxRemoveArgs,
+  InboxRenameArgs,
   SettingsPatchArgs,
 } from '../shared/todo-list-api';
 
@@ -137,6 +138,7 @@ const api: TodoListApi = {
   inbox: {
     attach: (args: InboxAttachArgs) => invoke('inbox.attach', args),
     attachBlob: (args: InboxAttachBlobArgs) => invoke('inbox.attachBlob', args),
+    rename: (args: InboxRenameArgs) => invoke('inbox.rename', args),
     list: (args: InboxListArgs) => invoke('inbox.list', args),
     read: (args: InboxReadArgs) => invoke('inbox.read', args),
     remove: (args: InboxRemoveArgs) => invoke('inbox.remove', args),

@@ -57,22 +57,34 @@ let root: Root;
 let container: HTMLDivElement;
 let attachBlob: ReturnType<typeof vi.fn>;
 let inboxRead: ReturnType<typeof vi.fn>;
+let documentCreate: ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
   (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   container = document.createElement('div');
   document.body.append(container);
+  // 重置 view-persistence —— 之前的「预览」测试会写到 localStorage，
+  // 不重置下一个 mount 就只渲染 MarkdownText 而 textarea 缺失了。
+  try { localStorage.removeItem('todo-list.mdView'); } catch { /* noop */ }
   attachBlob = vi.fn();
   inboxRead = vi.fn();
+  // MarkdownEditor.paste 成功后调 document.create({kind:'attachment',...})
+  // 给图片建 companion task_document 行，让后续附件 rename → MD alt 同步
+  // 有起点（旧 alt 就是这个 row 的 title）。
+  documentCreate = vi.fn().mockResolvedValue({ ok: true, data: { id: 'fake-attdoc' } });
   (window as unknown as {
     todoList: {
       inbox: {
         attachBlob: typeof attachBlob;
         read: typeof inboxRead;
       };
+      document: {
+        create: typeof documentCreate;
+      };
     };
   }).todoList = {
     inbox: { attachBlob, read: inboxRead },
+    document: { create: documentCreate },
   };
 });
 
@@ -157,7 +169,8 @@ describe('MarkdownEditor image paste', () => {
     expect(attachBlob).toHaveBeenCalledTimes(1);
     expect(attachBlob.mock.calls[0]![0]).toMatchObject({
       todoId: 'todo-abc',
-      filename: 'shot.png',
+      // filename 现在是确定时间戳（pasted-YYYYMMDD-HHMMSS-i），不用剪贴板里的真实名
+      filename: expect.stringMatching(/^pasted-\d{8}-\d{6}-1$/),
       mime: 'image/png',
     });
   });
@@ -303,5 +316,93 @@ describe('MarkdownEditor image paste', () => {
     // 返回 undefined → MarkdownText 走 alt 文本占位（mock 把 resolved[id]
     // 设成 undefined 就是这个语义）
     expect(captured.resolved['missing']).toBeUndefined();
+  });
+
+  it('粘贴：用「pasted-YYYYMMDD-HHMMSS-i」作为 alt + filename + companion doc title', async () => {
+    let resolveUpload!: (value: { ok: true; data: { id: string } }) => void;
+    attachBlob.mockImplementation(
+      () => new Promise((resolve) => { resolveUpload = resolve; }),
+    );
+
+    mountEditor('', 'todo-named');
+    dispatchPaste(new File(['x'], 'real-shot.png', { type: 'image/png' }));
+
+    // 等上传发起
+    await waitForAttachCall();
+
+    // attachBlob 的 filename 参数走时间戳格式，不再用剪贴板里的真实文件名。
+    // 这是「rename IPC 能精准替换 alt」的前提 —— 后续用户改名附件时，
+    // inbox.rename 会扫所有 ![oldAlt](attachment://<id>)，把 oldAlt 替换成
+    // 新 title；oldAlt = 时间戳形式 + i 对应 to 就能定位。
+    expect(attachBlob.mock.calls[0]![0]).toMatchObject({
+      todoId: 'todo-named',
+      mime: 'image/png',
+    });
+    const filename = attachBlob.mock.calls[0]![0]!.filename as string;
+    expect(filename).toMatch(/^pasted-\d{8}-\d{6}-1$/);
+    expect(filename).not.toContain('real-shot');
+
+    // 上传成功后 alt 也是同样格式（同一变量 baseName 拼出来的）。
+    await act(async () => {
+      resolveUpload({ ok: true, data: { id: 'att-abc' } });
+      await new Promise((r) => setTimeout(r, 0));
+      await new Promise((r) => setTimeout(r, 0));
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    const expectedAlt = filename; // 时间戳名字 = alt
+    expect(getTextarea().value).toContain(`![${expectedAlt}](attachment://att-abc)`);
+
+    // document.create({kind:'attachment', title, refId}) 也被调，title 与
+    // alt 完全一致 —— 这是 inbox.rename 同步替换 MD alt 的起点。
+    expect(documentCreate).toHaveBeenCalledWith({
+      todoId: 'todo-named',
+      kind: 'attachment',
+      title: expectedAlt,
+      refId: 'att-abc',
+    });
+  });
+
+  it('多图粘贴：每张 alt 是 pasted-YYYYMMDD-HHMMSS-i，i 递增', async () => {
+    const resolvers: Array<(value: { ok: true; data: { id: string } }) => void> = [];
+    attachBlob.mockImplementation(
+      () => new Promise((resolve) => { resolvers.push(resolve); }),
+    );
+
+    mountEditor('', 'todo-multi');
+    dispatchPaste(new File(['a'], 'a.png', { type: 'image/png' }));
+    dispatchPaste(new File(['b'], 'b.png', { type: 'image/png' }));
+
+    // 等两次 upload 发起
+    for (let i = 0; i < 50 && resolvers.length < 2; i++) {
+      await new Promise((r) => setTimeout(r, 0));
+    }
+
+    await act(async () => {
+      resolvers[0]!({ ok: true, data: { id: 'att-1' } });
+      resolvers[1]!({ ok: true, data: { id: 'att-2' } });
+      await new Promise((r) => setTimeout(r, 0));
+      await new Promise((r) => setTimeout(r, 0));
+      await new Promise((r) => setTimeout(r, 0));
+    });
+
+    // 两次 attachBlob 的 filename 分别带 -1 和 -2 后缀
+    const f1 = attachBlob.mock.calls[0]![0]!.filename as string;
+    const f2 = attachBlob.mock.calls[1]![0]!.filename as string;
+    expect(f1).toMatch(/pasted-\d{8}-\d{6}-1$/);
+    expect(f2).toMatch(/pasted-\d{8}-\d{6}-2$/);
+    expect(getTextarea().value).toContain(`![${f1}](attachment://att-1)`);
+    expect(getTextarea().value).toContain(`![${f2}](attachment://att-2)`);
+    // companion doc 各建一条
+    expect(documentCreate).toHaveBeenCalledTimes(2);
+    expect(documentCreate.mock.calls[0]![0]).toMatchObject({
+      kind: 'attachment',
+      title: f1,
+      refId: 'att-1',
+    });
+    expect(documentCreate.mock.calls[1]![0]).toMatchObject({
+      kind: 'attachment',
+      title: f2,
+      refId: 'att-2',
+    });
   });
 });

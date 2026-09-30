@@ -125,6 +125,14 @@ export interface InboxAttachBlobArgs {
 export interface InboxListArgs { todoId: string }
 export interface InboxReadArgs { id: string }
 export interface InboxRemoveArgs { id: string }
+/** Rename an attachment. Main updates the companion `task_documents.title` row
+ *  and rewrites every `![oldAlt](attachment://<id>)` in the task's progress /
+ *  note_md documents so the inline image alt text stays in sync with the new
+ *  attachment display name. Disk filename is left untouched on purpose — the
+ *  `{ulid}-{filename}.{ext}` layout keeps backup / migrate / git paths stable,
+ *  and the renderer only ever reads `inbox.read` (which strips the ulid
+ *  prefix). */
+export interface InboxRenameArgs { id: string; title: string }
 
 export interface SettingsPatchArgs {
   provider?: AIProvider;
@@ -259,6 +267,7 @@ export interface TodoListApi {
   inbox: {
     attach(args: InboxAttachArgs): Promise<IpcResponse<'inbox.attach'>>;
     attachBlob(args: InboxAttachBlobArgs): Promise<IpcResponse<'inbox.attachBlob'>>;
+    rename(args: InboxRenameArgs): Promise<IpcResponse<'inbox.rename'>>;
     list(args: InboxListArgs): Promise<IpcResponse<'inbox.list'>>;
     read(args: InboxReadArgs): Promise<IpcResponse<'inbox.read'>>;
     remove(args: InboxRemoveArgs): Promise<IpcResponse<'inbox.remove'>>;

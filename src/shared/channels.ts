@@ -64,6 +64,7 @@ const RUNTIME_CHANNEL_KEYS = [
   'drawing.setThumb',
   'inbox.attach',
   'inbox.attachBlob',
+  'inbox.rename',
   'inbox.list',
   'inbox.read',
   'inbox.remove',

@@ -331,6 +331,14 @@ export const IconWarn: React.FC<IconProps> = (p) => (
   </Svg>
 );
 
+/** Pencil — inline rename affordance on attachment list rows. */
+export const IconPencil: React.FC<IconProps> = (p) => (
+  <Svg {...p}>
+    <path d="M11.5 2.5l2 2-7.5 7.5H4v-2z" />
+    <path d="M10.5 3.5l2 2" />
+  </Svg>
+);
+
 /** Think — speech-bubble outline with three dots. Marks the AI "thinking /
  *  reasoning" surface (the 思考过程 panel). */
 export const IconThink: React.FC<IconProps> = (p) => (

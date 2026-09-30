@@ -313,7 +313,10 @@ function bootstrap(): void {
     registerContentHandlers(md, drawings, repo);
     registerDocumentHandlers(docs, resolveTaskDir, todosDir);
     registerLinkHandlers();
-    registerInboxHandlers(inbox);
+    // docs 注入给 inbox.rename —— 改附件名时要把同一个 todo 的 progress /
+    // note_md 文档里的 inline image alt 同步替换成新名字，调用走 DocumentStore
+    // 才能保留版本号 + git commit + content broadcast。
+    registerInboxHandlers(inbox, docs, resolveTaskDir);
     registerTagHandlers(tagRepo);
 
     // attachment://<id> → serve the inbox_attachments file bytes. Registered
@@ -770,7 +773,11 @@ function createMainWindow(): BrowserWindow {
   return win;
 }
 
-function registerInboxHandlers(inbox: InboxStore): void {
+function registerInboxHandlers(
+  inbox: InboxStore,
+  docs: DocumentStore,
+  resolveTaskDir: (id: string) => string,
+): void {
   register('inbox.attach', async (_e, req) => {
     try {
       return okResult(inbox.attach(req.id, req.filePath, req.mime));
@@ -788,6 +795,38 @@ function registerInboxHandlers(inbox: InboxStore): void {
     }
   });
 
+  // Rename an attachment: update companion task_documents.title + sweep
+  // progress/note_md inline image alts + best-effort disk rename. The sweep
+  // routes through DocumentStore.write so version bump + git commit +
+  // content broadcast all happen for free.
+  register('inbox.rename', async (_e, req) => {
+    try {
+      const result = inbox.rename(req.id, req.title, (docId, content) => {
+        const existing = docs.read(docId);
+        docs.write(docId, content, existing.version);
+        // Mirror to disk so git history + file explorer see the change too.
+        const doc = docs.get(docId);
+        if (doc && (doc.kind === 'progress' || doc.kind === 'note_md')) {
+          try {
+            docs.writeToFile(
+              resolveTaskDir(doc.todoId),
+              doc.kind,
+              doc.title ?? '',
+              content,
+            );
+          } catch (err) {
+            logger.warn(`inbox.rename: doc ${docId} disk mirror failed: ${(err as Error).message}`);
+          }
+        }
+        broadcastDataChanged('content');
+      });
+      broadcastDataChanged('content');
+      return okResult(result);
+    } catch (err) {
+      return failResult('inbox_rename_failed', (err as Error).message);
+    }
+  });
+
   register('inbox.list', (_e, req) => {
     try {
       return Promise.resolve(okResult(inbox.list(req.todoId)));
@@ -802,7 +841,7 @@ function registerInboxHandlers(inbox: InboxStore): void {
     try {
       return Promise.resolve(okResult(inbox.read(req.id)));
     } catch (err) {
-      return Promise.resolve(failResult('inbox_read_failed', (err as Error).message));
+      return failResult('inbox_read_failed', (err as Error).message);
     }
   });
 

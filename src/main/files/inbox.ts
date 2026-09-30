@@ -17,13 +17,16 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  renameSync,
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { basename } from 'node:path';
+import { basename, dirname } from 'node:path';
+import type { ULID } from '../../shared/todo-types';
 import { newId } from '../db/schema';
+import { logger } from '../logger';
 import { mimeExt, sanitizeName } from '../util/mime';
-import type { InboxAttachment, ULID } from '../../shared/todo-types';
+import type { InboxAttachment } from '../../shared/todo-types';
 import { attachmentFile } from './paths';
 
 interface AttachRow {
@@ -167,5 +170,109 @@ export class InboxStore {
       }
     }
     this.db.prepare('DELETE FROM inbox_attachments WHERE id = ?').run(id);
+  }
+
+  /**
+   * Rename an attachment. Five things happen in order:
+   *
+   *   1. Locate the inbox_attachments row (throws if missing).
+   *   2. Rename the on-disk file from `{ulid}-{oldName}.{ext}` to
+   *      `{ulid}-{newName}.{ext}`. The ulid stays at the front so the file
+   *      is still findable by id (InboxStore.read strips it on read-back);
+   *      only the human-facing portion of the filename changes.
+   *   3. Update `inbox_attachments.file_path` to the new absolute path so the
+   *      `attachment://<id>` protocol handler keeps serving bytes from the
+   *      same id.
+   *   4. Update the companion `task_documents.title` row (kind='attachment',
+   *      ref_id=this id). This is the canonical display name shown in the
+   *      附件 section.
+   *   5. Sweep every progress / note_md document belonging to this task and
+   *      replace `![oldAlt](attachment://<id>)` with
+   *      `![newTitle](attachment://<id>)` so inline images stay in sync. The
+   *      sweep writes each affected doc via the injected callback so the
+   *      caller (DocumentStore) owns the document.write + content broadcast.
+   *
+   * The disk rename is best-effort: if it fails (e.g. cross-platform path
+   * collision, read-only FS) the DB and task_documents still update — the
+   * user-visible name change survives even when the file basename can't be
+   * touched, and the protocol handler still streams from the new path on the
+   * next read-back attempt.
+   */
+  rename(
+    id: ULID,
+    newName: string,
+    /** Called once per progress / note_md doc whose content was rewritten.
+     *  Receives the doc id + the new full content; throws to abort the
+     *  rename if a write fails. */
+    onRewriteDoc: (docId: ULID, content: string) => void,
+  ): InboxAttachment {
+    const trimmed = newName.trim();
+    if (!trimmed) throw new Error('attachment_name_empty');
+    const row = this.get(id);
+    if (!row) throw new Error(`attachment_not_found: ${id}`);
+
+    // --- (2) rename the on-disk file, preserving the ulid prefix ---
+    const oldBase = basename(row.filePath);
+    const ext = oldBase.includes('.') ? oldBase.slice(oldBase.lastIndexOf('.')) : '';
+    const sanitized = sanitizeName(trimmed) || 'attachment';
+    const newBase = `${id}-${sanitized}${ext}`;
+    const newPath = attachmentFile(dirname(row.filePath), newBase);
+    if (newPath !== row.filePath) {
+      try {
+        if (existsSync(row.filePath)) renameSync(row.filePath, newPath);
+        else logger.warn(`inbox.rename: source missing on disk, skip fs rename: ${row.filePath}`);
+      } catch (err) {
+        logger.warn(`inbox.rename: filesystem rename failed, keeping DB update: ${(err as Error).message}`);
+      }
+    }
+    const now = Date.now();
+
+    // --- (3) update inbox_attachments.file_path in a single SQL ---
+    this.db
+      .prepare('UPDATE inbox_attachments SET file_path = ? WHERE id = ?')
+      .run(newPath, id);
+
+    // --- (4) update companion task_documents.title (if any) ---
+    this.db
+      .prepare(
+        `UPDATE task_documents SET title = ?, updated_at = ?
+         WHERE kind = 'attachment' AND ref_id = ?`,
+      )
+      .run(trimmed, now, id);
+
+    // --- (5) sweep progress / note_md docs, rewrite inline image alts ---
+    const docs = this.db
+      .prepare<[ULID], { id: string; content: string | null }>(
+        `SELECT d.id AS id, v.content AS content
+         FROM task_documents d
+         LEFT JOIN document_versions v ON v.id = (
+           SELECT MAX(id) FROM document_versions WHERE document_id = d.id
+         )
+         WHERE d.todo_id = ? AND d.kind IN ('progress', 'note_md')`,
+      )
+      .all(row.todoId);
+    // 用一个保守的占位替代原 alt：先把命中区间整体替换成 `\0ULID<i>...<br>`，
+    // 全部替换完成后再把占位换回新 title —— 这样新 title 里出现 `[` `]` `(` `)`
+    // 等 markdown 元字符时不会二次破坏语法。
+    const placeholder = `\x00ATT${id}\x00`;
+    const re = new RegExp(`!\\[([^\\]]*)\\]\\(attachment://${id}\\)`, 'g');
+    let touched = 0;
+    for (const doc of docs) {
+      const original = doc.content ?? '';
+      if (!re.test(original)) {
+        re.lastIndex = 0;
+        continue;
+      }
+      re.lastIndex = 0;
+      const replaced = original.replace(re, `![${placeholder}](attachment://${id})`);
+      const finalContent = replaced.replaceAll(placeholder, trimmed);
+      if (finalContent === original) continue;
+      onRewriteDoc(doc.id, finalContent);
+      touched++;
+    }
+    if (touched > 0) {
+      logger.info(`inbox.rename: rewrote ${touched} doc(s) for attachment ${id}`);
+    }
+    return { ...row, filePath: newPath };
   }
 }

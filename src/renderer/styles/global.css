@@ -3899,16 +3899,18 @@ a:hover {
   padding: 0;
 }
 
-/* ===== 「今日待办 / 其他任务」双区域 ===== */
+/* ===== 「今日待办 / 非今日任务 / 其他任务」三区域 ===== */
 
 .planned-section,
-.other-section {
+.other-section,
+.non-today-section {
   display: flex;
   flex-direction: column;
   padding: 0 0 var(--space-md);
 }
 .planned-section__header,
-.other-section__header {
+.other-section__header,
+.non-today-section__header {
   display: flex;
   align-items: center;
   gap: var(--space-xs);
@@ -3926,11 +3928,13 @@ a:hover {
   transition: background-color .12s;
 }
 .planned-section__header:hover,
-.other-section__header:hover {
+.other-section__header:hover,
+.non-today-section__header:hover {
   background: var(--bg-hover);
 }
 .planned-section__header:focus-visible,
-.other-section__header:focus-visible {
+.other-section__header:focus-visible,
+.non-today-section__header:focus-visible {
   outline: 2px solid var(--accent-primary);
   outline-offset: -2px;
 }
@@ -3942,7 +3946,8 @@ a:hover {
 }
 /* VSCode 风格：折叠时 chevron 旋转 -90°（指右）。展开时正向（指下）。 */
 .planned-section__header[aria-expanded="false"] .section-toggle__chevron,
-.other-section__header[aria-expanded="false"] .section-toggle__chevron {
+.other-section__header[aria-expanded="false"] .section-toggle__chevron,
+.non-today-section__header[aria-expanded="false"] .section-toggle__chevron {
   transform: rotate(-90deg);
 }
 /* 折叠容器 —— grid-template-rows: 0fr / 1fr 的现代动画技巧，
@@ -3966,7 +3971,8 @@ a:hover {
   }
 }
 .planned-section__title,
-.other-section__title {
+.other-section__title,
+.non-today-section__title {
   margin: 0;
   font-size: var(--font-sm);
   font-weight: 600;
@@ -3975,13 +3981,15 @@ a:hover {
   text-transform: uppercase;
 }
 .planned-section__count,
-.other-section__count {
+.other-section__count,
+.non-today-section__count {
   font-size: var(--font-xs);
   color: var(--fg-muted);
   font-variant-numeric: tabular-nums;
 }
 .planned-section__list,
-.other-section__list {
+.other-section__list,
+.non-today-section__list {
   list-style: none;
   margin: 0;
   padding: 0;
@@ -4523,7 +4531,8 @@ a:hover {
 }
 .attachments-view__name,
 .attachments-view__open,
-.attachments-view__remove {
+.attachments-view__remove,
+.attachments-view__rename {
   background: none;
   border: none;
   padding: 0;
@@ -4540,14 +4549,48 @@ a:hover {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* Inline rename: take over the same slot as the name button so the chip
+   doesn't jump width while the user types. Looks like a compact text input
+   that matches the chip's pill shape. */
+.attachments-view__name-input {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid var(--accent-primary);
+  border-radius: 999px;
+  padding: 1px 8px;
+  font: inherit;
+  background: var(--bg-overlay, var(--bg-surface));
+  color: var(--fg-primary);
+  outline: none;
+}
+.attachments-view__name-input:focus {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 30%, transparent);
+}
+.attachments-view__rename {
+  color: var(--fg-secondary);
+  display: inline-flex;
+  align-items: center;
+  opacity: 0;
+  transition: opacity 80ms ease;
+}
+.attachments-view__item:hover .attachments-view__rename,
+.attachments-view__rename:focus-visible {
+  opacity: 1;
+}
 .attachments-view__open,
 .attachments-view__remove {
   color: var(--fg-secondary);
 }
 .attachments-view__open:hover,
 .attachments-view__remove:hover,
-.attachments-view__name:hover {
+.attachments-view__name:hover,
+.attachments-view__rename:hover {
   color: var(--accent-primary);
+}
+.attachments-view__remove:disabled,
+.attachments-view__rename:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 .attachments-view__add {
   background: none;

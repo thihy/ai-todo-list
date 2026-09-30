@@ -239,6 +239,11 @@ export const MarkdownEditor: React.FC<{
   useEffect(() => {
     mdRef.current = md;
   }, [md]);
+  // 全局 paste 计数器 —— 单张 paste 内每张图 i=counter++。跨多次 paste（哪怕
+  // 同毫秒、哪怕同一 onPaste 调用内多张）单调递增，保证 filename / alt /
+  // 磁盘文件名 `pasted-{ts}-{i}` 永不撞。ulid 已经写在前面，撞了 ulid 也
+  // 不会真覆盖别人的文件，但 alt 撞名会让「附件」面板显示重名 —— 麻烦。
+  const pasteCounterRef = useRef<number>(0);
   // Apply an edit and restore the textarea's selection on the next paint so
   // the user sees it where the transform put it.
   const applyEdit = useCallback((next: EditResult): void => {
@@ -452,9 +457,14 @@ export const MarkdownEditor: React.FC<{
 
     // 给每张图一个 stable placeholder key（"paste-<timestamp>-<index>"），
     // 上传完成后用这个 key 精准替换。同一秒内多张也安全 —— index 不同。
+    //
+    // 这里 i 走 pasteCounterRef —— 跨 onPaste 调用单调递增，避免连续两次
+    // 粘贴（同毫秒）都生成 `pasted-{ts}-1` 重名。同一 onPaste 内的多张图
+    // 也按 counter 自增拿到不同 i。
     const ts = Date.now();
+    const indices: number[] = images.map(() => pasteCounterRef.current++);
     const placeholders: string[] = [];
-    for (let i = 0; i < images.length; i++) {
+    for (const i of indices) {
       const key = `paste-${ts}-${i}`;
       const alt = `pasted-${formatStamp(ts)}-${i + 1}`;
       placeholders.push(`![${alt}](attachment://pending/${key})`);
@@ -469,21 +479,42 @@ export const MarkdownEditor: React.FC<{
     // 状态 —— 上传是 fire-and-forget，等 promise resolve 时闭包里的 md 早已
     // 不是最新值（中间还可能有用户继续打字触发的 setMd，或前面那张图的
     // replaceRange 已经替换完）。读 mdRef 才是用户当前看到的正文。
-    images.forEach((file, i) => {
+    images.forEach((file, idx) => {
+      const i = indices[idx]!;
       const key = `paste-${ts}-${i}`;
-      const placeholder = `![${`pasted-${formatStamp(ts)}-${i + 1}`}](attachment://pending/${key})`;
+      const stamp = formatStamp(ts);
+      // 文件名走「pasted-YYYYMMDD-HHMMSS-i」格式 —— 不用剪贴板里读不到
+      // 的真实图像标题，确定性、可读。InboxStore.attachBlob 会把它拼到
+      // `{ulid}-{filename}.{ext}` 里；ulid 前缀是 InboxStore.read 时剥掉的
+      // 部分，所以渲染端 / MD alt 看到的名字就是 `pasted-...-<i>.<ext>`。
+      // 后缀 `-<i>` 用来在同秒多图时避免重名（同一秒两张都 paste 会撞）。
+      const baseName = `pasted-${stamp}-${i + 1}`;
+      const placeholder = `![${baseName}](attachment://pending/${key})`;
       void (async () => {
         try {
           const dataUrl = await blobToDataUrl(file);
           const res = await window.todoList.inbox.attachBlob({
             todoId,
             dataUrl,
-            filename: file.name || 'pasted.png',
+            filename: baseName,
             mime: file.type,
           });
           if (!res.ok) throw new Error(res.message ?? res.code ?? '上传失败');
           const id = res.data.id;
-          replaceRange(placeholder, `![${`pasted-${formatStamp(ts)}-${i + 1}`}](attachment://${id})`);
+          // 同步创建 companion task_document 行（kind='attachment'）。
+          // title 一开始就设为 baseName —— 这样后续用户从「附件」面板
+          // 改名（走 inbox.rename）时，main 端扫所有 progress/note_md 文档
+          // content、把 `![oldAlt](attachment://<id>)` 里的 oldAlt 替换成
+          // 新 title 才有意义：oldAlt 一开始就是 baseName，新旧映射干净。
+          // AI 也能按 document id 引用这个附件（与 TodoEditorPane 附件 section
+          // 上传文件的语义一致 —— 那条路径已经这么做了）。
+          void window.todoList.document.create({
+            todoId,
+            kind: 'attachment',
+            title: baseName,
+            refId: id,
+          });
+          replaceRange(placeholder, `![${baseName}](attachment://${id})`);
         } catch (err) {
           // 落盘失败：把占位行换成一行可见错误提示，方便用户定位是哪张坏了。
           const msg = err instanceof Error ? err.message : String(err);

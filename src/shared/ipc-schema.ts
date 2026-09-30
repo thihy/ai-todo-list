@@ -167,6 +167,11 @@ export interface InboxAttachBlobReq {
 export interface InboxListReq { todoId: ULID }
 export interface InboxReadRes { dataUrl: string; mime: string; filename: string }
 export interface InboxIdReq { id: ULID }
+/** Renderer -> main: rename an inbox attachment. Updates the companion
+ *  `task_documents.title` row and rewrites every `![oldAlt](attachment://<id>)`
+ *  in that task's progress / note_md documents so the inline image label stays
+ *  in sync with the attachment's display name. */
+export interface InboxRenameReq { id: ULID; title: string }
 
 // ----- ai.* -----
 
@@ -587,6 +592,7 @@ export interface IpcRegistry {
 
   'inbox.attach': IpcChannel<InboxAttachReq, IpcResult<InboxAttachment>>;
   'inbox.attachBlob': IpcChannel<InboxAttachBlobReq, IpcResult<InboxAttachment>>;
+  'inbox.rename': IpcChannel<InboxRenameReq, IpcResult<InboxAttachment>>;
   'inbox.list': IpcChannel<InboxListReq, IpcResult<InboxAttachment[]>>;
   'inbox.read': IpcChannel<InboxIdReq, IpcResult<InboxReadRes>>;
   'inbox.remove': IpcChannel<InboxIdReq, IpcResult<null>>;

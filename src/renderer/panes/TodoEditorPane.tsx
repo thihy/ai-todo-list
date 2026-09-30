@@ -36,7 +36,7 @@ import { StatusSelect } from '../components/StatusSelect';
 import { ProgressInline, ProgressTimeline } from '../components/ProgressView';
 import TodayGlyph from '../components/TodayGlyph';
 import { todayDateKey } from '../components/PlanGuideModal';
-import { IconAttach, IconExternal, IconLink, IconPlus, IconTrash } from '../components/icons';
+import { IconAttach, IconExternal, IconLink, IconPencil, IconPlus, IconTrash } from '../components/icons';
 import type { InboxAttachment, Priority, TodoStatus, TaskDocument } from '../../shared/todo-types';
 
 /** 链接 section — manages link-kind documents in their own addressable region
@@ -301,6 +301,51 @@ const AttachmentsView: React.FC<{ todoId: string }> = ({ todoId }) => {
     await refreshDocs();
   }, [docByRef, refresh, refreshDocs]);
 
+  // 附件名 inline 编辑：
+  //   - 默认展示文件名（点击触发 openAttachment：图片预览 / 非图片下载）
+  //   - 双击或点铅笔按钮 → 切到 input；Enter 提交，Esc 取消，失焦也提交
+  //   - 提交走 inbox.rename —— main 端会同步 task_documents.title + 扫
+  //     同一 task 的所有 progress/note_md 文档替换 inline image alt。
+  //     MarkdownEditor 那边靠 'content' broadcast 自动重读。
+  //   - 失败时回滚 input 文本并 toast。
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingDraft, setEditingDraft] = useState('');
+  const [renaming, setRenaming] = useState(false);
+
+  const startEdit = useCallback((a: InboxAttachment): void => {
+    const doc = docByRef.get(a.id);
+    setEditingId(a.id);
+    setEditingDraft(doc?.title ?? '');
+  }, [docByRef]);
+
+  const cancelEdit = useCallback((): void => {
+    setEditingId(null);
+    setEditingDraft('');
+  }, []);
+
+  const commitEdit = useCallback(async (a: InboxAttachment): Promise<void> => {
+    const next = editingDraft.trim();
+    const doc = docByRef.get(a.id);
+    const current = doc?.title ?? '';
+    if (!next || next === current) {
+      cancelEdit();
+      return;
+    }
+    setRenaming(true);
+    try {
+      const res = await window.todoList.inbox.rename({ id: a.id, title: next });
+      if (!res.ok) throw new Error(res.message ?? res.code ?? '改名失败');
+      cancelEdit();
+      // content 广播会触发 useAttachments/useDocuments 重读，但保险起见
+      // 显式调一下 —— 这里写时序是 rename 已经成功，广播已经发出。
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      window.alert(`重命名失败：${msg}`);
+    } finally {
+      setRenaming(false);
+    }
+  }, [editingDraft, docByRef, cancelEdit]);
+
   // 附件名/预览链接原先用 <a href="attachment://<id>">，点击会让整个
   // BrowserWindow 导航到该协议 URL——Chromium 以黑底渲染裸图片字节、且无
   // 返回按钮。这里拦截点击，图片走 in-app lightbox，非图片触发下载。
@@ -329,17 +374,51 @@ const AttachmentsView: React.FC<{ todoId: string }> = ({ todoId }) => {
           // title 属性挂详细数据：原始路径 + mime（hover 才展开，不挤占 UI）
           const detail = `${a.filePath}\n${a.mime}`;
           const label = isImage ? '预览' : '下载';
+          const isEditing = editingId === a.id;
           return (
             <li key={a.id} className="attachments-view__item" title={detail}>
               <IconAttach size={14} />
-              <button
-                type="button"
-                className="attachments-view__name"
-                title={title}
-                onClick={() => { void openAttachment(a); }}
-              >
-                {title}
-              </button>
+              {isEditing ? (
+                <input
+                  className="attachments-view__name-input"
+                  value={editingDraft}
+                  autoFocus
+                  disabled={renaming}
+                  aria-label="重命名附件"
+                  onChange={(e) => setEditingDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      void commitEdit(a);
+                    } else if (e.key === 'Escape') {
+                      e.preventDefault();
+                      cancelEdit();
+                    }
+                  }}
+                  onBlur={() => { void commitEdit(a); }}
+                />
+              ) : (
+                <button
+                  type="button"
+                  className="attachments-view__name"
+                  title={title}
+                  onClick={() => { void openAttachment(a); }}
+                  onDoubleClick={() => { startEdit(a); }}
+                >
+                  {title}
+                </button>
+              )}
+              {!isEditing && (
+                <button
+                  type="button"
+                  className="attachments-view__rename"
+                  title="重命名附件"
+                  aria-label="重命名附件"
+                  onClick={() => { startEdit(a); }}
+                >
+                  <IconPencil size={12} />
+                </button>
+              )}
               <button
                 type="button"
                 className="attachments-view__open"
@@ -354,6 +433,7 @@ const AttachmentsView: React.FC<{ todoId: string }> = ({ todoId }) => {
                 className="attachments-view__remove"
                 title="删除附件"
                 aria-label="删除附件"
+                disabled={isEditing}
                 onClick={() => { void removeAttachment(a); }}
               >
                 <IconTrash size={12} />
