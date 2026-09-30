@@ -1,4 +1,4 @@
-/* Todo List — light theme. Neutral graphite surfaces, emerald accent
+﻿/* Todo List 鈥?light theme. Neutral graphite surfaces, emerald accent
  * (deliberately non-blue). WCAG 2.2 AA contrast ratios computed, not estimated.
  * Frameless title bar: the Topbar IS the title bar; native caption buttons are
  * themed via titleBarOverlay and the topbar reserves space with env() insets.
@@ -6,10 +6,10 @@
 
 @import url('https://rsms.me/inter/inter.css');
 
-/* DSH design platform — vendored verbatim from
+/* DSH design platform 鈥?vendored verbatim from
  * deepseek-harness/packages/client/ui-theme/src/styles/. These sheets declare
  * the `--dsw-static-*` palette and the `--dsw-alias-*` semantic tokens every
- * DSH primitive (ToolRow, DisclosureRow, DiffBlock, MarkdownText, …) is drawn
+ * DSH primitive (ToolRow, DisclosureRow, DiffBlock, MarkdownText, 鈥? is drawn
  * with. Without them the vendored components resolve every var() to the
  * guaranteed-invalid value and render unstyled.
  *
@@ -24,7 +24,7 @@
 @import './dsh/shiki.css';
 
 :root {
-  /* Surface — light neutral graphite */
+  /* Surface 鈥?light neutral graphite */
   --bg-canvas: #FFFFFF;
   --bg-surface: #F6F7F9;
   --bg-surface-elev: #ECEEF1;
@@ -53,11 +53,11 @@
   --fg-muted: #636970; /* 5.0:1 on canvas, 4.6:1 on surface */
   --fg-on-accent: #FFFFFF; /* 5.5:1 on accent-primary */
 
-  /* Accents — emerald, non-blue */
+  /* Accents 鈥?emerald, non-blue */
   --accent-primary: #047857; /* 5.5:1 on canvas; white text 5.5:1 */
   --accent-primary-strong: #065F46;
   --accent-primary-soft: rgba(4, 120, 87, 0.14); /* folder fills, soft tints */
-  --accent-bright: #10B981; /* graphical only — icons, glyphs */
+  --accent-bright: #10B981; /* graphical only 鈥?icons, glyphs */
   --accent-success: #047857;
   --accent-warn: #B45309; /* 5.0:1 on canvas */
   --accent-danger: #DC2626; /* 4.8:1 on canvas */
@@ -121,7 +121,7 @@
 
 /* The `--shiki-*` syntax palette that DSH's CodeBlock emits through
    `createCssVariablesTheme` now comes from the vendored theme sheet
-   (styles/dsh/shiki.css) — see the @import block at the top of this file. */
+   (styles/dsh/shiki.css) 鈥?see the @import block at the top of this file. */
 
 * {
   box-sizing: border-box;
@@ -275,19 +275,26 @@ a:hover {
 
 /* ===== Topbar (also the frameless title bar) ===== */
 
+/* The topbar and the task-list panel's brand header (`.task-list-panel__brand`) now share
+ * the same visual band 鈥?same surface, no seam, no border between them.
+ * The topbar is intentionally *transparent* and has no bottom border; the
+ * sidebar header directly underneath carries the surface color and the
+ * left/right padding that would otherwise have been split across both
+ * elements. Net effect: a single light band spanning the top of the
+ * window 鈥?Codex-style "fused chrome". */
 .topbar {
   height: var(--topbar-h);
   flex: none;
   display: flex;
   align-items: center;
-  gap: var(--space-lg);
+  gap: var(--space-sm);
   /* Chrome band — a soft graphite gray, deliberately only a few shades
    * darker than the task-list body (`--bg-surface: #F6F7F9`). The native
    * Window Controls Overlay (caption buttons) is drawn by Chromium at
    * the same band, so its `titleBarOverlay.color` in main/index.ts must
    * match --chrome-bg exactly; otherwise a brighter/darker strip bleeds
-   * above the topbar and breaks the "fused chrome" seam. The bottom
-   * border drops so the sidebar header underneath sits flush. */
+   * above the topbar and breaks the "fused chrome" seam.
+   * No bottom border — the sidebar header underneath sits flush. */
   background: var(--chrome-bg);
   border-bottom: 0;
   -webkit-app-region: drag;
@@ -295,75 +302,38 @@ a:hover {
    * When WCO is active, env(titlebar-area-*) describe the drawable region;
    * the right gap equals 100% - (area-x + area-width). When inactive the
    * fallbacks collapse the calc to 0, leaving just the base padding. */
-  padding-left: max(var(--space-lg), env(titlebar-area-x, 0px));
+  padding-left: max(var(--space-sm), env(titlebar-area-x, 0px));
   padding-right: max(
-    var(--space-lg),
+    var(--space-sm),
     calc(100% - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100%))
   );
 }
 
+/* Brand badge — logo + product name, purely visual (no button, no
+ * affordance). Sits at the left of the topbar as the "app identity".
+ * Kept understated: 14px / 600 keeps the app name legible without
+ * overpowering the menu row. The whole topbar remains draggable via
+ * -webkit-app-region on the header itself, so no per-element override
+ * needed. */
 .topbar__brand {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: var(--space-sm);
-  -webkit-app-region: no-drag;
+  gap: var(--space-xs);
+  height: 32px;
+  padding: 0 var(--space-sm);
+  color: var(--fg-primary);
 }
-
 .topbar__logo {
   flex: none;
+  border-radius: 6px;
 }
-
 .topbar__name {
-  color: var(--fg-primary);
-  font-size: var(--font-lg);
-  font-weight: 650;
-  letter-spacing: -0.01em;
-}
-
-.topbar__search {
-  flex: 1;
-  max-width: 460px;
-  position: relative;
-  display: flex;
-  align-items: center;
-  -webkit-app-region: no-drag;
-}
-
-.topbar__search-icon {
-  position: absolute;
-  left: var(--space-md);
-  color: var(--fg-muted);
-  pointer-events: none;
-}
-
-.topbar__search input {
-  width: 100%;
-  padding-left: 38px;
-  padding-right: 56px;
-  height: 30px;
-  background: var(--bg-input);
-}
-
-.topbar__kbd {
-  position: absolute;
-  right: 8px;
-  top: 50%;
-  transform: translateY(-50%);
-  font-size: var(--font-xs);
-  color: var(--fg-muted);
-  border: 1px solid var(--border-default);
-  background: var(--bg-surface);
-  padding: 1px 6px;
-  border-radius: var(--radius-sm);
-  pointer-events: none;
-}
-
-.topbar__actions {
-  display: flex;
-  align-items: center;
-  gap: var(--space-sm);
-  margin-left: auto;
-  -webkit-app-region: no-drag;
+  font-size: var(--font-md);
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Title-bar tools (no-drag) + drag spacer. Native min/max/close sit in the
@@ -396,12 +366,39 @@ a:hover {
   border-radius: 6px;
   cursor: default;
   transition: background 0.12s ease, color 0.12s ease;
+  -webkit-app-region: no-drag;
 }
 .topbar__menu-item:hover {
-  background: var(--surface-hover, rgba(0, 0, 0, 0.06));
+  background: var(--chrome-hover);
   color: var(--text-primary);
 }
 .topbar__menu-item:focus-visible {
+  outline: 2px solid var(--accent, #10b981);
+  outline-offset: -2px;
+}
+/* Search button re-introduced as a single round icon button next to the
+ * menu row. Sits at the topbar's left edge after the menu, mirrors the
+ * Codex search affordance without the old full-width search input. */
+.topbar__search {
+  width: 28px;
+  height: 28px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--fg-secondary);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.topbar__search:hover {
+  background: var(--chrome-hover);
+  color: var(--text-primary);
+}
+.topbar__search:focus-visible {
   outline: 2px solid var(--accent, #10b981);
   outline-offset: -2px;
 }
@@ -543,6 +540,14 @@ a:hover {
   background: var(--bg-hover);
   color: var(--accent-primary);
 }
+/* Topbar lives on a soft-gray surface (`--chrome-bg`) that's a shade
+ * darker than --bg-surface; the regular --bg-hover (a faint emerald
+ * wash) still reads cleanly, but the dark-bg-hover fallback would
+ * look murky against chrome-bg. Re-point the hover tint to the
+ * chrome-specific wash so the icon hover affordance stays consistent. */
+.topbar .icon-btn:hover {
+  background: var(--chrome-hover);
+}
 
 .btn-toggle-ai {
   display: inline-flex;
@@ -576,15 +581,15 @@ a:hover {
   color: var(--fg-on-accent);
 }
 
-/* ===== Activity Bar ===== */
+/* ===== Sidebar (left nav rail) ===== */
 
-/* VSCode Activity Bar 风格：~48px 宽，只显示图标，点击切换主视图。
-   高度填满 .app-body（flex: 1）—— 比 Sidebar 的 .sidebar__spacer 自适应
-   简单很多，因为这里没有底部设置入口需要顶到底。
-   背景用 bg-surface-elev（更深浅灰），与右侧主区 bg-canvas 形成层次
-   —— Activity Bar 是 "chrome"，主区是 "内容"，视觉权重分开。 */
+/* VSCode Activity Bar 椋庢牸锛殈48px 瀹斤紝鍙樉绀哄浘鏍囷紝鐐瑰嚮鍒囨崲涓昏鍥俱€?
+   楂樺害濉弧 .app-body锛坒lex: 1锛夆€斺€?姣?Sidebar 鐨?.sidebar__spacer 鑷€傚簲
+   绠€鍗曞緢澶氾紝鍥犱负杩欓噷娌℃湁搴曢儴璁剧疆鍏ュ彛闇€瑕侀《鍒板簳銆?
+   鑳屾櫙鐢?bg-surface-elev锛堟洿娣辨祬鐏帮級锛屼笌鍙充晶涓诲尯 bg-canvas 褰㈡垚灞傛
+   鈥斺€?Activity Bar 鏄?"chrome"锛屼富鍖烘槸 "鍐呭"锛岃瑙夋潈閲嶅垎寮€銆?*/
 
-.activity-bar {
+.sidebar {
   width: 48px;
   flex: none;
   display: flex;
@@ -601,7 +606,7 @@ a:hover {
   gap: 4px;
 }
 
-.activity-bar__item {
+.sidebar__item {
   width: 36px;
   height: 36px;
   display: flex;
@@ -611,7 +616,7 @@ a:hover {
   background: transparent;
   border-radius: 8px;
   /* 默认色 = fg-secondary（深灰），比 fg-muted 对比度高，让图标"看得到"——
-     fg-muted 偏灰白，在浅灰背景上几乎消失。 */
+     fg-muted 偏灰白，在浅灰背景上几乎消失。*/
   color: var(--fg-secondary);
   cursor: pointer;
   position: relative;
@@ -619,24 +624,24 @@ a:hover {
   transition: background-color .12s ease, color .12s ease;
 }
 
-.activity-bar__item:hover {
-  background: var(--bg-hover);
+.sidebar__item:hover {
+  background: var(--chrome-hover);
   color: var(--fg-primary);
 }
 
-.activity-bar__item:focus-visible {
+.sidebar__item:focus-visible {
   outline: 2px solid var(--accent-primary);
   outline-offset: -2px;
 }
 
-.activity-bar__item.is-active {
+.sidebar__item.is-active {
   color: var(--accent-primary);
   background: var(--bg-active);
 }
 
 /* VSCode 风格：选中态在图标左侧加一根 accent 竖条，作为位置指示器。
-   用 ::before 绝对定位，避免影响 item 的布局尺寸。 */
-.activity-bar__item.is-active::before {
+   用 ::before 绝对定位，避免影响 item 的布局尺寸。*/
+.sidebar__item.is-active::before {
   content: '';
   position: absolute;
   left: -10px;
@@ -648,87 +653,116 @@ a:hover {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .activity-bar__item {
+  .sidebar__item {
     transition: none;
   }
 }
 
-/* ===== Sidebar ===== */
-
-.sidebar {
-  width: var(--sidebar-w);
-  flex: none;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: var(--space-md) var(--space-sm);
-  background: var(--bg-surface);
-  border-right: 1px solid var(--border-default);
-  overflow: auto;
-}
-
-.sidebar__section {
-  color: var(--fg-muted);
-  font-size: var(--font-xs);
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  margin: var(--space-md) var(--space-sm) var(--space-xs);
-}
-
-.sidebar__empty {
-  color: var(--fg-muted);
-  font-size: var(--font-sm);
-  padding: var(--space-xs) var(--space-md);
-}
-
+/* Spacer — pushes the user-avatar slot (.sidebar__avatar-slot) to the
+ * bottom of the rail. Sits as the LAST flex child before the avatar so
+ * flex:1 absorbs all remaining vertical space, regardless of how many
+ * nav items live above it. */
 .sidebar__spacer {
   flex: 1;
 }
 
-.nav-item {
+/* Avatar slot at the rail's bottom — host of the UserMenu. The popup
+ * anchored inside opens to the RIGHT of the rail (the .user-menu__popup
+ * uses right:0 relative to this slot), so the menu items themselves are
+ * always visible against the wider master-detail area rather than
+ * clipped by the 48px rail edge. */
+.sidebar__avatar-slot {
+  flex: none;
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  padding-bottom: var(--space-xs);
+}
+
+/* ===== Task list panel (chrome wrapper around TodoListPane) ===== */
+
+/* The TaskListPanel wrapper owns the left master column's chrome bands:
+ *   - .task-list-panel__brand  (top: notification / search / collapse tools,
+ *     fused with the Topbar above into one continuous chrome band)
+ *   - .task-list-panel__body   (middle: the TodoListPane — add-task header +
+ *     scrollable task list — owns its own internal chrome)
+ *   - .task-list-panel__footer (REMOVED — avatar moved to Sidebar rail)
+ *
+ * The wrapper itself carries NO content styling; it just sets the column
+ * width, the border against the master-detail area, and the flex scaffold
+ * for the three chrome bands. Width matches the old master-detail list
+ * width (var(--sidebar-w) === 220px in the legacy nav config but the
+ * current layout overrides this via inline style on the inner pane — see
+ * TodoListPane's taskListStyle(). */
+.task-list-panel {
+  width: 340px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--bg-surface);
+  border-right: 1px solid var(--border-default);
+  overflow: hidden;
+}
+
+/* Top chrome band — sits flush against the Topbar above (same --chrome-bg,
+ * no seam between them). Padding matches the Topbar's vertical rhythm so
+ * the two read as one band when stacked. The brand mark + product name
+ * live in the Topbar; this row only hosts list-scoped affordances
+ * (notification / search / collapse). The bottom border separates the
+ * tools row from the add-task row inside the body. */
+.task-list-panel__brand {
+  -webkit-app-region: no-drag;
+  flex: none;
   display: flex;
   align-items: center;
   gap: var(--space-sm);
-  width: 100%;
-  text-align: left;
-  padding: 6px var(--space-sm);
-  border-radius: var(--radius-md);
-  color: var(--fg-secondary);
-  font-size: var(--font-md);
-  font-weight: 500;
-  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+  padding: 0 var(--space-sm);
+  min-height: var(--topbar-h);
+  background: var(--chrome-bg, var(--bg-surface));
+  border-bottom: 1px solid var(--chrome-border, var(--border-subtle));
 }
-.nav-item:hover {
-  background: var(--bg-hover);
+
+.task-list-panel__brand-tools {
+  -webkit-app-region: no-drag;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+}
+
+.task-list-panel__brand-tool {
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--fg-secondary);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.task-list-panel__brand-tool:hover {
+  background: var(--chrome-hover, rgba(0, 0, 0, 0.06));
   color: var(--fg-primary);
 }
-.nav-item.is-active {
-  background: var(--bg-active);
-  color: var(--accent-primary);
-  font-weight: 600;
+.task-list-panel__brand-tool:focus-visible {
+  outline: 2px solid var(--accent, #10b981);
+  outline-offset: -2px;
 }
-.nav-icon {
-  flex: none;
-  color: var(--fg-muted);
-}
-.nav-item:hover .nav-icon {
-  color: var(--fg-secondary);
-}
-.nav-item.is-active .nav-icon {
-  color: var(--accent-primary);
-}
-.nav-icon-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: var(--radius-pill);
-  background: var(--fg-muted);
-  display: inline-block;
-}
-.nav-item__label {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+
+/* Body shell — flex:1 so it absorbs the remaining height in the column,
+ * min-height:0 so the inner .task-list (also a flex column) can shrink
+ * within it. Without min-height:0 the flex:1 chain breaks and the inner
+ * scrollable area would push past the column edge. */
+.task-list-panel__body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 /* ===== Statusbar ===== */
@@ -863,7 +897,7 @@ a:hover {
   font-size: var(--text-sm);
 }
 
-/* T4: turn-metrics tail line (time · duration · time-to-first-token · tok/s).
+/* T4: turn-metrics tail line (time 路 duration 路 time-to-first-token 路 tok/s).
    Small muted secondary text below the assistant turn; only rendered once the
    turn settles. */
 .aipane__metrics {
@@ -894,7 +928,7 @@ a:hover {
 .ai-rail__icon {
   /* explicit inline-flex with width/height = the 16px icon footprint.
      Previously this was a plain <span> with font-size:18px and no
-     dimensions — the SVG inside rendered at its intrinsic 16×16 but
+     dimensions 鈥?the SVG inside rendered at its intrinsic 16脳16 but
      the span's line-height box was 18px tall, leaving a 1px vertical
      offset and giving the icon a "shifted" appearance inside the
      centered flex parent. Locking width/height to 16px eliminates that
@@ -953,14 +987,14 @@ a:hover {
 
 /* Region 1: title (pinned at top). Contains the brand on the left, the
    active conversation title in the middle (truncated if long), and the
-   [+ new] / [🗂 history] action buttons on the right. The scroll-tracked
+   [+ new] / [馃梻 history] action buttons on the right. The scroll-tracked
    "current question" overlay sits BELOW this row as an absolutely-
    positioned child so it floats over the top of the body content without
    shifting it.
 
    `flex: 0 0 auto` = do NOT grow, do NOT shrink, take intrinsic height.
    This pins the title to the top of the flex column regardless of how
-   many messages the body holds — the body (Region 2) absorbs all extra
+   many messages the body holds 鈥?the body (Region 2) absorbs all extra
    vertical space. The previous `flex: none` shorthand is equivalent but
    spelled out here so the three-region contract is explicit at the rule. */
 .aipane__title {
@@ -970,7 +1004,7 @@ a:hover {
   gap: var(--space-xs);
   font-weight: 650;
   font-size: var(--font-md);
-  /* Single child (title-row) — keeps the title row pinned to the top of
+  /* Single child (title-row) 鈥?keeps the title row pinned to the top of
      the column flex. The scroll-tracked current-question overlay is NOT
      inside this region; it is an independent flex sibling of .aipane
      (Region 1b), so the title region's height is just the title row's
@@ -990,7 +1024,7 @@ a:hover {
   /* Three-zone flex: brand (left, intrinsic) | conv-title (sits next to
      brand, ellipsises when squeezed) | .aipane__title-spacer (flex: 1,
      absorbs leftover space) | actions (right edge, via the spacer
-     pushing them outward — .aipane__actions' own margin-left:auto is
+     pushing them outward 鈥?.aipane__actions' own margin-left:auto is
      redundant but kept as belt-and-braces for any future wrapping
      contexts). The earlier symmetric-spacer layout (spacer on BOTH
      sides of the title) fought margin-left:auto on the actions for the
@@ -1005,7 +1039,7 @@ a:hover {
   min-width: 0;
 }
 
-/* Brand label "AI 助手" on the left of the topbar — re-introduced per the
+/* Brand label "AI 鍔╂墜" on the left of the topbar 鈥?re-introduced per the
    L5 request that the panel always identify itself, since the conversation
    title moved into the content area. */
 .aipane__brand {
@@ -1028,7 +1062,7 @@ a:hover {
 /* ===== L5: minimal topbar ===== */
 
 /* The history icon sits in the right-side action cluster of the topbar.
-   "新建对话" (+) lives next to it as a sibling so both topbar affordances
+   "鏂板缓瀵硅瘽" (+) lives next to it as a sibling so both topbar affordances
    live in the same slot. The aipane__history wrapper is just a positioning
    context for the absolutely-positioned dropdown. */
 .aipane__actions {
@@ -1054,7 +1088,7 @@ a:hover {
   align-items: center;
 }
 
-/* Brand label "AI 助手" on the left of the topbar — re-introduced per the
+/* Brand label "AI 鍔╂墜" on the left of the topbar 鈥?re-introduced per the
    L5 request that the panel always identify itself, since the conversation
    title moved into the content area. */
 .aipane__brand {
@@ -1089,7 +1123,7 @@ a:hover {
 /* ===== L5: sticky conversation header (title + current question) ===== */
 
 /* One sticky wrapper holding the conversation title and the current-question
-   banner. Both used to be individually sticky at top:0 — the taller
+   banner. Both used to be individually sticky at top:0 鈥?the taller
    current-question banner overlapped the title and bled into it, which read
    as "content penetrating the title". Now they move as a single unit under
    one opaque full-bleed background, so scrolling messages cannot paint over
@@ -1099,7 +1133,7 @@ a:hover {
   top: 0;
   z-index: 2;
   /* Full-bleed (negative side margins) so the opaque header spans the body's
-     full width. No bottom margin — the body's flex gap separates the header
+     full width. No bottom margin 鈥?the body's flex gap separates the header
      from the first message. */
   margin: 0 calc(-1 * var(--space-lg));
   padding: 0;
@@ -1124,14 +1158,14 @@ a:hover {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  /* Don't grow — title takes its content width; the spacers carry the
+  /* Don't grow 鈥?title takes its content width; the spacers carry the
      flex distribution. min-width:0 lets the ellipsis kick in when the
      row gets narrower than the title text. */
   flex: 0 1 auto;
   min-width: 0;
 }
 .aipane__conv-title .aipane__rename {
-  /* Inline-rename input variant — same control as the dropdown rename,
+  /* Inline-rename input variant 鈥?same control as the dropdown rename,
      just rendered inside the heading so the user edits in place. */
   width: 100%;
   max-width: none;
@@ -1141,21 +1175,21 @@ a:hover {
 
 /* ===== L5: scroll-tracked "current question" pin ===== */
 
-/* A REAL flex child of .aipane (sibling of title / body / composer — NOT
+/* A REAL flex child of .aipane (sibling of title / body / composer 鈥?NOT
    nested in .aipane__title), so it consumes its own box in the column
    flex. .aipane__body (flex: 1 1 0) shrinks to make room, and the banner
    can NEVER overlap with the body's first user bubble.
 
    Padding matches .aipane__title-row (0 var(--space-md)) so the overlay's
    right-aligned bubble lines up vertically with the title row's right
-   edge — without the padding match, the overlay would visually extend
+   edge 鈥?without the padding match, the overlay would visually extend
    wider than the title row and read as "two zones with different
    alignment".
 
    The previous attempt nested the overlay INSIDE .aipane__title (as a
    column-flex sibling of title-row). That made the title region taller
    but meant title-row and overlay sat on the same .aipane__title
-   surface with their own internal layout — fine in isolation, but the
+   surface with their own internal layout 鈥?fine in isolation, but the
    user's reading was "the banner doesn't belong to the title; it's its
    own region", which is structurally true: the banner tracks SCROLL
    state, not title state. Lifting it out to be a sibling of the title
@@ -1164,7 +1198,7 @@ a:hover {
 .aipane__currentq-overlay {
   /* Absolute over the body-shell top so the banner floats above the
      scrolling content without entering the column flex. An in-flow
-     banner resized the scroll viewport the instant it appeared — the
+     banner resized the scroll viewport the instant it appeared 鈥?the
      content jumped by the banner's height, the just-scrolled-out bubble
      popped back into view, activeIdx cleared, the banner unmounted, and
      the cycle repeated: visible jitter at the stick boundary. Out of
@@ -1287,9 +1321,9 @@ a:hover {
   color: var(--fg-primary);
 }
 .aipane__menu--row {
-  /* Per-row dropdown anchored to the ⋯ button. Opens to the LEFT so it
+  /* Per-row dropdown anchored to the 鈰?button. Opens to the LEFT so it
      doesn't overflow the panel's right edge (the history dropdown is
-     itself anchored at the panel's right edge). The ⋯ button is 26px
+     itself anchored at the panel's right edge). The 鈰?button is 26px
      wide and flush to the row's right edge, so right:26px seats the
      menu's right edge against the button's left edge, with a 4px gap. */
   left: auto;
@@ -1335,13 +1369,13 @@ a:hover {
   transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
 }
 /* L3-E: the wrapper now contains TWO buttons (title + caret). Hover the
-   wrapper, hover both — keeps the existing affordance while letting
+   wrapper, hover both 鈥?keeps the existing affordance while letting
    each click target have its own visual focus state. */
 .aipane__switcher-btn[data-disabled='true'] {
   opacity: 0.5;
 }
 .aipane__switcher-title {
-  /* L3-E: title text is now its own button (click → rename). */
+  /* L3-E: title text is now its own button (click 鈫?rename). */
   display: inline-block;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1399,21 +1433,21 @@ a:hover {
   outline: none;
 }
 
-/* "+ New conversation" button styled as an icon-btn (28×28). */
+/* "+ New conversation" button styled as an icon-btn (28脳28). */
 .aipane__newbtn {
   font-size: var(--font-md);
   font-weight: 700;
 }
 
-/* Right-aligned wrapper for the actions ⋯ button + its dropdown. */
+/* Right-aligned wrapper for the actions 鈰?button + its dropdown. */
 .aipane__actions {
   position: relative;
 }
 
-/* ===== 权限预设选择器（会话级沙箱模式 + 审批策略） =====
-   坐在 title-row 的右侧动作簇里，历史按钮左边。它是个带文字的下拉触发器
-   （不是纯图标），因为「当前是什么权限姿态」必须一眼可见 —— 纯图标按钮
-   表达不了四种预设的差别。锚点 position:relative 让菜单挂在它下面。 */
+/* ===== 鏉冮檺棰勮閫夋嫨鍣紙浼氳瘽绾ф矙绠辨ā寮?+ 瀹℃壒绛栫暐锛?=====
+   鍧愬湪 title-row 鐨勫彸渚у姩浣滅皣閲岋紝鍘嗗彶鎸夐挳宸﹁竟銆傚畠鏄釜甯︽枃瀛楃殑涓嬫媺瑙﹀彂鍣?
+   锛堜笉鏄函鍥炬爣锛夛紝鍥犱负銆屽綋鍓嶆槸浠€涔堟潈闄愬Э鎬併€嶅繀椤讳竴鐪煎彲瑙?鈥斺€?绾浘鏍囨寜閽?
+   琛ㄨ揪涓嶄簡鍥涚棰勮鐨勫樊鍒€傞敋鐐?position:relative 璁╄彍鍗曟寕鍦ㄥ畠涓嬮潰銆?*/
 .aipane__presets {
   position: relative;
   flex: 0 0 auto;
@@ -1449,8 +1483,8 @@ a:hover {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-/* danger-full-access 是唯一一个"关掉所有护栏"的姿态 —— 常驻高亮，
-   让用户任何时候扫一眼标题栏都知道当前没有审批保护。 */
+/* danger-full-access 鏄敮涓€涓€涓?鍏虫帀鎵€鏈夋姢鏍?鐨勫Э鎬?鈥斺€?甯搁┗楂樹寒锛?
+   璁╃敤鎴蜂换浣曟椂鍊欐壂涓€鐪兼爣棰樻爮閮界煡閬撳綋鍓嶆病鏈夊鎵逛繚鎶ゃ€?*/
 .aipane__preset-btn--danger {
   border-color: var(--accent-danger);
   color: var(--accent-danger);
@@ -1460,7 +1494,7 @@ a:hover {
   color: var(--accent-danger);
 }
 .aipane__preset-menu {
-  /* 预设名 + 描述比对话标题长，200px 太窄会折成三行。 */
+  /* 棰勮鍚?+ 鎻忚堪姣斿璇濇爣棰橀暱锛?00px 澶獎浼氭姌鎴愪笁琛屻€?*/
   min-width: 260px;
 }
 .aipane__preset-item {
@@ -1490,8 +1524,8 @@ a:hover {
   white-space: normal;
 }
 
-/* Generic dropdown menu — used by both the switcher (left-anchored) and the
-   actions ⋯ menu (right-anchored). Absolute-positioned so it floats above
+/* Generic dropdown menu 鈥?used by both the switcher (left-anchored) and the
+   actions 鈰?menu (right-anchored). Absolute-positioned so it floats above
    the body without disturbing header layout. */
 .aipane__menu {
   position: absolute;
@@ -1499,7 +1533,7 @@ a:hover {
   min-width: 200px;
   /* L3-J: widen to 320px so the two-line layout (title + last-message
      preview) fits without forcing the preview to truncate below ~20
-     characters. Still bounded — wider than this and the dropdown
+     characters. Still bounded 鈥?wider than this and the dropdown
      starts colliding with the editor canvas. */
   max-width: 320px;
   background: var(--bg-surface-elev);
@@ -1518,9 +1552,9 @@ a:hover {
 .aipane__menu--right {
   right: 0;
 }
-/* 历史列表的可滚动容器：默认只装下 10 条左右；超出窗口时滚动。
-   max-height 用 min(70vh, 560px)：小窗口（≤800h）按 70vh，
-   大窗口封顶 560px 防止列表占满屏幕、遮挡下方内容。 */
+/* 鍘嗗彶鍒楄〃鐨勫彲婊氬姩瀹瑰櫒锛氶粯璁ゅ彧瑁呬笅 10 鏉″乏鍙筹紱瓒呭嚭绐楀彛鏃舵粴鍔ㄣ€?
+   max-height 鐢?min(70vh, 560px)锛氬皬绐楀彛锛堚墹800h锛夋寜 70vh锛?
+   澶х獥鍙ｅ皝椤?560px 闃叉鍒楄〃鍗犳弧灞忓箷銆侀伄鎸′笅鏂瑰唴瀹广€?*/
 .aipane__menu-list {
   max-height: min(70vh, 560px);
   overflow-y: auto;
@@ -1545,11 +1579,11 @@ a:hover {
   cursor: default;
 }
 
-/* ===== 批量选择：行首 checkbox + head 右侧 action + 底部 batchbar ===== */
+/* ===== 鎵归噺閫夋嫨锛氳棣?checkbox + head 鍙充晶 action + 搴曢儴 batchbar ===== */
 
-/* 行首 checkbox —— 用自定义方框 + 透明原生 input，避免不同平台样式差异。
-   默认与 aipane__menu-row 对齐垂直居中，hover 时边框显 accent 色；
-   选中态换成主色背景 + 白勾。 */
+/* 琛岄 checkbox 鈥斺€?鐢ㄨ嚜瀹氫箟鏂规 + 閫忔槑鍘熺敓 input锛岄伩鍏嶄笉鍚屽钩鍙版牱寮忓樊寮傘€?
+   榛樿涓?aipane__menu-row 瀵归綈鍨傜洿灞呬腑锛宧over 鏃惰竟妗嗘樉 accent 鑹诧紱
+   閫変腑鎬佹崲鎴愪富鑹茶儗鏅?+ 鐧藉嬀銆?*/
 .aipane__menu-check {
   position: relative;
   flex: 0 0 auto;
@@ -1572,7 +1606,7 @@ a:hover {
   border-color: var(--accent-primary, #2080ff);
 }
 .aipane__menu-check input[type="checkbox"] {
-  /* 隐藏原生 checkbox，状态用自定义方框 + ::after 勾展示 */
+  /* 闅愯棌鍘熺敓 checkbox锛岀姸鎬佺敤鑷畾涔夋柟妗?+ ::after 鍕惧睍绀?*/
   appearance: none;
   -webkit-appearance: none;
   width: 100%;
@@ -1595,12 +1629,12 @@ a:hover {
   pointer-events: none;
 }
 
-/* 行被勾选时给个微微高亮 —— 区别于「当前对话」的 --active 边框，不冲突。 */
+/* 琛岃鍕鹃€夋椂缁欎釜寰井楂樹寒 鈥斺€?鍖哄埆浜庛€屽綋鍓嶅璇濄€嶇殑 --active 杈规锛屼笉鍐茬獊銆?*/
 .aipane__menu-row--selected {
   background: color-mix(in srgb, var(--accent-primary, #2080ff) 6%, transparent);
 }
 
-/* Head 右侧的「全选 / 取消全选」按钮 —— 不抢主标题字重，hover 才出背景。 */
+/* Head 鍙充晶鐨勩€屽叏閫?/ 鍙栨秷鍏ㄩ€夈€嶆寜閽?鈥斺€?涓嶆姠涓绘爣棰樺瓧閲嶏紝hover 鎵嶅嚭鑳屾櫙銆?*/
 .aipane__menu-head-action {
   background: transparent;
   border: none;
@@ -1614,8 +1648,8 @@ a:hover {
 }
 .aipane__menu-head-action:hover { background: var(--bg-hover, rgba(0, 0, 0, 0.04)); }
 
-/* 列表下方批量操作条 —— 选中条目 > 0 时出现。flex 横向排：text + 取消 +
-   删除（红边框）。不与列表共享滚动（位置在 .aipane__menu-list 之外）。 */
+/* 鍒楄〃涓嬫柟鎵归噺鎿嶄綔鏉?鈥斺€?閫変腑鏉＄洰 > 0 鏃跺嚭鐜般€俧lex 妯悜鎺掞細text + 鍙栨秷 +
+   鍒犻櫎锛堢孩杈规锛夈€備笉涓庡垪琛ㄥ叡浜粴鍔紙浣嶇疆鍦?.aipane__menu-list 涔嬪锛夈€?*/
 .aipane__menu-batchbar {
   display: flex;
   align-items: center;
@@ -1692,7 +1726,7 @@ a:hover {
 }
 .aipane__menu-item {
   /* L3-J: column layout so a row can stack a title line and an optional
-     preview line. Action items (重命名 / 归档 / 删除 / 显示已归档) still
+     preview line. Action items (閲嶅懡鍚?/ 褰掓。 / 鍒犻櫎 / 鏄剧ず宸插綊妗? still
      work because their plain text content becomes an anonymous flex
      item that occupies one line at its natural height. */
   display: flex;
@@ -1728,7 +1762,7 @@ a:hover {
 .aipane__menu-item--toggle {
   color: var(--fg-muted);
 }
-/* L3-J: row 1 of a conversation entry — title + (optional) tags. */
+/* L3-J: row 1 of a conversation entry 鈥?title + (optional) tags. */
 .aipane__menu-line {
   display: flex;
   align-items: center;
@@ -1736,7 +1770,7 @@ a:hover {
   gap: var(--space-sm);
   min-width: 0;
 }
-/* L3-J: row 2 of a conversation entry — last message preview + (optional)
+/* L3-J: row 2 of a conversation entry 鈥?last message preview + (optional)
    count badge. Smaller and muted so it doesn't compete with the title. */
 .aipane__menu-preview {
   display: flex;
@@ -1817,7 +1851,7 @@ a:hover {
   /* Region 2: the conversation stream's scroll viewport. flex: 1 1 0 +
      min-height: 0 lets the body absorb all leftover vertical space (the
      title above + composer below are pinned via flex: 0 0 auto) AND shrink
-     below its content's intrinsic min-content height — without
+     below its content's intrinsic min-content height 鈥?without
      `min-height: 0`, a flex child with a long stream would refuse to shrink
      and push the composer off-screen. `overflow-y: scroll` keeps the
      scrollbar always visible so the stream + composer never shift width
@@ -1835,7 +1869,7 @@ a:hover {
 
   /* Scope the small-AI-chat markdown font to the AIPane only. The DSH
      MarkdownText primitive ships at 16px/28px (see
-     src/renderer/styles/dsh/gradient-shadow-text.css `body` tokens — the
+     src/renderer/styles/dsh/gradient-shadow-text.css `body` tokens 鈥?the
      figma export's defaults) and is also the canonical size used by the
      MarkdownEditor preview in the task-detail DocumentsView. The chat
      stream wants the same chat-rhythm as the surrounding bubbles
@@ -1870,11 +1904,11 @@ a:hover {
   /* Stretch to fill the scroll viewport so the centered empty-composer
      can vertically center via flex. Without this, the messages wrapper
      collapses to content height and `flex: 1` on the empty-composer has
-     nothing to fill — the input sits at the top instead of the middle. */
+     nothing to fill 鈥?the input sits at the top instead of the middle. */
   min-height: 100%;
 }
 
-/* "Jump to latest" affordance — appears when the user has scrolled up
+/* "Jump to latest" affordance 鈥?appears when the user has scrolled up
    out of the auto-follow window. Absolutely positioned so it doesn't
    consume layout space inside the body-shell. */
 .aipane__jump-to-latest {
@@ -1902,7 +1936,7 @@ a:hover {
 }
 
 /* ChatGPT-style centered composer shown when there is no active
-   conversation (currentId === null — a fresh draft). Vertically centers
+   conversation (currentId === null 鈥?a fresh draft). Vertically centers
    a greeting + AIComposer inside the scroll viewport; the bottom
    composer is hidden in this state, so the input lives here only.
    min-height: 100% + flex centering pins the block to the viewport
@@ -1937,10 +1971,10 @@ a:hover {
   max-width: 720px;
 }
 
-/* STARTUP-AI-ASYNC-002 — DSH cold-boot card. Centered inside the
+/* STARTUP-AI-ASYNC-002 鈥?DSH cold-boot card. Centered inside the
    message pane while ai.status is pending/loading. Distinct from
    `.aipane__empty` (no secondary-list style) and from
-   `.aipane__provider-notice` (no warning icon, no action button —
+   `.aipane__provider-notice` (no warning icon, no action button 鈥?
    the user can't speed up the boot, so there's nothing to act on).
    The spinner is a CSS-only double-rotation trick so we don't pull
    an icon dependency for a one-shot loading state. */
@@ -2043,9 +2077,9 @@ a:hover {
   border-radius: var(--radius-md);
 }
 
-/* Create-task operation card — light operation card used when the user
+/* Create-task operation card 鈥?light operation card used when the user
  * originates a create-task request from the Composer (intent=create-task).
- * Distinct from .bubble--user: the body shows "创建任务：<description>"
+ * Distinct from .bubble--user: the body shows "鍒涘缓浠诲姟锛?description>"
  * framing, not the raw prompt alone. Inherits .bubble / .bubble--user for
  * layout (right-aligned, max-width, padding) but overrides colour so the
  * intent reads as an action, not a chat message. */
@@ -2078,7 +2112,7 @@ a:hover {
   background: color-mix(in srgb, var(--accent-primary) 20%, transparent);
 }
 .ai-create-task-card__label {
-  /* Visual tag, not a heading — use sentence case and avoid bold contrast */
+  /* Visual tag, not a heading 鈥?use sentence case and avoid bold contrast */
   font-weight: 600;
 }
 .ai-create-task-card__body {
@@ -2143,7 +2177,7 @@ a:hover {
 .markdown hr { border: none; border-top: 1px solid var(--border-default); margin: var(--space-sm) 0; }
 
 /* Region 3: composer (pinned at bottom). Same flex contract as the title
-   (flex: 0 0 auto) — takes intrinsic height, never shrinks, stays glued
+   (flex: 0 0 auto) 鈥?takes intrinsic height, never shrinks, stays glued
    to the bottom of the column. The composer grows naturally with its
    textarea (autosize up to a soft cap); the body's `min-height: 0`
    guarantees it gives way instead of pushing the composer out of frame. */
@@ -2233,7 +2267,7 @@ a:hover {
 }
 
 /* + button lives INSIDE the composer card (left edge). Visual style is
-   dim-by-default so the user focuses on typing, not the chrome — brightens
+   dim-by-default so the user focuses on typing, not the chrome 鈥?brightens
    on hover/focus so it remains discoverable. */
 .aipane__composer-card .aipane__attach-btn {
   flex: none;
@@ -2271,7 +2305,7 @@ a:hover {
 
 /* Send / Stop buttons live INSIDE the composer card (right edge). They
    retain the brand button look so the primary action stays obvious, but
-   they no longer stretch the full height of the row — they sit at the
+   they no longer stretch the full height of the row 鈥?they sit at the
    bottom corner of the card like a chat-app send button. */
 .aipane__composer-card .aipane__send,
 .aipane__composer-card .aipane__stop {
@@ -2303,7 +2337,7 @@ a:hover {
   font-size: 11px;
 }
 
-/* Legacy row layout — kept for backwards compatibility with old markup
+/* Legacy row layout 鈥?kept for backwards compatibility with old markup
    snapshots in tests, but the active composer markup uses composer-card
    above. Hides cleanly so nothing breaks if old markup is ever rendered. */
 .aipane__composer-row {
@@ -2352,9 +2386,9 @@ a:hover {
   flex: none;
   align-self: stretch;
 }
-/* Chip row above the composer — shows files the user attached to the next
-   prompt. Allows removal via the × on each chip. The chip itself is just a
-   label; the × is its own focusable button. */
+/* Chip row above the composer 鈥?shows files the user attached to the next
+   prompt. Allows removal via the 脳 on each chip. The chip itself is just a
+   label; the 脳 is its own focusable button. */
 .aipane__attach-row {
   display: flex;
   flex-wrap: wrap;
@@ -2569,7 +2603,7 @@ a:hover {
   cursor: not-allowed;
 }
 /* Per-turn attachment chips rendered above the user bubble when an
-   attached file was part of the prompt. Pure label (no ×) — the turn is
+   attached file was part of the prompt. Pure label (no 脳) 鈥?the turn is
    already sent, removing it from history would lie about what was sent. */
 .turn__attachments {
   display: flex;
@@ -2595,7 +2629,7 @@ a:hover {
   white-space: nowrap;
 }
 /* L3-B: stop button replaces the Send button while a turn is in flight.
-   Distinct treatment (subtle warm tint + ⏹ glyph) so it reads as an
+   Distinct treatment (subtle warm tint + 鈴?glyph) so it reads as an
    abort, not as "Send, but disabled". Sized to match the Send button. */
 .aipane__stop {
   align-self: stretch;
@@ -2739,38 +2773,49 @@ a:hover {
   background: var(--accent-primary);
 }
 
-/* ===== Task list (left column) ===== */
+/* ===== Task list (sidebar body) ===== */
 
+/* The task-list pane fills the .task-list-panel__body column. Width and
+ * the right border belong to .task-list-panel now (see
+ * layout/TaskListPanel.tsx), so this section only owns the list's
+ * internal flex scaffold: header (add-task + collapse-all) on top,
+ * scrollable body filling the remainder. */
 .task-list {
-  width: 340px;
-  flex: none;
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  height: 100%;
-  overflow: hidden;
   position: relative;
-  background: var(--bg-canvas);
-  border-right: 1px solid var(--border-default);
+  overflow: hidden;
+  /* Slightly lighter than the chrome bands above & below so the list
+   * reads as a content area nested inside the sidebar chrome. */
+  background: var(--bg-surface);
 }
+
+/* Scrollable list body. min-height:0 is required so flex:1 actually
+ * shrinks within the parent flex scaffold — otherwise the body would
+ * push past the column edge when the task count overflows the fold. */
+.task-list__body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  scrollbar-gutter: stable;
+  padding: var(--space-sm) 0;
+}
+
 .task-list__header {
   flex: none;
-  padding: var(--space-md) var(--space-md) var(--space-sm);
+  display: flex;
+  gap: var(--space-sm);
+  align-items: stretch;
+  padding: var(--space-sm) var(--space-md) var(--space-md);
   border-bottom: 1px solid var(--border-default);
-  background: var(--bg-surface);
+  background: transparent;
 }
 .task-list__add {
   width: 100%;
   height: 32px;
   background: var(--bg-input);
-}
-.task-list__body {
-  flex: 1;
-  overflow: auto;
-  /* Reserve the scrollbar gutter even when no scrollbar is shown so the
-     content width stays constant — otherwise the list reflows sideways
-     when a task tips the list past the fold. */
-  scrollbar-gutter: stable;
-  padding: var(--space-sm) 0;
 }
 .task-list__hint {
   padding: var(--space-lg);
@@ -2790,88 +2835,17 @@ a:hover {
   margin-top: var(--space-sm);
   font-size: var(--font-xs);
   line-height: 1.7;
-}
-.task-list__footer {
-  flex: none;
-  min-height: 44px;
-  display: flex;
-  align-items: center;
-  border-top: 1px solid var(--border-default);
-  background: var(--bg-surface);
-  padding: var(--space-xs);
-}
-
-/* ===== Task list (left column) ===== */
-
-.task-list {
-  width: 340px;
-  flex: none;
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  overflow: hidden;
-  position: relative;
-  background: var(--bg-canvas);
-  border-right: 1px solid var(--border-default);
-}
-.task-list__header {
-  flex: none;
-  padding: var(--space-md) var(--space-md) var(--space-sm);
-  border-bottom: 1px solid var(--border-default);
-  background: var(--bg-surface);
-}
-.task-list__add {
-  width: 100%;
-  height: 32px;
-  background: var(--bg-input);
-}
-.task-list__body {
-  flex: 1;
-  overflow: auto;
-  /* Reserve the scrollbar gutter even when no scrollbar is shown so the
-     content width stays constant — otherwise the list reflows sideways
-     when a task tips the list past the fold. */
-  scrollbar-gutter: stable;
-  padding: var(--space-sm) 0;
-}
-.task-list__hint {
-  padding: var(--space-lg);
-  color: var(--fg-muted);
-  font-size: var(--font-sm);
-}
-.task-list__empty {
-  padding: var(--space-3xl) var(--space-lg);
-  text-align: center;
-  color: var(--fg-muted);
-}
-.task-list__empty-glyph {
-  font-size: var(--font-3xl);
-  margin-bottom: var(--space-sm);
-}
-.task-list__empty-hint {
-  margin-top: var(--space-sm);
-  font-size: var(--font-xs);
-  line-height: 1.7;
-}
-.task-list__footer {
-  flex: none;
-  min-height: 44px;
-  display: flex;
-  align-items: center;
-  border-top: 1px solid var(--border-default);
-  background: var(--bg-surface);
-  padding: var(--space-xs);
 }
 
 /* Collapsed task-list rail. Same role as .ai-rail but for the LEFT master
-   column: thin vertical strip with a vertical "任务" label and a trailing
+   column: thin vertical strip with a vertical "浠诲姟" label and a trailing
    chevron (the expand affordance) pointing toward the list it reveals.
-   Mirrors .ai-rail's structure (label middle, chevron at bottom) — but
+   Mirrors .ai-rail's structure (label middle, chevron at bottom) 鈥?but
    WITHOUT a top icon, because the rail is the COLLAPSED state: showing
    a "collapse" glyph (IconCollapseBar) there would be semantically
    redundant (the grip in the open state already serves that role).
    The AI rail's top icon is IconSparkle (a brand mark, not a collapse
-   affordance); the task rail's "brand" is just the vertical "任务"
+   affordance); the task rail's "brand" is just the vertical "浠诲姟"
    label, so nothing else belongs at the top. The trailing chevron is
    pushed to the bottom by .task-list-rail svg's margin-top:auto. */
 .task-list-rail {
@@ -2902,7 +2876,7 @@ a:hover {
 /* `display: block` drops the inline-baseline shift; explicit width/height
    pins the chevron SVG to its declared footprint so it can't drift
    horizontally inside the centered flex column; `margin-top: auto` pushes
-   it to the bottom of the rail so the "任务" label sits in the visual
+   it to the bottom of the rail so the "浠诲姟" label sits in the visual
    middle. */
 .task-list-rail svg {
   display: block;
@@ -2920,7 +2894,7 @@ a:hover {
   position: absolute;
   left: var(--space-sm);
   right: var(--space-sm);
-  /* Sit just above the footer row. 44px ≈ footer min-height (chip + padding). */
+  /* Sit just above the footer row. 44px 鈮?footer min-height (chip + padding). */
   bottom: calc(44px + var(--space-xs));
   z-index: var(--z-toast);
   display: flex;
@@ -2987,30 +2961,53 @@ a:hover {
   border-left: 2px solid transparent;
   cursor: pointer;
   /* Pills on the second row are flex:0 0 auto (full intrinsic width) so
-     we clip any overflow on the row edge — the rightmost element (the
+     we clip any overflow on the row edge 鈥?the rightmost element (the
      actions group, anchored via margin-left:auto) is the LAST thing on
      the line and so the most likely to get clipped. The visible order
      is pills-left, actions-right, so clipping naturally trims the
      leftmost decorative pill (tag / subtask / drawings) when the row
-     is too narrow — matching the user's "超出则直接隐藏" intent. */
+     is too narrow 鈥?matching the user's "瓒呭嚭鍒欑洿鎺ラ殣钘? intent. */
   overflow: hidden;
   transition: background var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
 }
 /* (Progress line was historically drawn as a separate ::after at the
-   row's bottom, but that left a 1–2px gap from the divider border.
+   row's bottom, but that left a 1鈥?px gap from the divider border.
    The progress + divider are now fused into the bottom border via
    border-image above, so the line is contiguous with the row below.) */
 .task-row {
   position: relative;
 }
+/* Adjacent-row divider 鈥?every task row gets a hairline at its top edge
+   except the first one in its list. Replaces the previous reliance on
+   padding alone, which became hard to read once rows share a uniform
+   background (default theme mode is now transparent 鈥?see priority
+   colours block below). The line is --border-subtle (1px) so it doesn't
+   fight with the selection rail / hover background; siblings are still
+   visually fused via padding, but each row now has a clear floor.
+
+   The divider renders inside the row's padding-left box, so subtask rows
+   (with deeper --row-depth) get an indented rule that lines up with their
+   text 鈥?no edge-to-edge bar across the indent gutter. */
+.task-row + .task-row {
+  border-top: 1px solid var(--border-subtle);
+}
+/* First row of a list / section should not double up with the section
+ * header's bottom border 鈥?drop the top border on the first row to keep
+ * a single clean divider between the section header and the first task.
+ * `:not(...)` keeps the rule scoped: any task row that follows another
+ * still gets its top divider. */
+.task-list__root-tasks > .task-row:first-child,
+.task-branch__children > .task-row:first-child {
+  border-top: 0;
+}
 .task-row:hover {
   background: var(--bg-hover);
 }
-/* Active selection — the row keeps its priority background; selection is
+/* Active selection 鈥?the row keeps its priority background; selection is
     conveyed by a 4px accent-primary left border instead of a background
     overlay (which would clash with the priority bg, especially in
     theme-mode presets where the priority colour IS the row background).
-    The border-width jump from 2px→4px is offset by a matching -2px on
+    The border-width jump from 2px鈫?px is offset by a matching -2px on
     padding-left so checkbox / title stay aligned with non-active rows.
     The colour is set here so the default (theme-mode) row gets a visible
     accent rail; .task-list--custom overrides it with the row's own
@@ -3048,54 +3045,71 @@ a:hover {
 }
 
 /* ---- task-row priority colours ---- */
-/* TodoListPane 的 taskListStyle() 始终把 10 个 CSS 自定义属性
+/* TodoListPane 鐨?taskListStyle() 濮嬬粓鎶?10 涓?CSS 鑷畾涔夊睘鎬?
  *   --task-prio-<p>-bg / -fg
- * 注入到顶层 <section>（mode=theme 时是 DEFAULT 的浅色，mode=custom 时是
- * 用户在面板里选的任意色）。下面这套背景 + title 颜色规则挂在
- * .task-list .task-row[data-priority=...] 上，没有 `.task-list--custom`
- * 守卫，因此 theme 模式也能拿到按优先级的浅色底色，"跟随主题" 名副其实。
+ * 娉ㄥ叆鍒伴《灞?<section>銆備笅闈㈣繖濂楄鍒欐寕鍦?
+ * .task-list .task-row[data-priority=...] 涓婏紝娌℃湁 `.task-list--custom`
+ * 瀹堝崼 鈥斺€?鍦ㄩ粯璁わ紙theme锛夋ā寮忎笌 custom 妯″紡閮戒細鐢熸晥锛涘尯鍒彧鍦ㄤ笅闈?
+ * 鐨勮鐩栧潡锛?
  *
- * State classes（.is-done / .is-cancelled 的删除线 + 透明度 /
- * .is-blocked 的红边）由上文已有的 .task-row.is-* 规则处理；这里只
- * 给 priority bg / title 兜底。 */
-.task-list .task-row[data-priority="very-low"] {
-  background: var(--task-prio-very-low-bg, var(--bg-base));
-  color: var(--task-prio-very-low-fg, var(--fg-primary));
-}
-.task-list .task-row[data-priority="low"] {
-  background: var(--task-prio-low-bg, var(--bg-base));
-  color: var(--task-prio-low-fg, var(--fg-primary));
-}
-.task-list .task-row[data-priority="medium"] {
-  background: var(--task-prio-medium-bg, var(--bg-base));
-  color: var(--task-prio-medium-fg, var(--fg-primary));
-}
-.task-list .task-row[data-priority="high"] {
-  background: var(--task-prio-high-bg, var(--bg-base));
-  color: var(--task-prio-high-fg, var(--fg-primary));
-}
+ * - 榛樿妯″紡锛氭墍鏈夎閮界敤涓婚鑳屾櫙锛堥€忔槑缁ф壙 .task-list 鐨?bg-surface锛夛紝
+ *   閫氳繃 title 鐨?font-size / font-weight / color 鍖哄垎浼樺厛绾с€傝瑙夐噸
+ *   閲忎粠銆屽簳鑹叉祿搴︺€嶆敼鎴愩€屽瓧鍙?+ 瀛楅噸 + 棰滆壊娴撳害銆嶏紝閰嶈壊鏇村厠鍒讹紝涔熻
+ *   custom 妯″紡鐨勩€岃嚜瀹氫箟搴曡壊銆嶆洿鏈夊樊寮傚寲浠峰€硷紙榛樿涓嶅啀鏌撳簳锛夈€?
+ * - custom 妯″紡锛?task-list--custom锛夛細淇濈暀鏃ц涓?鈥斺€?琛屽簳鑹茬敤
+ *   --task-prio-X-bg锛宼itle 鐢?--task-prio-X-fg锛屼絾鏄惧紡閲嶇疆 size / weight
+ *   鍒伴粯璁わ紝閬垮厤銆岃窡闅忎富棰樸€嶄笌銆岃嚜瀹氫箟銆嶅湪鍚屼竴琛屽悓鏃剁敓鏁堝鑷磋瑙夊壊瑁傘€?
+ *
+ * State classes锛?is-done / .is-cancelled 鐨勫垹闄ょ嚎 + 閫忔槑搴?/
+ * .is-blocked 鐨勭孩杈癸級鐢变笂鏂囧凡鏈夌殑 .task-row.is-* 瑙勫垯澶勭悊銆?*/
+/* 鈥斺€?榛樿锛坱heme锛夋ā寮忥細琛岃儗鏅户鎵夸富棰橈紝title 鐢?size/weight/color 鍖哄垎 鈥斺€?*/
+.task-list .task-row[data-priority="very-low"],
+.task-list .task-row[data-priority="low"],
+.task-list .task-row[data-priority="medium"],
+.task-list .task-row[data-priority="high"],
 .task-list .task-row[data-priority="very-high"] {
-  background: var(--task-prio-very-high-bg, var(--bg-base));
-  color: var(--task-prio-very-high-fg, var(--fg-primary));
-}
-/* Title inherits the row's fg as default; state classes (.is-done /
-   .is-cancelled) still strike-through + fade via the global rules above
-   that target `.task-row__title` with --fg-muted. */
-.task-list .task-row[data-priority="very-low"] .task-row__title,
-.task-list .task-row[data-priority="low"] .task-row__title,
-.task-list .task-row[data-priority="medium"] .task-row__title,
-.task-list .task-row[data-priority="high"] .task-row__title,
-.task-list .task-row[data-priority="very-high"] .task-row__title {
+  /* 琛岃儗鏅€忔槑 鈫?瑙嗚涓婁笌 .task-list 鐨?bg-surface 铻嶄负涓€浣擄紙鏃犲簳鑹插潡锛夈€?
+     hover / active / blocked 鐨勭姸鎬佽壊浠嶇敱涓婃枃瑙勫垯鎺ョ銆?*/
+  background: transparent;
   color: inherit;
+}
+/* Default锛坱heme锛変笅鎸変紭鍏堢骇閫掑鏍囬鐨勫瓧鍙?+ 瀛楅噸 + 棰滆壊楗卞拰搴︼紝璁╃敤鎴?
+ * 鍦ㄤ笉闈犺儗鏅壊鐨勬儏鍐典笅涔熻兘涓€鐪煎尯鍒嗕紭鍏堢骇銆俧g-muted 鈫?fg-primary 鈫?
+ * accent-warn 鈫?accent-danger锛岄鑹茶秺鏉ヨ秺楗卞拰锛泂ize 13/13/14/15/16px锛?
+ * weight 400/500/500/600/700锛寃eight 澧為暱璁╅珮浼樺厛绾с€屾洿鍘氥€嶃€?*/
+.task-list:not(.task-list--custom) .task-row[data-priority="very-low"] .task-row__title {
+  color: var(--fg-muted);
+  font-size: var(--font-sm);
+  font-weight: 400;
+}
+.task-list:not(.task-list--custom) .task-row[data-priority="low"] .task-row__title {
+  color: var(--fg-secondary);
+  font-size: var(--font-sm);
+  font-weight: 500;
+}
+.task-list:not(.task-list--custom) .task-row[data-priority="medium"] .task-row__title {
+  color: var(--fg-primary);
+  font-size: var(--font-md);
+  font-weight: 500;
+}
+.task-list:not(.task-list--custom) .task-row[data-priority="high"] .task-row__title {
+  color: var(--accent-warn);
+  font-size: 15px;
+  font-weight: 600;
+}
+.task-list:not(.task-list--custom) .task-row[data-priority="very-high"] .task-row__title {
+  color: var(--accent-danger);
+  font-size: var(--font-lg);
+  font-weight: 700;
 }
 
 /* ---- custom-mode state overrides ---- */
-/* mode='custom' 时 TodoListPane 额外附加 .task-list--custom className。
- * 下面这套覆盖规则只在 custom 模式下生效；theme 模式仍走默认 hover / active
- * 行为（hover 用 --bg-hover，active 用 --bg-active + accent-primary 左
- * 边框）。白底黑字 / 柔和彩色这种「干净配色」如果被默认 hover 的
- * --bg-hover 染色或 active 用 --bg-active 覆盖会破坏配色一致性，所以
- * 这里清掉 hover / active 的默认背景、把状态指示改成左边框 + outline。 */
+/* mode='custom' 鏃?TodoListPane 棰濆闄勫姞 .task-list--custom className銆?
+ * 涓嬮潰杩欏瑕嗙洊瑙勫垯鍙湪 custom 妯″紡涓嬬敓鏁堬紱theme 妯″紡浠嶈蛋榛樿 hover / active
+ * 琛屼负锛坔over 鐢?--bg-hover锛宎ctive 鐢?--bg-active + accent-primary 宸?
+ * 杈规锛夈€傜櫧搴曢粦瀛?/ 鏌斿拰褰╄壊杩欑銆屽共鍑€閰嶈壊銆嶅鏋滆榛樿 hover 鐨?
+ * --bg-hover 鏌撹壊鎴?active 鐢?--bg-active 瑕嗙洊浼氱牬鍧忛厤鑹蹭竴鑷存€э紝鎵€浠?
+ * 杩欓噷娓呮帀 hover / active 鐨勯粯璁よ儗鏅€佹妸鐘舵€佹寚绀烘敼鎴愬乏杈规 + outline銆?*/
 .task-list--custom .task-row:hover {
   background: inherit;
 }
@@ -3116,7 +3130,7 @@ a:hover {
 }
 /* Active selection must always read as "you are here". The default
    .task-row.is-active above already gives a 4px accent-primary left border
-   without touching background — same treatment in custom mode so the
+   without touching background 鈥?same treatment in custom mode so the
    visual language stays consistent. We just (1) swap border-left-color
    to the row's own priority fg so the bar matches the row's identity
    instead of a generic accent, and (2) drop the outline (the thicker
@@ -3141,14 +3155,51 @@ a:hover {
 .task-list--custom .task-row[data-priority="very-high"].is-active {
   border-left-color: var(--task-prio-very-high-fg, var(--fg-primary));
 }
-/* Done 行：保留 priority bg，只把 title 文字变成 fg 60% 透明，避免硬黑
-   切到浅色背景上刺眼。is-cancelled 用 opacity 整体淡化。 */
+/* Done 琛岋細淇濈暀 priority bg锛屽彧鎶?title 鏂囧瓧鍙樻垚 fg 60% 閫忔槑锛岄伩鍏嶇‖榛?
+   鍒囧埌娴呰壊鑳屾櫙涓婂埡鐪笺€俰s-cancelled 鐢?opacity 鏁翠綋娣″寲銆?*/
 .task-list--custom .task-row[data-priority="very-low"].is-done,
 .task-list--custom .task-row[data-priority="low"].is-done,
 .task-list--custom .task-row[data-priority="medium"].is-done,
 .task-list--custom .task-row[data-priority="high"].is-done,
 .task-list--custom .task-row[data-priority="very-high"].is-done {
   color: color-mix(in srgb, var(--task-prio-low-fg, var(--fg-primary)) 60%, transparent);
+}
+/* custom 妯″紡涓嬬殑 title 棰滆壊 鈥斺€?涓嶇敤榛樿鐨?accent 璋冭壊鏉匡紝鑰屾槸鐢ㄧ敤鎴?
+ * 鍦ㄨ缃潰鏉块噷鎸戠殑 priority fg锛坱askListStyle 娉ㄥ叆鐨?--task-prio-X-fg锛夈€?
+ * size/weight 浠嶇敱浼樺厛绾ч€夋嫨鍣ㄩ€掑锛堣涓婃柟 .task-list:not(.task-list--custom)
+ * 鍧楋級锛屼笌榛樿妯″紡淇濇寔涓€鑷?鈥斺€?鍞竴涓嶅悓鏄鑹叉潵婧愶紙鐢ㄦ埛鑷€?vs 涓婚璋冭壊鏉匡級銆?
+ * 琛屽簳鑹茬敱涓婃枃 .task-list--custom .task-row[data-priority=...]:hover 涔嬪
+ * 鐨勬棫瑙勫垯瑕嗙洊锛氶粯璁?.task-list .task-row[data-priority=...] 宸茬粺涓€鏀逛负
+ * transparent锛屼絾 custom 妯″紡琛屽簳鑹蹭緷璧?--task-prio-X-bg锛屾墍浠ヤ笅闈㈣ˉ鍥炪€?*/
+.task-list--custom .task-row[data-priority="very-low"] {
+  background: var(--task-prio-very-low-bg, var(--bg-base));
+}
+.task-list--custom .task-row[data-priority="low"] {
+  background: var(--task-prio-low-bg, var(--bg-base));
+}
+.task-list--custom .task-row[data-priority="medium"] {
+  background: var(--task-prio-medium-bg, var(--bg-base));
+}
+.task-list--custom .task-row[data-priority="high"] {
+  background: var(--task-prio-high-bg, var(--bg-base));
+}
+.task-list--custom .task-row[data-priority="very-high"] {
+  background: var(--task-prio-very-high-bg, var(--bg-base));
+}
+.task-list--custom .task-row[data-priority="very-low"] .task-row__title {
+  color: var(--task-prio-very-low-fg, var(--fg-primary));
+}
+.task-list--custom .task-row[data-priority="low"] .task-row__title {
+  color: var(--task-prio-low-fg, var(--fg-primary));
+}
+.task-list--custom .task-row[data-priority="medium"] .task-row__title {
+  color: var(--task-prio-medium-fg, var(--fg-primary));
+}
+.task-list--custom .task-row[data-priority="high"] .task-row__title {
+  color: var(--task-prio-high-fg, var(--fg-primary));
+}
+.task-list--custom .task-row[data-priority="very-high"] .task-row__title {
+  color: var(--task-prio-very-high-fg, var(--fg-primary));
 }
 .task-list--custom .task-row[data-priority="very-low"].is-cancelled,
 .task-list--custom .task-row[data-priority="low"].is-cancelled,
@@ -3157,8 +3208,8 @@ a:hover {
 .task-list--custom .task-row[data-priority="very-high"].is-cancelled {
   opacity: 0.6;
 }
-/* Blocked 覆盖在 priority tint 之上（红边 / 红染必须始终可见，不被用户
-   自定义配色淹没）。 */
+/* Blocked 瑕嗙洊鍦?priority tint 涔嬩笂锛堢孩杈?/ 绾㈡煋蹇呴』濮嬬粓鍙锛屼笉琚敤鎴?
+   鑷畾涔夐厤鑹叉饭娌★級銆?*/
 .task-list--custom .task-row[data-priority="very-low"].is-blocked,
 .task-list--custom .task-row[data-priority="low"].is-blocked,
 .task-list--custom .task-row[data-priority="medium"].is-blocked,
@@ -3167,7 +3218,7 @@ a:hover {
   background: color-mix(in srgb, var(--accent-danger) 12%, transparent);
 }
 /* Blocked + is-active: the danger rail (is-blocked) plus the 4px priority-fg
-   left border (is-active) together signal "selected & blocked" — no extra
+   left border (is-active) together signal "selected & blocked" 鈥?no extra
    treatment needed. */
 .task-row__main {
   flex: 1;
@@ -3177,8 +3228,8 @@ a:hover {
   gap: 2px;
 }
 /* Two-row layout:
-     row 1: title-line  — glyph + title + today-icon + chevron + status
-     row 2: meta-line   — subtitle pills (left) + action buttons (right)
+     row 1: title-line  鈥?glyph + title + today-icon + chevron + status
+     row 2: meta-line   鈥?subtitle pills (left) + action buttons (right)
    The meta-line collapses the old subtitle row + the old standalone
    actions row into a single line. When the row gets narrow, the pills
    hide right-to-left; the actions stay anchored to the right edge. */
@@ -3191,7 +3242,7 @@ a:hover {
   display: flex;
   align-items: center;
   gap: var(--space-sm);
-  /* No min-width:0 here — we want the pills to keep their full intrinsic
+  /* No min-width:0 here 鈥?we want the pills to keep their full intrinsic
      width so priority / due / tags never disappear. The row above has
      overflow:hidden so any pill that overflows the row gets clipped on
      the left (since pills come first and actions anchor to the right). */
@@ -3208,15 +3259,15 @@ a:hover {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* StatusSelect 在第一行尾：margin-left:auto 让标题 + chevron + today-icon
-   占据左侧空间，状态选择器钉到行尾。 */
+/* StatusSelect 鍦ㄧ涓€琛屽熬锛歮argin-left:auto 璁╂爣棰?+ chevron + today-icon
+   鍗犳嵁宸︿晶绌洪棿锛岀姸鎬侀€夋嫨鍣ㄩ拤鍒拌灏俱€?*/
 .task-row__title-line > .status-select {
   margin-left: auto;
 }
-/* 第二行的 pills 区：作为 meta-line 的唯一可收缩项（min-width:0 +
-   overflow:hidden），里面所有 chip flex:0 0 auto 不收缩，超出时从
-   fragment 末端开始裁切（tag / drawings / subtask 排后）。actions
-   用 margin-left:auto 钉在最右，自身 flex:0 0 auto 不参与收缩。 */
+/* 绗簩琛岀殑 pills 鍖猴細浣滀负 meta-line 鐨勫敮涓€鍙敹缂╅」锛坢in-width:0 +
+   overflow:hidden锛夛紝閲岄潰鎵€鏈?chip flex:0 0 auto 涓嶆敹缂╋紝瓒呭嚭鏃朵粠
+   fragment 鏈寮€濮嬭鍒囷紙tag / drawings / subtask 鎺掑悗锛夈€俛ctions
+   鐢?margin-left:auto 閽夊湪鏈€鍙筹紝鑷韩 flex:0 0 auto 涓嶅弬涓庢敹缂┿€?*/
 .task-row__meta-pills {
   flex: 1 1 auto;
   min-width: 0;
@@ -3242,8 +3293,8 @@ a:hover {
   color: var(--fg-muted);
   font-size: var(--font-xs);
 }
-/* Actions group 永远钉在第二行最右侧（margin-left:auto），即使用户
-   在该行没有任何 metadata pill 也保持位置稳定。 */
+/* Actions group 姘歌繙閽夊湪绗簩琛屾渶鍙充晶锛坢argin-left:auto锛夛紝鍗充娇鐢ㄦ埛
+   鍦ㄨ琛屾病鏈変换浣?metadata pill 涔熶繚鎸佷綅缃ǔ瀹氥€?*/
 .task-row__meta-line > .task-row__actions {
   flex: 0 0 auto;
   margin-left: auto;
@@ -3252,7 +3303,7 @@ a:hover {
   align-items: center;
   gap: 2px;
 }
-/* Calendar + drawing icons inside due/drawings chips — fixed-size leading
+/* Calendar + drawing icons inside due/drawings chips 鈥?fixed-size leading
    glyph. */
 .task-row__due-icon,
 .task-row__drawings-icon {
@@ -3277,7 +3328,7 @@ a:hover {
   color: var(--accent-success);
   font-weight: 600;
 }
-/* Container query on meta-line — at truly tiny widths drop decorative
+/* Container query on meta-line 鈥?at truly tiny widths drop decorative
    chips (tag / subtask / drawings / progress). Priority + due-date are
    protected and never get display:none, so the row always tells you
    what's important. The actions group is anchored right and always
@@ -3302,7 +3353,7 @@ a:hover {
 .task-row__prio--medium { color: var(--accent-warning); background: color-mix(in srgb, var(--accent-warning) 14%, var(--bg-soft)); }
 .task-row__prio--low { color: var(--accent-info); background: color-mix(in srgb, var(--accent-info) 14%, var(--bg-soft)); }
 .task-row__prio--very-low { color: var(--fg-muted); background: color-mix(in srgb, var(--fg-muted) 12%, var(--bg-soft)); }
-/* Metadata pills — base layout for each chip class. They are direct
+/* Metadata pills 鈥?base layout for each chip class. They are direct
    children of .task-row__meta-pills (no wrapper). The flex rules in
    .task-row__meta-pills > ... above handle sizing / shrinking.
    All pills are intentionally small (--font-xs = 11px) so a row of
@@ -3341,7 +3392,7 @@ a:hover {
   font-size: var(--font-xs);
   color: var(--accent-info);
 }
-/* Subtask progress chip when the whole branch is done — accent-success so
+/* Subtask progress chip when the whole branch is done 鈥?accent-success so
    a glance tells you the branch is clear. */
 .task-row__sub--done {
   font-size: var(--font-xs);
@@ -3350,7 +3401,7 @@ a:hover {
 }
 /* Per-row action button (delete / restore / plan / add-subtask). Sits on
    the SECOND line below the title (`.task-row__actions`), right-aligned.
-   Always visible — opacity:1 at rest with quiet `fg-muted` color so the
+   Always visible 鈥?opacity:1 at rest with quiet `fg-muted` color so the
    row reads "actions exist here"; on hover the color lifts to signal
    interactivity. Originally these were hover-revealed on the title line,
    but that pulled the status icon off the right edge at rest. */
@@ -3371,8 +3422,8 @@ a:hover {
   cursor: pointer;
   transition: color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
 }
-/* 图标常驻 —— 不再展示标签文字。hover 行时图标自身高亮；标签 DOM 仍保留
-   以保留 aria-label/title 的可访问性，只是视觉上不出现。 */
+/* 鍥炬爣甯搁┗ 鈥斺€?涓嶅啀灞曠ず鏍囩鏂囧瓧銆俬over 琛屾椂鍥炬爣鑷韩楂樹寒锛涙爣绛?DOM 浠嶄繚鐣?
+   浠ヤ繚鐣?aria-label/title 鐨勫彲璁块棶鎬э紝鍙槸瑙嗚涓婁笉鍑虹幇銆?*/
 .task-row__action-label {
   display: none !important;
 }
@@ -3386,21 +3437,21 @@ a:hover {
   background: var(--bg-active);
   border-color: color-mix(in srgb, var(--accent-primary) 30%, transparent);
 }
-/* + 子任务（位于 trash/restore 之前）—— constructive 在左、destructive 在右 */
+/* + 瀛愪换鍔★紙浣嶄簬 trash/restore 涔嬪墠锛夆€斺€?constructive 鍦ㄥ乏銆乨estructive 鍦ㄥ彸 */
 .task-row__add-subtask:hover {
   color: var(--accent-primary);
   background: var(--bg-active);
   border-color: color-mix(in srgb, var(--accent-primary) 30%, transparent);
 }
-/* creating=true 时该行下方的 input 已展开，+ 按钮常驻以高亮作为视觉锚点 */
+/* creating=true 鏃惰琛屼笅鏂圭殑 input 宸插睍寮€锛? 鎸夐挳甯搁┗浠ラ珮浜綔涓鸿瑙夐敋鐐?*/
 .task-row.is-creating-subtask .task-row__add-subtask {
   color: var(--accent-primary);
   border-color: color-mix(in srgb, var(--accent-primary) 30%, transparent);
   background: var(--bg-active);
 }
 
-/* 行内"添加子任务"输入行 —— 与未来子任务同级缩进（depth+1），dashed-border input
-   聚焦时硬化为 solid；失败时变红闪动一次。 */
+/* 琛屽唴"娣诲姞瀛愪换鍔?杈撳叆琛?鈥斺€?涓庢湭鏉ュ瓙浠诲姟鍚岀骇缂╄繘锛坉epth+1锛夛紝dashed-border input
+   鑱氱劍鏃剁‖鍖栦负 solid锛涘け璐ユ椂鍙樼孩闂姩涓€娆°€?*/
 .task-row__subtask-create {
   cursor: text;
 }
@@ -3436,7 +3487,7 @@ a:hover {
   opacity: 0.6;
   cursor: not-allowed;
 }
-/* IPC 失败 / 空标题闪烁：边框 + 图标变 danger 色，左右抖动一次 */
+/* IPC 澶辫触 / 绌烘爣棰橀棯鐑侊細杈规 + 鍥炬爣鍙?danger 鑹诧紝宸﹀彸鎶栧姩涓€娆?*/
 .task-row__subtask-create.is-error .task-row__subtask-input {
   border-color: var(--accent-danger);
   animation: subtask-create-error 0.35s var(--ease-out);
@@ -3452,7 +3503,7 @@ a:hover {
   75%  { transform: translateX(-2px); }
   100% { transform: translateX(0); }
 }
-/* 取消 (×) 按钮：常驻可见，覆盖 .task-row__action 默认 opacity:0 */
+/* 鍙栨秷 (脳) 鎸夐挳锛氬父椹诲彲瑙侊紝瑕嗙洊 .task-row__action 榛樿 opacity:0 */
 .task-row__subtask-cancel {
   opacity: 1;
 }
@@ -3460,7 +3511,7 @@ a:hover {
   color: var(--fg-secondary);
   background: var(--bg-active);
 }
-/* 已删除 bin: the restore button carries a text label and is the row's
+/* 宸插垹闄?bin: the restore button carries a text label and is the row's
    primary action (always visible, not hover-revealed), so it gets auto
    width + a gap for the glyph. The deletion-time label sits muted before
    it. */
@@ -3519,7 +3570,7 @@ a:hover {
 
 /* ===== Fullscreen document mode =====
  * The task list disappears; the right column becomes a tall DocumentsView
- * with a slim header showing the task title + exit button. Esc / the ⛶
+ * with a slim header showing the task title + exit button. Esc / the 鉀?
  * button drop back to normal mode. The AI panel (rendered in App.tsx) is
  * untouched, so the user can keep asking questions about what's on screen. */
 .task-detail--fullscreen { background: var(--bg-canvas); }
@@ -3583,7 +3634,7 @@ a:hover {
 }
 
 /* Section header with an inline action button next to the title
- * (e.g. open-directory icon next to 文档). The h2 keeps its own line;
+ * (e.g. open-directory icon next to 鏂囨。). The h2 keeps its own line;
  * the action sits to the right via flex. */
 .editor-pane__section-head {
   display: flex;
@@ -3611,7 +3662,7 @@ a:hover {
   border-color: var(--border-soft);
 }
 
-/* ===== User menu (bottom-left chip) ===== */
+/* ===== User menu (sidebar bottom chip) ===== */
 
 .user-menu {
   position: relative;
@@ -3655,10 +3706,52 @@ a:hover {
 .user-menu__chev {
   opacity: 0.7;
 }
+/* When the user-menu sits inside the narrow Sidebar rail (48px), the
+   chip can't show the full-width name + chevron layout. Collapse to
+   just the avatar (slightly larger so it matches the rail icon weight)
+   and center the chip in the rail. The popup still opens right-anchored
+   to the chip, so the menu items are fully visible against the wider
+   master-detail area. */
+.sidebar .user-menu {
+  width: 100%;
+}
+.sidebar .user-menu__chip {
+  justify-content: center;
+  padding: 4px;
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  margin: 0 auto;
+}
+.sidebar .user-menu__avatar {
+  width: 28px;
+  height: 28px;
+}
+.sidebar .user-menu__name,
+.sidebar .user-menu__chev {
+  display: none;
+}
+/* In the narrow Sidebar rail the popup can't anchor right (would extend
+ * off-screen to the left — the rail is at the viewport's left edge). Flip
+ * it to open RIGHT toward the master-detail area, and bottom-align it
+ * with the chip so the menu grows upward — this keeps the 4-item menu
+ * fully visible even when the avatar sits near the viewport's bottom
+ * edge. */
+.sidebar .user-menu__popup {
+  top: auto;
+  bottom: 0;
+  right: auto;
+  left: calc(100% + 6px);
+  transform: none;
+}
+/* Popup 鈥?anchored below the avatar (avatar now lives in the Sidebar
+   rail, not the task-list column), opens DOWN-RIGHT from the chip. The
+   head row shows the OS username so the user still has an at-a-glance
+   identity read even though the chip itself only renders the initial. */
 .user-menu__popup {
   position: absolute;
-  bottom: calc(100% + 6px);
-  left: 0;
+  top: calc(100% + 6px);
+  right: 0;
   min-width: 180px;
   z-index: var(--z-overlay);
   background: var(--bg-input);
@@ -3770,8 +3863,8 @@ a:hover {
   padding: var(--space-lg) var(--space-xl);
 }
 
-/* ===== Plan guide modal (今日待办 / 全屏引导) =====
-   复用 .settings-modal 的 backdrop / header / dialog 锚点；只覆盖差异。 */
+/* ===== Plan guide modal (浠婃棩寰呭姙 / 鍏ㄥ睆寮曞) =====
+   澶嶇敤 .settings-modal 鐨?backdrop / header / dialog 閿氱偣锛涘彧瑕嗙洊宸紓銆?*/
 .plan-guide-modal__dialog {
   width: min(560px, 92vw);
   height: min(620px, 86vh);
@@ -3944,9 +4037,9 @@ a:hover {
 
 /* ===== L5: task row toggle + document icon + subtask nesting ===== */
 
-/* SubTask collapse/expand toggle — sits right AFTER the title (before the
-   status dot), so the row reads "name ▸ status". Only rendered when the
-   task actually has subtasks. Same 16×16 slot as the inline controls so
+/* SubTask collapse/expand toggle 鈥?sits right AFTER the title (before the
+   status dot), so the row reads "name 鈻?status". Only rendered when the
+   task actually has subtasks. Same 16脳16 slot as the inline controls so
    the indicators line up down the right side of the title line. */
 .task-row__toggle {
   flex: none;
@@ -3965,7 +4058,7 @@ a:hover {
   color: var(--fg-primary);
   background: var(--bg-active);
 }
-/* Document glyph slot — 14×14 icon for each task row. */
+/* Document glyph slot 鈥?14脳14 icon for each task row. */
 .task-row__icon {
   flex: none;
   display: inline-flex;
@@ -3988,7 +4081,7 @@ a:hover {
 }
 
 /* Root-level tasks (no group) render after the group tree in their own
-   list. No section header — the document glyph is enough to signal
+   list. No section header 鈥?the document glyph is enough to signal
    "this is a task". */
 .task-list__root-tasks {
   list-style: none;
@@ -3996,7 +4089,7 @@ a:hover {
   padding: 0;
 }
 
-/* ===== 「今日待办 / 非今日任务 / 其他任务」三区域 ===== */
+/* ===== 銆屼粖鏃ュ緟鍔?/ 闈炰粖鏃ヤ换鍔?/ 鍏朵粬浠诲姟銆嶄笁鍖哄煙 ===== */
 
 .planned-section,
 .other-section,
@@ -4011,7 +4104,11 @@ a:hover {
   display: flex;
   align-items: center;
   gap: var(--space-xs);
-  padding: var(--space-sm) var(--space-md) var(--space-xs);
+  /* Slightly more vertical padding now that the title sits at 15px /
+   * 700 鈥?without the bump the heading crowds the chevron and the
+   * count chip. Keeps the same horizontal rhythm so the section dividers
+   * line up with the brand-header padding above. */
+  padding: var(--space-md) var(--space-md) var(--space-sm);
   border: none;
   border-bottom: 1px solid var(--border-subtle);
   margin: 0 0 var(--space-xs);
@@ -4041,14 +4138,14 @@ a:hover {
   transition: transform .15s ease;
   transform-origin: center;
 }
-/* VSCode 风格：折叠时 chevron 旋转 -90°（指右）。展开时正向（指下）。 */
+/* VSCode 椋庢牸锛氭姌鍙犳椂 chevron 鏃嬭浆 -90掳锛堟寚鍙筹級銆傚睍寮€鏃舵鍚戯紙鎸囦笅锛夈€?*/
 .planned-section__header[aria-expanded="false"] .section-toggle__chevron,
 .other-section__header[aria-expanded="false"] .section-toggle__chevron,
 .non-today-section__header[aria-expanded="false"] .section-toggle__chevron {
   transform: rotate(-90deg);
 }
-/* 折叠容器 —— grid-template-rows: 0fr / 1fr 的现代动画技巧，
-   不依赖 max-height 估算，可对任意高度内容平滑收起。 */
+/* 鎶樺彔瀹瑰櫒 鈥斺€?grid-template-rows: 0fr / 1fr 鐨勭幇浠ｅ姩鐢绘妧宸э紝
+   涓嶄緷璧?max-height 浼扮畻锛屽彲瀵逛换鎰忛珮搴﹀唴瀹瑰钩婊戞敹璧枫€?*/
 .section-collapse {
   display: grid;
   grid-template-rows: 1fr;
@@ -4071,11 +4168,16 @@ a:hover {
 .other-section__title,
 .non-today-section__title {
   margin: 0;
-  font-size: var(--font-sm);
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  color: var(--fg-secondary);
-  text-transform: uppercase;
+  /* Bumped from --font-sm (13px) to 15px so the section headings ("浠婃棩
+   * 浠诲姟 / 闈炰粖鏃ヤ换鍔?/ 鍏ㄩ儴浠诲姟") read as proper section titles rather
+   * than compact eyebrow labels. Drop the uppercase + tracking so the
+   * larger size doesn't feel like a SHOUT 鈥?the visual weight comes
+   * from size + 700 weight now. */
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0;
+  color: var(--fg-primary);
+  text-transform: none;
 }
 .planned-section__count,
 .other-section__count,
@@ -4092,8 +4194,8 @@ a:hover {
   padding: 0;
 }
 
-/* 今日行 —— 不再加亮背景。视觉分组已通过上半区 / 下半区两个 section
-   标题完成，整行保持与其他任务一致的默认样式。 */
+/* 浠婃棩琛?鈥斺€?涓嶅啀鍔犱寒鑳屾櫙銆傝瑙夊垎缁勫凡閫氳繃涓婂崐鍖?/ 涓嬪崐鍖轰袱涓?section
+   鏍囬瀹屾垚锛屾暣琛屼繚鎸佷笌鍏朵粬浠诲姟涓€鑷寸殑榛樿鏍峰紡銆?*/
 .task-row__planned-icon {
   display: inline-flex;
   align-items: center;
@@ -4107,7 +4209,7 @@ a:hover {
   opacity: 0.6;
 }
 
-/* "+ 今日" 按钮 —— 复用 .task-row__action 的尺寸 + 配色 override。 */
+/* "+ 浠婃棩" 鎸夐挳 鈥斺€?澶嶇敤 .task-row__action 鐨勫昂瀵?+ 閰嶈壊 override銆?*/
 .task-row__plan-btn {
   color: var(--accent-primary);
 }
@@ -4117,8 +4219,8 @@ a:hover {
   border-color: color-mix(in srgb, var(--accent-primary) 30%, transparent);
 }
 
-/* 上半区"从今日剔除"按钮 —— 常驻（不是 hover-only），因为这是上半区
- * 唯一的"反向操作"，用户看不到就失去对称。 */
+/* 涓婂崐鍖?浠庝粖鏃ュ墧闄?鎸夐挳 鈥斺€?甯搁┗锛堜笉鏄?hover-only锛夛紝鍥犱负杩欐槸涓婂崐鍖?
+ * 鍞竴鐨?鍙嶅悜鎿嶄綔"锛岀敤鎴风湅涓嶅埌灏卞け鍘诲绉般€?*/
 .task-row__unplan-btn {
   display: inline-flex;
   align-items: center;
@@ -4376,7 +4478,7 @@ a:hover {
 
 /*
   Two-band layout. The outer grid splits the pane into:
-    - summary row (auto, fits its content) — title + meta + drawings
+    - summary row (auto, fits its content) 鈥?title + meta + drawings
     - body row    (1fr, fills remaining space, scrolls internally)
   The summary stays put while the user scrolls the markdown body. The
   bottom row has `overflow: auto` so long bodies / long history drawers
@@ -4394,11 +4496,11 @@ a:hover {
   color: var(--fg-muted);
 }
 
-/* --- sub-section layout (基本信息 / 链接 / 文档 / 动态) --- */
-/* The pane is a flex column: the 基本信息 header is fixed (does not scroll)
+/* --- sub-section layout (鍩烘湰淇℃伅 / 閾炬帴 / 鏂囨。 / 鍔ㄦ€? --- */
+/* The pane is a flex column: the 鍩烘湰淇℃伅 header is fixed (does not scroll)
    so its popovers (status/priority/date/tag/progress-note) are never clipped
-   by an overflow ancestor — they paint in the header's stacking context above
-   the scroll body. The 链接/文档/动态 sections live in .editor-pane__scroll,
+   by an overflow ancestor 鈥?they paint in the header's stacking context above
+   the scroll body. The 閾炬帴/鏂囨。/鍔ㄦ€?sections live in .editor-pane__scroll,
    which is the only overflow:auto element, so the header stays put while the
    user scrolls through documents and activity. */
 .editor-pane--sections {
@@ -4415,7 +4517,7 @@ a:hover {
   position: relative;
   z-index: var(--z-popover);
 }
-/* Scroll body — the only element that scrolls. min-height:0 lets it shrink
+/* Scroll body 鈥?the only element that scrolls. min-height:0 lets it shrink
    inside the flex column instead of pushing the header off-screen. Its own
    stacking context (z-index:1) is below the header (var(--z-popover)). */
 .editor-pane__scroll {
@@ -4438,7 +4540,7 @@ a:hover {
   border-bottom: 1px solid var(--border-default);
   /* min-height:0 lets the docs-workspace child shrink to its content's
      actual size when the scroll body is shorter than its min-height:420
-     default — without this, the embedded Excalidraw host (which has its
+     default 鈥?without this, the embedded Excalidraw host (which has its
      own min-height:520) can grow the section past the scroll viewport
      on small/fullscreen layouts and re-introduce the unbounded canvas. */
   min-height: 0;
@@ -4461,8 +4563,8 @@ a:hover {
   color: var(--fg-muted);
   white-space: nowrap;
 }
-/* 基本信息 has no section title — the title is the hero. Its title-line holds
-   the status glyph, the title (natural content width — no flex-grow, so the
+/* 鍩烘湰淇℃伅 has no section title 鈥?the title is the hero. Its title-line holds
+   the status glyph, the title (natural content width 鈥?no flex-grow, so the
    heading sizes itself like normal HTML), and the creation date pushed right. */
 .editor-pane__section--basic .editor-pane__title-line {
   align-items: center;
@@ -4476,7 +4578,7 @@ a:hover {
 }
 /* Progress sits on its own row below the meta line. The row fills its
    available width so the bar (whose own flex sizing then kicks in) can claim
-   the rest of the horizontal space — without this, .progress-inline's
+   the rest of the horizontal space 鈥?without this, .progress-inline's
    flex:0 0 auto locks it to its content width and the bar only gets its
    min-width. */
 .editor-pane__progress-row {
@@ -4508,15 +4610,22 @@ a:hover {
   position: relative;
   display: inline-flex;
 }
+/* The menu is portalled to document.body with position:fixed (see
+   StatusSelect.tsx). It used to be a child of the trigger at
+   position:absolute, which got clipped by .task-row { overflow:hidden } —
+   the row sets overflow:hidden so the meta-line pills clip cleanly when
+   the row narrows, but the same context also chopped the popover when
+   it extended below the row (140 px of menu vanished). Portalling puts
+   the menu outside that overflow context entirely. The component sets
+   `top` and `left`/`right` inline from the trigger's viewport rect, so
+   only the visual chrome (background, border, shadow, etc.) is here. */
 .status-select__menu {
-  position: absolute;
+  position: fixed;
   /* Match the project's popover scale so the menu paints above sibling
      pickers in the same header (PriorityPicker / DatePicker / TagInput all
      use --z-popover). The hardcoded 20 left it under-painted relative to
      them. */
   z-index: var(--z-popover);
-  top: calc(100% + 4px);
-  left: 0;
   min-width: 160px;
   display: flex;
   flex-direction: column;
@@ -4526,14 +4635,6 @@ a:hover {
   border: 1px solid var(--border-default);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-md);
-}
-/* The icon trigger sits at the LEFT edge of both the list row and the detail
-   header title-line. Right-aligning the 160px menu to it pushed the menu ~140px
-   off-screen to the left, where .editor-pane--sections { overflow: hidden }
-   clipped it. Left-align so the menu extends rightward into the visible area. */
-.status-select--icon .status-select__menu {
-  left: 0;
-  right: auto;
 }
 .status-select__option {
   display: flex;
@@ -4602,9 +4703,9 @@ a:hover {
   border-color: var(--accent-primary);
 }
 
-/* --- 附件列表 + 图片预览 lightbox ---
-   附件行的 name/open 原本是 <a href="attachment://<id>">，点击会让整个窗口
-   导航到裸图片字节（黑屏、无返回）。现改为 <button>，图片走 in-app lightbox。 */
+/* --- 闄勪欢鍒楄〃 + 鍥剧墖棰勮 lightbox ---
+   闄勪欢琛岀殑 name/open 鍘熸湰鏄?<a href="attachment://<id>">锛岀偣鍑讳細璁╂暣涓獥鍙?
+   瀵艰埅鍒拌８鍥剧墖瀛楄妭锛堥粦灞忋€佹棤杩斿洖锛夈€傜幇鏀逛负 <button>锛屽浘鐗囪蛋 in-app lightbox銆?*/
 .attachments-view__list {
   list-style: none;
   margin: 0;
@@ -4704,9 +4805,9 @@ a:hover {
 
 .image-lightbox {
   position: fixed;
-  /* 留出顶部标题栏：右上角是原生 min/max/close 按钮（titleBarOverlay），
-     网页层盖不住，整屏遮罩会截断它们、很难看。从 topbar 下沿开始遮罩，
-     标题栏与窗口按钮保持可见，视觉更干净。 */
+  /* 鐣欏嚭椤堕儴鏍囬鏍忥細鍙充笂瑙掓槸鍘熺敓 min/max/close 鎸夐挳锛坱itleBarOverlay锛夛紝
+     缃戦〉灞傜洊涓嶄綇锛屾暣灞忛伄缃╀細鎴柇瀹冧滑銆佸緢闅剧湅銆備粠 topbar 涓嬫部寮€濮嬮伄缃╋紝
+     鏍囬鏍忎笌绐楀彛鎸夐挳淇濇寔鍙锛岃瑙夋洿骞插噣銆?*/
   top: var(--topbar-h);
   right: 0;
   bottom: 0;
@@ -4777,7 +4878,7 @@ a:hover {
   line-height: 1.4;
 }
 
-/* --- 链接 section --- */
+/* --- 閾炬帴 section --- */
 
 .links-view {
   display: flex;
@@ -4869,8 +4970,8 @@ a:hover {
   font-size: var(--font-sm);
 }
 
-/* 子任务的创建入口在任务列表行尾（hover 行尾 + 按钮 → 就地 input），
-   不再在详情页 section 中提供 —— 列表树就是唯一的真实来源。 */
+/* 瀛愪换鍔＄殑鍒涘缓鍏ュ彛鍦ㄤ换鍔″垪琛ㄨ灏撅紙hover 琛屽熬 + 鎸夐挳 鈫?灏卞湴 input锛夛紝
+   涓嶅啀鍦ㄨ鎯呴〉 section 涓彁渚?鈥斺€?鍒楄〃鏍戝氨鏄敮涓€鐨勭湡瀹炴潵婧愩€?*/
 
 /* --- summary band: dense chrome that recedes --- */
 
@@ -4923,7 +5024,7 @@ a:hover {
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 35%, transparent);
 }
 .editor-pane__title-copy {
-  /* Copy button — visible on hover only so it doesn't clutter the read
+  /* Copy button 鈥?visible on hover only so it doesn't clutter the read
      state, but always present for keyboard/assistive users. */
   flex: 0 0 auto;
   display: inline-flex;
@@ -5116,7 +5217,7 @@ a:hover {
 .date-picker__label {
   white-space: nowrap;
 }
-/* Popover — absolute so opening it never changes the row's height. */
+/* Popover 鈥?absolute so opening it never changes the row's height. */
 .date-picker__popover {
   position: absolute;
   top: calc(100% + 4px);
@@ -5296,7 +5397,7 @@ a:hover {
   flex: 0 0 auto;
 }
 
-/* --- tag input: popover sections (最近使用 / AI 推荐 / 全部标签) --- */
+/* --- tag input: popover sections (鏈€杩戜娇鐢?/ AI 鎺ㄨ崘 / 鍏ㄩ儴鏍囩) --- */
 
 .tag-input__section {
   display: flex;
@@ -5827,7 +5928,7 @@ a:hover {
   font-weight: 600;
 }
 .cleanup-similar__member.is-target::after {
-  content: '保留';
+  content: '淇濈暀';
   margin-left: 2px;
   padding-left: 5px;
   border-left: 1px solid currentColor;
@@ -5917,7 +6018,7 @@ a:hover {
   text-align: left;
   font: inherit;
   color: var(--fg-primary);
-  /* 预留右上角给 ✓ 角标绝对定位 */
+  /* 棰勭暀鍙充笂瑙掔粰 鉁?瑙掓爣缁濆瀹氫綅 */
   position: relative;
 }
 .task-appearance__preset:hover {
@@ -5926,8 +6027,8 @@ a:hover {
 .task-appearance__preset.is-selected {
   border-color: var(--accent-primary);
   background: color-mix(in srgb, var(--accent-primary) 12%, var(--bg-soft));
-  /* 加一层 inset 高亮让选中态在所有预设里一眼可辨——单靠边框/底色用户
-     反馈"没反应",所以叠一层半透明主色填充来强化对比 */
+  /* 鍔犱竴灞?inset 楂樹寒璁╅€変腑鎬佸湪鎵€鏈夐璁鹃噷涓€鐪煎彲杈ㄢ€斺€斿崟闈犺竟妗?搴曡壊鐢ㄦ埛
+     鍙嶉"娌″弽搴?,鎵€浠ュ彔涓€灞傚崐閫忔槑涓昏壊濉厖鏉ュ己鍖栧姣?*/
   box-shadow: inset 0 0 0 1px var(--accent-primary);
 }
 .task-appearance__preset-check {
@@ -5938,14 +6039,14 @@ a:hover {
   font-weight: 700;
   line-height: 1;
   color: var(--accent-primary);
-  /* 让 ✓ 不占按钮的 flex 高度,避免把它推到 swatches 下方 */
+  /* 璁?鉁?涓嶅崰鎸夐挳鐨?flex 楂樺害,閬垮厤鎶婂畠鎺ㄥ埌 swatches 涓嬫柟 */
   pointer-events: none;
 }
 .task-appearance__preset-swatches {
   display: flex;
   gap: 3px;
   align-items: center;
-  /* 给右上角 ✓ 留点空间,不撞到第一个色块 */
+  /* 缁欏彸涓婅 鉁?鐣欑偣绌洪棿,涓嶆挒鍒扮涓€涓壊鍧?*/
   padding-right: 16px;
 }
 .task-appearance__preset-swatch {
@@ -5966,9 +6067,9 @@ a:hover {
 }
 .task-appearance__row {
   display: grid;
-  /* 优先级名 | 背景(色块+输入) | 文字(色块+输入) —— 之前多了一个
-     "优先级 · 无"预览格子,既冗余又占布局,现在色块直接挨着输入框,
-     信息更紧凑。 */
+  /* 浼樺厛绾у悕 | 鑳屾櫙(鑹插潡+杈撳叆) | 鏂囧瓧(鑹插潡+杈撳叆) 鈥斺€?涔嬪墠澶氫簡涓€涓?
+     "浼樺厛绾?路 鏃?棰勮鏍煎瓙,鏃㈠啑浣欏張鍗犲竷灞€,鐜板湪鑹插潡鐩存帴鎸ㄧ潃杈撳叆妗?
+     淇℃伅鏇寸揣鍑戙€?*/
   grid-template-columns: 60px minmax(0, 1fr) minmax(0, 1fr);
   align-items: center;
   gap: var(--space-sm);
@@ -6001,9 +6102,9 @@ a:hover {
   border-color: var(--accent-danger);
   color: var(--accent-danger);
 }
-/* Preset mode (mode !== 'custom')：整行只读,文本 input 设 readOnly 可以
-   选中复制,色板 input 完全 disabled 以免误开原生弹窗。视觉上把行降低对比
-   度 + 锁定鼠标手势,告诉用户这一档不能直接改。 */
+/* Preset mode (mode !== 'custom')锛氭暣琛屽彧璇?鏂囨湰 input 璁?readOnly 鍙互
+   閫変腑澶嶅埗,鑹叉澘 input 瀹屽叏 disabled 浠ュ厤璇紑鍘熺敓寮圭獥銆傝瑙変笂鎶婅闄嶄綆瀵规瘮
+   搴?+ 閿佸畾榧犳爣鎵嬪娍,鍛婅瘔鐢ㄦ埛杩欎竴妗ｄ笉鑳界洿鎺ユ敼銆?*/
 .task-appearance__row.is-disabled {
   opacity: 0.7;
 }
@@ -6015,9 +6116,9 @@ a:hover {
   cursor: not-allowed;
 }
 .task-appearance__picker {
-  /* 系统原生色板入口:Electron 里 <input type="color"> 点击弹出 OS 颜色
-     选择器,出来的永远是合法 #RRGGBB。样式上把外框/内框去掉做成一个
-     28×28 的小色块——本身就是视觉颜色显示,旁边不用再放预览 swatch。 */
+  /* 绯荤粺鍘熺敓鑹叉澘鍏ュ彛:Electron 閲?<input type="color"> 鐐瑰嚮寮瑰嚭 OS 棰滆壊
+     閫夋嫨鍣?鍑烘潵鐨勬案杩滄槸鍚堟硶 #RRGGBB銆傛牱寮忎笂鎶婂妗?鍐呮鍘绘帀鍋氭垚涓€涓?
+     28脳28 鐨勫皬鑹插潡鈥斺€旀湰韬氨鏄瑙夐鑹叉樉绀?鏃佽竟涓嶇敤鍐嶆斁棰勮 swatch銆?*/
   appearance: none;
   -webkit-appearance: none;
   border: 1px solid var(--border-subtle);
@@ -6028,7 +6129,7 @@ a:hover {
   background: transparent;
   cursor: pointer;
   flex-shrink: 0;
-  /* 透明度 0 让原生 swatch 完全盖住,只露 28×28 的内框 */
+  /* 閫忔槑搴?0 璁╁師鐢?swatch 瀹屽叏鐩栦綇,鍙湶 28脳28 鐨勫唴妗?*/
   overflow: hidden;
 }
 .task-appearance__picker::-webkit-color-swatch-wrapper {
@@ -6042,12 +6143,12 @@ a:hover {
   border-color: var(--accent-primary);
 }
 .task-appearance__picker:disabled {
-  /* 锁定后整体降饱和,跟旁边 readOnly 的 hex 输入一致;hover 不变色 */
+  /* 閿佸畾鍚庢暣浣撻檷楗卞拰,璺熸梺杈?readOnly 鐨?hex 杈撳叆涓€鑷?hover 涓嶅彉鑹?*/
   filter: grayscale(0.5);
 }
 
-/* 「+ 新增自定义」按钮 —— 与预设按钮同 grid 槽位,但用虚线边框 +
- * 居中文字表达「占位 / 新增」的语义,避免误以为是另一种预设。 */
+/* 銆? 鏂板鑷畾涔夈€嶆寜閽?鈥斺€?涓庨璁炬寜閽悓 grid 妲戒綅,浣嗙敤铏氱嚎杈规 +
+ * 灞呬腑鏂囧瓧琛ㄨ揪銆屽崰浣?/ 鏂板銆嶇殑璇箟,閬垮厤璇互涓烘槸鍙︿竴绉嶉璁俱€?*/
 .task-appearance__preset--add {
   align-items: center;
   justify-content: center;
@@ -6063,9 +6164,9 @@ a:hover {
   color: var(--fg-muted);
 }
 
-/* 行内「新建自定义预设」输入态 —— 同一槽位渲染 input + 创建按钮。 */
+/* 琛屽唴銆屾柊寤鸿嚜瀹氫箟棰勮銆嶈緭鍏ユ€?鈥斺€?鍚屼竴妲戒綅娓叉煋 input + 鍒涘缓鎸夐挳銆?*/
 .task-appearance__preset--creating {
-  /* 内含 input + button,改用 flex-row 让两者并列 */
+  /* 鍐呭惈 input + button,鏀圭敤 flex-row 璁╀袱鑰呭苟鍒?*/
   flex-direction: row;
   align-items: center;
   gap: 6px;
@@ -6086,10 +6187,10 @@ a:hover {
   flex: 0 0 auto;
 }
 
-/* × 删除按钮 —— 仅用户自定义预设渲染;hover / focus 父按钮时露出。
- * 默认透明度 0 + 右上角绝对定位,不占按钮的 flex 高度;hover 时
- * 透明度变 1 给视觉反馈。点击 / Enter 时触发删除,带 stopPropagation
- * 避免冒泡到父按钮的 onClick（否则会先触发「选中该预设」再删除）。 */
+/* 脳 鍒犻櫎鎸夐挳 鈥斺€?浠呯敤鎴疯嚜瀹氫箟棰勮娓叉煋;hover / focus 鐖舵寜閽椂闇插嚭銆?
+ * 榛樿閫忔槑搴?0 + 鍙充笂瑙掔粷瀵瑰畾浣?涓嶅崰鎸夐挳鐨?flex 楂樺害;hover 鏃?
+ * 閫忔槑搴﹀彉 1 缁欒瑙夊弽棣堛€傜偣鍑?/ Enter 鏃惰Е鍙戝垹闄?甯?stopPropagation
+ * 閬垮厤鍐掓场鍒扮埗鎸夐挳鐨?onClick锛堝惁鍒欎細鍏堣Е鍙戙€岄€変腑璇ラ璁俱€嶅啀鍒犻櫎锛夈€?*/
 .task-appearance__preset-delete {
   position: absolute;
   top: 4px;
@@ -6191,7 +6292,7 @@ a:hover {
   background: var(--bg-surface);
 }
 
-/* --- inline progress (基本信息 section) --- */
+/* --- inline progress (鍩烘湰淇℃伅 section) --- */
 
 .progress-inline {
   position: relative;
@@ -6303,7 +6404,7 @@ a:hover {
   box-shadow: var(--shadow-md);
 }
 /* Decrease-confirm view inside the same popover shell. Triggered when a
-   drag lands below the current value — explicit Yes/No before we log. */
+   drag lands below the current value 鈥?explicit Yes/No before we log. */
 .progress-inline__decrease-warn {
   font-size: var(--font-sm);
   color: var(--fg-primary);
@@ -6563,7 +6664,7 @@ a:hover {
      drawing host (.docs-workspace__excalidraw height:100%) fill the same
      row. Previously this was min-height:420px (content-driven, indefinite),
      which forced the drawing to a fixed 600px and let Markdown sit at its
-     content height — so switching tabs between a 600px drawing and a ~360px
+     content height 鈥?so switching tabs between a 600px drawing and a ~360px
      Markdown doc jumped vertically. A fixed 600px here makes both tabs fill
      the same 568px editor row. In fullscreen the `.fullscreen-doc__body >
      .docs-workspace { flex:1; min-height:0 }` override takes over and fills
@@ -6573,7 +6674,7 @@ a:hover {
      editor body (also --bg-canvas, see .docs-workspace__editor below) read
      as distinct surfaces inside it. The card itself is now bordered with
      --border-strong + a subtle shadow so the user can locate the editor's
-     boundary at a glance — previously the textarea bg matched the card
+     boundary at a glance 鈥?previously the textarea bg matched the card
      bg, so the editor's actual area blended with the surroundings. */
   background: var(--bg-surface);
   border: 1px solid var(--border-strong);
@@ -6669,7 +6770,7 @@ a:hover {
   padding: 0;
   /* Fill the editor row so the Excalidraw host (height:100%) has a bounded
      parent. Without flex-grow the drawing sits at content height, the host's
-     flex:1 has no free space to fill, and the canvas collapses to 0 — which
+     flex:1 has no free space to fill, and the canvas collapses to 0 鈥?which
      is exactly the fullscreen height:0 bug. */
   flex: 1 1 auto;
   min-height: 0;
@@ -6678,7 +6779,7 @@ a:hover {
    height of the containing block so make sure the container in which you
    render Excalidraw has non zero dimensions."
 
-   Our previous integration violated this — the host relied on
+   Our previous integration violated this 鈥?the host relied on
    `min-height: 520px` + a chain of `auto`-height flex/grid parents, so the
    container's height was *undefined* rather than zero. Per CSS spec, a
    `height: 100%` child of an undefined-height parent resolves to `auto`,
@@ -6688,14 +6789,14 @@ a:hover {
    updateDOMRect). The result was a feedback loop: any non-trivial
    `state.height` pushed the host to that height on first paint, which
    updateDOMRect measured back and solidified. A stale 19M-px value
-   ballooned the canvas to 33M buffer pixels (×1.75 DPR) and the toolbar
+   ballooned the canvas to 33M buffer pixels (脳1.75 DPR) and the toolbar
    icons rendered at the same scale.
 
    The standard fix is to give the host an explicit, bounded height. The
    host now fills its parent (height:100%), which is bounded because
    .docs-workspace has a definite 600px height (or flex:1 in fullscreen),
    .docs-workspace__drawing is flex:1, and the editor row is a definite
-   1fr track — so updateDOMRect reads a real pixel value, not content
+   1fr track 鈥?so updateDOMRect reads a real pixel value, not content
    height. */
 .docs-workspace__excalidraw {
   width: 100%;
@@ -6852,7 +6953,7 @@ a:hover {
   display: flex;
   flex-direction: column;
   /* min-height:0 lets the drawing tab's flex child shrink to the available
-     row height instead of forcing the .docs-workspace grid taller — which
+     row height instead of forcing the .docs-workspace grid taller 鈥?which
      would propagate all the way back to .editor-pane__scroll and, on a
      fullscreen layout, would let the Excalidraw canvas's first-paint
      style.height get measured back into state.height unboundedly. */
@@ -6907,7 +7008,7 @@ a:hover {
    Edge-to-edge: no left/right/top padding so the bar fills the card width
    like a real chrome row. Padding-bottom only, so the format buttons don't
    kiss the editor body's top border. Background is one shade darker than
-   the card so the bar reads as a distinct functional region — same shade
+   the card so the bar reads as a distinct functional region 鈥?same shade
    as the WYSIWYG toolbar so the two editors share a visual rhythm. */
 .md-editor__topbar {
   flex: none;
@@ -6921,7 +7022,7 @@ a:hover {
   min-height: 36px;
 }
 .md-editor__topbar .md-editor__toolbar {
-  /* Inside the topbar the toolbar doesn't need its own padding/background —
+  /* Inside the topbar the toolbar doesn't need its own padding/background 鈥?
      the topbar owns that. Just lay the buttons out inline. */
   padding: 0;
   background: transparent;
@@ -6978,7 +7079,7 @@ a:hover {
   color: var(--fg-muted);
   cursor: default;
 }
-/* Icon-only variant — sits at the start of the topbar next to the History
+/* Icon-only variant 鈥?sits at the start of the topbar next to the History
    popover. Same width as a toolbar button so the topbar rhythm stays even. */
 .md-editor__save--icon {
   width: 28px;
@@ -6989,7 +7090,7 @@ a:hover {
   justify-content: center;
 }
 .md-editor__save--icon.is-dirty {
-  /* Visually distinct from the muted "已保存" state — there IS work to save. */
+  /* Visually distinct from the muted "宸蹭繚瀛? state 鈥?there IS work to save. */
   background: var(--accent-warning, #d97706);
   border-color: var(--accent-warning, #d97706);
   color: var(--fg-on-accent);
@@ -7077,7 +7178,7 @@ a:hover {
 .md-editor__textarea:focus { outline: none; }
 .md-editor__body--split .md-editor__textarea { border: 1px solid var(--border-default); border-radius: var(--radius-md); }
 
-/* History popover — git-backed save history, anchored to the clock-arrow
+/* History popover 鈥?git-backed save history, anchored to the clock-arrow
    trigger in the editor topbar. Panel anchors below-right of the button. */
 .history-popover {
   position: relative;
@@ -7203,7 +7304,7 @@ a:hover {
 .editor-statusbar__spacer {
   flex: 1;
 }
-/* View-mode segmented control (编辑/预览/分屏) — lives in the status bar
+/* View-mode segmented control (缂栬緫/棰勮/鍒嗗睆) 鈥?lives in the status bar
    (the top toolbar used to host it, but the user wants the topbar to be
    format-affordances-only). Inline-flex segmented pill on the right side
    of the bar, just before the save-state cluster. */
@@ -7233,7 +7334,7 @@ a:hover {
   color: var(--fg-default);
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
 }
-/* "已保存 X 秒前" / "保存中…" / "未保存" cluster on the right. Dirty and
+/* "宸蹭繚瀛?X 绉掑墠" / "淇濆瓨涓€? / "鏈繚瀛? cluster on the right. Dirty and
    saving states use accent colors so the user can tell at a glance whether
    their last change has hit disk. */
 .editor-statusbar__save {
@@ -7248,7 +7349,7 @@ a:hover {
 }
 
 /* Rendered markdown preview. The .md-preview block is the canonical home
- * for markdown typography — the WYSIWYG content uses its own rules. */
+ * for markdown typography 鈥?the WYSIWYG content uses its own rules. */
 .md-preview {
   padding: var(--space-md);
   /* Match the editor body's --bg-canvas so the rendered preview reads as

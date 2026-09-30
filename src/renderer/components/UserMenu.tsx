@@ -1,8 +1,8 @@
-// User menu — bottom-left chip (lives in the task-list footer). Click expands a
-// popup with 设置 / 关于 / 检查更新 / 退出. 设置 opens the settings modal; the
-// rest go through the app.action IPC. The chip shows the OS username (no
-// hardcoded preset identity); if it can't be resolved, the chip renders an
-// avatar glyph only.
+// User menu — lives at the bottom of the sidebar (`.task-list__footer`).
+// Click expands a popup with 设置 / 关于 / 检查更新 / 退出. 设置 opens
+// the settings modal; the rest go through the app.action IPC. The chip
+// shows the OS username (no hardcoded preset identity); if it can't be
+// resolved, the chip renders an avatar glyph only.
 
 import React, { useEffect, useRef, useState } from 'react';
 

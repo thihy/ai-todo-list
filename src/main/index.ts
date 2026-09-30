@@ -57,6 +57,27 @@ if (process.env['ELECTRON_E2E'] === '1') {
   app.commandLine.appendSwitch('disable-software-rasterizer');
 }
 
+// Dev-only Chromium DevTools Protocol (CDP) endpoint. Exposes the running
+// renderer at http://localhost:9222/json so external clients (Node scripts,
+// Puppeteer, VSCode attach, etc.) can drive it the same way Chrome DevTools
+// drives a normal browser tab. This is the canonical way to debug an Electron
+// renderer from outside the app — `mcp_browser` is tied to the desktop's
+// in-app FilePanel and cannot reach Electron BrowserWindows, so without this
+// port every styling iteration had to bounce through the user.
+//
+// Gating: dev builds only (`!app.isPackaged`). Production builds must never
+// expose a remote debugger to anyone who can open localhost on the host.
+// Override: set `ELECTRON_REMOTE_DEBUG=0` to force-disable even in dev, or
+// `ELECTRON_REMOTE_DEBUG_PORT=<n>` to pick a non-default port.
+if (!app.isPackaged && process.env['ELECTRON_REMOTE_DEBUG'] !== '0') {
+  const cdpPort = Number(process.env['ELECTRON_REMOTE_DEBUG_PORT'] ?? 9222);
+  if (Number.isFinite(cdpPort)) {
+    app.commandLine.appendSwitch('remote-debugging-port', String(cdpPort));
+    app.commandLine.appendSwitch('remote-allow-origins', '*');
+    logger.info(`CDP 远程调试已启用: http://localhost:${cdpPort}/json`);
+  }
+}
+
 // Single-instance lock. A second launch (e.g. clicking the shortcut while the
 // tray app is alive) should surface the existing window, NOT start a second
 // process — `app.quit()` on the loser + `second-instance` on the winner handles
@@ -735,7 +756,11 @@ function createMainWindow(): BrowserWindow {
     minWidth: 960,
     minHeight: 600,
     show: false,
-    backgroundColor: '#FFFFFF',
+    // Initial window background. Must match the renderer's bg-canvas
+    // (#0F172A) so the first paint doesn't flash white before the React
+    // tree mounts. Previously #FFFFFF — fine for light-mode topbars but
+    // clashes with the project's dark theme.
+    backgroundColor: '#0F172A',
     title: 'AI待办',
     // Frameless with themed native caption buttons (Window Controls Overlay):
     // removes the Windows title bar so the top bar blends with the app chrome.
@@ -1292,9 +1317,9 @@ function registerAppHandlers(rootDir: string, getMainWindow: () => BrowserWindow
   // colour, which clashes with the dimmed client area beneath.
   //
   // Colours chosen to land on the same gray-shifted-mid-luminance band the
-  // modal backdrop ends up at on a typical light-mode topbar (translucent
-  // black over #F6F7F9 → ~ #7B7E84 after blending, with a near-black glyph
-  // for contrast against that mid-gray background). Tweak here if you
+  // modal backdrop ends up at on the project's dark topbar (translucent
+  // black over #1E293B → ~ #3B4252 after blending, with a near-white glyph
+  // for contrast against that mid-dark background). Tweak here if you
   // change the backdrop tint.
   const TITLEBAR_OVERLAY_LIGHT = { color: '#D5D8DE', symbolColor: '#1A1D21' };
   const TITLEBAR_OVERLAY_DIM = { color: '#B5BAC2', symbolColor: '#1A1D21' };

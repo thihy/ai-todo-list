@@ -7,7 +7,7 @@
 import React, { useEffect, useState, useCallback, Suspense } from 'react';
 import { ErrorBoundary } from './ErrorBoundary';
 import { Topbar } from './layout/Topbar';
-import { ActivityBar } from './layout/ActivityBar';
+import { Sidebar } from './layout/Sidebar';
 import { Statusbar } from './layout/Statusbar';
 import { AIPanel } from './layout/AIPanel';
 import { useToastBus } from './components/Toast';
@@ -24,6 +24,7 @@ import {
 } from './components/PlanGuideModal';
 import { Composer, type ExternalAiSubmitDetail } from './components/Composer';
 import { TodoListPane } from './panes/TodoListPane';
+import { TaskListPanel } from './layout/TaskListPanel';
 // TodoEditorPane is the task-detail body. Only rendered when the user has
 // actually selected a task — split it off so the typical cold-start (no
 // selection yet) doesn't pay for its dependencies (MarkdownEditor +
@@ -208,7 +209,15 @@ export const App: React.FC = () => {
       }
     };
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    // Sidebar's brand-header search button dispatches this when the topbar's
+    // search button is gone — the topbar is now light/transparent and the
+    // brand lives down in the sidebar header (see TodoListPane + layout/Topbar).
+    const onOpenPalette = () => setPaletteOpen(true);
+    window.addEventListener('app:open-palette', onOpenPalette);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('app:open-palette', onOpenPalette);
+    };
   }, []);
 
   // Esc drops out of fullscreen doc mode (the inverse of clicking the fullscreen icon).
@@ -369,7 +378,7 @@ export const App: React.FC = () => {
           onSelectSort={selectSort}
         />
         <div className="app-body">
-          <ActivityBar listFilter={listFilter} onSelectFilter={selectFilter} />
+          <Sidebar listFilter={listFilter} onSelectFilter={selectFilter} onOpenSettings={() => setSettingsOpen(true)} />
           <main className={`app-main${view === 'list' ? ' is-master' : ''}`}>
             {view === 'list' && showFullscreen && selectedId && (
               <FullscreenDoc
@@ -387,24 +396,23 @@ export const App: React.FC = () => {
                     with the same [|] expand affordance so the user can
                     pop it back open without hunting through menus. */}
                 {listOpen ? (
-                  // Collapse affordance is rendered INSIDE the task list's
-                  // own header (right edge of .task-list__header, via the
-                  // .task-list__collapse-btn button) — not in a separate
-                  // 16px grip column on the panel's right edge. The user
-                  // reads the icon as "part of the area" they're looking
-                  // at, not as a chrome handle on a divider strip. Same
-                  // pattern as the AI panel (see layout/AIPanel.tsx).
-                  <TodoListPane
-                    width={listWidth}
-                    filter={listFilter}
-                    sort={listSort}
-                    selectedId={selectedId}
-                    onSelect={(id) => navigate(routeToHash({ name: 'todo', id }))}
-                    onOpenSettings={() => setSettingsOpen(true)}
-                    onCompose={() => setComposing(true)}
-                    onCollapse={toggleList}
-                    toastBus={toast}
-                  />
+                  // TaskListPanel owns the task-list column's chrome bands
+                  // (top brand tools row) and delegates the actual list
+                  // body to TodoListPane. The user-avatar chip that used
+                  // to live here has moved out into the left Sidebar rail
+                  // (see layout/Sidebar.tsx) — that rail is the proper
+                  // home for it.
+                  <TaskListPanel onCollapse={toggleList}>
+                    <TodoListPane
+                      width={listWidth}
+                      filter={listFilter}
+                      sort={listSort}
+                      selectedId={selectedId}
+                      onSelect={(id) => navigate(routeToHash({ name: 'todo', id }))}
+                      onCompose={() => setComposing(true)}
+                      toastBus={toast}
+                    />
+                  </TaskListPanel>
                 ) : (
                   <button
                     type="button"

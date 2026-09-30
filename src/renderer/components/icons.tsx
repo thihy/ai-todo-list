@@ -413,4 +413,24 @@ export const IconCollapseBar: React.FC<IconProps> = ({ size = 16, children: _ign
   </svg>
 );
 
+/** Bell — notification indicator for the sidebar header. Mirrors the
+ *  Codex / ChatGPT desktop chrome where the brand header hosts a small
+ *  bell affordance. The dot at the bottom is intentional — it telegraphs
+ *  "notifications" without needing a literal bell clapper. */
+export const IconBell: React.FC<IconProps> = (p) => (
+  <Svg {...p}>
+    <path d="M4 11.5h8l-1-1.4V7a3 3 0 1 0-6 0v3.1l-1 1.4z" />
+    <path d="M6.5 13a1.5 1.5 0 0 0 3 0" />
+  </Svg>
+);
+
+/** Magnifying glass — search affordance. Same family as the rest of the
+ *  icons (1.4 stroke, round caps). Sized 16 by default. */
+export const IconSearch: React.FC<IconProps> = (p) => (
+  <Svg {...p}>
+    <circle cx="7" cy="7" r="4.2" />
+    <path d="M10.3 10.3l3 3" />
+  </Svg>
+);
+
 export default Svg;

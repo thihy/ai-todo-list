@@ -380,7 +380,7 @@ export const TaskAppearancePane: React.FC<Props> = ({
         </div>
         <div className="field-hint">
           {selectedPreset === 'theme'
-            ? '当前为「跟随主题」，行底色与标题色由 DEFAULT 调色板决定；hover / active 走应用默认主题样式。'
+            ? '当前为「跟随主题」，行底色透明，标题通过字号 / 字重 / 颜色随优先级递增；hover / active 走应用默认主题样式。'
             : isCustom
               ? '当前为自定义模式；下方逐项调整每个优先级的背景与文字色。'
               : '选中的预设直接套用；保存时若仍在该预设上，颜色会一并写入预设。'}
@@ -397,13 +397,16 @@ export const TaskAppearancePane: React.FC<Props> = ({
               value={draft.colors[p]}
               onChange={(channel, v) => updateColor(p, channel, v)}
               disabled={!isCustom || isSaving}
+              themeMode={selectedPreset === 'theme'}
             />
           ))}
         </div>
         <div className="field-hint">
-          {!isCustom
-            ? '当前为预设模式，颜色只读；选中命名自定义预设或「+ 新增自定义」后可逐项调整。'
-            : '颜色接受 #RGB / #RRGGBB 两种写法。预览实时刷新；点「保存」后才会写入磁盘。'}
+          {selectedPreset === 'theme'
+            ? '跟随主题模式下背景色由主题决定（任务行用透明底 + 字号/字重/颜色区分优先级）；文字色仅作「柔和彩色」等自定义预设的默认值。'
+            : !isCustom
+              ? '当前为预设模式，颜色只读；选中命名自定义预设或「+ 新增自定义」后可逐项调整。'
+              : '颜色接受 #RGB / #RRGGBB 两种写法。预览实时刷新；点「保存」后才会写入磁盘。'}
         </div>
       </div>
 
@@ -447,6 +450,19 @@ const PresetButton: React.FC<{
   // 样的 hover 处理，React hover 仅用于避免 disabled 时残留 ×。
   const [hover, setHover] = useState(false);
   const showDelete = Boolean(onDelete) && hover && !disabled;
+  // 「跟随主题」预设：实际生效的行为是「透明背景 + 主题色 fg + 不同
+  // size/weight」。swatch 预览要如实反映，所以用 transparent + 主题色
+  // 变量，而不是 preset 自带的旧 DEFAULT 浅色 hex。否则用户在面板里
+  // 看到的 swatch 与任务列表实际渲染不一致（清单里没有底色，预览里却
+  // 有底色）。
+  const isTheme = preset.value.mode === 'theme';
+  const themeFg: Record<Priority, string> = {
+    'very-low': 'var(--fg-muted)',
+    'low':      'var(--fg-secondary)',
+    'medium':   'var(--fg-primary)',
+    'high':     'var(--accent-warn)',
+    'very-high':'var(--accent-danger)',
+  };
   return (
     <button
       type="button"
@@ -468,8 +484,11 @@ const PresetButton: React.FC<{
             key={prio}
             className="task-appearance__preset-swatch"
             style={{
-              background: preset.value.colors[prio].background,
-              borderColor: preset.value.colors[prio].foreground,
+              background: isTheme ? 'transparent' : preset.value.colors[prio].background,
+              borderColor: isTheme ? themeFg[prio] : preset.value.colors[prio].foreground,
+              // Theme 模式下边框加粗一点，让透明底 + 细边的色块仍然可
+              // 见（不被设置面板的浅灰背景吃掉）。
+              borderWidth: isTheme ? 1.5 : 1,
             }}
             aria-hidden="true"
           />
@@ -565,9 +584,16 @@ const ColorRow: React.FC<{
   /** True when the row should be read-only — preset mode (mode !== 'custom')
    *  or during a save round-trip. Inputs use `readOnly` (still selectable
    *  for copy), the color picker is fully `disabled` since it would
-   *  otherwise open a native modal the user shouldn't be able to invoke. */
+   *  otherwise open a native modal the user shouldn't be able to invoke.
+   *
+   *  `themeMode` 进一步控制：跟随主题模式下 background 字段不再有意义
+   *  （CSS 直接读透明 + 主题色，不会用 --task-prio-X-bg），所以连同
+   *  色板一起禁用并 placeholder 提示「由主题决定」。foreground 仍可读，
+   *  因为「+ 新增自定义」按钮 / 用户预设仍会注入 --task-prio-X-fg 给
+   *  custom 模式使用。 */
   disabled?: boolean;
-}> = ({ priority, value, onChange, disabled = false }) => {
+  themeMode?: boolean;
+}> = ({ priority, value, onChange, disabled = false, themeMode = false }) => {
   const [bg, setBg] = useState(value.background);
   const [fg, setFg] = useState(value.foreground);
   // 当外部 value 变化（切预设等）同步本地 draft，避免用户敲到一半被外部
@@ -580,7 +606,7 @@ const ColorRow: React.FC<{
 
   // commit on blur：只有合法值才下发到外层，避免半成品 # 写到 settings。
   const commitBg = (): void => {
-    if (disabled) return;
+    if (disabled || themeMode) return;
     if (isValidCssColor(bg)) onChange('background', bg);
     else setBg(value.background);
   };
@@ -596,7 +622,7 @@ const ColorRow: React.FC<{
   // 一个 28×28 的视觉色块,所以旁边不再单独放预览 swatch —— 避免 hex
   // 输入、色板、swatch 三个颜色元件挤一行。
   const pickBg = (e: React.ChangeEvent<HTMLInputElement>): void => {
-    if (disabled) return;
+    if (disabled || themeMode) return;
     const picked = e.target.value.toUpperCase();
     setBg(picked);
     onChange('background', picked);
@@ -611,9 +637,13 @@ const ColorRow: React.FC<{
   // 上一次有效值兜底,否则色板会因非法 value 直接抛错。
   const bgPickerValue = isValidCssColor(bg) ? bg : value.background;
   const fgPickerValue = isValidCssColor(fg) ? fg : value.foreground;
+  // theme 模式下 background 字段 = 「由主题决定」占位 + 禁用；fg 字段
+  // 仍然显示 hex（与 SOFT_COLORS 兼容），但 readOnly（因为切到 theme
+  // 模式时 draft.mode='theme'，下面的 disabled 已经是 true 了）。
+  const bgPlaceholder = themeMode ? '由主题决定' : '#RRGGBB';
 
   return (
-    <div className={`task-appearance__row${disabled ? ' is-disabled' : ''}`}>
+    <div className={`task-appearance__row${disabled ? ' is-disabled' : ''}${themeMode ? ' is-theme' : ''}`}>
       <div className="task-appearance__row-label">{PRIORITY_LABEL[priority]}</div>
       <label className="task-appearance__field">
         <span className="task-appearance__field-label">背景</span>
@@ -625,10 +655,10 @@ const ColorRow: React.FC<{
           onBlur={commitBg}
           onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
           aria-label={`${PRIORITY_LABEL[priority]} 优先级 背景色`}
-          placeholder="#RRGGBB"
+          placeholder={bgPlaceholder}
           spellCheck={false}
-          readOnly={disabled}
-          aria-readonly={disabled}
+          readOnly={disabled || themeMode}
+          aria-readonly={disabled || themeMode}
         />
         <input
           type="color"
@@ -636,9 +666,9 @@ const ColorRow: React.FC<{
           value={bgPickerValue}
           onChange={pickBg}
           aria-label={`${PRIORITY_LABEL[priority]} 优先级 背景色 色板`}
-          title="从色板选择颜色"
-          disabled={disabled}
-          tabIndex={disabled ? -1 : 0}
+          title={themeMode ? '跟随主题模式下背景由主题决定' : '从色板选择颜色'}
+          disabled={disabled || themeMode}
+          tabIndex={disabled || themeMode ? -1 : 0}
         />
       </label>
       <label className="task-appearance__field">

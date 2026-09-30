@@ -1,91 +1,85 @@
-// Sidebar — primary navigation: lists, priorities, settings.
-// The AI assistant is a resident right panel, so it has no nav entry here.
+// Sidebar — the leftmost navigation rail. VSCode-style ~48px-wide icon
+// column with view-switcher items (今日 / 非今日 / 全部) at the top and the
+// user-avatar chip pinned to the bottom. The avatar's popup menu (设置 /
+// 关于 / 检查更新 / 退出) opens to the RIGHT of the rail so it can show full
+// labels without being clipped by the column edge.
+//
+// Design intent:
+//   - Icon-only items so the rail stays narrow; titles + aria-labels
+//     handle accessibility (hover tooltip + screen-reader fallback).
+//   - The avatar at the bottom is flex-pushed by .sidebar__spacer —
+//     keeping it OUT of the icon-button rhythm (it has a different
+//     visual weight, the gradient pill, and a popup menu) so the rail
+//     reads as "icons + identity" rather than "all icons".
+//   - onSelectFilter triggers App.tsx's listFilter state update + hash
+//     sync (same path the Topbar filter buttons use).
 
 import React from 'react';
-import type { Route } from '../router';
+import type { ListFilter } from '../router';
+import { UserMenu } from '../components/UserMenu';
 
-export const Sidebar: React.FC<{
-  route: Route;
-  onNavigate: (to: string) => void;
-}> = ({ onNavigate }) => {
-  const isActive = (target: string): boolean => location.hash === target;
-
-  const priorities = ['very-high', 'high', 'medium', 'low', 'very-low'];
-  const prioLabel: Record<string, string> = { 'very-high': '极高', high: '高', medium: '中', low: '低', 'very-low': '极低' };
-
-  return (
-    <nav className="sidebar" aria-label="主导航">
-      <SectionLabel>导航</SectionLabel>
-      <NavItem label="全部 TODO" icon="house" target="#/" active={isActive('#/')} onClick={onNavigate} />
-      {/* 今天 / 未来 7 天 的"按截止日期"视图被新的"今日待办 / 其他任务"双区
-          视图替代（见 TodoListPane 的上半区 / 下半区）；旧的 nav 入口删除。 */}
-      <NavItem label="未完成" icon="undone" target="#/list/status/next" active={isActive('#/list/status/next')} onClick={onNavigate} />
-      <NavItem label="归档" icon="archive" target="#/list/archived" active={isActive('#/list/archived')} onClick={onNavigate} />
-      <NavItem label="已删除" icon="trash" target="#/list/deleted" active={isActive('#/list/deleted')} onClick={onNavigate} />
-      <NavItem label="统计" icon="chart" target="#/stats" active={isActive('#/stats')} onClick={onNavigate} />
-
-      <SectionLabel>优先级</SectionLabel>
-      {priorities.map((p) => (
-        <NavItem
-          key={p}
-          label={prioLabel[p] ?? p}
-          icon={`prio-${p}`}
-          target={`#/list/priority/${p}`}
-          active={isActive(`#/list/priority/${p}`)}
-          onClick={onNavigate}
-        />
-      ))}
-
-      <div className="sidebar__spacer" />
-      <NavItem label="设置" icon="gear" target="#/settings" active={isActive('#/settings')} onClick={onNavigate} />
-    </nav>
-  );
-};
-
-const ICONS: Record<string, string> = {
-  house: 'M2 8L8 3L14 8V13.5C14 13.78 13.78 14 13.5 14H2.5C2.22 14 2 13.78 2 13.5V8Z',
-  today: 'M3 5H13V13H3V5Z M5 2.5V4 M11 2.5V4 M3 7H13',
-  week: 'M2.5 12.5L6 8L9 10.5L13.5 4.5',
-  undone: 'M1.5 8a6.5 6.5 0 1 0 13 0a6.5 6.5 0 1 0 -13 0',
-  archive: 'M2.5 3H13.5L14 6H2L2.5 3Z M3.5 6V13H12.5V6 M6.5 8H9.5',
-  trash: 'M3 4.5H13 M6.5 4.5V3.2A.5.5 0 01 7 2.7H9A.5.5 0 019.5 3.2V4.5 M5 4.5L5.6 12.5A.5.5 0 006.1 13H9.9A.5.5 0 0010.4 12.5L11 4.5',
-  chart: 'M3 13H13 M5 13V9 M8 13V6 M11 13V3',
-  'prio-very-high': 'M8 2L14 14H2L8 2Z M8 6V10 M8 11.6V12',
-  'prio-high': 'M8 2L14 14H2L8 2Z',
-  'prio-medium': 'M3 3H13V13H3V3Z',
-  'prio-low': 'M8 4L12 12H4L8 4Z',
-  'prio-very-low': 'M3 8H13',
-  gear: 'M8 5.5a2.5 2.5 0 100 5 2.5 2.5 0 000-5Z M8 1V3 M8 13V15 M1 8H3 M13 8H15 M3 3L4.5 4.5 M11.5 11.5L13 13 M3 13L4.5 11.5 M11.5 4.5L13 3',
-};
-
-function NavIcon({ name }: { name: string }): React.ReactElement {
-  const d = ICONS[name];
-  if (!d) return <span className="nav-icon-dot" aria-hidden="true" />;
-  return (
-    <svg className="nav-icon" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-      <path d={d} stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
-const SectionLabel: React.FC<{ children: React.ReactNode }> = ({ children }) => (
-  <div className="sidebar__section">{children}</div>
-);
-
-const NavItem: React.FC<{
+type Item = {
+  kind: ListFilter['kind'];
   label: string;
   icon: string;
-  target: string;
-  active: boolean;
-  onClick: (target: string) => void;
-}> = ({ label, icon, target, active, onClick }) => (
-  <button
-    type="button"
-    className={`nav-item${active ? ' is-active' : ''}`}
-    onClick={() => onClick(target)}
-    aria-current={active ? 'page' : undefined}
-  >
-    <NavIcon name={icon} />
-    <span className="nav-item__label">{label}</span>
-  </button>
+};
+
+const ITEMS: readonly Item[] = [
+  { kind: 'today', label: '今日', icon: 'today' },
+  { kind: 'non-today', label: '非今日', icon: 'non-today' },
+  { kind: 'all', label: '全部', icon: 'list' },
+] as const;
+
+export const Sidebar: React.FC<{
+  listFilter: ListFilter;
+  onSelectFilter: (f: ListFilter) => void;
+  onOpenSettings: () => void;
+}> = ({ listFilter, onSelectFilter, onOpenSettings }) => (
+  <nav className="sidebar" aria-label="侧边导航">
+    {ITEMS.map((it) => {
+      const active = listFilter.kind === it.kind;
+      return (
+        <button
+          key={it.kind}
+          type="button"
+          className={`sidebar__item${active ? ' is-active' : ''}`}
+          title={it.label}
+          aria-label={it.label}
+          aria-current={active ? 'page' : undefined}
+          onClick={() => onSelectFilter({ kind: it.kind } as ListFilter)}
+        >
+          <Glyph name={it.icon} />
+        </button>
+      );
+    })}
+    <div className="sidebar__spacer" />
+    <div className="sidebar__avatar-slot">
+      <UserMenu onOpenSettings={onOpenSettings} />
+    </div>
+  </nav>
+);
+
+// SVG glyph collection — 24×24 viewBox, stroke width 1.8, heavier than the
+// generic 16px icon-btn set so the rail's icons read at a glance
+// (matching VSCode Activity Bar visual weight). Semantic shapes:
+// today = large check (今日要做), non-today = horizontal bar / minus
+// (今日不动 / 暂缓 — neutral, unlike × which implies "删除/错误"),
+// all = three horizontal lines (complete list) — three shapes the eye
+// can tell apart instantly without hover prompts.
+const ICONS: Record<string, string> = {
+  list: 'M5 6.5H19 M5 12H19 M5 17.5H15',
+  today: 'M5 12.5L10 17.5L19 7.5',
+  'non-today': 'M7 12H17',
+};
+
+const Glyph: React.FC<{ name: string }> = ({ name }) => (
+  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+    <path
+      d={ICONS[name] ?? ''}
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+  </svg>
 );

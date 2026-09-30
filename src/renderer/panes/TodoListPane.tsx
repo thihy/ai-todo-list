@@ -24,9 +24,8 @@ import type { ListFilter, SortKey } from '../router';
 import { ToastHost } from '../components/Toast';
 import type { ToastBus } from '../components/Toast';
 import type { Todo, TodoStatus, ULID } from '../../shared/todo-types';
-import { UserMenu } from '../components/UserMenu';
 import { StatusSelect } from '../components/StatusSelect';
-import { IconCalendar, IconChevronDown, IconCollapseBar, IconDrawing, IconInboxEmpty, IconTrash } from '../components/icons';
+import { IconCalendar, IconChevronDown, IconDrawing, IconInboxEmpty, IconTrash } from '../components/icons';
 import { todayDateKey } from '../components/PlanGuideModal';
 import TodayGlyph from '../components/TodayGlyph';
 import { DEFAULT_TASK_APPEARANCE, type TaskAppearance } from '../../shared/task-appearance';
@@ -37,11 +36,9 @@ export const TodoListPane: React.FC<{
   sort: SortKey;
   selectedId: string | null;
   onSelect: (id: string) => void;
-  onOpenSettings: () => void;
   onCompose: () => void;
-  onCollapse?: () => void;
   toastBus: ToastBus;
-}> = ({ width, filter, sort, selectedId, onSelect, onOpenSettings, onCompose, onCollapse, toastBus }) => {
+}> = ({ width, filter, sort, selectedId, onSelect, onCompose, toastBus }) => {
   const repoFilter = filterToRepoFilter(filter);
   const { data, loading, refresh } = useTodos(repoFilter);
   // 任务优先级配色 —— mode=custom 时把 colors 注入 CSS 自定义属性；
@@ -279,6 +276,12 @@ export const TodoListPane: React.FC<{
   const isEmpty = !loading && data.length === 0;
   return (
     <section className={`task-list${taskAppearance?.mode === 'custom' ? ' task-list--custom' : ''}`} aria-label="任务列表" style={taskListStyle(taskAppearance, width)}>
+      {/* This pane renders ONLY the task-list body. The sidebar chrome —
+          top brand tools row (notification / search / collapse) and the
+          bottom user-avatar footer — lives in layout/Sidebar.tsx, which
+          wraps this pane in App. Keeping chrome out of here makes the
+          list column itself a pure content region, while the wrapper owns
+          the bands that frame it. */}
       <header className="task-list__header">
         <button type="button" className="task-list__add-btn" onClick={onCompose}>
           <PlusGlyph /> 新建任务
@@ -303,23 +306,6 @@ export const TodoListPane: React.FC<{
               {allExpanded ? <CollapseAllGlyph /> : <ExpandAllGlyph />}
             </button>
           </div>
-        )}
-        {onCollapse && (
-          /* Collapse affordance — same IconCollapseBar as the AI panel
-             header, living ON the task list's own header (right edge) so
-             the user sees it as part of the area they're looking at, not
-             a handle on a separate divider column. Mirrors the AI panel
-             pattern byte-for-byte: chrome button at the title row's far
-             right, after the in-panel tools. */
-          <button
-            type="button"
-            className="task-list__collapse-btn"
-            onClick={onCollapse}
-            title="收起任务列表"
-            aria-label="收起任务列表"
-          >
-            <IconCollapseBar />
-          </button>
         )}
       </header>
 
@@ -376,7 +362,7 @@ export const TodoListPane: React.FC<{
                     aria-controls="planned-section-list"
                     onClick={() => setPlannedSectionCollapsed((v) => !v)}
                   >
-                    <IconChevronDown size={12} className="section-toggle__chevron" />
+                    <IconChevronDown size={14} className="section-toggle__chevron" />
                     <span className="planned-section__title">今日待办</span>
                     <span className="planned-section__count">{plannedSet.size}</span>
                   </button>
@@ -430,7 +416,7 @@ export const TodoListPane: React.FC<{
                     aria-controls="non-today-section-list"
                     onClick={() => setNonTodaySectionCollapsed((v) => !v)}
                   >
-                    <IconChevronDown size={12} className="section-toggle__chevron" />
+                    <IconChevronDown size={14} className="section-toggle__chevron" />
                     <span className="non-today-section__title">非今日任务</span>
                     <span className="non-today-section__count">{nonTodayRoots.length}</span>
                   </button>
@@ -484,7 +470,7 @@ export const TodoListPane: React.FC<{
                     aria-controls="other-section-list"
                     onClick={() => setOtherSectionCollapsed((v) => !v)}
                   >
-                    <IconChevronDown size={12} className="section-toggle__chevron" />
+                    <IconChevronDown size={14} className="section-toggle__chevron" />
                     <span className="other-section__title">{archivedView ? '归档' : '全部任务'}</span>
                     <span className="other-section__count">{rootTasks.length}</span>
                   </button>
@@ -528,12 +514,10 @@ export const TodoListPane: React.FC<{
         </>
       </div>
 
-      <footer className="task-list__footer">
-        <UserMenu onOpenSettings={onOpenSettings} />
-      </footer>
-
-      {/* Toasts anchor to the bottom of this task-list column (stacked upward
-          above the footer) — not a global bottom-right overlay. */}
+      {/* Toasts anchor to the bottom of this task-list column (stacked upward)
+          — not a global bottom-right overlay. The user-avatar chip that used
+          to live in a sibling footer has moved out into layout/Sidebar.tsx,
+          which now owns the sidebar's bottom chrome. */}
       <ToastHost bus={toastBus} />
     </section>
   );
@@ -1330,6 +1314,8 @@ const PlusGlyph: React.FC = () => (
     <path d="M8 3v10M3 8h10" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
   </svg>
 );
+
+
 
 // TodayGlyph lives in components/TodayGlyph.tsx — shared with TodoEditorPane.
 

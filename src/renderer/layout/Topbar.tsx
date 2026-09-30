@@ -1,7 +1,16 @@
-// Topbar — the frameless title bar. Left: brand (drag). Tools (no-drag):
-// [过滤][排序][搜索] then flat menu-category buttons 文件/编辑/视图/窗口/帮助
-// (each pops its native submenu). Then a drag spacer; native min/max/close
-// sit in the titleBarOverlay region reserved by the topbar's env() right padding.
+// Topbar — the frameless title bar. Holds:
+//   1. Brand (logo + product name + project switcher chevron) on the left.
+//   2. Filter / sort / search controls (in-panel actions live in the task list,
+//      the topbar keeps the menu + a compact Cmd-K search).
+//   3. Flat menu-category buttons (文件 / 编辑 / 视图 / 窗口 / 帮助) that pop
+//      their native submenu via window.todoList.app.popupMenuCategory.
+//   4. Drag spacer + native caption buttons (env titlebar-area).
+//
+// Visually the topbar shares its background with the sidebar underneath
+// (both bg-surface) and drops the bottom border, so the two read as one
+// continuous chrome band. The brand mark / project switcher lives here,
+// NOT in the sidebar header — the sidebar only hosts list-scoped actions
+// (notification / search / collapse) plus the user avatar at its footer.
 
 import React from 'react';
 import { FilterButton } from '../components/FilterPopover';
@@ -19,9 +28,14 @@ export const Topbar: React.FC<{
 }> = ({ onOpenPalette, listFilter, onSelectFilter, listSort, onSelectSort }) => {
   return (
     <header className="topbar">
+      {/* Brand badge — purely visual. We don't ship project switching in
+         this build (single-tenant app), so the chevron + button affordance
+         were misleading dead UI. Just renders the logo + product name;
+         the whole topbar remains draggable via -webkit-app-region on the
+         header itself. */}
       <div className="topbar__brand">
         <Logo />
-        <strong className="topbar__name">AI待办</strong>
+        <span className="topbar__name">AI 待办</span>
       </div>
 
       <div className="topbar__tools">
@@ -36,19 +50,20 @@ export const Topbar: React.FC<{
         >
           <SearchIcon />
         </button>
-        <div className="topbar__menu" role="menubar" aria-label="应用菜单">
-          {MENU_CATEGORIES.map((cat) => (
-            <button
-              key={cat}
-              type="button"
-              className="topbar__menu-item"
-              role="menuitem"
-              onClick={() => void window.todoList.app.popupMenuCategory(cat)}
-            >
-              {cat}
-            </button>
-          ))}
-        </div>
+      </div>
+
+      <div className="topbar__menu" role="menubar" aria-label="应用菜单">
+        {MENU_CATEGORIES.map((cat) => (
+          <button
+            key={cat}
+            type="button"
+            className="topbar__menu-item"
+            role="menuitem"
+            onClick={() => void window.todoList.app.popupMenuCategory(cat)}
+          >
+            {cat}
+          </button>
+        ))}
       </div>
 
       <div className="topbar__spacer" />
