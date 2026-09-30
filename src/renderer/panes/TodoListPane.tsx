@@ -153,10 +153,11 @@ export const TodoListPane: React.FC<{
     await refresh();
   }, [refresh]);
 
-  // Quick-recovery: soft-deleting a task from the active list pops a 5-min
+  // Quick-recovery: soft-deleting a task from the active list pops a 30s
   // toast with a 恢复 action. No confirmation — the delete is immediate
-  // (logical, always undoable). The toast auto-dismisses after 5 min; the
-  // task is still recoverable from the 已删除 filter view after that.
+  // (logical, always undoable). 30s（不是原来的 5 分钟）：这个 toast 挂在
+  // 任务列表底部、是常驻可见的浮层，5 分钟里一直杵着会挡住新行；30s 足够
+  // 用户看清"删了哪条"并点「恢复」，超时后任务仍在「已删除」视图里可找回。
   const onDelete = useCallback(async (id: string) => {
     const todo = data.find((t) => t.id === id);
     await window.todoList.todo.delete(id);
@@ -165,7 +166,7 @@ export const TodoListPane: React.FC<{
       toastBus.push({
         kind: 'info',
         message: `已删除「${todo.title || '(无标题)'}」`,
-        ttl: 5 * 60_000,
+        ttl: 30_000,
         action: {
           label: '恢复',
           run: () => {
