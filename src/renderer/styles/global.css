@@ -34,6 +34,19 @@
   --bg-active: rgba(4, 120, 87, 0.12);
   --bg-tooltip: #1F2227;
 
+  /* Chrome band — a soft graphite gray, deliberately only a few shades
+   * darker than the task-list body (`--bg-surface: #F6F7F9`). The aim
+   * is to mark the title-bar band, the native Window Controls Overlay,
+   * and the left rail as their own continuous chrome strip — visibly
+   * distinct from the task list underneath, but not so dark that the
+   * app flips into "dark mode". Foreground tokens reuse the existing
+   * `--fg-*` family because --chrome-bg sits on the light side of the
+   * spectrum (≈ 12 % darker than --bg-surface) and the dark text on
+   * light gray keeps AA contrast untouched. */
+  --chrome-bg: #D5D8DE;
+  --chrome-hover: rgba(0, 0, 0, 0.06);
+  --chrome-border: rgba(0, 0, 0, 0.08);
+
   /* Foreground — computed AA on canvas/surface */
   --fg-primary: #1A1D21; /* 16.9:1 on canvas */
   --fg-secondary: #4A4F57; /* 8.2:1 on canvas */
@@ -268,8 +281,15 @@ a:hover {
   display: flex;
   align-items: center;
   gap: var(--space-lg);
-  background: var(--bg-surface);
-  border-bottom: 1px solid var(--border-default);
+  /* Chrome band — a soft graphite gray, deliberately only a few shades
+   * darker than the task-list body (`--bg-surface: #F6F7F9`). The native
+   * Window Controls Overlay (caption buttons) is drawn by Chromium at
+   * the same band, so its `titleBarOverlay.color` in main/index.ts must
+   * match --chrome-bg exactly; otherwise a brighter/darker strip bleeds
+   * above the topbar and breaks the "fused chrome" seam. The bottom
+   * border drops so the sidebar header underneath sits flush. */
+  background: var(--chrome-bg);
+  border-bottom: 0;
   -webkit-app-region: drag;
   /* Reserve space for native caption buttons (Window Controls Overlay).
    * When WCO is active, env(titlebar-area-*) describe the drawable region;
@@ -571,8 +591,13 @@ a:hover {
   flex-direction: column;
   align-items: center;
   padding: var(--space-sm) 0;
-  background: var(--bg-surface-elev);
-  border-right: 1px solid var(--border-default);
+  /* Sidebar rail — shares the chrome band with the topbar and the
+   * Window Controls Overlay so the three pieces read as one continuous
+   * strip across the top + left of the window. Same `var(--chrome-bg)`
+   * value; the right border is dropped in favour of a transparent
+   * seam that lets the underlying chrome colour bleed through. */
+  background: var(--chrome-bg);
+  border-right: 1px solid var(--chrome-border);
   gap: 4px;
 }
 

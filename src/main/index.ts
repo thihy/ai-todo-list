@@ -739,11 +739,14 @@ function createMainWindow(): BrowserWindow {
     title: 'AI待办',
     // Frameless with themed native caption buttons (Window Controls Overlay):
     // removes the Windows title bar so the top bar blends with the app chrome.
-    // Light overlay matches the topbar surface; native min/max/close stay.
+    // Overlay colours MUST match the renderer's topbar --chrome-bg
+    // (#D5D8DE) and the icon --fg-primary (#1A1D21); otherwise the strip
+    // rendered by Chromium above the webContents shows as a brighter or
+    // darker band that visually breaks the "fused chrome" seam.
     titleBarStyle: 'hidden',
     titleBarOverlay: {
-      color: '#F6F7F9',
-      symbolColor: '#4A4F57',
+      color: '#D5D8DE',
+      symbolColor: '#1A1D21',
       height: 44,
     },
     autoHideMenuBar: true,
@@ -1293,8 +1296,8 @@ function registerAppHandlers(rootDir: string, getMainWindow: () => BrowserWindow
   // black over #F6F7F9 → ~ #7B7E84 after blending, with a near-black glyph
   // for contrast against that mid-gray background). Tweak here if you
   // change the backdrop tint.
-  const TITLEBAR_OVERLAY_LIGHT = { color: '#F6F7F9', symbolColor: '#4A4F57' };
-  const TITLEBAR_OVERLAY_DIM = { color: '#7B7E84', symbolColor: '#1F2329' };
+  const TITLEBAR_OVERLAY_LIGHT = { color: '#D5D8DE', symbolColor: '#1A1D21' };
+  const TITLEBAR_OVERLAY_DIM = { color: '#B5BAC2', symbolColor: '#1A1D21' };
   register('app.setTitleBarOverlay', (_e, req) => {
     try {
       // macOS uses traffic-light buttons, not a titleBarOverlay — skip
