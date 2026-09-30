@@ -446,6 +446,10 @@ export const App: React.FC = () => {
                   onFullscreen={(todoId) => setFullscreenTodoId(todoId)}
                   selectedDocId={selectedDocId}
                   onSelectDoc={onSelectDoc}
+                  // 「今日待办」视图下新建 → 默认加入今日；「后续待办」/
+                  // 「全部待办」下新建 → 默认后续办。其它视图（归档/已删除/
+                  // 按状态筛选）保持不勾选，因为那里没有"今天做"这层含义。
+                  defaultPlannedToday={listFilter.kind === 'today'}
                 />
               </div>
             )}
@@ -496,11 +500,17 @@ const TaskDetail: React.FC<{
   onFullscreen: (todoId: string) => void;
   selectedDocId: string | null;
   onSelectDoc: (tabId: string) => void;
-}> = ({ todoId, composing, onCloseCompose, onAiSubmit, navigate, onFullscreen, selectedDocId, onSelectDoc }) => {
+  defaultPlannedToday: boolean;
+}> = ({ todoId, composing, onCloseCompose, onAiSubmit, navigate, onFullscreen, selectedDocId, onSelectDoc, defaultPlannedToday }) => {
   if (composing) {
     return (
       <div className="task-detail task-detail--compose">
-        <Composer onClose={onCloseCompose} navigate={navigate} onAiSubmit={onAiSubmit} />
+        <Composer
+          onClose={onCloseCompose}
+          navigate={navigate}
+          onAiSubmit={onAiSubmit}
+          defaultPlannedToday={defaultPlannedToday}
+        />
       </div>
     );
   }

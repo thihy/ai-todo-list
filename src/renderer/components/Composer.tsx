@@ -59,7 +59,12 @@ export const Composer: React.FC<{
   onClose: () => void;
   navigate: (to: string) => void;
   onAiSubmit?: (detail: ExternalAiSubmitDetail) => void;
-}> = ({ onClose, navigate, onAiSubmit }) => {
+  /** 「加入今日待办」复选框的初始值。由 App 按当前任务列表视图推导：
+   *  在「今日待办」视图下新建 → 默认勾选（用户此时的意图就是今天做）；
+   *  在「后续待办」/「全部待办」下新建 → 默认不勾选（即后续办）。
+   *  这只是**默认值**：复选框仍可手动改，用户永远能覆盖。 */
+  defaultPlannedToday?: boolean;
+}> = ({ onClose, navigate, onAiSubmit, defaultPlannedToday = false }) => {
   const [mode, setMode] = useState<'form' | 'ai'>('form');
   const [text, setText] = useState('');
   const [images, setImages] = useState<PastedImage[]>([]);
@@ -76,7 +81,10 @@ export const Composer: React.FC<{
     priority: 'low' as Priority,
     dueDate: '',
     tags: '',
-    plannedToday: false,
+    // 初始值取自打开 Composer 那一刻的当前视图（在「今日待办」里新建就是
+    // true）。用惰性初始化而不是 useEffect 同步：Composer 每次挂载就是一个
+    // 全新表单，用 effect 回填会让首帧闪一下未勾选的状态。
+    plannedToday: defaultPlannedToday,
   });
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
