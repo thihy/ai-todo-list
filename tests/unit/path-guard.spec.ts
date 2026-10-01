@@ -18,8 +18,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, symlinkSync, writeFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, sep, isAbsolute } from 'node:path';
-import { isWithinWorkspace } from '../../src/main/dsh/path-guard';
+import { join, sep, isAbsolute, resolve as pathResolve } from 'node:path';
+import { isWithinWorkspace, isContained } from '../../src/main/dsh/path-guard';
 
 let workspace: string;
 let outside: string;
@@ -103,6 +103,66 @@ describe('isWithinWorkspace — containment', () => {
       symlinkSync(outside, join(workspace, 'inside', 'link'), 'dir');
     }
     expect(isWithinWorkspace(workspace, join('inside', 'link'))).toBe(false);
+  });
+});
+
+describe('isContained — symlinked workspace root', () => {
+  // Regression: on macOS/Linux `os.tmpdir()` is reached through a symlink
+  // (/var/folders/... -> /private/var/folders/..., /tmp -> /private/tmp).
+  // realpath then returns a path with NO string relationship to the one the
+  // caller passed, and comparing only the realpath form rejected legitimate
+  // in-workspace relative paths. CI on ubuntu-latest caught this; Windows never
+  // does, because C:\Users\<u>\AppData\Local\Temp is not a link.
+  //
+  // A `..` segment cannot reproduce it (path.resolve normalises that away) and
+  // a real symlink needs Developer Mode/admin on Windows. So we exercise the
+  // extracted decision function directly, using the host separator so the
+  // strings are valid on whichever platform runs the suite.
+  const S = sep;
+  const root = `${S}tmp`;
+  const realRoot = `${S}private${S}tmp`;
+  const rawWs = `${root}${S}pathguard-ws-link`;
+  const realWs = `${realRoot}${S}pathguard-ws-link`;
+  // `isContained` compares against `path.resolve(rawWorkspace)`, which on
+  // Windows prepends the current drive. Build the expectation the same way so
+  // these assertions hold on whichever host runs the suite.
+  const resolvedRawWs = pathResolve(rawWs);
+
+  it('models the symlinked-tmpdir shape: raw workspace and its realpath differ', () => {
+    expect(rawWs).not.toBe(realWs);
+  });
+
+  it('accepts a not-yet-existing file under the RAW workspace prefix', () => {
+    // The leaf does not exist, so realpath fell back to path.resolve, which
+    // kept the unresolved prefix. Old logic compared against realWs only and
+    // returned false here — this is the assertion the fix restores.
+    expect(isContained(rawWs, realWs, `${resolvedRawWs}${S}notes.md`)).toBe(true);
+    expect(
+      isContained(rawWs, realWs, `${resolvedRawWs}${S}sub${S}folder${S}notes.md`),
+    ).toBe(true);
+  });
+
+  it('accepts a path that realpath resolved under the REAL workspace prefix', () => {
+    // The file exists, so realpath succeeded and gave the resolved form.
+    expect(isContained(rawWs, realWs, `${realWs}${S}notes.md`)).toBe(true);
+  });
+
+  it('accepts the workspace root itself in either form', () => {
+    expect(isContained(rawWs, realWs, realWs)).toBe(true);
+    expect(isContained(rawWs, realWs, rawWs)).toBe(true);
+  });
+
+  it('still rejects traversal, siblings and paths outside', () => {
+    // The security invariant the widened comparison must not break.
+    expect(isContained(rawWs, realWs, `${S}etc${S}passwd`)).toBe(false);
+    expect(isContained(rawWs, realWs, `${root}${S}other-ws${S}notes.md`)).toBe(false);
+    // Sibling whose name merely extends the workspace name — the classic
+    // prefix-match trap that the trailing separator is there to prevent.
+    expect(isContained(rawWs, realWs, `${realWs}-evil${S}notes.md`)).toBe(false);
+    expect(isContained(rawWs, realWs, `${rawWs}-evil${S}notes.md`)).toBe(false);
+    // Parent directories themselves.
+    expect(isContained(rawWs, realWs, root)).toBe(false);
+    expect(isContained(rawWs, realWs, realRoot)).toBe(false);
   });
 });
 

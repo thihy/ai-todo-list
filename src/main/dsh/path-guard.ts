@@ -1,7 +1,7 @@
 // Workspace path containment for DSH fs tools. The host-side guard is the FIRST
 // line of defense for read-class tools (`read` / `read_image` / `grep` / `glob`):
 // the DSH sandbox backend (`dsh-fs-sandbox` in workspace-write mode) does NOT
-// cover reads — only writes. So if the AI calls `read('/etc/passwd')`, the only
+// cover reads 閳?only writes. So if the AI calls `read('/etc/passwd')`, the only
 // thing standing between the model and that file content is this function.
 //
 // Mutate-class tools (`write` / `edit` / `bash` / `pwsh`) go through `tools/pre-execute`
@@ -12,8 +12,8 @@
 //
 // Two corrections matter for security:
 //   - `realpathSync.native` follows symlinks / junctions / Windows long/short
-//     names. A naïve `path.resolve` check on `/workspace/linked/etc/passwd` would
-//     PASS but then `read` would actually open `/etc/passwd` — the kernel
+//     names. A na鑼倂e `path.resolve` check on `/workspace/linked/etc/passwd` would
+//     PASS but then `read` would actually open `/etc/passwd` 閳?the kernel
 //     resolves the link, our check must too.
 //   - Windows file systems are case-insensitive. `C:\Workspace\foo` and
 //     `C:\WORKSPACE\FOO` refer to the same file. Compare lowercased real paths
@@ -22,7 +22,7 @@
 // ENOENT handling: when the AI requests a path that doesn't exist yet (a
 // common case for `write` targets, or for `read` on a fresh workspace), we
 // fall back to `path.resolve` and check the prefix. The actual file access
-// later produces ENOENT for the model — which is exactly what it would have
+// later produces ENOENT for the model 閳?which is exactly what it would have
 // gotten had we allowed it through. This is safe because:
 //   - A symlink pointing outside the workspace ALWAYS exists (the symlink
 //     itself is a file/dir); realpath succeeds and we follow it.
@@ -56,12 +56,38 @@ export function isWithinWorkspace(workspace: string, requested: string): boolean
   if (realWorkspace === null) return false;
   // Try realpath first to follow symlinks / junctions / long-short aliases.
   // If the path doesn't exist yet (write targets, fresh-workspace reads),
-  // fall back to the resolved path — the file can't be a symlink yet because
+  // fall back to the resolved path 閳?the file can't be a symlink yet because
   // it doesn't exist.
   const realResolved = safeRealpath(resolved) ?? resolved;
+  return isContained(workspace, realWorkspace, realResolved);
+}
+
+/** Pure containment decision, split out so it can be tested without a real
+ *  symlink: creating one needs Developer Mode/admin on Windows, and the bug it
+ *  guards only reproduces where `os.tmpdir()` sits behind a symlink.
+ *
+ *  `realWorkspace` is the workspace after `realpathSync.native`; `realResolved`
+ *  is the requested path, realpath'd when it exists and left as the
+ *  `path.resolve` output when it does not.
+ *
+ *  Both the realpath form AND the raw form of the workspace are accepted. That
+ *  second comparison is load-bearing: on macOS `os.tmpdir()` is
+ *  `/var/folders/...` while its realpath is `/private/var/folders/...`, so for a
+ *  not-yet-existing file `realResolved` still carries the unresolved prefix and
+ *  comparing against `realWorkspace` alone would reject a legitimate
+ *  in-workspace path. Accepting the raw prefix cannot widen the boundary:
+ *  `realResolved` is still an absolute, `..`-free path, so neither a `../`
+ *  escape nor a sibling directory satisfies either prefix test. */
+export function isContained(
+  rawWorkspace: string,
+  realWorkspace: string,
+  realResolved: string,
+): boolean {
   return (
     pathEquals(realWorkspace, realResolved)
     || pathStartsWith(realResolved, realWorkspace + path.sep)
+    || pathEquals(rawWorkspace, realResolved)
+    || pathStartsWith(realResolved, path.resolve(rawWorkspace) + path.sep)
   );
 }
 
@@ -99,7 +125,7 @@ function pathStartsWith(a: string, prefix: string): boolean {
  *  shape. DSH fs tools accept a few aliases (`file_path` / `path` / `pattern`),
  *  and tools like `grep` carry the search root in `path` while `glob` carries
  *  it in `pattern`. We let the caller pass the key list to try in priority
- *  order. Returns undefined when nothing is a string — the caller decides
+ *  order. Returns undefined when nothing is a string 閳?the caller decides
  *  whether the tool needs a path check at all. */
 export function extractStringPath(
   args: unknown,

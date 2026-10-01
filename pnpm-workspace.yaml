@@ -6,6 +6,10 @@ allowBuilds:
   '@deepseek-ai/dsh-subprocess-local': true
   '@google/genai': true
   better-sqlite3: false
+  # Downloads the Electron binary in postinstall. Without this the package
+  # resolves but `require('electron')` throws "Electron failed to install
+  # correctly" 鈥?which takes down every spec that transitively imports it.
+  electron: true
   electron-winstaller: true
   esbuild: true
   koffi: true
