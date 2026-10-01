@@ -25,6 +25,9 @@ interface AIComposerProps {
   attachments: readonly AIComposerAttachment[];
   onRemoveAttachment: (path: string) => void;
   onPickAttachment: () => void;
+  /** 剪贴板里带 `image/*` 时回调，文件已按剪贴板顺序排列。纯文本
+   *  粘贴不触发 —— 那种情况不拦截，textarea 保持默认行为。 */
+  onPasteFiles: (files: File[]) => void;
   onSubmit: () => void;
   onStop: () => void;
   busy: boolean;
@@ -46,6 +49,7 @@ export const AIComposer = forwardRef<HTMLTextAreaElement, AIComposerProps>(funct
     attachments,
     onRemoveAttachment,
     onPickAttachment,
+    onPasteFiles,
     onSubmit,
     onStop,
     busy,
@@ -91,6 +95,23 @@ export const AIComposer = forwardRef<HTMLTextAreaElement, AIComposerProps>(funct
           aria-label="向 AI 提问"
           value={value}
           onChange={(event) => onChange(event.target.value)}
+          onPaste={(event) => {
+            // 只接管剪贴板里的图片项。截图在 Windows 上是 image/png，
+            // macOS/Linux 截屏工具可能给 image/tiff —— 一律按 `image/`
+            // 前缀收，扩展名由 AIPane 侧按 mime 推断。
+            const items = event.clipboardData?.items;
+            if (!items) return;
+            const files: File[] = [];
+            for (const it of items) {
+              if (it.kind === 'file' && it.type.startsWith('image/')) {
+                const file = it.getAsFile();
+                if (file) files.push(file);
+              }
+            }
+            if (files.length === 0) return;
+            event.preventDefault();
+            onPasteFiles(files);
+          }}
           onKeyDown={(event) => {
             if (event.nativeEvent.isComposing || event.keyCode === 229) return;
             if (event.key === 'Enter' && !event.shiftKey) {

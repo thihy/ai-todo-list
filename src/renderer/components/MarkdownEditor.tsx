@@ -33,6 +33,7 @@ import {
 } from './icons';
 import { MarkdownText, type MarkdownLabels, type MarkdownPathImages } from '@deepseek-ai/dsh-client-ui-primitives';
 import { HistoryPopover } from './HistoryPopover';
+import { blobToDataUrl } from '../utils/blob-to-data-url';
 
 /** A textarea + value transform, returning the new value and selection. */
 interface EditResult {
@@ -837,16 +838,4 @@ function formatStamp(ts: number): string {
   const mi = String(d.getMinutes()).padStart(2, '0');
   const ss = String(d.getSeconds()).padStart(2, '0');
   return `${yyyy}${mm}${dd}-${hh}${mi}${ss}`;
-}
-
-/** Encode a Blob into a base64 data: URL. Mirrors the helper in
-//  Composer.tsx — kept local here to avoid a cross-component coupling for a
-//  five-line FileReader dance. */
-function blobToDataUrl(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const r = new FileReader();
-    r.onload = () => resolve(String(r.result));
-    r.onerror = () => reject(r.error);
-    r.readAsDataURL(blob);
-  });
 }

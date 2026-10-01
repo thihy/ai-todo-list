@@ -63,6 +63,7 @@ import { AI_SUBMIT_EVENT, type ExternalAiSubmitDetail } from '../components/Comp
 import { recoverToolResultValue, parseToolArgs } from '../tool-presentation';
 import type { ComposerBlock } from '@deepseek-ai/dsh-client-ui-conversation/client';
 import { AIComposer, type AIComposerAttachment } from '../dsh/AIComposer';
+import { blobToDataUrl } from '../utils/blob-to-data-url';
 import { PendingQuestionCard } from '../dsh/PendingQuestionCard';
 import { PendingApprovalCard } from '../dsh/PendingApprovalCard';
 import { AssistantTurnContent } from '../dsh/AssistantTurnContent';
@@ -170,6 +171,93 @@ interface HistoryTurnLike {
  *    - 空字符串 / 不以 `/` 开头 → 原样返回
  *  纯函数,无副作用。runSubmit 在主路径之外再调一次兜底(capture /
  *  externalSubmit 等不走 textarea onChange 的路径)。 */
+/** 附件块 header —— 告诉 AI 怎么把这个文件读进来。
+ *
+ *  必须写死读法，因为模型默认会调 `read`，而 DSH 的 `read` 碰到二进制直接
+ *  抛 `binary file`，TurnFailureGuard 随即把整轮停掉 —— 实测用户说「看看这
+ *  张图」时就是这么炸的：附件好好落在磁盘上，整轮仍然失败。
+ *
+ *  读法写成「优先 read_image，没有就 pwsh」而不是无条件点名 read_image：本 app
+ *  的 cordis.yml 没有挂载 attachments 服务（@deepseek-ai/dsh-attachment-local
+ *  只是未声明的传递依赖），而 dsh-tool-fs 正是在 `ctx.inject(['attachments'], …)`
+ *  里才注册 `read_image`，所以它目前**不在**模型工具集里。无条件点名一个调不到
+ *  的工具只会让模型绕远路；`pwsh` 确实能读，已验证能正确解出像素。
+ */
+export function attachmentHeader(a: AttachedFile): string {
+  return `[attached: ${a.name} (${a.mime}, ${a.size} 字节) — 别用 read 读它，二进制会报错并中断本轮；优先用 read_image，工具集里没有就用 pwsh 解析]`;
+}
+
+/** 解析历史 user 消息里的附件引用块。
+ *
+ *  格式：`[attached: <名字> (<mime>, <字节> 字节)<可选提示>]\n<绝对路径>`，
+ *  块之间用 `\n\n---\n\n` 分隔。`字节)` 之后的读法提示（点名 read /
+ *  read_image）是后加的，正则用 `[^\]\n]*` 宽容吃掉，所以旧格式（无提示
+ *  语）和新格式都能解析 —— 已有会话重启回放不能因此丢附件 chip。
+ *
+ *  返回剥掉附件块后的 userText：bubble 只显示用户原始输入，附件信息走
+ *  `attached` 单独渲染，不重复出现在正文里。 */
+export function parseAttachedBlocks(rawText: string): {
+  attached: AttachedFile[];
+  userText: string;
+} {
+  const ATTACH_BLOCK =
+    /\[attached: ([^()]+) \(([^,]+), (\d+) 字节\)[^\]\n]*\]\n([^\n]+)/g;
+  const attached: AttachedFile[] = [];
+  for (const m of rawText.matchAll(ATTACH_BLOCK)) {
+    attached.push({
+      name: m[1]!.trim(),
+      mime: m[2]!.trim(),
+      size: Number(m[3]),
+      path: m[4]!.trim(),
+    });
+  }
+  if (attached.length === 0) return { attached, userText: rawText };
+  // 两步剥块：先吃「块 + 紧随其后的分隔符」，再兜底吃掉孤立的 header 行
+  // + 路径行（旧格式缺 trailing separator 时会走到这步）。
+  const userText = rawText
+    .replace(/\[attached: [^\n]+\n[^\n]+\n\n---\n\n?/g, '')
+    .replace(/\[attached: [^\n]+\n[^\n]+/g, '')
+    // 块是追加在用户文本**之后**的，分隔符在块**前面** —— 上面两条都只处理
+    // 块后面的分隔符，所以前面那个 `\n\n---\n\n` 会剩下，让 bubble 里多出一行
+    // `---`。这里统一收掉任意残留分隔符。
+    .replace(/\n+---\n+/g, '\n')
+    .trim();
+  return { attached, userText };
+}
+
+/** 给剪贴板图片起一个 chip 行上能看的名字。
+ *
+ *  截屏（Win+Shift+S / macOS ⌘⇧4 / gnome-screenshot）在剪贴板里常常
+ *  没有文件名，Chromium 就给一个通用的 `image.png`。一次粘多张时全叫
+ *  同一个名字，chip 行和 prompt 里的 `[attached: ...]` header 都分不清
+ *  谁是谁。名字缺失或属于这批通用默认值时补 `pasted-<n>.<ext>`；从文件
+ *  管理器复制的真实文件名（`架构图.png`）原样保留。
+ *
+ *  落盘文件名另有 ULID 去重（见 composer-inbox 的 resolveTarget），
+ *  这里只管用户可见的名字。 */
+export function pastedFileName(file: File, seq: number): string {
+  const name = file.name.trim();
+  if (name && !/^image(\.\w+)?$/i.test(name)) return name;
+  return `pasted-${seq}.${extensionForMime(file.type)}`;
+}
+
+/** mime → 展示用扩展名。覆盖剪贴板截图实际会出现的几种，其余回退到
+ *  subtype 的字母数字部分（`image/svg+xml` → `svg`；DSH 的 `read_image`
+ *  按 mime 判定类型、不依赖扩展名，所以回退值只要是合法字符即可）。 */
+function extensionForMime(mime: string): string {
+  const subtype = mime.replace(/^image\//, '').split(';')[0]!.trim();
+  switch (subtype) {
+    case '':
+      return 'png';
+    case 'jpeg':
+      return 'jpg';
+    case 'svg+xml':
+      return 'svg';
+    default:
+      return subtype.replace(/[^a-z0-9]/gi, '') || 'png';
+  }
+}
+
 export function stripLeadingSlashCommand(text: string): string {
   if (!text) return text;
   if (text[0] !== '/') return text;
@@ -887,6 +975,80 @@ export const AIPane: React.FC<{
     setAttachments((prev) => prev.filter((a) => a.path !== path));
   };
 
+  // 粘贴图片走和 `pickFile` 完全相同的落盘通道：字节流先写进
+  // <rootDir>/.todo-list/dsh_workspace/inbox/，chip 只留绝对路径 + 元数据，
+  // prompt 里不 inline dataUrl，AI 之后自己用 DSH `read_image` 读。
+  //
+  // 落盘是异步的（blob → dataUrl → IPC → writeFile，几十到几百 ms）。用户
+  // 「粘完立刻回车」时 `attachments` 还没被 setState 刷出来，直接读 state
+  // 会静默丢图，所以把 in-flight promise 挂 ref，由 runSubmit 开头
+  // await 一次（settlePendingPastes）。
+  const inflightPastesRef = useRef<Set<Promise<AttachedFile | null>>>(new Set());
+  const pasteSeqRef = useRef(0);
+
+  const importPastedImage = async (
+    file: File,
+    conversationId: string | null,
+  ): Promise<AttachedFile> => {
+    const dataUrl = await blobToDataUrl(file);
+    const name = pastedFileName(file, pasteSeqRef.current++);
+    const r = await window.todoList.app.importBlob({
+      conversationId,
+      name,
+      mime: file.type,
+      dataUrl,
+    });
+    if (!r.ok) throw new Error(r.message ?? r.code ?? '导入失败');
+    return {
+      path: r.data.path,
+      name: r.data.name,
+      mime: r.data.mime,
+      size: r.data.size,
+    };
+  };
+
+  const pasteAttachments = (files: File[]): void => {
+    for (const file of files) {
+      // 记下粘贴时的会话：importBlob 的落盘 key 由它决定，回调里要拿它
+      // 和当前会话比对（见下面 .then 里的守卫）。
+      const targetConv = currentIdRef.current;
+      let task: Promise<AttachedFile | null>;
+      task = importPastedImage(file, targetConv)
+        .then((a) => {
+          // 落盘期间用户切了会话或新建草稿：这张图写进了旧会话的 inbox，
+          // 挂到新会话的 chip 行上只会让 prompt 指向别的会话的文件。丢弃
+          // chip 即可 —— 文件本身已注册在旧会话索引里，删会话时会被
+          // cleanupForConv 收走。
+          if (currentIdRef.current !== targetConv) return null;
+          setAttachments((prev) => [...prev, a]);
+          return a;
+        })
+        .catch((err: unknown) => {
+          // 附件区没有独立错误位，沿用 pickAttachment 的做法把提示写进输入
+          // 框，避免「看着粘上了、其实没落盘」。
+          const msg = err instanceof Error ? err.message : String(err);
+          setInput((cur) => cur || `[无法附加图片：${msg}]`);
+          return null;
+        })
+        .finally(() => {
+          inflightPastesRef.current.delete(task);
+        });
+      inflightPastesRef.current.add(task);
+    }
+  };
+
+  /** 等所有 in-flight 粘贴落盘完成，返回本批成功导入的附件。用 while
+   *  而不是一次 allSettled：await 期间用户可能又粘了新图。 */
+  const settlePendingPastes = async (): Promise<AttachedFile[]> => {
+    const done: AttachedFile[] = [];
+    while (inflightPastesRef.current.size > 0) {
+      for (const a of await Promise.all([...inflightPastesRef.current])) {
+        if (a) done.push(a);
+      }
+    }
+    return done;
+  };
+
   const switchTo = (id: string): void => {
     setShowHistory(false);
     setRowMenuId(null);
@@ -1193,7 +1355,14 @@ export const AIPane: React.FC<{
       if (!prompt) return;
       // 把归一化结果写回输入框,用户能看到 `/` 被吃掉,不是凭空消失
       if (input.trim() !== prompt) setInput(prompt);
-      attached = attachments;
+      // 粘完立刻回车时 `attachments` 还是旧快照（importBlob 没返回），
+      // 直接提交会静默丢图。await 一次 in-flight 粘贴并按 path 去重合并 ——
+      // 闭环条件是「已粘贴 = 已进 prompt」。
+      const settled = await settlePendingPastes();
+      attached = [
+        ...attachments,
+        ...settled.filter((a) => !attachments.some((b) => b.path === a.path)),
+      ];
     }
 
     // User intent drives how main wraps the wire prompt: `create-task`
@@ -1230,14 +1399,18 @@ export const AIPane: React.FC<{
 
     if (!override) setAttachments([]);
 
-    // 把 draft 期间 pickFile 写入的「c-draft-...」路径挪到正式 convId
-    // 下，让 cleanupForConv(convId) 之后能找到并 unlink。Composer 已经
-    // 把数据写到正确的 convId key（它读了 conv-active 事件），所以
-    // 这里只对 `app.pickFile` 的产物（即 path 前缀是 c-draft- 的）调用
-    // relinkDraft —— relinkDraft 是幂等的，对非 draft 路径是 no-op。
+    // 把 draft 期间写入的「c-draft-...」路径挪到正式 convId 下，让
+    // cleanupForConv(convId) 之后能找到并 unlink。Composer 已经把数据写到
+    // 正确的 convId key（它读了 conv-active 事件），所以这里只对 draft 态
+    // 产物调用 relinkDraft —— relinkDraft 是幂等的，对非 draft 路径是 no-op。
     if (attached.length > 0 && convId) {
       const draftPaths = attached
         .map((a) => a.path)
+        // 匹配路径里以 `c-draft-` 开头的那一段文件名。main 的 resolveTarget
+        // 产出的名字是 `c-draft-<ulid>-<原名>`，draft 段后面还跟着 basename，
+        // 但整段不含分隔符，所以 `[^/\\]+$` 能一路吃到路径末尾 —— 实测
+        // relinkDraft 正常工作，draft 附件确实被挂到了正式会话上。真实 convId
+        // 是 ULID，不会出现 draft 段。
         .filter((p) => /[/\\]c-draft-[^/\\]+$/.test(p));
       if (draftPaths.length > 0) {
         try {
@@ -1255,13 +1428,10 @@ export const AIPane: React.FC<{
 
     let finalWire = prompt;
     if (attached.length > 0) {
-      // 每个附件塞一个 header + 绝对路径块。AI 看到路径后会自己调
-      // `read` / `read_image` 流式读磁盘，prompt 体积不会随附件 size
-      // 增长；DSH 的 path-guard 确保路径必须在 dsh_workspace/ 下。
-      const blocks = attached.map((a) => {
-        const header = `[attached: ${a.name} (${a.mime}, ${a.size} 字节)]`;
-        return `${header}\n${a.path}`;
-      });
+      // 每个附件塞一个 header + 绝对路径块。prompt 体积不会随附件 size
+      // 增长；DSH 的 path-guard 确保路径必须在 dsh_workspace/ 下。header 里
+      // 点名读工具的原因见 attachmentHeader 的说明。
+      const blocks = attached.map((a) => `${attachmentHeader(a)}\n${a.path}`);
       finalWire = `${prompt}\n\n---\n\n${blocks.join('\n\n---\n\n')}`;
     }
 
@@ -1891,6 +2061,7 @@ export const AIPane: React.FC<{
                   attachments={attachments}
                   onRemoveAttachment={removeAttachment}
                   onPickAttachment={() => void pickAttachment()}
+                  onPasteFiles={pasteAttachments}
                   onSubmit={() => void runSubmit()}
                   onStop={() => void stop()}
                   busy={busy}
@@ -1978,6 +2149,7 @@ export const AIPane: React.FC<{
           attachments={attachments}
           onRemoveAttachment={removeAttachment}
           onPickAttachment={() => void pickAttachment()}
+          onPasteFiles={pasteAttachments}
           onSubmit={() => void runSubmit()}
           onStop={() => void stop()}
           busy={busy}
@@ -2015,31 +2187,7 @@ function historyToTurn(h: HistoryTurnLike): Turn {
     // 只在加载历史时跑一次，不在流式热路径上。
     const userIntent: 'chat' | 'create-task' | undefined =
       h.intent ?? (decodeUserMessage(rawText).intent ?? undefined);
-    // 历史回放：把新格式的附件引用块（`[attached: name (mime, size 字节)]\n<path>`）
-    // 解析出来，挂到 `attached`，并把 user 字符串里的对应块剥掉，让 bubble
-    // 只显示用户原始输入。块之间用 `\n\n---\n\n` 分隔，所以正则匹配到
-    // 下一个 header 或文末为止。
-    const ATTACH_BLOCK = /\[attached: ([^()]+) \(([^,]+), (\d+) 字节\)\]\n([^\n]+)/g;
-    const attached: AttachedFile[] = [];
-    let userText = rawText;
-    const matches = rawText.matchAll(ATTACH_BLOCK);
-    for (const m of matches) {
-      attached.push({
-        name: m[1]!.trim(),
-        mime: m[2]!.trim(),
-        size: Number(m[3]),
-        path: m[4]!.trim(),
-      });
-    }
-    if (attached.length > 0) {
-      // 整体替换：把附件块 + 紧随其后的 `\n\n---\n\n` 分隔符一起剥掉。
-      userText = rawText
-        .replace(/\[attached: [^\n]+\n[^\n]+\n\n---\n\n?/g, '')
-        // 兜底：若历史文本格式稍变（缺 trailing separator），把孤立的
-        // header 行 + 路径行也剥掉，避免 bubble 显示重复的附件引用。
-        .replace(/\[attached: [^\n]+\n[^\n]+/g, '')
-        .trimEnd();
-    }
+    const { attached, userText } = parseAttachedBlocks(rawText);
     return {
       id: crypto.randomUUID(),
       user: userText,

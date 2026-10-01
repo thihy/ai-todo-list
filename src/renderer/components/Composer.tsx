@@ -14,6 +14,7 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { IconClose, IconSend } from './icons';
+import { blobToDataUrl } from '../utils/blob-to-data-url';
 import type { Priority, TodoStatus } from '../../shared/todo-types';
 
 interface PastedImage {
@@ -386,12 +387,3 @@ export const Composer: React.FC<{
     </div>
   );
 };
-
-function blobToDataUrl(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const r = new FileReader();
-    r.onload = () => resolve(String(r.result));
-    r.onerror = () => reject(r.error);
-    r.readAsDataURL(blob);
-  });
-}
