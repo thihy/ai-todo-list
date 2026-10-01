@@ -105,9 +105,14 @@ describe.skipIf(isWin)('JsonRpcBridge', () => {
     expect(res.result[0].id).toBe('t1');
   });
 
-  it('rejects unknown method with -32000', async () => {
-    const res = (await call('bogus.method', {})) as { error: { code: number } };
-    expect(res.error.code).toBe(-32000);
+  it('rejects unknown method with -32601 (JSON-RPC method not found)', async () => {
+    // The allowlist check in dispatch() answers with -32601 before any SDK
+    // call happens, so this never reaches the generic -32000 handler-error
+    // path. This assertion said -32000 and had never run (the whole spec is
+    // skipIf(win32)), so the mismatch went unnoticed until CI on Linux.
+    const res = (await call('bogus.method', {})) as { error: { code: number; message: string } };
+    expect(res.error.code).toBe(-32601);
+    expect(res.error.message).toContain('bogus.method');
   });
 
   it('returns parse error on bad json', async () => {
