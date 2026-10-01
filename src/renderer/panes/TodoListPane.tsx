@@ -282,6 +282,21 @@ export const TodoListPane: React.FC<{
       .filter((t) => !t.parentId || !deletedIds.has(t.parentId))
       .sort((a, b) => (b.deletedAt ?? 0) - (a.deletedAt ?? 0));
   }, [data, deletedView]);
+  // —— 空态判定 ——
+  // 旧写法只有 `data.length === 0` 一个条件，于是 Sidebar 切到「今日」而今天
+  // 一条都没安排时是**纯空白**的：today / non-today / all 三个视图在 repo 层都
+  // 取全量 active 任务（见 filterToRepoFilter），data.length 仍然 > 0，但三个
+  // section 的渲染条件都要求本视图的行数 > 0 —— 于是一个都不渲染。用户既
+  // 看不到"今天确实没安排"，也没有下一步该点哪里的线索，看起来像应用坏了。
+  //
+  // 所以空态必须按**视图**判定：先算这个视图实际会渲染的行（哪个 section 亮着
+  // 就看哪个的行数），行数为 0 才显示空态。data 为空时沿用原来的「暂无任务」。
+  const todayEmpty = !loading && todayView && plannedRoots.length === 0;
+  const nonTodayEmpty = !loading && nonTodayView && nonTodayRoots.length === 0;
+  const allEmpty = !loading && allView && rootTasks.length === 0;
+  // 「今日 / 后续待办 / 全部」任一视图为空都给出视图专属空态；allView 不再走
+  // data.length 分支，因为它的行就是全部根任务，rootTasks 才是这个视图的真值。
+  const viewEmpty = todayEmpty || nonTodayEmpty || allEmpty;
   const isEmpty = !loading && data.length === 0;
   return (
     <section className="task-list" aria-label="任务列表">
@@ -338,7 +353,7 @@ export const TodoListPane: React.FC<{
           {loading && data.length === 0 && (
             <div className="task-list__hint">加载中…</div>
           )}
-          {isEmpty && !deletedView && (
+          {isEmpty && !deletedView && !viewEmpty && (
             <div className="task-list__empty">
               <IconInboxEmpty size={28} className="task-list__empty-glyph" />
               <div>暂无任务</div>
@@ -354,6 +369,32 @@ export const TodoListPane: React.FC<{
               <div className="task-list__empty-hint">
                 删除的任务会暂存于此，可随时恢复
               </div>
+            </div>
+          )}
+          {/* 视图级空态 —— 本视图一条都没有，但库里仍有其它任务。给出"为什么空"
+              和"下一步做什么"，而不是留一片空白。今日视图带一个「添加今日待办」
+              主行动：此时打开 Composer 会因 defaultPlannedToday 自动勾选「加入
+              今日待办」，新建的任务直接落在这个视图里，不用再手动安排一次。 */}
+          {viewEmpty && (
+            <div className="task-list__empty">
+              {todayEmpty ? (
+                <IconCalendar size={28} className="task-list__empty-glyph" />
+              ) : (
+                <IconInboxEmpty size={28} className="task-list__empty-glyph" />
+              )}
+              <div>
+                {todayEmpty ? '今天没有待办' : nonTodayEmpty ? '没有后续待办' : '暂无任务'}
+              </div>
+              <div className="task-list__empty-hint">
+                {todayEmpty
+                  ? '把要做的事加进今日，或按 Ctrl+Shift+T 快速捕获'
+                  : nonTodayEmpty
+                    ? '所有任务都已安排到今日，或当前列表还没有任务'
+                    : '点击上方「新建任务」输入，或按 Ctrl+Shift+T 快速捕获'}
+              </div>
+              <button type="button" className="btn-primary task-list__empty-action" onClick={onCompose}>
+                <PlusGlyph /> {todayEmpty ? '添加今日待办' : '新建任务'}
+              </button>
             </div>
           )}
 

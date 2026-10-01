@@ -2796,6 +2796,11 @@ a:hover {
   font-size: var(--font-xs);
   line-height: 1.7;
 }
+/* 空态里的主行动按钮（今日视图的「添加今日待办」等）。居中放在提示文字下方，
+   让"这里没有内容"同时也是一个可点击的入口，而不是死文案。 */
+.task-list__empty-action {
+  margin-top: var(--space-lg);
+}
 
 /* Collapsed task-list rail. Same role as .ai-rail but for the LEFT master
    column: thin vertical strip with a vertical "浠诲姟" label and a trailing
