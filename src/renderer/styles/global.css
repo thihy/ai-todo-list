@@ -4056,6 +4056,21 @@ a:hover {
 .section-collapse {
   display: block;
 }
+
+/* 分组标题行。三个 section 之前完全没有样式，标题直接顶到 x=0 —— 比下面
+   根任务的文档图标还要靠左（`.task-row` 左边有 2px 选中轨 + 8px 内边距），
+   视觉上像是"漏了一层缩进"。这里补上：
+   - 左右内边距 10px（space-sm + 2px 轨），让标题与根任务的图标左边缘对齐；
+   - 标题与计数 baseline 对齐、留 4px，避免读成"全部待办17"；
+   - 上下留白给 section 一点呼吸，section 自身已有 12px 下边距。 */
+.planned-section__header,
+.non-today-section__header,
+.other-section__header {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-xs);
+  padding: var(--space-sm) calc(var(--space-sm) + 2px) var(--space-xs);
+}
 .planned-section__title,
 .other-section__title,
 .non-today-section__title {
