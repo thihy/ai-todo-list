@@ -33,6 +33,11 @@ could be misclassified as a creation request.
   `todo.create` only when the user explicitly asks for one, and
   confirmation comes back from the resulting row, not from the
   model's free-text reply.
+- Ordinary chat is still *triaged*: the model classifies each turn
+  (close a loop / new task / adjust / chat) before acting. Triaging
+  does not relax the rule above — bucket "new" in chat is proposed
+  with `ask_user_question` and created only after the user
+  confirms. See `docs/task-creation-and-storage.md` §3.1.
 
 ## Impact
 
@@ -52,6 +57,9 @@ could be misclassified as a creation request.
 - AI-initiated **updates** to an existing task follow the same
   rule: the tool call must include the `id` of a row that exists
   in `todos`. The AI may not invent IDs.
+- A report that closes an existing loop is an **update**, not a
+  creation. If no row matches, the model asks; it must not create
+  a stand-in task to represent work it could not locate.
 - A future "smart suggestion" feature that proposes tasks for the
   user to accept / reject must still ultimately go through the
   user's explicit confirm — the rule above does not relax when the

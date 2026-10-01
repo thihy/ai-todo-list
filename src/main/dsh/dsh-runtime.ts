@@ -2418,7 +2418,7 @@ function registerDomainTools(
   reg(defineTool({
     name: 'todo_create',
     ...wire('todo_create'),
-    description: 'Create a real TODO and return it with its generated id. Use a concise actionable title. Defaults are status=next and priority=low; do not invent urgency, due dates, tags, or parent ids. parentId must come from an actual todo_list/todo_search result. Set plannedFor only when the user explicitly asks to do/add it today; a due date of today alone is not enough. Markdown body starts empty — use content_writeBody only when the user supplied meaningful notes.',
+    description: 'Create a real TODO and return it with its generated id. Use a concise actionable title. Defaults are status=next and priority=low; do not invent urgency, due dates, tags, or parent ids. parentId must come from an actual todo_list/todo_search result. Set plannedFor only when the user explicitly asks to do/add it today; a due date of today alone is not enough. Markdown body starts empty — use content_writeBody only when the user supplied meaningful notes. Consent: in a create-task turn (the request carries an explicit create intent) call this directly; in ordinary chat, first put the drafted title in front of the user with ask_user_question and create only after they confirm. A message that merely mentions a thing ("报销搞定了") is never consent to create, and a completion report must never be answered by creating a stand-in task.',
     parameters: {
       description: { type: 'string', description: '一句中文意图说明；展示在 UI 卡片标题旁（DSH 原生约定，可选；不填则由 summarizeToolCall 从结果/参数结构化字段派生）' },
       title: { type: 'string', required: true, description: 'TODO title (required)' },
@@ -2452,7 +2452,7 @@ function registerDomainTools(
   reg(defineTool({
     name: 'todo_update',
     ...wire('todo_update'),
-    description: 'Update fields of an existing TODO. Pass only the fields you want to change — null clears the field (e.g. dueAt: null). Setting status="done" automatically stamps doneAt; any other status clears it. Pass parentId to reparent a task (make it a subtask of another); pass parentId=null to promote to top-level. Cycles are rejected. Pass archivedAt to archive (a unix-ms timestamp, e.g. Date.now()) or archivedAt=null to restore an archived task.',
+    description: 'Update fields of an existing TODO. Pass only the fields you want to change — null clears the field (e.g. dueAt: null). Setting status="done" automatically stamps doneAt; any other status clears it. Pass parentId to reparent a task (make it a subtask of another); pass parentId=null to promote to top-level. Cycles are rejected. Pass archivedAt to archive (a unix-ms timestamp, e.g. Date.now()) or archivedAt=null to restore an archived task. Closing a loop goes through here: when the user reports existing work as finished / abandoned / stuck ("搞定了", "先放一放"), match the row first — app_currentContext when a task is focused, otherwise todo_search / todo_list — and never call todo_create to stand in for a task you could not find.',
     parameters: {
       description: { type: 'string', description: '一句中文意图说明；展示在 UI 卡片标题旁（DSH 原生约定，可选；不填则由 summarizeToolCall 从结果/参数结构化字段派生）' },
       id: { type: 'string', required: true, description: 'TODO id' },
@@ -2581,7 +2581,7 @@ function registerDomainTools(
   reg(defineTool({
     name: 'todo_search',
     ...wire('todo_search'),
-    description: 'Full-text search across TODO titles and markdown bodies (FTS5-backed). Returns hits with a short snippet + score.',
+    description: 'Full-text search across TODO titles and markdown bodies (FTS5-backed). Returns hits with a short snippet + score. This is the first step when matching a report to an existing task (e.g. "上次那个搞定了") — search before concluding there is nothing to update, and when several rows match, list the candidates with ask_user_question instead of guessing.',
     parameters: { description: { type: 'string', description: '一句中文意图说明；展示在 UI 卡片标题旁（DSH 原生约定，可选；不填则由 summarizeToolCall 从结果/参数结构化字段派生）' }, query: { type: 'string', required: true, description: 'Search query' }, limit: { type: 'number', description: 'Max hits (default 20)' } },
     output: jsonOutput,
     async execute(args: { query: string; limit?: number }) { return repo.search(args.query, args.limit ?? 20); },
@@ -2945,7 +2945,7 @@ function registerDomainTools(
   reg(defineTool({
     name: 'app_currentContext',
     ...wire('app_currentContext'),
-    description: 'Read the user\'s current focus (what they have open right now — a task, document, or drawing). Returns the full row(s) so you can act on them with todo_update / content_writeBody / drawing_save etc. without a separate lookup. Returns null when nothing is focused — the user is on the list/stats view, in which case call todo_list to find a candidate.',
+    description: 'Read the user\'s current focus (what they have open right now — a task, document, or drawing). Returns the full row(s) so you can act on them with todo_update / content_writeBody / drawing_save etc. without a separate lookup. Returns null when nothing is focused — the user is on the list/stats view, in which case call todo_list to find a candidate. A non-null task focus is the strongest signal for a bare report like "搞定了" / "处理完了": it almost always refers to that task, so prefer it over guessing from keywords — but name the task you claimed in your reply so a wrong guess is obvious.',
     parameters: { description: { type: 'string', description: '一句中文意图说明；展示在 UI 卡片标题旁（DSH 原生约定，可选；不填则由 summarizeToolCall 从结果/参数结构化字段派生）' } },
     output: jsonOutput,
     async execute() {

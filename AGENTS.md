@@ -33,8 +33,10 @@ or on-disk storage. Detailed contracts live in
 7. AI-create intent must be explicit (`intent: 'create-task'`). Do not infer it
    from which component appears to have sent a plain string.
 8. Form creation calls `todo.create` directly and does not invoke the AI.
-9. Ordinary AI chat remains ordinary chat unless the user explicitly asks to
-   create a task.
+9. Ordinary AI chat is triaged by intent, but it never *silently* creates a
+   task: a create during ordinary chat requires the user's explicit
+   confirmation. A report that closes an existing loop must update that task,
+   never create a stand-in.
 10. Never invent task IDs, especially `parentId`. Query real rows first.
 
 ## Current storage layout
@@ -91,6 +93,10 @@ higher-priority instructions.
 
 ## AI task-creation rules
 
+These apply to a create-task turn (the request carries the explicit envelope)
+and to any creation the user confirmed during ordinary chat. The canonical text
+lives in `resources/dsh/cordis.yml` → `创建任务操作`.
+
 - Call `todo.create`; do not merely suggest a task.
 - Use a concise, actionable title.
 - Default to `status=next` and `priority=low` unless the user gives evidence
@@ -102,6 +108,38 @@ higher-priority instructions.
 - Multiple clearly independent tasks may produce multiple `todo.create` calls.
 - Ask for essential missing information instead of creating placeholders.
 - Confirm the actual created result briefly.
+- An envelope does not guarantee there is something to create. If its `text` is
+  only a completion report or a question, close the loop or answer instead of
+  inventing a placeholder task.
+
+## AI intent triage (close a loop vs. create a task)
+
+Every user turn is classified into exactly one of four buckets before any tool
+call. Canonical text: `resources/dsh/cordis.yml` → `意图判断`.
+
+- **A close** — the user reports the result of existing work (“搞定了”,
+  “不用做了”, “先放一放”). Resolve the real row, then `todo.update`
+  (`done` / `cancelled` / `blocked`).
+- **B new** — the user brings work that does not exist yet. Create, but in
+  ordinary chat put the drafted title to the user with
+  `ask_user_question` first.
+- **C adjust** — points at an existing task without closing it: deadline,
+  today, priority, title, parent.
+- **D chat** — answer normally, touch no todo data.
+
+Resolution order, stopping at the first hit:
+
+1. `app_currentContext` has a focused task → a bare “搞定了” refers to it.
+   Name the claimed task in the reply so a wrong guess is visible.
+2. Otherwise search (`todo.search` / `todo.list`): exactly one hit → claim it;
+   several → `ask_user_question` with the candidates; zero → re-classify and
+   ask.
+3. No existing reference → B or D per the rules above.
+
+Hard constraints: a completion report never creates a task; ambiguity is asked
+about rather than guessed; ordinary chat never creates silently. The tool
+descriptions in `src/main/dsh/dsh-runtime.ts` carry the same contract, and
+`tests/unit/dsh-persona-intent-triage.spec.ts` pins it.
 
 ## Change map
 
@@ -114,6 +152,7 @@ When changing a contract, update all relevant layers:
 | AI tool | `src/main/dsh/dsh-runtime.ts`, permission/tool presentation where applicable |
 | AI-create envelope | `src/shared/task-creation.ts`, AI handler/runtime, history decoding, tests |
 | AI behavior | `resources/dsh/cordis.yml` and matching tool descriptions |
+| AI intent triage | `resources/dsh/cordis.yml` → `意图判断`, `todo_create` / `todo_update` / `todo_search` / `app_currentContext` descriptions, `tests/unit/dsh-persona-intent-triage.spec.ts` |
 | Storage path | `TaskDirectoryStore` and every file store; never add a separate title resolver |
 
 ## Code exploration workflow
@@ -154,6 +193,12 @@ Storage changes should cover stable repeated resolution, legacy adoption,
 successful rename, failed rename, and all document kinds. AI-create changes
 should cover envelope round trips, literal user text, local-date handling,
 history replay, ordinary-chat isolation, and collapsed-panel request delivery.
+Intent-triage changes are prompt-only: run
+`tests/unit/dsh-persona-intent-triage.spec.ts`, which pins the four buckets,
+the close-loop constraints, and the rule that every tool the prompt names must
+be registered in `src/main/dsh/dsh-runtime.ts`. Note the model-facing tool
+names are snake_case (`todo_update`), not the dotted IPC channels
+(`todo:update`) — the prompt must use the former.
 
 Preserve unrelated dirty-worktree changes. Use `apply_patch` for focused edits.
 

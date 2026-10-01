@@ -115,10 +115,46 @@ The model must:
 11. Ask only for essential missing information.
 12. Briefly report what was actually created.
 
-Ordinary side-panel chat has no create-task envelope. It must not silently
-become task creation merely because the text resembles a task. An explicit
-chat instruction such as “帮我创建一个任务” can still be handled according to
-normal assistant intent and tool rules.
+Ordinary side-panel chat has no create-task envelope, so the model must not
+turn a chat line into a task row on its own initiative.
+
+## 3.1 Intent triage in ordinary chat
+
+Before any tool call, every user turn is classified into exactly one bucket.
+The canonical text is `resources/dsh/cordis.yml` → `意图判断`.
+
+| Bucket | Meaning | Action |
+| --- | --- | --- |
+| A close | Result of existing work is reported (“搞定了”, “不用做了”, “先放一放”) | resolve the real row, then `todo_update` with `done` / `cancelled` / `blocked` |
+| B new | Work that does not exist yet | `ask_user_question` with the drafted title, then `todo_create` after confirmation |
+| C adjust | Existing task, not a terminal state — deadline, today, priority, title, parent | `todo_update` / `todo_planForToday` |
+| D chat | No todo data involved | answer only |
+
+Resolution order, first hit wins:
+
+1. `app_currentContext` returns a focused task → a bare completion report
+   refers to it. The reply must name the claimed task so a wrong guess is
+   visible.
+2. Otherwise search with `todo_search` / `todo_list`: exactly one hit → claim
+   it; several hits → `ask_user_question` listing the candidates; zero hits →
+   re-classify, and if the turn really was a completion report, ask which task
+   to close instead of creating one.
+3. No reference to existing work → bucket B or D.
+
+Three constraints hold in every bucket:
+
+- A completion report never creates a task. There is no stand-in row for a
+  task the model failed to find.
+- Ambiguity is asked about, never guessed. Questions carry concrete options.
+- Ordinary chat never creates silently. Only an envelope turn creates
+  directly.
+
+The same contract is repeated in the `todo_create`, `todo_update`,
+`todo_search`, and `app_currentContext` descriptions in
+`src/main/dsh/dsh-runtime.ts`, and pinned by
+`tests/unit/dsh-persona-intent-triage.spec.ts`. Model-facing tool names are
+snake_case; the dotted `todo.*` spellings in this document refer to IPC
+channels and must not appear in the prompt.
 
 ## 4. Stable task-directory association
 
@@ -256,6 +292,15 @@ For task creation:
 - local date is computed per request;
 - the UI never displays the internal envelope;
 - project is absent from new creation flows.
+
+For intent triage (`tests/unit/dsh-persona-intent-triage.spec.ts`):
+
+- the four buckets are declared and the section precedes the general working
+  principles;
+- the close-loop constraints are present;
+- an envelope turn is still allowed to create directly;
+- dotted tool names appear only as a counter-example;
+- every domain tool named in the prompt is registered in `dsh-runtime.ts`.
 
 For storage:
 
