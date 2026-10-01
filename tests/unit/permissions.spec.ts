@@ -24,9 +24,9 @@ describe('Permission tiers', () => {
 
   it('disjoint sets', () => {
     const all = new Set<string>();
-    for (const t of SAFE_TOOLS) expect(all.has(t)).toBe(false), all.add(t);
-    for (const t of NOTIFY_UNDO_TOOLS) expect(all.has(t)).toBe(false), all.add(t);
-    for (const t of DESTRUCTIVE_TOOLS) expect(all.has(t)).toBe(false), all.add(t);
+    for (const t of SAFE_TOOLS) { expect(all.has(t)).toBe(false); all.add(t); }
+    for (const t of NOTIFY_UNDO_TOOLS) { expect(all.has(t)).toBe(false); all.add(t); }
+    for (const t of DESTRUCTIVE_TOOLS) { expect(all.has(t)).toBe(false); all.add(t); }
   });
 
   it('unknown tool defaults to block', () => {

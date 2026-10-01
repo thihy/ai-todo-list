@@ -26,7 +26,7 @@ const MENU_H = 168; // measured height of the 5-option status menu
 const GAP = 4;
 
 beforeEach(() => {
-  (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   element = document.createElement('div');
   document.body.append(element);
   // happy-dom does no layout, so offsetHeight / getBoundingClientRect come
@@ -40,7 +40,7 @@ beforeEach(() => {
   });
   HTMLElement.prototype.getBoundingClientRect = function (this: HTMLElement) {
     const isMenu = this.classList?.contains('status-select__menu');
-    const top = Number((this as any).dataset.testTop ?? 0);
+    const top = Number(this.dataset.testTop ?? 0);
     const h = isMenu ? MENU_H : 20;
     return {
       top, bottom: top + h, left: 0, right: 200, width: 200, height: h,
@@ -81,13 +81,13 @@ const innerHeight = () => window.innerHeight;
 
 describe('StatusSelect flips the menu above triggers near the window bottom', () => {
   it('mounts the menu at all (guards the portalled render path)', () => {
-    (window as any).innerHeight = 800;
+    (window as unknown as { innerHeight: number }).innerHeight = 800;
     const menu = openMenu(mountAt(100));
     expect(menu).toBeTruthy();
   });
 
   it('keeps the menu inside the viewport for a bottom-row trigger', () => {
-    (window as any).innerHeight = 800;
+    (window as unknown as { innerHeight: number }).innerHeight = 800;
     // Bottom row of an 800px viewport: only ~20px of room below the trigger
     // but ~500px above it. This is the exact case that used to overflow.
     const trigger = mountAt(720);
@@ -100,7 +100,7 @@ describe('StatusSelect flips the menu above triggers near the window bottom', ()
   });
 
   it('actually flips upward (is-flipped) instead of merely clamping', () => {
-    (window as any).innerHeight = 800;
+    (window as unknown as { innerHeight: number }).innerHeight = 800;
     const trigger = mountAt(720);
     const menu = openMenu(trigger);
 
@@ -111,7 +111,7 @@ describe('StatusSelect flips the menu above triggers near the window bottom', ()
   });
 
   it('still opens downward for a top-row trigger (no over-flipping)', () => {
-    (window as any).innerHeight = 800;
+    (window as unknown as { innerHeight: number }).innerHeight = 800;
     const trigger = mountAt(40);
     const menu = openMenu(trigger);
 
@@ -125,7 +125,7 @@ describe('StatusSelect flips the menu above triggers near the window bottom', ()
   it('clamps into the viewport when neither side can fit the menu', () => {
     // 360px viewport with a 168px menu: room exists on both sides, but the
     // component must still land fully on screen rather than off an edge.
-    (window as any).innerHeight = 360;
+    (window as unknown as { innerHeight: number }).innerHeight = 360;
     const trigger = mountAt(250);
     const menu = openMenu(trigger);
 
@@ -135,7 +135,7 @@ describe('StatusSelect flips the menu above triggers near the window bottom', ()
   });
 
   it('clears the position on close so a reopen re-measures from scratch', () => {
-    (window as any).innerHeight = 800;
+    (window as unknown as { innerHeight: number }).innerHeight = 800;
     const trigger = mountAt(720);
     openMenu(trigger);
     expect(document.querySelector('.status-select__menu')).toBeTruthy();

@@ -339,6 +339,7 @@ function makeUserAgentFetch(ua: string): typeof globalThis.fetch {
   // Headers constructor accepts all of them; we go through `any` only to
   // sidestep the DOM-typed HeadersInit that isn't in the node tsconfig lib.
   const stamp = (headers: unknown): Headers => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- see above: sidesteps the DOM-typed HeadersInit, absent from the node lib
     const h = new Headers((headers as any) ?? undefined);
     h.set('user-agent', ua);
     return h;
@@ -446,7 +447,7 @@ export function createLlmAdapters(deps: CreateAdaptersDeps): {
       // 拿到 key + key 长度（不打印 key 本身）。当用户报的"401/未授权"
       // 类问题复现时，能从日志直接看到这一次实际查到的 key 是空字符串还是
       // 有值，避免怀疑到 env var / 缓存上去。
-      let resolved = '';
+      let resolved: string;
       if (provider === 'custom') {
         const list = deps.getCustomProviders();
         const activeId = deps.getCustomProviderId();

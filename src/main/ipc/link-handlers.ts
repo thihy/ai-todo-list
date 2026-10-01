@@ -121,7 +121,7 @@ export async function fetchLinkMeta(rawUrl: string): Promise<LinkMeta> {
       };
     }
     let received = 0;
-    let stopped = false;
+    const stopped = false;
     const chunks: Uint8Array[] = [];
     while (received < MAX_BODY_BYTES && !stopped) {
       const { done, value } = await reader.read();

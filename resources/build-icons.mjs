@@ -108,7 +108,6 @@ function smoothstep(a, b, x) {
 function render(size, ss) {
   const ssN = size * ss;
   const out = Buffer.alloc(size * size * 4);
-  const row = Buffer.alloc(ssN * 4); // one source row reused
 
   for (let oy = 0; oy < size; oy++) {
     // fill ss rows into an accumulator

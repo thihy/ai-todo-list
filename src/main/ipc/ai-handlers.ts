@@ -16,16 +16,16 @@ import type { DshHandle } from '../dsh/types';
 import { resolveEndpoint, healthCheck } from '../dsh/endpoints';
 import { getDshRuntime, peekDshRuntime, answerUserQuestion, answerUserApproval, revokeSessionTool, listSessionGranted, type DshRuntimeDeps } from '../dsh/dsh-runtime';
 import { costForUsage } from '../dsh/pricing';
-import { SettingsStore } from '../settings/store';
+import type { SettingsStore } from '../settings/store';
 import { BrowserWindow, dialog } from 'electron';
 import { logger } from '../logger';
 import type { AIStreamEvent } from '../../shared/ai-types';
 import type { DataScope } from '../../shared/todo-list-api';
-import { TodoRepo } from '../db/todo-repo';
-import { ConversationRepo } from '../db/conversation-repo';
-import { MarkdownStore } from '../files/markdown';
-import { DrawingStore } from '../files/drawings';
-import { DocumentStore } from '../files/documents';
+import type { TodoRepo } from '../db/todo-repo';
+import type { ConversationRepo } from '../db/conversation-repo';
+import type { MarkdownStore } from '../files/markdown';
+import type { DrawingStore } from '../files/drawings';
+import type { DocumentStore } from '../files/documents';
 import * as composerInbox from '../ai/composer-inbox';
 import type Database from 'better-sqlite3';
 
@@ -197,7 +197,7 @@ export function registerAiHandlers(dsh: DshHandle): void {
 
     // L4-E: running cost for this turn. Updated after runTurn resolves,
     // using the tokens the runtime accumulated from the raw DSH event stream.
-    let costUsd = 0;
+    let costUsd: number;
     // L5-A: the wire is now raw DSH session events (passthrough), not a
     // synthesized toolCall blob. Renderer owns the tool/call ↔ tool/result
     // merge (useAiStream), so this layer no longer keeps a `liveCallMeta`
@@ -751,7 +751,7 @@ export function registerAiHandlers(dsh: DshHandle): void {
     const trimmed = text.trim();
     if (!trimmed) return null;
     try { return JSON.parse(trimmed); } catch { /* fall through */ }
-    const m = trimmed.match(/\[[^\[\]]*\]/);
+    const m = trimmed.match(/\[[^[\]]*\]/);
     if (!m) return null;
     try { return JSON.parse(m[0]); } catch { return null; }
   }

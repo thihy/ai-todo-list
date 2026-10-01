@@ -11,7 +11,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-type LoggerModule = typeof import('../../src/main/logger');
+import type * as loggerModule from '../../src/main/logger';
+
+type LoggerModule = typeof loggerModule;
 
 /** Fresh module graph per scenario — logger caches its resolved path inside
  *  the Logger instance, and the electron mock has to differ per test. */

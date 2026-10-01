@@ -111,7 +111,7 @@ openspec/
 
 ```bash
 pnpm typecheck                  # tsc --noEmit on three projects
-pnpm lint                       # eslint over .ts / .tsx
+pnpm lint                       # eslint over .ts / .tsx / .mjs / .cjs
 pnpm test                       # vitest run
 pnpm test:watch                 # vitest in watch mode
 pnpm test:cov                   # coverage
@@ -121,6 +121,55 @@ pnpm build                      # produces out/{main,preload,renderer}
 pnpm dist:dir                   # unpacked app under dist/
 pnpm dist                       # native installer
 ```
+
+## CI and releases
+
+Two GitHub Actions workflows live in `.github/workflows/`.
+
+### `ci.yml` — static checks on every push and PR
+
+Runs on `windows-latest` and `ubuntu-latest`, in this order:
+
+1. `pnpm install --frozen-lockfile`
+2. `pnpm typecheck`
+3. `pnpm lint`
+4. `pnpm test`
+5. `pnpm build`
+
+Both operating systems run the same checks on purpose: Windows is the real
+target, and Linux catches accidental platform assumptions without becoming the
+blocking gate. New pushes to a branch cancel the in-flight run.
+
+Lint blocks on **errors** only. There are 13 pre-existing
+`react-hooks/exhaustive-deps` warnings in the renderer; add
+`--max-warnings 0` to the `lint` script once they are cleared.
+
+### `release.yml` — tag-driven packaging
+
+Push a `v*` tag (or run the workflow manually with a `tag` input):
+
+```bash
+# 1. bump version + changelog, commit
+# 2. tag and push — the workflow verifies the tag matches package.json
+git tag v1.0.0-rc9
+git push origin main --tags
+```
+
+The job installs, rebuilds native modules for Electron's ABI, builds, packages
+the NSIS installer, and attaches the `.exe`, its `.blockmap`, and the update
+metadata to the GitHub Release for that tag.
+
+**It does not publish to the auto-update feed.** `package.json` →
+`build.publish` points at the **GitCode** generic provider, which is what the
+in-app `electron-updater` reads (`src/main/updater/updater.ts`). The release job
+therefore runs `electron-builder --publish never` and uploads to the GitHub
+Release itself, so tagging can never push a half-formed update to the live feed.
+Releasing to GitCode stays a separate, deliberate step.
+
+Artifacts are **unsigned** — CI has no signing certificate, and
+`CSC_IDENTITY_AUTO_DISCOVERY=false` stops electron-builder from stalling while
+it looks for one. Add `CSC_LINK` (and the certificate) to sign properly.
+
 
 ## Smoke test after install
 

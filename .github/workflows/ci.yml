@@ -1,0 +1,64 @@
+name: CI
+
+# Static checks + a real build on every push and PR.
+# The release workflow is separate: see release.yml.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# A new push to the same branch supersedes the previous run.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Lint, typecheck, unit tests, build
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # The app is Windows-first (see package.json build.win / resources/dsh),
+        # so Windows is the gate that matters. Linux runs the same static checks
+        # to catch accidental platform assumptions without slowing the gate.
+        os: [windows-latest, ubuntu-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.17.0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Static checks. `lint` also covers resources/*.mjs and *.cjs, and the
+      # package.json DSH-pinning rule, so run it before the slower steps.
+      - name: Typecheck
+        run: pnpm typecheck
+
+      # Errors block. The 13 pre-existing react-hooks/exhaustive-deps warnings
+      # stay non-blocking; tighten with --max-warnings once they are cleared.
+      - name: Lint
+        run: pnpm lint
+
+      - name: Unit tests
+        run: pnpm test
+
+      # electron-vite build runs the `prebuild` hook, which copies the
+      # Excalidraw fonts into src/renderer/public — required for a real bundle.
+      - name: Build
+        run: pnpm build

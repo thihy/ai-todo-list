@@ -45,6 +45,7 @@ import { decodeUserMessage, encodeTaskCreationEnvelope, type UserIntent } from '
 // 渲染端能看到显式的 "DSH unavailable" 而不是 import 阶段崩掉。
 type DshContext = {
   get(key: string): unknown;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- cordis middleware handlers have per-event arity; a single signature cannot express them
   on(event: string, handler: (...args: any[]) => void): () => void;
   fiber?: { dispose?(): Promise<void> };
   /** L4-G: cordis waterfall 调用。ask_user_question / ask_user_approval 工具
@@ -2316,6 +2317,7 @@ export function foldHistory(events: ReadonlyArray<{ type: string; data?: unknown
 /** Register the domain tools (todo/content/drawing) against the DSH tool registry. */
 function registerDomainTools(
   tools: { register(def: unknown): () => void },
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- DSH's defineTool is generic over `const` type params; no non-any signature can bind to it here
   defineTool: (d: any) => unknown,
   deps: DshRuntimeDeps,
   ctx: DshContext,
@@ -2562,7 +2564,7 @@ function registerDomainTools(
         if (!Array.isArray(parsed)) throw new Error('ids must be a JSON array of strings');
         ids = parsed.filter((s): s is string => typeof s === 'string');
       } catch (err) {
-        throw new Error(`todo_batchUpdate: invalid ids — ${(err as Error).message}`);
+        throw new Error(`todo_batchUpdate: invalid ids — ${(err as Error).message}`, { cause: err });
       }
       const patch: TodoPatch = {};
       if (args.status && (TODO_STATUSES as readonly string[]).includes(args.status)) patch.status = args.status as TodoStatus;

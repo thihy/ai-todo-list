@@ -16,7 +16,7 @@
 // 大小写不敏感比较，所以测试需要覆盖到这两条规则。
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { existsSync, mkdtempSync, rmSync, symlinkSync, writeFileSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, rmSync, symlinkSync, writeFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, sep, isAbsolute } from 'node:path';
 import { isWithinWorkspace } from '../../src/main/dsh/path-guard';

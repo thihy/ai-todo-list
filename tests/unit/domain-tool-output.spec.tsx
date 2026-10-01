@@ -1,6 +1,12 @@
 // @vitest-environment happy-dom
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
+import type {
+  DiffBlockProps,
+  DisclosureRowProps,
+  JsonTreeProps,
+  TerminalBlockProps,
+} from '@deepseek-ai/dsh-client-ui-primitives';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
 // Keep the real adapter and ToolRow; stub only the external visual primitives.
@@ -11,10 +17,10 @@ vi.mock('@deepseek-ai/dsh-client-ui-primitives', () => {
     IconEditOutline16: Icon, IconSearchOutline16: Icon, IconSparkle16: Icon, IconInspectOutline12: Icon,
     StateDot: Icon, CodeBlock: Icon, ReadBlock: Icon, SearchBlock: Icon, WebBlock: Icon,
     diffTotals: () => ({ added: 1, removed: 0 }),
-    DiffBlock: ({ diffs }: any) => <pre>{JSON.stringify(diffs)}</pre>,
-    JsonTree: ({ data }: any) => <pre>{JSON.stringify(data)}</pre>,
-    TerminalBlock: ({ output, exitCode, signal }: any) => <pre>{output} exit={exitCode} {signal}</pre>,
-    DisclosureRow: ({ open, onToggle, children, title }: any) => <div><button onClick={onToggle}>{title}</button>{open && children}</div>,
+    DiffBlock: ({ diffs }: DiffBlockProps) => <pre>{JSON.stringify(diffs)}</pre>,
+    JsonTree: ({ data }: JsonTreeProps) => <pre>{JSON.stringify(data)}</pre>,
+    TerminalBlock: ({ output, exitCode, signal }: TerminalBlockProps) => <pre>{output} exit={exitCode} {signal}</pre>,
+    DisclosureRow: ({ open, onToggle, children, title }: DisclosureRowProps) => <div><button onClick={onToggle}>{title}</button>{open && children}</div>,
   };
 });
 vi.mock('../../src/renderer/dsh/ui-tool/tool/components/AskQuestionCard', () => ({ AskQuestionCard: () => null }));
@@ -24,7 +30,7 @@ import { recoverToolResultValue } from '../../src/shared/tool-presentation';
 let element: HTMLDivElement;
 let root: Root;
 beforeEach(() => {
-  (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   element = document.createElement('div'); document.body.append(element); root = createRoot(element);
 });
 afterEach(() => { act(() => root.unmount()); element.remove(); });

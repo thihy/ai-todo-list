@@ -4,9 +4,10 @@
   "private": true,
   "description": "AI-native Electron TODO list with Markdown content and Excalidraw drawings, built on DeepSeek Harness (DSH)",
   "appId": "com.todolist.app",
-  "productName": "AI待办",
+  "productName": "AI寰呭姙",
   "author": "todo-list",
-  "copyright": "Copyright © 2026 todo-list",
+  "copyright": "Copyright 漏 2026 todo-list",
+  "packageManager": "pnpm@10.17.0",
   "main": "out/main/index.js",
   "type": "module",
   "scripts": {
@@ -15,7 +16,7 @@
     "preview": "electron-vite preview",
     "start": "electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
-    "lint": "eslint . --ext .ts,.tsx",
+    "lint": "eslint . --ext .ts,.tsx,.mjs,.cjs",
     "format": "prettier --write \"src/**/*.{ts,tsx,md,json}\"",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -182,7 +183,7 @@
   },
   "build": {
     "appId": "com.todolist.app",
-    "productName": "AI待办",
+    "productName": "AI寰呭姙",
     "npmRebuild": false,
     "directories": {
       "output": "dist",
@@ -246,7 +247,7 @@
       "allowToChangeInstallationDirectory": false,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "AI待办"
+      "shortcutName": "AI寰呭姙"
     },
     "mac": {
       "target": [

@@ -458,7 +458,6 @@ describe('TodoRepo + MarkdownStore', () => {
     // Read the migration source and assert no migration script issues the
     // rebuild command. This is a static check — catches a regression at
     // test time before users hit it at boot time.
-    const { readFileSync } = require('node:fs') as typeof import('node:fs');
     const schemaSrc = readFileSync(
       new URL('../../src/main/db/schema.ts', import.meta.url),
       'utf8',

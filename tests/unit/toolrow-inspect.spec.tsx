@@ -1,6 +1,12 @@
 // @vitest-environment happy-dom
 import React, { act, StrictMode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
+import type {
+  DiffBlockProps,
+  DisclosureRowProps,
+  JsonTreeProps,
+  TerminalBlockProps,
+} from '@deepseek-ai/dsh-client-ui-primitives';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Mirror the existing test's DisclosureRow mock so we test the real ToolRow
@@ -12,10 +18,10 @@ vi.mock('@deepseek-ai/dsh-client-ui-primitives', () => {
     IconEditOutline16: Icon, IconSearchOutline16: Icon, IconSparkle16: Icon, IconInspectOutline12: Icon,
     StateDot: Icon, CodeBlock: Icon, ReadBlock: Icon, SearchBlock: Icon, WebBlock: Icon,
     diffTotals: () => ({ added: 1, removed: 0 }),
-    DiffBlock: ({ diffs }: any) => <pre>{JSON.stringify(diffs)}</pre>,
-    JsonTree: ({ data }: any) => <pre>{JSON.stringify(data)}</pre>,
-    TerminalBlock: ({ output, exitCode, signal }: any) => <pre>{output} exit={exitCode} {signal}</pre>,
-    DisclosureRow: ({ open, onToggle, expandable, children, title, collapsedContent }: any) => (
+    DiffBlock: ({ diffs }: DiffBlockProps) => <pre>{JSON.stringify(diffs)}</pre>,
+    JsonTree: ({ data }: JsonTreeProps) => <pre>{JSON.stringify(data)}</pre>,
+    TerminalBlock: ({ output, exitCode, signal }: TerminalBlockProps) => <pre>{output} exit={exitCode} {signal}</pre>,
+    DisclosureRow: ({ open, onToggle, expandable, children, title, collapsedContent }: DisclosureRowProps) => (
       <div data-disclosure-row>
         <div data-disclosure-header onClick={expandable ? onToggle : undefined} role={expandable ? 'button' : undefined}>
           {title}
@@ -34,7 +40,7 @@ import { conversationT } from '../../src/renderer/dsh/conversation-locale';
 let element: HTMLDivElement;
 let root: Root;
 beforeEach(() => {
-  (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   element = document.createElement('div'); document.body.append(element);
 });
 afterEach(() => { act(() => root.unmount()); element.remove(); });

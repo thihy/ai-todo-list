@@ -1,0 +1,100 @@
+name: Release
+
+# Tag-driven packaging. Push a `v*` tag and this builds the installer and
+# attaches it to the GitHub Release for that tag.
+#
+# NOTE on publishing: package.json → build.publish points at the **GitCode**
+# generic provider, because that is what the in-app electron-updater reads
+# (see src/main/updater/updater.ts). We therefore build with
+# `--publish never` and upload artifacts to the GitHub Release ourselves, so
+# packaging a tag can never push a half-formed update to the live feed.
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to build (e.g. v1.0.0-rc8). Leave empty to build the current ref.'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    name: Build and publish ${{ github.event.inputs.tag || github.ref_name }}
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+          # Tags must resolve to real commits, and the tag must be on the
+          # release line, not an untrusted fork branch.
+          fetch-depth: 0
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # A tag that disagrees with package.json would ship an installer whose
+      # filename/updater metadata contradicts the Release it is attached to.
+      - name: Verify tag matches package.json version
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tag = '${{ github.event.inputs.tag || github.ref_name }}'
+          $pkgVersion = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          if ($tag -ne "v$pkgVersion") {
+            throw "Tag '$tag' does not match package.json version '$pkgVersion'. Update the version before tagging."
+          }
+          Write-Host "tag $tag matches package.json $pkgVersion"
+
+      # better-sqlite3 is a native module. pnpm-workspace.yaml sets
+      # `allowBuilds: better-sqlite3: false` (no postinstall), so the Electron
+      # ABI rebuild must happen explicitly or the packaged app cannot open
+      # its database.
+      - name: Rebuild native modules for Electron
+        run: pnpm rebuild
+
+      - name: Build
+        run: pnpm build
+
+      # --publish never: see the note at the top of this file. The GitCode
+      # generic feed belongs to the in-app updater and is released separately.
+      - name: Package (NSIS installer)
+        run: pnpm exec electron-builder --win --publish never
+        env:
+          # No signing certificate in CI; skip the auto-discovery stall.
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Attach the installer plus its blockmap and update metadata
+      # (electron-updater needs the .blockmap for differential downloads).
+      # builder-debug.yml is electron-builder's internal scratch file — skip it.
+      - name: Upload artifacts to GitHub Release
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tag = '${{ github.event.inputs.tag || github.ref_name }}'
+          $assets = Get-ChildItem -Path dist -File -Recurse |
+            Where-Object { $_.Extension -in '.exe', '.blockmap', '.yml' -and $_.Name -ne 'builder-debug.yml' }
+          if (-not $assets) { throw "No release artifacts found in dist/ — packaging failed silently." }
+          $assets | ForEach-Object { Write-Host "asset: $($_.Name)" }
+
+          $existing = gh release view $tag --json tagName --jq .tagName 2>$null
+          if (-not $existing) {
+            gh release create $tag --title $tag --generate-notes
+          }
+          gh release upload $tag $($assets.FullName) --clobber
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

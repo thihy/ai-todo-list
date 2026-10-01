@@ -104,7 +104,7 @@ function inlineWidth(el: HTMLElement): string | null {
 
 describe('TaskListPanel 列宽契约', () => {
   it('可变宽度落在 .task-list-panel（flex child）上，不在内层 .task-list 上', async () => {
-    const api = mountPanel(360);
+    mountPanel(360);
 
     // 关键断言：宽度挂在直接父级上。
     expect(inlineWidth(panel())).toBe('360px');

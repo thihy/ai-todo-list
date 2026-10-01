@@ -25,6 +25,7 @@ import {
 import { Composer, type ExternalAiSubmitDetail } from './components/Composer';
 import { TodoListPane } from './panes/TodoListPane';
 import { TaskListPanel } from './layout/TaskListPanel';
+import type { Todo } from '../shared/todo-types';
 // TodoEditorPane is the task-detail body. Only rendered when the user has
 // actually selected a task — split it off so the typical cold-start (no
 // selection yet) doesn't pay for its dependencies (MarkdownEditor +
@@ -148,7 +149,7 @@ export const App: React.FC = () => {
   // candidates 缓存：modal 打开那一刻拉一次（避免渲染期间 dataVersion 触发
   // 重渲染时 modal 里列表跳变）。Modal 自己 sortCandidates + slice(12)，
   // 所以即使缓存是全集也没问题。
-  const [planCandidates, setPlanCandidates] = useState<import('../shared/todo-types').Todo[]>([]);
+  const [planCandidates, setPlanCandidates] = useState<Todo[]>([]);
   const todayKey = React.useMemo(() => todayDateKey(), []);
 
   // 启动时根据 settings 决定是否弹引导。
@@ -169,7 +170,7 @@ export const App: React.FC = () => {
     // 已经 planned 了不主动弹 —— 但通知点击 / 用户主动调起路径仍能开。
     void window.todoList.todo.list({}).then((res) => {
       if (!res.ok) return;
-      const all = res.data as import('../shared/todo-types').Todo[];
+      const all = res.data as Todo[];
       const alreadyPlannedToday = all.some((t) => t.plannedFor === todayKey);
       if (alreadyPlannedToday) {
         // 仅写 lastPlanGuideDate，避免明天重复判定同一段 loaded 状态。
@@ -202,7 +203,7 @@ export const App: React.FC = () => {
     void window.todoList.todo.list({}).then((res) => {
       if (!res.ok) return;
       setPlanCandidates(
-        (res.data as import('../shared/todo-types').Todo[]).filter(
+        (res.data as Todo[]).filter(
           (t) => !t.archivedAt && !t.deletedAt,
         ),
       );

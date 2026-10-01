@@ -1012,8 +1012,7 @@ export const AIPane: React.FC<{
       // 记下粘贴时的会话：importBlob 的落盘 key 由它决定，回调里要拿它
       // 和当前会话比对（见下面 .then 里的守卫）。
       const targetConv = currentIdRef.current;
-      let task: Promise<AttachedFile | null>;
-      task = importPastedImage(file, targetConv)
+      const task: Promise<AttachedFile | null> = importPastedImage(file, targetConv)
         .then((a) => {
           // 落盘期间用户切了会话或新建草稿：这张图写进了旧会话的 inbox，
           // 挂到新会话的 chip 行上只会让 prompt 指向别的会话的文件。丢弃

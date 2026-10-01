@@ -63,6 +63,7 @@ export function slugify(title: string): string {
 
   // 2-3. Windows 非法字符、控制字符、空白、首尾 '.' / '_' / 空格
   const cleaned = head
+    // eslint-disable-next-line no-control-regex -- \x00-\x1f 正是这里要清洗掉的控制字符
     .replace(/[<>:"/\\|?*\x00-\x1f]/g, '_')
     .replace(/\s+/g, '_')
     .replace(/^[.\s_]+|[.\s_]+$/g, '');

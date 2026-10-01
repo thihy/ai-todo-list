@@ -9,7 +9,7 @@ import { ulid } from 'ulid';
 import { MarkdownStore } from '../../src/main/files/markdown';
 import { openDb } from '../../src/main/db/schema';
 import * as paths from '../../src/main/files/paths';
-import Database from 'better-sqlite3';
+import type Database from 'better-sqlite3';
 
 let db: Database.Database;
 let dir: string;

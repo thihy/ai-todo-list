@@ -9,8 +9,8 @@ let host: HTMLDivElement;
 const session = vi.fn().mockResolvedValue({ ok: true });
 const always = vi.fn().mockResolvedValue({ ok: true });
 beforeEach(() => {
-  (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
-  (window as any).todoList = { aiUserApproval: { grantSession: session, grantAlways: always } };
+  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+  (window as unknown as { todoList: unknown }).todoList = { aiUserApproval: { grantSession: session, grantAlways: always } };
   session.mockClear(); always.mockClear();
   host = document.createElement('div'); document.body.append(host); root = createRoot(host);
 });

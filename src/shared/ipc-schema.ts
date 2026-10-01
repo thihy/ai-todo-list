@@ -223,7 +223,7 @@ export interface AIHealthRes {
   error?: string;
 }
 export interface AIModelsRes { models: AIModel[] }
-export interface AIGetMemoryReq {}
+export type AIGetMemoryReq = Record<string, never>;
 export interface AIForgetMemoryReq { id: ULID }
 
 // ----- ai.conversation.* -----
@@ -390,7 +390,7 @@ export interface PermissionPromptReq {
 
 // ----- settings.* -----
 
-export interface SettingsGetReq {}
+export type SettingsGetReq = Record<string, never>;
 export interface SettingsSetReq {
   provider?: AIProvider;
   model?: AIModel;

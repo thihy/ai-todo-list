@@ -8,7 +8,7 @@
 // paths.uniqueTodoDir (no mkdir) so test assertions and store calls share
 // the same path string.
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';

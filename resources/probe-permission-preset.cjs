@@ -120,8 +120,8 @@ app.whenReady().then(async () => {
     failed = true;
   } finally {
     clearTimeout(timeout);
-    try { await ctx?.fiber?.dispose(); } catch {}
-    try { rmSync(scratch, { recursive: true, force: true }); } catch {}
+    try { await ctx?.fiber?.dispose(); } catch { /* best-effort teardown */ }
+    try { rmSync(scratch, { recursive: true, force: true }); } catch { /* best-effort cleanup */ }
     log(failed ? 'RESULT: FAIL' : 'RESULT: PASS');
     app.exit(failed ? 1 : 0);
   }

@@ -4,6 +4,8 @@ import type {
   IpcChannelName,
   IpcRequest,
   IpcResponse,
+  StartupSnapshot,
+  CleanupActions,
 } from './ipc-schema';
 import type {
   AIModel,
@@ -85,7 +87,7 @@ export interface AppEventMap {
   /** Startup state snapshot pushed whenever core / ai changes phase. The
    *  renderer calls `app.startup.get()` once before subscribing to make sure
    *  it doesn't miss a transition that already fired. */
-  'app:startup': import('./ipc-schema').StartupSnapshot;
+  'app:startup': StartupSnapshot;
   /** Tag catalog mutation notification. `affectedTodoIds` is the list of
    *  todo ids whose tag set changed (rename / merge / cleanup may touch
    *  many tasks; other operations pass an empty list since they don't
@@ -477,7 +479,7 @@ export interface TodoListApi {
     recolor(name: string, color: string): Promise<IpcResponse<'tag.recolor'>>;
     merge(sources: string[], target: string, newColor?: string): Promise<IpcResponse<'tag.merge'>>;
     previewCleanup(): Promise<IpcResponse<'tag.previewCleanup'>>;
-    applyCleanup(actions: import('./ipc-schema').CleanupActions): Promise<IpcResponse<'tag.applyCleanup'>>;
+    applyCleanup(actions: CleanupActions): Promise<IpcResponse<'tag.applyCleanup'>>;
     reactivate(name: string): Promise<IpcResponse<'tag.reactivate'>>;
   };
   // L4-G: human-in-the-loop answers for DSH user-questions + user-approval
@@ -485,7 +487,7 @@ export interface TodoListApi {
   // `ai:user-approval-request`); the renderer correlates its reply via
   // the `reqId` minted by the main-process listener.
   aiUserQuestion: {
-    answer(reqId: string, answers: import('./ai-types').UserQuestionAnswerItem[]): Promise<IpcResponse<'ai.userQuestion.answer'>>;
+    answer(reqId: string, answers: UserQuestionAnswerItem[]): Promise<IpcResponse<'ai.userQuestion.answer'>>;
   };
   aiUserApproval: {
     answer(reqId: string, decision: 'allow-once' | 'reject'): Promise<IpcResponse<'ai.userApproval.answer'>>;

@@ -44,7 +44,7 @@ describe('Electron DSH subprocess compatibility', () => {
     const args = ['runner.js', '--', 'rg.exe', '--files'];
     const options = { env: { DSH_SUBPROCESS_RUNNER: 'windows', PATH: 'tools' }, stdio: ['ignore', 'pipe', 'pipe', 'ipc'] as const };
     // Match the provider's overloaded spawn seam.
-    (host.spawn as Function)(process.execPath, args, options);
+    (host.spawn as unknown as (...args: unknown[]) => unknown)(process.execPath, args, options);
     expect(original).toHaveBeenCalledWith(process.execPath, args, {
       ...options, windowsHide: true,
       env: { ...options.env, ELECTRON_RUN_AS_NODE: '1', TODO_LIST_HIDE_CHILD_WINDOWS: '1' },

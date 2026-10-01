@@ -860,7 +860,7 @@ export function openDb(filePath: string): DbHandle {
   // Fresh DB has no schema_meta; the query fails with "no such table" until
   // the first migration creates it. Treat any error as v0 and let the loop
   // below run all migrations.
-  let currentVersion = 0;
+  let currentVersion: number;
   try {
     const row = db
       .prepare<[], { version: number | null }>('SELECT MAX(version) as version FROM schema_meta')
