@@ -5,12 +5,24 @@ import { appendFileSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
 // Path of the rotating single-file log under Electron's per-user data dir.
-// Exported so other modules (diagnostics bundle, the "open log dir" affordance)
-// can reuse the same string instead of hard-coding it. `getPath('userData')`
-// is sync and available as soon as `app` has been imported; we resolve it
-// lazily inside `ensurePath()` to keep the module import order flexible.
-export const LOG_PATH = join(app.getPath('userData'), 'todo-list.log');
-export const LOG_DIR = dirname(LOG_PATH);
+// Exposed as functions (not consts) so importing this module never touches
+// `app`: dozens of main-process modules import the logger at module scope,
+// and unit tests import those modules without an Electron instance — an
+// eager `app.getPath()` here threw `Cannot read properties of undefined`
+// during test collection and took 16 suites with it. Both resolvers return
+// null when Electron is unavailable so callers degrade to console-only.
+export function logDir(): string | null {
+  try {
+    return app.getPath('userData');
+  } catch {
+    return null;
+  }
+}
+
+export function logPath(): string | null {
+  const dir = logDir();
+  return dir === null ? null : join(dir, 'todo-list.log');
+}
 
 const LEVELS = { debug: 10, info: 20, warn: 30, error: 40 } as const;
 type Level = keyof typeof LEVELS;
@@ -25,10 +37,12 @@ class Logger {
 
   private ensurePath(): string | null {
     if (this.logPath) return this.logPath;
+    const path = logPath();
+    if (path === null) return null;
     try {
-      mkdirSync(LOG_DIR, { recursive: true });
-      this.logPath = LOG_PATH;
-      return LOG_PATH;
+      mkdirSync(dirname(path), { recursive: true });
+      this.logPath = path;
+      return path;
     } catch {
       return null;
     }

@@ -10,15 +10,6 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
-// electron 在 vitest 里没真实实例；mock 掉 app.getPath 防止 logger.ts 在
-// import 时炸（baseline 上 inbox-store 等直接 import main logger 的 spec
-// 都因这个 fail，与本次改动无关 —— 这里只是为了让我们新增的 rename 测试
-// 能跑起来）。
-vi.mock('electron', () => ({
-  app: { getPath: () => '.' },
-  BrowserWindow: { getAllWindows: () => [] },
-}));
-
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';

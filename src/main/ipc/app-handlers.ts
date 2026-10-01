@@ -7,7 +7,7 @@ import { existsSync } from 'node:fs';
 import { shell } from 'electron';
 import { okResult, failResult, register } from './router';
 import { getFocus, setFocus } from '../app-context';
-import { LOG_DIR, logger } from '../logger';
+import { logDir, logger } from '../logger';
 
 export interface AppHandlersDeps {
   /** Resolve the per-task directory for a given TODO id. Post-refactor every
@@ -70,7 +70,10 @@ export function registerAppFocusHandlers(deps: AppHandlersDeps): void {
   // non-empty error string when the platform refuses (e.g. dir deleted
   // between intent and click — extremely rare).
   register('app.openLogDir', async () => {
-    const target = LOG_DIR;
+    const target = logDir();
+    if (target === null) {
+      return failResult('open_failed', 'userData path unavailable');
+    }
     try {
       const errMsg = await shell.openPath(target);
       if (errMsg) {
