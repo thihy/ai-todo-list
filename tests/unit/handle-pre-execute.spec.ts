@@ -18,12 +18,18 @@ import type { PreToolDecision } from '@deepseek-ai/dsh-tools';
 // 用真实目录做 workspace —— isWithinWorkspace() 走 realpath,POSIX 风格
 // 路径在 win32 上 path.sep 不匹配,会直接 deny 而不是返回 true。
 let workspace: string;
+let outside: string;
 beforeEach(() => {
   workspace = mkdtempSync(join(tmpdir(), 'hpe-'));
+  // A sibling temp dir that is definitely outside `workspace`, used by the
+  // "path outside workspace" cases. Must be created per-test because
+  // isWithinWorkspace() realpaths whatever it is handed.
+  outside = mkdtempSync(join(tmpdir(), 'hpe-outside-'));
   process.env.DSH_WORKSPACE_ROOT = workspace;
 });
 afterEach(() => {
   rmSync(workspace, { recursive: true, force: true });
+  rmSync(outside, { recursive: true, force: true });
 });
 
 function makeDeps(currentPresetValue: string | undefined = 'workspace-write') {
@@ -160,7 +166,12 @@ describe('handlePreExecute — read 类工具', () => {
   it('workspace 外 read → deny(PATH_OUTSIDE_WORKSPACE)', async () => {
     const d = makeDeps();
     const r = await handlePreExecute(
-      { name: 'read', arguments: { file_path: 'C:\\Windows\\System32\\drivers\\etc\\hosts' } } as never,
+      // Must be a real absolute path on the host platform. A hardcoded
+      // 'C:\\Windows\\...' is NOT absolute on POSIX — path.resolve() treats it
+      // as relative and lands it under the workspace, so the guard correctly
+      // allows it and CI fails with "next() should not have been called".
+      // Use the sibling `outside` temp dir, which is absolute everywhere.
+      { name: 'read', arguments: { file_path: join(outside, 'notes.md') } } as never,
       nextNeverCalled, d,
     );
     expect(r.kind).toBe('deny');

@@ -46,10 +46,15 @@ const fakeSdk: TodoListSdk = {
 let bridge: JsonRpcBridge;
 
 const isWin = process.platform === 'win32';
+// `start()` refuses to bind without a capability token (defence in depth —
+// index.ts gates on settings.sdkBridge.enabled). This spec skipped on win32
+// from the start, so the missing token was never noticed: the server never
+// listened and every call got ENOENT. Pass a token, as production does.
+const TOKEN = 'test-capability-token';
 
 beforeAll(() => {
   if (isWin) return;
-  bridge = new JsonRpcBridge(fakeSdk, SOCKET);
+  bridge = new JsonRpcBridge(fakeSdk, SOCKET, { token: TOKEN });
   bridge.start();
   // Give the server a tick to bind
   return new Promise<void>((resolve) => setTimeout(resolve, 50));
@@ -79,6 +84,10 @@ function call(method: string, params: unknown): Promise<unknown> {
       }
     });
     sock.on('error', reject);
+    // The first line of every connection must carry the capability token
+    // (src/main/sdk/bridge.ts → handle()). The bridge consumes it and does
+    // not treat it as a request, so the reply we care about is the second one.
+    sock.write(JSON.stringify({ auth: TOKEN }) + '\n');
     const req = { jsonrpc: '2.0', id: 1, method, params };
     sock.end(JSON.stringify(req) + '\n');
   });
@@ -108,6 +117,9 @@ describe.skipIf(isWin)('JsonRpcBridge', () => {
       sock.on('data', (c) => chunks.push(c));
       sock.on('end', () => resolve(JSON.parse(Buffer.concat(chunks).toString('utf8').trim())));
       sock.on('error', reject);
+      // Auth first, so the malformed line is parsed as a request (-32700)
+      // rather than rejected as unauthenticated (-32001).
+      sock.write(JSON.stringify({ auth: TOKEN }) + '\n');
       sock.end('not-json\n');
     });
     expect(res.error.code).toBe(-32700);
