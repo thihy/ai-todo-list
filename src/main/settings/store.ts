@@ -14,13 +14,6 @@ import { randomBytes } from 'node:crypto';
 import { DEFAULT_CAPTURE_HOTKEY, ROOT_DIR_NAME, CONFIG_FILENAME, DEFAULT_PROVIDER, DEFAULT_AI_USER_AGENT, DSH_WORKSPACE_SUBDIR } from '../../shared/constants';
 import type { AIModel, AIProvider, CustomProviderConfig, CustomProviderInput, LogLevel } from '../../shared/ai-types';
 import type { TagDef } from '../../shared/todo-types';
-import {
-  DEFAULT_TASK_APPEARANCE,
-  type TaskAppearance,
-  type TaskAppearanceCustomPreset,
-  normalizeCustomPresets,
-  normalizeTaskAppearance,
-} from '../../shared/task-appearance';
 
 export interface PersistedSettings {
   provider: AIProvider;
@@ -65,16 +58,6 @@ export interface PersistedSettings {
    *  this time passes, neither the boot-time guide nor the scheduled
    *  reminder re-prompts. Cleared by the next launch that finds it expired. */
   snoozePlanGuideUntil: number | null;
-  /** Per-priority row background/foreground colours (very-low/low/medium/high/very-high).
-   *  Theme mode lets the renderer fall back to CSS defaults; custom mode
-   *  injects the user-chosen values as CSS custom properties. Normalised on
-   *  load so any partial / corrupted JSON falls back to defaults. */
-  taskAppearance: TaskAppearance;
-  /** 用户在设置面板里创建的命名自定义配色预设。可删除、可重选；
-   *  presetIdOf() 在 custom-mode 下按"用户优先、内建其次"的顺序匹配颜色。
-   *  Normalised on load —— 损坏条目（id/label 缺失、颜色非法、超过上限）
-   *  会被过滤掉，确保面板不会被打坏。 */
-  taskAppearanceCustomPresets: TaskAppearanceCustomPreset[];
   /** SEC-01 — JSON-RPC bridge settings. The bridge is OFF by default;
    *  users opt in via Settings → 数据 → 外部访问. The capability token is
    *  generated on first enable and rotated on demand. The token is
@@ -141,8 +124,6 @@ const DEFAULTS: PersistedSettings = {
   dailyPlanReminderTime: '09:00',
   lastPlanGuideDate: null,
   snoozePlanGuideUntil: null,
-  taskAppearance: { ...DEFAULT_TASK_APPEARANCE, colors: { ...DEFAULT_TASK_APPEARANCE.colors } },
-  taskAppearanceCustomPresets: [],
   sdkBridge: { enabled: false, token: null },
   autoUpdate: true,
   maxConversations: 100,
@@ -191,28 +172,21 @@ export class SettingsStore {
 
   private load(): PersistedSettings {
     if (!existsSync(this.path)) {
-      return {
-        ...DEFAULTS,
-        taskAppearance: { ...DEFAULT_TASK_APPEARANCE, colors: { ...DEFAULT_TASK_APPEARANCE.colors } },
-        taskAppearanceCustomPresets: [],
-      };
+      return { ...DEFAULTS };
     }
     try {
       const raw = JSON.parse(readFileSync(this.path, 'utf8'));
-      // 旧 config.json 没有 taskAppearance 字段：归一化成默认值而不是整对象 spread 覆盖。
       const merged = { ...DEFAULTS, ...raw };
-      merged.taskAppearance = normalizeTaskAppearance(raw.taskAppearance);
-      // 用户自定义预设：缺字段 / 损坏值时归一化成 []。
-      merged.taskAppearanceCustomPresets = normalizeCustomPresets(raw.taskAppearanceCustomPresets);
+      // 任务配色已固化为应用样式，不再从 config.json 读取。旧配置里残留的
+      // 脏键必须显式删掉：`{ ...DEFAULTS, ...raw }` 会把它们原样 spread 回来，
+      // 并在下次 persist 时又写回磁盘。删掉后由下一次保存自然清理干净。
+      delete (merged as Record<string, unknown>).taskAppearance;
+      delete (merged as Record<string, unknown>).taskAppearanceCustomPresets;
       // logLevel：损坏字面量 / 缺失字段都回退到 'info'，不让 logger 阈值被脏值卡住。
       merged.logLevel = normaliseLogLevel(raw.logLevel);
       return merged;
     } catch {
-      return {
-        ...DEFAULTS,
-        taskAppearance: { ...DEFAULT_TASK_APPEARANCE, colors: { ...DEFAULT_TASK_APPEARANCE.colors } },
-        taskAppearanceCustomPresets: [],
-      };
+      return { ...DEFAULTS };
     }
   }
 
@@ -277,8 +251,6 @@ export class SettingsStore {
       dailyPlanReminderTime: v.dailyPlanReminderTime,
       lastPlanGuideDate: v.lastPlanGuideDate,
       snoozePlanGuideUntil: v.snoozePlanGuideUntil,
-      taskAppearance: v.taskAppearance,
-      taskAppearanceCustomPresets: v.taskAppearanceCustomPresets,
       // 透传 logger 阈值给渲染端。SettingsModal 把它接成 GeneralPane 的下拉。
       logLevel: v.logLevel,
       // SEC-01 — always return the full state (enabled + token) so the

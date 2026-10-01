@@ -13,7 +13,7 @@ import { AIPanel } from './layout/AIPanel';
 import { useToastBus } from './components/Toast';
 import { CommandPaletteHost } from './components/CommandPalette';
 // SettingsModal pulls the whole settings UI tree (ModelPane + CustomProviders-
-// Editor + TaskAppearancePane + TagInput + useSettings). It's only opened
+// Editor + the other config panes + useSettings). It's only opened
 // occasionally — keep it out of the initial bundle.
 const SettingsModal = React.lazy(() =>
   import('./components/SettingsModal').then((m) => ({ default: m.SettingsModal })),

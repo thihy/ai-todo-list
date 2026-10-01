@@ -5,8 +5,10 @@
 // concept — everything is a Task.
 //
 // Tree behaviour:
-//   - Indentation by nesting depth, driven by the `--row-depth` CSS custom
-//     property so SubTasks visibly nest under their parent.
+//   - Indentation by nesting depth is owned by the CSS, not by this file:
+//     every `.task-branch__children` level shifts itself right via
+//     margin-left and draws a tree guide line, so SubTasks (and
+//     sub-sub-tasks) form a visible staircase of cards automatically.
 //   - Single-click selects; double-click toggles expand/collapse (so you
 //     can stay on the same row and drill in). The chevron after the status
 //     glyph also toggles.
@@ -19,7 +21,7 @@
 //     a focused row does the same.
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useTodos, useSettings } from '../hooks/useTodoListApi';
+import { useTodos } from '../hooks/useTodoListApi';
 import type { ListFilter, SortKey } from '../router';
 import { ToastHost } from '../components/Toast';
 import type { ToastBus } from '../components/Toast';
@@ -28,7 +30,6 @@ import { StatusSelect } from '../components/StatusSelect';
 import { IconCalendar, IconCollapseBar, IconDrawing, IconInboxEmpty, IconTrash } from '../components/icons';
 import { todayDateKey } from '../components/PlanGuideModal';
 import TodayGlyph from '../components/TodayGlyph';
-import { DEFAULT_TASK_APPEARANCE, type TaskAppearance } from '../../shared/task-appearance';
 
 export const TodoListPane: React.FC<{
   filter: ListFilter;
@@ -46,10 +47,6 @@ export const TodoListPane: React.FC<{
 }> = ({ filter, sort, selectedId, onSelect, onSubtaskCreated, onAiCreated, onCompose, onCollapse, toastBus }) => {
   const repoFilter = filterToRepoFilter(filter);
   const { data, loading, refresh } = useTodos(repoFilter);
-  // 任务优先级配色 —— mode=custom 时把 colors 注入 CSS 自定义属性；
-  // mode=theme 时不注入，由 CSS 主题默认样式接管，节省一次序列化。
-  const { data: settings } = useSettings();
-  const taskAppearance = settings?.taskAppearance;
 
   // Auto-refresh when a new todo is created elsewhere (capture window, AI).
   // 主进程在 AI 走 todo_create 建完任务后会推 app:todo-created { id }，
@@ -287,7 +284,7 @@ export const TodoListPane: React.FC<{
   }, [data, deletedView]);
   const isEmpty = !loading && data.length === 0;
   return (
-    <section className={`task-list${taskAppearance?.mode === 'custom' ? ' task-list--custom' : ''}`} aria-label="任务列表" style={taskListStyle(taskAppearance)}>
+    <section className="task-list" aria-label="任务列表">
       {/* This pane owns the column's visible chrome. The resizable width and
           the right border live on the TaskListPanel shell that wraps it —
           width in particular MUST stay on the wrapper, because that is the
@@ -664,7 +661,6 @@ const TaskBranch: React.FC<{
     <>
       <TaskRow
         todo={todo}
-        depth={depth}
         active={todo.id === selectedId}
         onSelect={onSelect}
         onCycle={onCycle}
@@ -689,7 +685,6 @@ const TaskBranch: React.FC<{
       />
       {!archivedView && creating && (
         <SubtaskCreateRow
-          depth={depth}
           draft={draft}
           busy={busy}
           onChange={setDraft}
@@ -802,7 +797,6 @@ const PlannedBranch: React.FC<{
     <>
       <TaskRow
         todo={todo}
-        depth={depth}
         active={todo.id === selectedId}
         onSelect={onSelect}
         onCycle={onCycle}
@@ -828,7 +822,6 @@ const PlannedBranch: React.FC<{
           深度 +1。 */}
       {creating && (
         <SubtaskCreateRow
-          depth={depth}
           draft={draft}
           busy={busy}
           onChange={setDraft}
@@ -867,7 +860,6 @@ const PlannedBranch: React.FC<{
       {hasPeerChildren && (
         <li
           className="task-row task-row__peer-chip-row"
-          style={{ '--row-depth': depth + 1 } as React.CSSProperties}
           onClick={(e) => e.stopPropagation()}
         >
           <button
@@ -917,7 +909,6 @@ const PlannedBranch: React.FC<{
 
 const TaskRow: React.FC<{
   todo: Todo;
-  depth: number;
   active: boolean;
   onSelect: (id: string) => void;
   onCycle: (next: TodoStatus) => Promise<void>;
@@ -946,7 +937,7 @@ const TaskRow: React.FC<{
    *  be visual noise. The 下半区 keeps the toggle so the user can collapse
    *  a busy branch on demand. */
   hideExpandToggle?: boolean;
-}> = ({ todo, depth, active, onSelect, onCycle, hasSubtasks, subtaskCount, subtaskDoneCount, subtasksExpanded, onToggleSubtasks, archivedView, onDelete, onRestore, creating, onAddSubtask, todayKey, onTogglePlan, hideExpandToggle }) => {
+}> = ({ todo, active, onSelect, onCycle, hasSubtasks, subtaskCount, subtaskDoneCount, subtasksExpanded, onToggleSubtasks, archivedView, onDelete, onRestore, creating, onAddSubtask, todayKey, onTogglePlan, hideExpandToggle }) => {
   const st = todo.status;
   // Terminal/voided states recede (icon mutes, title strikes); blocked is still
   // active but flagged. Each off-default status gets its own row class so the
@@ -966,15 +957,6 @@ const TaskRow: React.FC<{
       tabIndex={0}
       className={`task-row${active ? ' is-active' : ''}${statusCls}${creatingCls}${plannedCls}`}
       data-priority={todo.priority || 'very-low'}
-      style={
-        {
-          '--row-depth': depth,
-          // 0–100; falls back to 0 so the bottom line is invisible for
-          // not-started tasks. Drawn as a horizontal fill on the row's
-          // bottom edge (see .task-row::after in global.css).
-          '--row-progress': `${Math.max(0, Math.min(100, todo.progress ?? 0))}%`,
-        } as React.CSSProperties
-      }
       onClick={() => onSelect(todo.id)}
       onDoubleClick={(e) => {
         // Double-click toggles expand/collapse WITHOUT deselecting/navigating
@@ -1110,22 +1092,22 @@ const TaskRow: React.FC<{
   );
 };
 
-/** 行内"添加子任务"输入行 — 渲染成 <li> 与 TaskRow 视觉对齐，深度 +1 与未来
- *  子任务同级。draft/busy 由父级 TaskBranch 持有，本组件只渲染 UI + 转抛事件。
+/** 行内"添加子任务"输入行 — 渲染成 <li>，与 TaskRow 共用同一套卡片样式。
+ *  层级由父级把它放在哪个容器里决定（和未来的子任务同级），本组件不感知深度。
+ *  draft/busy 由父级 TaskBranch 持有，本组件只渲染 UI + 转抛事件。
  *  - 首次 mount 自动 focus（useEffect）
  *  - Enter 提交；Escape 取消；× 按钮取消
  *  - 提交成功时父级清空 draft，input 节点不卸载 → 焦点自然保留，连续创建无感
  *  - 提交失败时（IPC res.ok=false 或空标题）父级保留 draft；本组件展示 is-error
  *    红色边框 + 抖动一次，让用户感知原因并立即修改重试 */
 const SubtaskCreateRow: React.FC<{
-  depth: number;
   draft: string;
   busy: boolean;
   onChange: (next: string) => void;
   /** 返回 true = 创建成功；false = 失败（draft 保留，触发 is-error） */
   onSubmit: () => Promise<boolean>;
   onCancel: () => void;
-}> = ({ depth, draft, busy, onChange, onSubmit, onCancel }) => {
+}> = ({ draft, busy, onChange, onSubmit, onCancel }) => {
   const inputRef = useRef<HTMLInputElement>(null);
   const [showError, setShowError] = useState(false);
 
@@ -1152,7 +1134,6 @@ const SubtaskCreateRow: React.FC<{
   return (
     <li
       className={`task-row task-row__subtask-create${showError ? ' is-error' : ''}`}
-      style={{ '--row-depth': depth + 1 } as React.CSSProperties}
       onClick={(e) => e.stopPropagation()}
     >
       <div className="task-row__main">
@@ -1426,38 +1407,6 @@ function filterToRepoFilter(f: ListFilter): Parameters<typeof window.todoList.to
       // Exhaustive — future filter kinds should land here.
       return {};
   }
-}
-
-/** 把 taskAppearance 转换为顶层 <section> 的 style。
- *  - 始终注入 8 个 CSS 自定义属性（--task-prio-<p>-bg / -fg），包括
- *    mode='theme' 与首次未加载的情况（用 DEFAULT_TASK_APPEARANCE 兜底）。
- *    CSS 端的行背景规则挂在 `.task-list .task-row[data-priority=...]`
- *    上（始终生效），所以 theme 模式也能拿到按优先级的浅色底色。
- *  - mode === 'custom' 时另外附加 `task-list--custom` className，让覆盖
- *    规则（hover / active / done / cancelled / blocked 的 fg 边框与
- *    outline）只作用于 custom 模式；theme 模式仍走 hover 用 --bg-hover、
- *    active 用 --bg-active + accent 左边框的默认行为。
- *
- *  这里不设 width：列宽由 TaskListPanel 的 inline style 提供（它才是
- *  .master-detail 的 flex child），本 section 只负责 stretch 填满。 */
-function taskListStyle(
-  appearance: TaskAppearance | undefined,
-): React.CSSProperties {
-  const c = appearance?.colors ?? DEFAULT_TASK_APPEARANCE.colors;
-  return {
-    // CSS 自定义属性键在 React 里用 camelCase，对应 CSS 里的 kebab-case；
-    // 我们在 CSS 里直接写 kebab-case 字符串键（TS 在 cast 里允许任意键）。
-    ['--task-prio-very-low-bg' as never]: c['very-low'].background,
-    ['--task-prio-very-low-fg' as never]: c['very-low'].foreground,
-    ['--task-prio-low-bg' as never]: c.low.background,
-    ['--task-prio-low-fg' as never]: c.low.foreground,
-    ['--task-prio-medium-bg' as never]: c.medium.background,
-    ['--task-prio-medium-fg' as never]: c.medium.foreground,
-    ['--task-prio-high-bg' as never]: c.high.background,
-    ['--task-prio-high-fg' as never]: c.high.foreground,
-    ['--task-prio-very-high-bg' as never]: c['very-high'].background,
-    ['--task-prio-very-high-fg' as never]: c['very-high'].foreground,
-  };
 }
 
 function formatDate(ms: number): string {

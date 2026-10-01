@@ -30,7 +30,7 @@ import type { ToastBus } from '../../src/renderer/components/Toast';
 // 打桩掉，就能只关心它的 DOM 契约而不牵扯 IPC。
 vi.mock('../../src/renderer/hooks/useTodoListApi', () => ({
   useTodos: () => ({ data: [], loading: false, refresh: () => Promise.resolve() }),
-  useSettings: () => ({ data: { taskAppearance: undefined } }),
+  useSettings: () => ({ data: {} }),
 }));
 
 let container: HTMLDivElement;
@@ -162,15 +162,14 @@ describe('真实 TodoListPane 不再自带宽度', () => {
     expect(inlineWidth(panel())).toBe('360px');
   });
 
-  it('TodoListPane 仍注入优先级配色用的 CSS 自定义属性（宽度改动没误伤它）', async () => {
+  it('TodoListPane 不再往 section 注入任何内联样式', async () => {
     await mountReal(360);
     const real = container.querySelector<HTMLElement>('.task-list')!;
-    // taskListStyle 的本职：5 档优先级 × (bg + fg) 共 10 个 --task-prio-* 变量。
-    // 宽度被摘掉后这些必须还在，否则 custom 模式的任务行会掉色。
-    for (const p of ['very-high', 'high', 'medium', 'low', 'very-low']) {
-      expect(real.style.getPropertyValue(`--task-prio-${p}-bg`)).not.toBe('');
-      expect(real.style.getPropertyValue(`--task-prio-${p}-fg`)).not.toBe('');
-    }
+    // 这里曾经断言 10 个 --task-prio-* 自定义属性还在（保护 taskListStyle 没被
+    // 宽度改动误伤）。任务配色功能整条下线后，taskListStyle 已删除，section 不再
+    // 持有任何内联样式 —— 保留一条"cssText 必须为空"的反向锁定：将来若有人又往
+    // 这里塞内联宽度或内联配色，第一个用例的 inlineWidth(real) 会先炸。
+    expect(real.style.cssText).toBe('');
   });
 
   it('TodoListPane 不接受 width prop（类型层面已移除，运行时也不该有）', async () => {

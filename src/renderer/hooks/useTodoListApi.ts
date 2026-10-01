@@ -16,7 +16,6 @@ import type { SettingsGetRes, TagCatalogRow, TagCatalogEntry, StartupComponentSt
 import { useDataVersion } from '../data-bus';
 import { compactAiStreamEvents } from '../dsh/stream-buffer';
 import { deriveProviderStatus, type ProviderStatus } from '../dsh/provider-status';
-import { normalizeCustomPresets, normalizeTaskAppearance } from '../../shared/task-appearance';
 import { useToastBus } from '../components/Toast';
 
 declare global {
@@ -386,20 +385,6 @@ export function useDrawing(id: string | null): { scene: DrawingScene | null } {
   return { scene };
 }
 
-/** 在设置读取边界统一归一化——只覆盖 taskAppearance / 命名自定义预设，
- *  其他字段原样保留。这样响应里缺 / null / 旧格式都不会让
- *  TaskAppearancePane 在 `value.mode` 上炸掉，也保证面板上能看到用户的
- *  命名自定义预设（即使老的主进程没下发也走默认 []）。SettingsGetRes
- *  类型声明里这两个字段是必填，但跨版本主进程（更老的二进制没下发）仍是
- *  现实情况，必须在边界做兜底。 */
-function normalizeSettingsResponse(settings: SettingsGetRes): SettingsGetRes {
-  return {
-    ...settings,
-    taskAppearance: normalizeTaskAppearance(settings.taskAppearance),
-    taskAppearanceCustomPresets: normalizeCustomPresets(settings.taskAppearanceCustomPresets),
-  };
-}
-
 /** Thrown by `useSettings().patch` when the settings store rejects a
  *  write. We strip the patch argument before it can reach the message so a
  *  failure reading `保存 API Key 时磁盘满了` doesn't leak the key into a
@@ -426,7 +411,7 @@ export function useSettings(): {
   const [syncing, setSyncing] = useState(false);
   const refresh = useCallback(async () => {
     const res = await window.todoList.settings.get();
-    if (res.ok) setData(normalizeSettingsResponse(res.data));
+    if (res.ok) setData(res.data);
   }, []);
   const patch = useCallback(
     async (patch: SettingsPatchArgs) => {
@@ -439,7 +424,7 @@ export function useSettings(): {
           const reason = res.message ?? '保存失败';
           throw new SettingsPatchError(reason);
         }
-        setData(normalizeSettingsResponse(res.data));
+        setData(res.data);
       } finally {
         setSyncing(false);
       }
@@ -462,7 +447,7 @@ export function useSettings(): {
   // so this broadcast only matters for CHANGES MADE BY OTHER ACTORS (the AI
   // bumping monthlyCostUsd is the only one in practice). We still replace
   // `data` on the broadcast — consumers that need draft-isolation handle
-  // it themselves (TaskAppearancePane keeps its own draft).
+  // it themselves.
   useEffect(() => {
     return window.todoList.on('app:settings-changed', () => { void refresh(); });
   }, [refresh]);

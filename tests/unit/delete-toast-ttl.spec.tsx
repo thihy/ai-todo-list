@@ -24,7 +24,7 @@ const TODOS = [
 
 vi.mock('../../src/renderer/hooks/useTodoListApi', () => ({
   useTodos: () => ({ data: TODOS, loading: false, refresh: () => Promise.resolve() }),
-  useSettings: () => ({ data: { taskAppearance: undefined } }),
+  useSettings: () => ({ data: {} }),
 }));
 
 let container: HTMLDivElement;

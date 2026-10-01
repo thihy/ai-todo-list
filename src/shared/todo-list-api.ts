@@ -27,7 +27,6 @@ import type { ProgressLogEntry } from './todo-types';
 import type { DocumentVersionEntry, TaskDocument } from './todo-types';
 import type { DrawingMeta, DrawingScene } from './todo-types';
 import type { TagDef } from './todo-types';
-import type { TaskAppearance, TaskAppearanceCustomPreset } from './task-appearance';
 
 // --- App events pushed from main ---
 
@@ -155,10 +154,6 @@ export interface SettingsPatchArgs {
   lastPlanGuideDate?: string | null;
   /** Epoch-ms until which the guide and scheduled reminder stay muted. */
   snoozePlanGuideUntil?: number | null;
-  /** 任务优先级配色。theme 模式不修改 colors；custom 模式传完整 colors。 */
-  taskAppearance?: TaskAppearance;
-  /** 用户在设置面板里创建的命名自定义配色预设。 */
-  taskAppearanceCustomPresets?: TaskAppearanceCustomPreset[];
   /** Auto-updater master switch. Toggling this takes effect
    *  immediately (cancels / schedules the post-startup background
    *  check) and persists across restarts. */

@@ -981,8 +981,6 @@ function registerSettingsHandlers(
         ...(req.dailyPlanReminderTime !== undefined ? { dailyPlanReminderTime: req.dailyPlanReminderTime } : {}),
         ...(req.lastPlanGuideDate !== undefined ? { lastPlanGuideDate: req.lastPlanGuideDate } : {}),
         ...(req.snoozePlanGuideUntil !== undefined ? { snoozePlanGuideUntil: req.snoozePlanGuideUntil } : {}),
-        ...(req.taskAppearance !== undefined ? { taskAppearance: req.taskAppearance } : {}),
-        ...(req.taskAppearanceCustomPresets !== undefined ? { taskAppearanceCustomPresets: req.taskAppearanceCustomPresets } : {}),
         ...(typeof req.autoUpdate === 'boolean' ? { autoUpdate: req.autoUpdate } : {}),
       });
       if (req.customProviders) {

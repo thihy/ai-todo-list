@@ -32,8 +32,6 @@ import type {
   UserApprovalAnswer,
 } from './ai-types';
 
-import type { TaskAppearance, TaskAppearanceCustomPreset } from './task-appearance';
-
 // ----- Generic envelope -----
 
 export interface IpcSuccess<T> { ok: true; data: T }
@@ -424,12 +422,6 @@ export interface SettingsSetReq {
   // Snooze deadline (epoch ms) set by 「改天再提醒」. Until this passes, no
   // boot guide or scheduled reminder fires. Renderer clears it on next launch.
   snoozePlanGuideUntil?: number | null;
-  // 任务优先级配色 —— mode=theme 时跟随 CSS 主题；mode=custom 时 colors
-  // 完整覆盖 4 个优先级的背景/前景。具体值由 Settings UI 编辑 / 选预设。
-  taskAppearance?: TaskAppearance;
-  // 用户在设置面板里创建的命名自定义配色预设；空数组表示没有用户预设。
-  // 持久化在 userData/config.json，损坏值由 SettingsStore.load() 归一化为 []。
-  taskAppearanceCustomPresets?: TaskAppearanceCustomPreset[];
   // AUTO-UPDATE toggle — when false the 5 s post-startup background
   // check is skipped; the manual "检查更新" button is unaffected.
   // Defaults to true (existing installs keep their behaviour).
@@ -452,9 +444,6 @@ export interface SettingsGetRes extends AISettings {
   dailyPlanReminderTime: string;
   lastPlanGuideDate: string | null;
   snoozePlanGuideUntil: number | null;
-  taskAppearance: TaskAppearance;
-  // 用户在设置面板里创建的命名自定义配色预设；空数组表示没有。
-  taskAppearanceCustomPresets: TaskAppearanceCustomPreset[];
   /** SEC-01 — current bridge state. `enabled` reflects persistence;
    *  `token` is the live capability token (returned once on rotation
    *  / enable so the user can copy it). When `enabled: false`, `token`

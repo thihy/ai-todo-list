@@ -65,6 +65,12 @@
 
   /* Border */
   --border-default: #E3E5E9;
+  /* 分隔线专用：比 default 更淡一档，用于"同一层级内切分内容"（行与行、
+     面板与面板）。这个变量之前在 :root 里根本不存在，而全文件有 17 处在用
+     var(--border-subtle)。自定义属性缺失会让整条声明在"计算期值"阶段被判为
+     非法并被浏览器丢弃（border-style 回到 none），所以那些"本该存在"的
+     1px 分隔线一条都没画出来 —— 任务列表"行与行之间不明显"就是这个原因。 */
+  --border-subtle: #EBEDF0;
   --border-strong: #C9CDD4;
 
   /* Spacing */
@@ -752,7 +758,7 @@ a:hover {
   box-shadow: 0 0 0 3px rgba(4, 120, 87, 0.16);
 }
 .dot--warn {
-  background: var(--accent-warning);
+  background: var(--accent-warn);
   box-shadow: 0 0 0 3px rgba(183, 121, 31, 0.18);
 }
 .dot--pending {
@@ -1605,7 +1611,7 @@ a:hover {
   gap: var(--space-xs, 4px);
   padding: var(--space-xs) var(--space-sm);
   border-top: 1px solid var(--border-subtle, #EDEFF2);
-  background: var(--bg-subtle, #fafbfc);
+  background: var(--bg-soft);
 }
 .aipane__menu-batchbar-text {
   flex: 1 1 auto;
@@ -2751,7 +2757,10 @@ a:hover {
   min-height: 0;
   overflow: auto;
   scrollbar-gutter: stable;
-  padding: var(--space-sm) 0;
+  /* 左右各留 8px：任务行现在是"浮在列底上的卡片"，卡片边缘必须和列边缘
+     脱开，卡片感才成立；贴边排布会退回成色带列表。下方留 16px，让最后一
+     张卡片不贴着滚动区底边。 */
+  padding: var(--space-sm) var(--space-sm) var(--space-lg);
 }
 
 .task-list__header {
@@ -2901,11 +2910,11 @@ a:hover {
   align-items: flex-start;
   gap: var(--space-sm);
   padding: var(--space-sm);
-  /* Indentation by nesting depth. --row-depth is set inline (0 = root
-     task, 1 = child of a depth-0 task, etc.). The padding-left formula
-     (var(--space-sm) + depth*14px) keeps icon+text aligned down the
-     tree so a parent and its subtask at the next depth line up. */
-  padding-left: calc(var(--space-sm) + var(--row-depth, 0) * 14px);
+  /* 缩进改由**容器**承担：每一层 .task-branch__children 用 margin-left
+     整体右移，于是子任务的"卡片"本身（而不只是卡片里的文字）形成一道向右下
+     的阶梯。卡片化之后这是必需的 —— 卡片左边缘全部对齐时，唯一的层级线索就
+     只剩文字缩进，那太弱了。左侧固定留 8px（外加 2px 选中轨）给图标。 */
+  padding-left: var(--space-sm);
   /* 2px left border serves double duty: the selection indicator (when
      primary) and the danger rail (when blocked). Otherwise it's just
      a transparent placeholder so border-color transitions look clean. */
@@ -2928,48 +2937,25 @@ a:hover {
 .task-row {
   position: relative;
 }
-/* Adjacent-row divider 鈥?every task row gets a hairline at its top edge
-   except the first one in its list. Replaces the previous reliance on
-   padding alone, which became hard to read once rows share a uniform
-   background (default theme mode is now transparent 鈥?see priority
-   colours block below). The line is --border-subtle (1px) so it doesn't
-   fight with the selection rail / hover background; siblings are still
-   visually fused via padding, but each row now has a clear floor.
-
-   The divider renders inside the row's padding-left box, so subtask rows
-   (with deeper --row-depth) get an indented rule that lines up with their
-   text 鈥?no edge-to-edge bar across the indent gutter. */
-.task-row + .task-row {
-  border-top: 1px solid var(--border-subtle);
-}
-/* First row of a list / section should not double up with the section
- * header's bottom border 鈥?drop the top border on the first row to keep
- * a single clean divider between the section header and the first task.
- * `:not(...)` keeps the rule scoped: any task row that follows another
- * still gets its top divider. */
-.task-list__root-tasks > .task-row:first-child,
-.task-branch__children > .task-row:first-child {
-  border-top: 0;
-}
+/* 相邻任务行之间不再画分隔线（原本是一条 1px var(--border-subtle) 顶部细线）。
+   两个原因：
+   1. 细线只能"标记边界"，两行仍共用同一片连续底色，读起来还是一整块；
+   2. 行现在有独立卡面和 6px gap 留白，再叠一条线只会在卡片之间多一道噪点。
+   层级分隔改由下面"任务卡片化"块里的卡面 + gap 承担。 */
 .task-row:hover {
   background: var(--bg-hover);
 }
-/* Active selection 鈥?the row keeps its priority background; selection is
-    conveyed by a 4px accent-primary left border instead of a background
-    overlay (which would clash with the priority bg, especially in
-    theme-mode presets where the priority colour IS the row background).
-    The border-width jump from 2px鈫?px is offset by a matching -2px on
-    padding-left so checkbox / title stay aligned with non-active rows.
-    The colour is set here so the default (theme-mode) row gets a visible
-    accent rail; .task-list--custom overrides it with the row's own
-    priority fg below so the bar matches the row's identity in custom
-    mode. Without the explicit color the 4px border inherits
-    `border-left: 2px solid transparent` from .task-row and the active
-    state is invisible. */
+/* 选中态的左侧轨：4px 主色。原先这里还带一套 custom 模式的覆盖（用各优先级
+   自己的 fg 给左轨上色），随任务配色功能一起移除了。
+   宽度从 2px 跳到 4px，用 padding-left 减 2px 抵消，保证选中时图标与标题
+   不发生横向位移。
+   必须显式给 color —— 否则这 4px 会继承 .task-row 的
+   `border-left: 2px solid transparent`，选中态在界面上完全不可见。
+   卡面（背景 / 描边 / 投影）的选中表现见下方「任务卡片化」块。 */
 .task-row.is-active {
   border-left-width: 4px;
   border-left-color: var(--accent-primary);
-  padding-left: calc(var(--space-sm) - 2px + var(--row-depth, 0) * 14px);
+  padding-left: calc(var(--space-sm) - 2px);
 }
 .task-row.is-done .task-row__title {
   text-decoration: line-through;
@@ -2995,182 +2981,169 @@ a:hover {
   background: color-mix(in srgb, var(--accent-danger) 12%, var(--bg-active));
 }
 
-/* ---- task-row priority colours ---- */
-/* TodoListPane 鐨?taskListStyle() 濮嬬粓鎶?10 涓?CSS 鑷畾涔夊睘鎬?
- *   --task-prio-<p>-bg / -fg
- * 娉ㄥ叆鍒伴《灞?<section>銆備笅闈㈣繖濂楄鍒欐寕鍦?
- * .task-list .task-row[data-priority=...] 涓婏紝娌℃湁 `.task-list--custom`
- * 瀹堝崼 鈥斺€?鍦ㄩ粯璁わ紙theme锛夋ā寮忎笌 custom 妯″紡閮戒細鐢熸晥锛涘尯鍒彧鍦ㄤ笅闈?
- * 鐨勮鐩栧潡锛?
+/* ---- 任务卡片化：让每一条任务读成一个独立单元 ----
  *
- * - 榛樿妯″紡锛氭墍鏈夎閮界敤涓婚鑳屾櫙锛堥€忔槑缁ф壙 .task-list 鐨?bg-surface锛夛紝
- *   閫氳繃 title 鐨?font-size / font-weight / color 鍖哄垎浼樺厛绾с€傝瑙夐噸
- *   閲忎粠銆屽簳鑹叉祿搴︺€嶆敼鎴愩€屽瓧鍙?+ 瀛楅噸 + 棰滆壊娴撳害銆嶏紝閰嶈壊鏇村厠鍒讹紝涔熻
- *   custom 妯″紡鐨勩€岃嚜瀹氫箟搴曡壊銆嶆洿鏈夊樊寮傚寲浠峰€硷紙榛樿涓嶅啀鏌撳簳锛夈€?
- * - custom 妯″紡锛?task-list--custom锛夛細淇濈暀鏃ц涓?鈥斺€?琛屽簳鑹茬敤
- *   --task-prio-X-bg锛宼itle 鐢?--task-prio-X-fg锛屼絾鏄惧紡閲嶇疆 size / weight
- *   鍒伴粯璁わ紝閬垮厤銆岃窡闅忎富棰樸€嶄笌銆岃嚜瀹氫箟銆嶅湪鍚屼竴琛屽悓鏃剁敓鏁堝鑷磋瑙夊壊瑁傘€?
+ * 改造前每一行都是透明的，只靠一条 1px 分隔线区分相邻任务 —— 而那条线因为
+ * --border-subtle 从未被定义，实际上根本没渲染出来。结果是整列任务糊成一片
+ * 文字流：数不清有几条、找不到"我正在编辑哪一条"、也扫不出哪些已经做完了。
  *
- * State classes锛?is-done / .is-cancelled 鐨勫垹闄ょ嚎 + 閫忔槑搴?/
- * .is-blocked 鐨勭孩杈癸級鐢变笂鏂囧凡鏈夌殑 .task-row.is-* 瑙勫垯澶勭悊銆?*/
-/* 鈥斺€?榛樿锛坱heme锛夋ā寮忥細琛岃儗鏅户鎵夸富棰橈紝title 鐢?size/weight/color 鍖哄垎 鈥斺€?*/
-.task-list .task-row[data-priority="very-low"],
-.task-list .task-row[data-priority="low"],
-.task-list .task-row[data-priority="medium"],
-.task-list .task-row[data-priority="high"],
-.task-list .task-row[data-priority="very-high"] {
-  /* 琛岃儗鏅€忔槑 鈫?瑙嗚涓婁笌 .task-list 鐨?bg-surface 铻嶄负涓€浣擄紙鏃犲簳鑹插潡锛夈€?
-     hover / active / blocked 鐨勭姸鎬佽壊浠嶇敱涓婃枃瑙勫垯鎺ョ銆?*/
-  background: transparent;
-  color: inherit;
+ * 改造后每一行是一张卡片，浮在 --bg-surface 的列底上：
+ *   - 卡面 = --bg-canvas 白 + 1px 描边。描边用 box-shadow 画而不是 border，
+ *     因为 border-left 已经被"选中轨 / 阻塞轨"占用；box-shadow 不占布局，
+ *     不会出现描边一出现整列内容就横向抖动的问题，并且自动跟随 border-radius。
+ *   - 留白 = 行与行之间 6px gap。留白比线条更能真正"切开"两个单位。
+ *   - 层级 = 已完成 / 已取消的行退回列底同色并淡掉描边，主动向后撤退；
+ *     未完成的任务因此在一长串列表里自动浮起来。这是本次改动里对扫读
+ *     提升最大的一条。
+ */
+.task-row {
+  background: var(--bg-canvas);
+  border-radius: var(--radius-md);
+  box-shadow: 0 0 0 1px var(--border-default);
+  /* 上下内边距 8→10px：卡片有了边界，行内"标题 + meta"两行需要更多纵向
+     呼吸。左右保持 8px 不动 —— 分组标题的对齐计算依赖这个值
+     （见 .planned-section__header 的注释）。 */
+  padding-top: 10px;
+  padding-bottom: 10px;
+  transition: background var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out);
 }
-/* Default锛坱heme锛変笅鎸変紭鍏堢骇閫掑鏍囬鐨勫瓧鍙?+ 瀛楅噸 + 棰滆壊楗卞拰搴︼紝璁╃敤鎴?
- * 鍦ㄤ笉闈犺儗鏅壊鐨勬儏鍐典笅涔熻兘涓€鐪煎尯鍒嗕紭鍏堢骇銆俧g-muted 鈫?fg-primary 鈫?
- * accent-warn 鈫?accent-danger锛岄鑹茶秺鏉ヨ秺楗卞拰锛泂ize 13/13/14/15/16px锛?
- * weight 400/500/500/600/700锛寃eight 澧為暱璁╅珮浼樺厛绾с€屾洿鍘氥€嶃€?*/
-.task-list:not(.task-list--custom) .task-row[data-priority="very-low"] .task-row__title {
+/* hover：卡面轻微压深 + 描边加深，读作"这张卡被拾起"。刻意不叠投影 ——
+   一列卡片里同时出现多个投影会很脏。 */
+.task-row:hover {
+  background: var(--bg-soft);
+  box-shadow: 0 0 0 1px var(--border-strong);
+}
+/* 选中：左侧 4px 主色轨（见上方 .task-row.is-active）+ 卡面染主色 + 描边转
+   主色。三重信号保证"我在这里"在长列表里一眼可辨。 */
+.task-row.is-active {
+  background: var(--bg-active);
+  box-shadow: 0 0 0 1px var(--accent-primary),
+    0 1px 4px color-mix(in srgb, var(--fg-primary) 10%, transparent);
+}
+/* 阻塞：危险轨（border-left-color，见上方）+ 卡面淡淡染红 + 描边染红。
+   不铺整块红底 —— 阻塞只是这一条任务的状态，不该抢走整行的视觉重量。 */
+.task-row.is-blocked {
+  background: color-mix(in srgb, var(--accent-danger) 6%, var(--bg-canvas));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent-danger) 32%, transparent);
+}
+.task-row.is-blocked:hover {
+  background: color-mix(in srgb, var(--accent-danger) 11%, var(--bg-canvas));
+}
+/* 阻塞 + 选中：危险轨保持不变（语义是"你正在看一条被卡住的任务"），只把
+   描边加深成实心危险色，让选中信号在红底上也足够清楚。 */
+.task-row.is-blocked.is-active {
+  background: color-mix(in srgb, var(--accent-danger) 13%, var(--bg-canvas));
+  box-shadow: 0 0 0 1px var(--accent-danger),
+    0 1px 4px color-mix(in srgb, var(--fg-primary) 10%, transparent);
+}
+/* 已完成 / 已取消：卡面退回列底同色（--bg-surface），描边淡到几乎看不见 ——
+   这两种行等于"从列表里退场"，把注意力让给还没做的事。删除线与整体透明度
+   由上方既有规则负责，这里只处理卡面。 */
+.task-row.is-done,
+.task-row.is-cancelled {
+  background: var(--bg-surface);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--border-default) 55%, transparent);
+}
+.task-row.is-done:hover,
+.task-row.is-cancelled:hover {
+  background: var(--bg-soft);
+}
+
+/* ---- 行与行之间的留白 ----
+ * 原来靠 border-top 画线，现在是真正的空隙。所有承载任务行的 <ul> 都要
+ * 声明这个 gap，包括三个分区的列表和递归嵌套的子任务列表。
+ * 嵌套比顶层更紧（4px vs 6px）：间距随层级收紧，子任务在视觉上就隶属于
+ * 父任务，读起来是"树枝"而不是"又一份平铺列表"。 */
+.task-list__root-tasks,
+.planned-section__list,
+.other-section__list,
+.non-today-section__list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+/* 子任务列表的布局角色。缩进的实际值在下方该选择器自身的容器规则里
+   （margin: 0 0 0 20px）——那条规则带 `margin: 0` 重置，写在更靠后的位置，
+   缩进必须由它来声明，否则会被重置掉（这正是第一版没生效的原因）。 */
+.task-branch__children {
+  position: relative;
+  gap: 4px;
+}
+/* 树状引导线：把父任务和它的一串子任务在视觉上连起来。画在父与子之间的空档
+   里（相对子卡片左边缘 -6px，即 x=14）。没有它时，"这一串属于上一条"只能靠
+   猜缩进；有了它，多级结构一眼可读。
+   颜色用 --border-subtle —— 这个 token 是本次一并补上的，此前未定义，
+   这条线（以及全 app 另外 16 处分隔线）都画不出来。 */
+.task-branch__children::before {
+  content: '';
+  position: absolute;
+  left: -6px;
+  top: 2px;
+  bottom: 2px;
+  width: 1px;
+  background: var(--border-subtle);
+}
+
+/* ---- task-row priority colours ---- */
+/* 优先级现在是应用的固定样式，不再提供自定义入口（原先「设置 → 任务配色」
+ * 整条链路已移除：shared/task-appearance.ts、TaskAppearancePane、以及
+ * 运行时注入的 --task-prio-* 自定义属性全部不再存在）。
+ *
+ * 这里只负责一件事：把优先级映射成**排版层级**。
+ *
+ * 文字颜色一律保持中性（fg-muted / fg-secondary / fg-primary），颜色的职责
+ * 交给第二行的优先级胶囊（.task-row__prio--*，自带彩色圆点 + 彩色底）。原因：
+ * 把橙、红直接刷在标题文字上，一列里只要有几条高优先级任务就会读成"水果
+ * 拼盘"——刺眼、廉价、且长列表下互相干扰；而字号 + 字重的递进同样能传达
+ * 重要性，却安静得多。颜色信号一个都没丢，只是换到了更合适的载体上。
+ *
+ *   very-low  12px / 400   (--font-sm)
+ *   low       12.5px / 500
+ *   medium    13.5px / 500 (--font-md)
+ *   high      14.5px / 600
+ *   very-high 15.5px / 700
+ *
+ * 卡面（背景 / 描边 / 圆角 / 各状态色）由上方「任务卡片化」块统一负责，这里
+ * 一律不碰。原块里有一条 background: transparent 规则，特异性比卡面规则更高、
+ * 会把卡片底色整个盖掉，已随 custom 模式一起删除。 */
+.task-list .task-row[data-priority="very-low"] .task-row__title {
   color: var(--fg-muted);
   font-size: var(--font-sm);
   font-weight: 400;
 }
-.task-list:not(.task-list--custom) .task-row[data-priority="low"] .task-row__title {
+.task-list .task-row[data-priority="low"] .task-row__title {
   color: var(--fg-secondary);
-  font-size: var(--font-sm);
+  font-size: 12.5px;
   font-weight: 500;
 }
-.task-list:not(.task-list--custom) .task-row[data-priority="medium"] .task-row__title {
+.task-list .task-row[data-priority="medium"] .task-row__title {
   color: var(--fg-primary);
   font-size: var(--font-md);
   font-weight: 500;
 }
-.task-list:not(.task-list--custom) .task-row[data-priority="high"] .task-row__title {
-  color: var(--accent-warn);
-  font-size: 15px;
+.task-list .task-row[data-priority="high"] .task-row__title {
+  color: var(--fg-primary);
+  font-size: 14.5px;
   font-weight: 600;
 }
-.task-list:not(.task-list--custom) .task-row[data-priority="very-high"] .task-row__title {
-  color: var(--accent-danger);
-  font-size: var(--font-lg);
+.task-list .task-row[data-priority="very-high"] .task-row__title {
+  color: var(--fg-primary);
+  font-size: 15.5px;
   font-weight: 700;
 }
+/* 已完成 / 已取消：排版层级对"已经退场的行"不再适用，统一压回 muted 常规字
+ * 重，否则一条"very-high 但已完成"的任务会顶着最大字号和最重字重留在列表里。
+ * 放在上面五条之后 —— 特异性相同（.task-list + .task-row + .is-done + 类），
+ * 靠后写取胜。 */
+.task-list .task-row.is-done .task-row__title,
+.task-list .task-row.is-cancelled .task-row__title {
+  color: var(--fg-muted);
+  font-size: var(--font-md);
+  font-weight: 400;
+}
 
-/* ---- custom-mode state overrides ---- */
-/* mode='custom' 鏃?TodoListPane 棰濆闄勫姞 .task-list--custom className銆?
- * 涓嬮潰杩欏瑕嗙洊瑙勫垯鍙湪 custom 妯″紡涓嬬敓鏁堬紱theme 妯″紡浠嶈蛋榛樿 hover / active
- * 琛屼负锛坔over 鐢?--bg-hover锛宎ctive 鐢?--bg-active + accent-primary 宸?
- * 杈规锛夈€傜櫧搴曢粦瀛?/ 鏌斿拰褰╄壊杩欑銆屽共鍑€閰嶈壊銆嶅鏋滆榛樿 hover 鐨?
- * --bg-hover 鏌撹壊鎴?active 鐢?--bg-active 瑕嗙洊浼氱牬鍧忛厤鑹蹭竴鑷存€э紝鎵€浠?
- * 杩欓噷娓呮帀 hover / active 鐨勯粯璁よ儗鏅€佹妸鐘舵€佹寚绀烘敼鎴愬乏杈规 + outline銆?*/
-.task-list--custom .task-row:hover {
-  background: inherit;
-}
-.task-list--custom .task-row[data-priority="very-low"]:hover {
-  border-left-color: var(--task-prio-very-low-fg, var(--fg-primary));
-}
-.task-list--custom .task-row[data-priority="low"]:hover {
-  border-left-color: var(--task-prio-low-fg, var(--fg-primary));
-}
-.task-list--custom .task-row[data-priority="medium"]:hover {
-  border-left-color: var(--task-prio-medium-fg, var(--fg-primary));
-}
-.task-list--custom .task-row[data-priority="high"]:hover {
-  border-left-color: var(--task-prio-high-fg, var(--fg-primary));
-}
-.task-list--custom .task-row[data-priority="very-high"]:hover {
-  border-left-color: var(--task-prio-very-high-fg, var(--fg-primary));
-}
-/* Active selection must always read as "you are here". The default
-   .task-row.is-active above already gives a 4px accent-primary left border
-   without touching background 鈥?same treatment in custom mode so the
-   visual language stays consistent. We just (1) swap border-left-color
-   to the row's own priority fg so the bar matches the row's identity
-   instead of a generic accent, and (2) drop the outline (the thicker
-   border is already the selection indicator). */
-.task-list--custom .task-row.is-active {
-  outline: none;
-  padding-left: calc(var(--space-sm) - 2px + var(--row-depth, 0) * 14px);
-  border-left-width: 4px;
-}
-.task-list--custom .task-row[data-priority="very-low"].is-active {
-  border-left-color: var(--task-prio-very-low-fg, var(--fg-primary));
-}
-.task-list--custom .task-row[data-priority="low"].is-active {
-  border-left-color: var(--task-prio-low-fg, var(--fg-primary));
-}
-.task-list--custom .task-row[data-priority="medium"].is-active {
-  border-left-color: var(--task-prio-medium-fg, var(--fg-primary));
-}
-.task-list--custom .task-row[data-priority="high"].is-active {
-  border-left-color: var(--task-prio-high-fg, var(--fg-primary));
-}
-.task-list--custom .task-row[data-priority="very-high"].is-active {
-  border-left-color: var(--task-prio-very-high-fg, var(--fg-primary));
-}
-/* Done 琛岋細淇濈暀 priority bg锛屽彧鎶?title 鏂囧瓧鍙樻垚 fg 60% 閫忔槑锛岄伩鍏嶇‖榛?
-   鍒囧埌娴呰壊鑳屾櫙涓婂埡鐪笺€俰s-cancelled 鐢?opacity 鏁翠綋娣″寲銆?*/
-.task-list--custom .task-row[data-priority="very-low"].is-done,
-.task-list--custom .task-row[data-priority="low"].is-done,
-.task-list--custom .task-row[data-priority="medium"].is-done,
-.task-list--custom .task-row[data-priority="high"].is-done,
-.task-list--custom .task-row[data-priority="very-high"].is-done {
-  color: color-mix(in srgb, var(--task-prio-low-fg, var(--fg-primary)) 60%, transparent);
-}
-/* custom 妯″紡涓嬬殑 title 棰滆壊 鈥斺€?涓嶇敤榛樿鐨?accent 璋冭壊鏉匡紝鑰屾槸鐢ㄧ敤鎴?
- * 鍦ㄨ缃潰鏉块噷鎸戠殑 priority fg锛坱askListStyle 娉ㄥ叆鐨?--task-prio-X-fg锛夈€?
- * size/weight 浠嶇敱浼樺厛绾ч€夋嫨鍣ㄩ€掑锛堣涓婃柟 .task-list:not(.task-list--custom)
- * 鍧楋級锛屼笌榛樿妯″紡淇濇寔涓€鑷?鈥斺€?鍞竴涓嶅悓鏄鑹叉潵婧愶紙鐢ㄦ埛鑷€?vs 涓婚璋冭壊鏉匡級銆?
- * 琛屽簳鑹茬敱涓婃枃 .task-list--custom .task-row[data-priority=...]:hover 涔嬪
- * 鐨勬棫瑙勫垯瑕嗙洊锛氶粯璁?.task-list .task-row[data-priority=...] 宸茬粺涓€鏀逛负
- * transparent锛屼絾 custom 妯″紡琛屽簳鑹蹭緷璧?--task-prio-X-bg锛屾墍浠ヤ笅闈㈣ˉ鍥炪€?*/
-.task-list--custom .task-row[data-priority="very-low"] {
-  background: var(--task-prio-very-low-bg, var(--bg-base));
-}
-.task-list--custom .task-row[data-priority="low"] {
-  background: var(--task-prio-low-bg, var(--bg-base));
-}
-.task-list--custom .task-row[data-priority="medium"] {
-  background: var(--task-prio-medium-bg, var(--bg-base));
-}
-.task-list--custom .task-row[data-priority="high"] {
-  background: var(--task-prio-high-bg, var(--bg-base));
-}
-.task-list--custom .task-row[data-priority="very-high"] {
-  background: var(--task-prio-very-high-bg, var(--bg-base));
-}
-.task-list--custom .task-row[data-priority="very-low"] .task-row__title {
-  color: var(--task-prio-very-low-fg, var(--fg-primary));
-}
-.task-list--custom .task-row[data-priority="low"] .task-row__title {
-  color: var(--task-prio-low-fg, var(--fg-primary));
-}
-.task-list--custom .task-row[data-priority="medium"] .task-row__title {
-  color: var(--task-prio-medium-fg, var(--fg-primary));
-}
-.task-list--custom .task-row[data-priority="high"] .task-row__title {
-  color: var(--task-prio-high-fg, var(--fg-primary));
-}
-.task-list--custom .task-row[data-priority="very-high"] .task-row__title {
-  color: var(--task-prio-very-high-fg, var(--fg-primary));
-}
-.task-list--custom .task-row[data-priority="very-low"].is-cancelled,
-.task-list--custom .task-row[data-priority="low"].is-cancelled,
-.task-list--custom .task-row[data-priority="medium"].is-cancelled,
-.task-list--custom .task-row[data-priority="high"].is-cancelled,
-.task-list--custom .task-row[data-priority="very-high"].is-cancelled {
-  opacity: 0.6;
-}
-/* Blocked 瑕嗙洊鍦?priority tint 涔嬩笂锛堢孩杈?/ 绾㈡煋蹇呴』濮嬬粓鍙锛屼笉琚敤鎴?
-   鑷畾涔夐厤鑹叉饭娌★級銆?*/
-.task-list--custom .task-row[data-priority="very-low"].is-blocked,
-.task-list--custom .task-row[data-priority="low"].is-blocked,
-.task-list--custom .task-row[data-priority="medium"].is-blocked,
-.task-list--custom .task-row[data-priority="high"].is-blocked,
-.task-list--custom .task-row[data-priority="very-high"].is-blocked {
-  background: color-mix(in srgb, var(--accent-danger) 12%, transparent);
-}
-/* Blocked + is-active: the danger rail (is-blocked) plus the 4px priority-fg
-   left border (is-active) together signal "selected & blocked" 鈥?no extra
-   treatment needed. */
 .task-row__main {
   flex: 1;
   min-width: 0;
@@ -3301,7 +3274,7 @@ a:hover {
 }
 .task-row__prio--very-high { color: var(--accent-danger); background: color-mix(in srgb, var(--accent-danger) 16%, var(--bg-soft)); }
 .task-row__prio--high { color: var(--accent-danger); background: color-mix(in srgb, var(--accent-danger) 12%, var(--bg-soft)); }
-.task-row__prio--medium { color: var(--accent-warning); background: color-mix(in srgb, var(--accent-warning) 14%, var(--bg-soft)); }
+.task-row__prio--medium { color: var(--accent-warn); background: color-mix(in srgb, var(--accent-warn) 14%, var(--bg-soft)); }
 .task-row__prio--low { color: var(--accent-info); background: color-mix(in srgb, var(--accent-info) 14%, var(--bg-soft)); }
 .task-row__prio--very-low { color: var(--fg-muted); background: color-mix(in srgb, var(--fg-muted) 12%, var(--bg-soft)); }
 /* Metadata pills 鈥?base layout for each chip class. They are direct
@@ -4023,11 +3996,18 @@ a:hover {
   color: var(--fg-muted);
 }
 
-/* SubTask children nest under their parent. Indentation is driven by
-   `--row-depth` so the recursion (sub-sub-tasks) keeps nesting. */
+/* 子任务列表容器。左边距就是**嵌套层级的缩进**：每一层容器自己整体右移
+   20px，于是子任务（乃至子子任务）的卡片本身会形成一道向右下的阶梯 ——
+   卡片化之后这是必需的，因为所有卡片的左边缘默认是对齐的，只缩进卡片里的
+   文字撑不起层级感。
+   取 20px 而不是原来的 14px：卡片带 2px 描边和圆角，缩进太浅会读成"排版
+   错位"而不是"下一层"。20px 也刚好在父行文字起点（x=10）与子卡片左边缘
+   之间留出一条空档，容器的 ::before 引导线就画在那里。
+   缩进必须声明在这一条里：下面 .task-branch__children 的 `margin: 0` 重置
+   写在文件更靠后的位置，同特异性下会覆盖卡片化块里的 margin-left。 */
 .task-branch__children {
   list-style: none;
-  margin: 0;
+  margin: 0 0 0 20px;
   padding: 0;
 }
 
@@ -4047,7 +4027,9 @@ a:hover {
 .non-today-section {
   display: flex;
   flex-direction: column;
-  padding: 0 0 var(--space-md);
+  /* 卡片化之后每个 section 是一摞独立卡片，分区之间需要比行间距更大的
+     呼吸（16px + 卡片自身留白）才读得出"换了一个分组"。 */
+  padding: 0 0 var(--space-lg);
 }
 /* Section 内容容器。折叠能力已随 Sidebar 视图切换移除（见
    TodoListPane 的 SectionCollapsed 注释），这里只保留一个块级容器，
@@ -4133,7 +4115,7 @@ a:hover {
   align-items: center;
   gap: var(--space-xs);
   margin: var(--space-xs) 0 var(--space-sm);
-  margin-left: calc(var(--row-depth, 0) * 16px + var(--space-md));
+  margin-left: var(--space-md);
   padding: 4px 10px;
   border-radius: 6px;
   background: transparent;
@@ -4148,19 +4130,29 @@ a:hover {
   border-color: var(--accent-primary);
   background: var(--accent-primary-soft);
 }
+/* 兄弟折叠 chip 所在的行不是一条任务，只是一个"展开 N 个子任务"的入口，
+   所以不参与卡片化（清掉卡面与描边，否则会读成一条空白任务）。左边距对齐到
+   子任务卡片的位置，它在视觉上属于下一层，而不是和父任务平级。 */
 .task-row__peer-chip-row {
   list-style: none;
   padding: 0;
+  margin-left: 20px;
+  background: transparent;
+  box-shadow: none;
+}
+.task-row__peer-chip-row:hover {
+  background: transparent;
+  box-shadow: none;
 }
 .task-row__peer-chip {
   display: inline-flex;
   align-items: center;
   gap: 4px;
   margin: 2px 0 4px;
-  margin-left: calc(var(--row-depth, 0) * 16px + var(--space-md));
+  margin-left: var(--space-md);
   padding: 2px 8px;
   border-radius: 999px;
-  background: var(--bg-subtle);
+  background: var(--bg-soft);
   border: 1px solid var(--border-subtle);
   color: var(--fg-secondary);
   font-size: var(--font-xs);
@@ -5897,238 +5889,6 @@ a:hover {
   .cleanup-similar__target {
     justify-content: space-between;
   }
-}
-
-/* ---- task appearance (priority colours) pane ---- */
-
-.task-appearance {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-md);
-}
-.task-appearance__presets {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-  gap: var(--space-sm);
-}
-.task-appearance__preset {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  align-items: stretch;
-  padding: var(--space-sm);
-  background: var(--bg-soft);
-  border: 1px solid var(--border-subtle);
-  border-radius: 6px;
-  cursor: pointer;
-  transition: border-color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
-  text-align: left;
-  font: inherit;
-  color: var(--fg-primary);
-  /* 棰勭暀鍙充笂瑙掔粰 鉁?瑙掓爣缁濆瀹氫綅 */
-  position: relative;
-}
-.task-appearance__preset:hover {
-  border-color: var(--accent-primary);
-}
-.task-appearance__preset.is-selected {
-  border-color: var(--accent-primary);
-  background: color-mix(in srgb, var(--accent-primary) 12%, var(--bg-soft));
-  /* 鍔犱竴灞?inset 楂樹寒璁╅€変腑鎬佸湪鎵€鏈夐璁鹃噷涓€鐪煎彲杈ㄢ€斺€斿崟闈犺竟妗?搴曡壊鐢ㄦ埛
-     鍙嶉"娌″弽搴?,鎵€浠ュ彔涓€灞傚崐閫忔槑涓昏壊濉厖鏉ュ己鍖栧姣?*/
-  box-shadow: inset 0 0 0 1px var(--accent-primary);
-}
-.task-appearance__preset-check {
-  position: absolute;
-  top: 4px;
-  right: 6px;
-  font-size: 12px;
-  font-weight: 700;
-  line-height: 1;
-  color: var(--accent-primary);
-  /* 璁?鉁?涓嶅崰鎸夐挳鐨?flex 楂樺害,閬垮厤鎶婂畠鎺ㄥ埌 swatches 涓嬫柟 */
-  pointer-events: none;
-}
-.task-appearance__preset-swatches {
-  display: flex;
-  gap: 3px;
-  align-items: center;
-  /* 缁欏彸涓婅 鉁?鐣欑偣绌洪棿,涓嶆挒鍒扮涓€涓壊鍧?*/
-  padding-right: 16px;
-}
-.task-appearance__preset-swatch {
-  display: inline-block;
-  width: 18px;
-  height: 18px;
-  border-radius: 4px;
-  border: 1px solid;
-}
-.task-appearance__preset-label {
-  font-size: var(--font-sm);
-  font-weight: 500;
-}
-.task-appearance__editor {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-sm);
-}
-.task-appearance__row {
-  display: grid;
-  /* 浼樺厛绾у悕 | 鑳屾櫙(鑹插潡+杈撳叆) | 鏂囧瓧(鑹插潡+杈撳叆) 鈥斺€?涔嬪墠澶氫簡涓€涓?
-     "浼樺厛绾?路 鏃?棰勮鏍煎瓙,鏃㈠啑浣欏張鍗犲竷灞€,鐜板湪鑹插潡鐩存帴鎸ㄧ潃杈撳叆妗?
-     淇℃伅鏇寸揣鍑戙€?*/
-  grid-template-columns: 60px minmax(0, 1fr) minmax(0, 1fr);
-  align-items: center;
-  gap: var(--space-sm);
-  padding: var(--space-sm);
-  border: 1px solid var(--border-subtle);
-  border-radius: 6px;
-  background: var(--bg-soft);
-}
-.task-appearance__row-label {
-  font-weight: 500;
-  text-align: center;
-}
-.task-appearance__field {
-  display: flex;
-  flex-direction: row;
-  align-items: center;
-  gap: var(--space-xs);
-  font-size: var(--font-xs);
-  min-width: 0;
-}
-.task-appearance__field-label {
-  color: var(--fg-muted);
-  flex-shrink: 0;
-}
-.task-appearance__color-input {
-  flex: 1;
-  min-width: 60px;
-}
-.task-appearance__color-input.is-error {
-  border-color: var(--accent-danger);
-  color: var(--accent-danger);
-}
-/* Preset mode (mode !== 'custom')锛氭暣琛屽彧璇?鏂囨湰 input 璁?readOnly 鍙互
-   閫変腑澶嶅埗,鑹叉澘 input 瀹屽叏 disabled 浠ュ厤璇紑鍘熺敓寮圭獥銆傝瑙変笂鎶婅闄嶄綆瀵规瘮
-   搴?+ 閿佸畾榧犳爣鎵嬪娍,鍛婅瘔鐢ㄦ埛杩欎竴妗ｄ笉鑳界洿鎺ユ敼銆?*/
-.task-appearance__row.is-disabled {
-  opacity: 0.7;
-}
-.task-appearance__row.is-disabled .task-appearance__color-input {
-  cursor: default;
-  background: var(--bg-surface);
-}
-.task-appearance__row.is-disabled .task-appearance__picker {
-  cursor: not-allowed;
-}
-.task-appearance__picker {
-  /* 绯荤粺鍘熺敓鑹叉澘鍏ュ彛:Electron 閲?<input type="color"> 鐐瑰嚮寮瑰嚭 OS 棰滆壊
-     閫夋嫨鍣?鍑烘潵鐨勬案杩滄槸鍚堟硶 #RRGGBB銆傛牱寮忎笂鎶婂妗?鍐呮鍘绘帀鍋氭垚涓€涓?
-     28脳28 鐨勫皬鑹插潡鈥斺€旀湰韬氨鏄瑙夐鑹叉樉绀?鏃佽竟涓嶇敤鍐嶆斁棰勮 swatch銆?*/
-  appearance: none;
-  -webkit-appearance: none;
-  border: 1px solid var(--border-subtle);
-  border-radius: 4px;
-  width: 28px;
-  height: 28px;
-  padding: 0;
-  background: transparent;
-  cursor: pointer;
-  flex-shrink: 0;
-  /* 閫忔槑搴?0 璁╁師鐢?swatch 瀹屽叏鐩栦綇,鍙湶 28脳28 鐨勫唴妗?*/
-  overflow: hidden;
-}
-.task-appearance__picker::-webkit-color-swatch-wrapper {
-  padding: 2px;
-}
-.task-appearance__picker::-webkit-color-swatch {
-  border: none;
-  border-radius: 2px;
-}
-.task-appearance__picker:hover:not(:disabled) {
-  border-color: var(--accent-primary);
-}
-.task-appearance__picker:disabled {
-  /* 閿佸畾鍚庢暣浣撻檷楗卞拰,璺熸梺杈?readOnly 鐨?hex 杈撳叆涓€鑷?hover 涓嶅彉鑹?*/
-  filter: grayscale(0.5);
-}
-
-/* 銆? 鏂板鑷畾涔夈€嶆寜閽?鈥斺€?涓庨璁炬寜閽悓 grid 妲戒綅,浣嗙敤铏氱嚎杈规 +
- * 灞呬腑鏂囧瓧琛ㄨ揪銆屽崰浣?/ 鏂板銆嶇殑璇箟,閬垮厤璇互涓烘槸鍙︿竴绉嶉璁俱€?*/
-.task-appearance__preset--add {
-  align-items: center;
-  justify-content: center;
-  border-style: dashed;
-  background: transparent;
-  min-height: 72px;
-}
-.task-appearance__preset--add:hover {
-  background: color-mix(in srgb, var(--accent-primary) 6%, transparent);
-}
-.task-appearance__preset--add .task-appearance__preset-label {
-  font-weight: 400;
-  color: var(--fg-muted);
-}
-
-/* 琛屽唴銆屾柊寤鸿嚜瀹氫箟棰勮銆嶈緭鍏ユ€?鈥斺€?鍚屼竴妲戒綅娓叉煋 input + 鍒涘缓鎸夐挳銆?*/
-.task-appearance__preset--creating {
-  /* 鍐呭惈 input + button,鏀圭敤 flex-row 璁╀袱鑰呭苟鍒?*/
-  flex-direction: row;
-  align-items: center;
-  gap: 6px;
-  padding: 6px var(--space-sm);
-  border-color: var(--accent-primary);
-  background: color-mix(in srgb, var(--accent-primary) 6%, var(--bg-soft));
-  box-shadow: inset 0 0 0 1px var(--accent-primary);
-}
-.task-appearance__new-name {
-  flex: 1 1 auto;
-  min-width: 0;
-  padding: 4px 6px;
-  font-size: var(--font-sm);
-}
-.task-appearance__new-confirm {
-  padding: 4px 10px;
-  font-size: var(--font-sm);
-  flex: 0 0 auto;
-}
-
-/* 脳 鍒犻櫎鎸夐挳 鈥斺€?浠呯敤鎴疯嚜瀹氫箟棰勮娓叉煋;hover / focus 鐖舵寜閽椂闇插嚭銆?
- * 榛樿閫忔槑搴?0 + 鍙充笂瑙掔粷瀵瑰畾浣?涓嶅崰鎸夐挳鐨?flex 楂樺害;hover 鏃?
- * 閫忔槑搴﹀彉 1 缁欒瑙夊弽棣堛€傜偣鍑?/ Enter 鏃惰Е鍙戝垹闄?甯?stopPropagation
- * 閬垮厤鍐掓场鍒扮埗鎸夐挳鐨?onClick锛堝惁鍒欎細鍏堣Е鍙戙€岄€変腑璇ラ璁俱€嶅啀鍒犻櫎锛夈€?*/
-.task-appearance__preset-delete {
-  position: absolute;
-  top: 4px;
-  right: 4px;
-  width: 18px;
-  height: 18px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 50%;
-  background: var(--bg-base);
-  border: 1px solid var(--border-subtle);
-  color: var(--fg-muted);
-  cursor: pointer;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity var(--dur-fast) var(--ease-out),
-    color var(--dur-fast) var(--ease-out),
-    border-color var(--dur-fast) var(--ease-out);
-}
-.task-appearance__preset-delete.is-visible {
-  opacity: 1;
-  pointer-events: auto;
-}
-.task-appearance__preset-delete:hover {
-  color: var(--accent-danger);
-  border-color: var(--accent-danger);
-}
-.task-appearance__preset-delete:focus-visible {
-  outline: 2px solid var(--accent-primary);
-  outline-offset: 1px;
 }
 
 /* --- progress bar + progress view --- */

@@ -20,16 +20,14 @@ import {
   type CustomProviderInput,
 } from '../../shared/ai-types';
 import { TagManagementPane } from './TagManagementPane';
-import { TaskAppearancePane } from './TaskAppearancePane';
 
-type Category = 'general' | 'model' | 'data' | 'tags' | 'appearance' | 'hotkeys' | 'reminder' | 'integration' | 'health' | 'about';
+type Category = 'general' | 'model' | 'data' | 'tags' | 'hotkeys' | 'reminder' | 'integration' | 'health' | 'about';
 
 const CATEGORIES: { key: Category; label: string }[] = [
   { key: 'general', label: '通用' },
   { key: 'model', label: '模型' },
   { key: 'data', label: '数据' },
   { key: 'tags', label: '标签' },
-  { key: 'appearance', label: '任务配色' },
   { key: 'hotkeys', label: '快捷键' },
   { key: 'reminder', label: '提醒' },
   { key: 'integration', label: '外部访问' },
@@ -41,8 +39,8 @@ export const SettingsModal: React.FC<{ open: boolean; onClose: () => void }> = (
   const [cat, setCat] = useState<Category>('model');
   const settings = useSettings();
   // `patchWithToast` swallows save failures into an error toast — used by
-  // the simple, per-keystroke panels below. TaskAppearancePane + ModelPane
-  // + CustomProvidersEditor get the raw `patch` (which throws) so they can
+  // the simple, per-keystroke panels below. ModelPane + CustomProvidersEditor
+  // get the raw `patch` (which throws) so they can
   // drive their own branch-on-outcome UI (clear draft only on success,
   // surface inline error, etc.).
   const patchWithToast = useSettingsPatchWithToast();
@@ -109,17 +107,6 @@ export const SettingsModal: React.FC<{ open: boolean; onClose: () => void }> = (
               // for read / rename / merge / cleanup, and listens to
               // app:tags-changed via the data bus for live refresh.
               <TagManagementPane />
-            ) : cat === 'appearance' ? (
-              <TaskAppearancePane
-                value={data.taskAppearance}
-                customPresets={data.taskAppearanceCustomPresets ?? []}
-                onSave={async (next, nextCustomPresets) => {
-                  await patch({
-                    taskAppearance: next,
-                    taskAppearanceCustomPresets: nextCustomPresets,
-                  });
-                }}
-              />
             ) : cat === 'hotkeys' ? (
               <HotkeysPane data={data} patch={patchWithToast} />
             ) : cat === 'reminder' ? (

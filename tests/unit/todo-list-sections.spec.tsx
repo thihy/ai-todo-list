@@ -40,7 +40,7 @@ const TODOS = [
 // 所以统一喂同一份数据，让 section 之间的差异纯粹来自渲染条件。
 vi.mock('../../src/renderer/hooks/useTodoListApi', () => ({
   useTodos: () => ({ data: TODOS, loading: false, refresh: () => Promise.resolve() }),
-  useSettings: () => ({ data: { taskAppearance: undefined } }),
+  useSettings: () => ({ data: {} }),
 }));
 
 let container: HTMLDivElement;
