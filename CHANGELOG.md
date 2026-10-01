@@ -4,6 +4,39 @@ All notable changes to todo-list are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0-rc8] - 2026-10-01
+
+User-visible changes since `1.0.0-rc7`. Theme: the task list gets a real visual hierarchy and an empty state, the window becomes genuinely responsive instead of clipping, and the AI assistant learns to tell "that one's done" apart from "here's something new".
+
+### Added
+
+- **Task rows are cards, with level guides for subtasks.** Each row now reads as a distinct surface instead of a flat line, and nested subtasks draw a connector rail so the parent/child relationship is visible at a glance. Task colour customisation was removed — the card treatment plus the hierarchy rail carry the structure on their own.
+- **Empty state for the task list.** A view with no matching tasks now says so instead of rendering a blank panel, so "nothing here" never reads as "the app failed to load".
+- **Non-today tasks get their own section**, with view switching moved into a left-hand Activity Bar (renamed from ActivityBar in the same pass). Group collapsing was removed: the Sidebar is now the single place views are chosen, so the two competing mechanisms no longer fight each other.
+- **AI assistant and task list collapse to a rail.** Narrow windows used to drop these panels entirely; they now shrink to a rail and stay reachable.
+- **Image paste in the AI composer and in the progress/document editor.** Pasted images are stored as attachments and rendered in the preview (`attachment://` URLs resolve to `data:` URLs, which the previous preview did not handle).
+- **Attachments can be renamed inline**, in the attachment panel, with the Markdown `alt` text kept in sync. Pasted files are named by timestamp rather than a counter.
+- **Intent triage in the AI prompt.** Every turn is now classified before any tool call, so "搞定了 / 不用做了" closes the loop on an existing task via `todo.update` instead of creating a stand-in placeholder, while genuinely new work is created. Ambiguity is asked about rather than guessed.
+- **New tasks land in the view's own group by default**, and selecting a subtask highlights only that subtask; AI-created tasks navigate straight to the detail panel.
+
+### Changed
+
+- **The window can actually get narrow.** `BrowserWindow` `minWidth` dropped to 720 so the responsive breakpoints are reachable at all, and the task list / AI assistant widths now scale with the window.
+- **The delete-task hover tooltip drops from 5 minutes to 30 seconds.** Five minutes was long enough to stop reading as a response to the current action.
+- **Group names unified to 「后续待办」 and 「全部待办」**, and the brand bar merged into the new-task row, leaving only 「收起」.
+
+### Fixed
+
+- **Task list column could not be resized.** Dragging the divider now works, and a regression test pins the column-width behaviour.
+- **The status menu on bottom-row tasks overflowed the window** instead of flipping upward.
+- **The 「全部」 view showed more than 「全部待办」.** It now shows only its own group.
+- **Group header styles were missing**, leaving section titles flush against the panel edge.
+- **16 main-process test suites crashed during collection.** The logger resolved its log path eagerly at import time, which threw before any test could run; the path is now resolved lazily.
+
+### Removed
+
+- **Per-task colour customisation**, superseded by the card treatment and hierarchy rail.
+
 ## [1.0.0-rc7] - 2026-09-23
 
 User-visible changes since `1.0.0-rc6`. Theme: ship-blocking packaging fix (DSH runtime was failing to boot from the packaged installer because 12 transitive DSH peer packages were never copied into `app.asar`), plus a small "open log dir" affordance for bug reporting.

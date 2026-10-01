@@ -5,7 +5,7 @@ export const APP_NAME = 'todo-list';
 // package.json 的版本决定安装包文件名（ai-todo-list-Setup-${version}.exe），
 // 而这里决定运行时上报的版本和"检查更新"看到的版本。两者不同步会让
 // 安装包文件名和应用内显示的版本对不上。
-export const APP_VERSION = '1.0.0-rc2';
+export const APP_VERSION = '1.0.0-rc8';
 export const APP_USER_AGENT = `${APP_NAME}/${APP_VERSION}`;
 
 // User-facing brand shown in the Windows taskbar right-click menu and the
