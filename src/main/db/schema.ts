@@ -7,7 +7,7 @@ const { ulid } = ulidPkg;
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 
-export const SCHEMA_VERSION = 19;
+export const SCHEMA_VERSION = 21;
 
 const MIGRATIONS: ReadonlyArray<{ version: number; sql: string }> = [
   {
@@ -831,6 +831,71 @@ const MIGRATIONS: ReadonlyArray<{ version: number; sql: string }> = [
     // 全部为 NULL（语义即「未选择」）。
     sql: `
       ALTER TABLE conversations ADD COLUMN permission_preset TEXT;
+    `,
+  },
+  {
+    version: 21,
+    // 文档以文件为准：`task_documents` 这张「文档索引表」被删除。
+    //
+    // 为什么:标签和文件名是同一个东西(除了 progress.md)，所以「这个任务有
+    // 哪些文档」问文件系统就够了。DB 再存一份映射，两份数据迟早不一致，
+    // 而且不一致的时候没人知道该信谁。DB 里留着的是**用户明确说过不属于文档**
+    // 的两类东西，它们各有归属表：
+    //   - 链接 → 新的 todo_links
+    //   - 附件 → 早就有的 inbox_attachments(不需要迁移)
+    //
+    // 迁移步骤(顺序重要，全程一个事务):
+    //   1. 建 todo_links，先把 kind='link' 的行原样搬过去 —— 这一步
+    //      必须在 DROP TABLE 之前，否则链接连同 todo 一起消失。
+    //   2. 重建 document_versions：旧的 document_id 外键指向
+    //      task_documents(id)，表一 DROP 版本历史就查不到了。新的版本行改用
+    //      (todo_id, file_name) 作为身份 —— 文件名才是文档的稳定身份。
+    //      file_name 由 title 推导:progress → progress.md，其余 → {title}.md。
+    //      映射不出来的孤儿版本行(文档行已被外部删掉)直接丢弃:没有 todo 就
+    //      无法确定归属，SQL 迁移里也不打日志。
+    //   3. DROP task_documents。
+    //
+    // 注意 openDb() 在整个迁移阶段把 foreign_keys 关掉了，所以 DROP TABLE
+    // 不会级联删掉 document_versions —— 这正是必须**先**重建版本表的原因。
+    sql: `
+      CREATE TABLE todo_links (
+        id TEXT PRIMARY KEY,
+        todo_id TEXT NOT NULL,
+        title TEXT,
+        url TEXT NOT NULL,
+        description TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        FOREIGN KEY (todo_id) REFERENCES todos(id) ON DELETE CASCADE
+      );
+      CREATE INDEX idx_todo_links_todo ON todo_links(todo_id);
+
+      INSERT INTO todo_links (id, todo_id, title, url, description, created_at, updated_at)
+      SELECT id, todo_id, title, url, description, created_at, updated_at
+      FROM task_documents
+      WHERE kind = 'link';
+
+      CREATE TABLE document_versions_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        todo_id TEXT NOT NULL,
+        file_name TEXT NOT NULL,
+        content TEXT NOT NULL,
+        saved_at INTEGER NOT NULL
+      );
+
+      INSERT INTO document_versions_new (todo_id, file_name, content, saved_at)
+      SELECT d.todo_id,
+             CASE WHEN d.kind = 'progress' THEN 'progress.md' ELSE d.title || '.md' END,
+             v.content,
+             v.saved_at
+      FROM document_versions v
+      JOIN task_documents d ON d.id = v.document_id;
+
+      DROP TABLE document_versions;
+      ALTER TABLE document_versions_new RENAME TO document_versions;
+      CREATE INDEX idx_doc_versions_doc ON document_versions(todo_id, file_name, saved_at DESC);
+
+      DROP TABLE task_documents;
     `,
   },
 ];

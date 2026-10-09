@@ -7,9 +7,9 @@
 //
 // The DB row's `file_path` column stores the absolute on-disk path (so the
 // `attachment://` protocol handler can stream bytes without re-resolving
-// anything). `task_documents` rows of kind 'attachment' carry a refId
-// pointing at inbox_attachments.id — this store is the content-of-truth;
-// DocumentStore only owns the list metadata for that kind.
+// anything). Attachments are NOT documents: they have no task-directory file,
+// so they never got a task_documents row to begin with (schema v21 deletes
+// that table). This store is their whole truth.
 
 import type Database from 'better-sqlite3';
 import {
@@ -182,29 +182,28 @@ export class InboxStore {
    *      only the human-facing portion of the filename changes.
    *   3. Update `inbox_attachments.file_path` to the new absolute path so the
    *      `attachment://<id>` protocol handler keeps serving bytes from the
-   *      same id.
-   *   4. Update the companion `task_documents.title` row (kind='attachment',
-   *      ref_id=this id). This is the canonical display name shown in the
-   *      附件 section.
-   *   5. Sweep every progress / note_md document belonging to this task and
+   *      same id. That row is the attachment's only display name — there is
+   *      no companion document row to keep in sync (schema v21 dropped
+   *      task_documents; attachments never had a task-directory file).
+   *   4. Sweep every progress / note_md file belonging to this task and
    *      replace `![oldAlt](attachment://<id>)` with
    *      `![newTitle](attachment://<id>)` so inline images stay in sync. The
-   *      sweep writes each affected doc via the injected callback so the
-   *      caller (DocumentStore) owns the document.write + content broadcast.
+   *      sweep hands each affected file back through the injected callback so
+   *      the caller owns the write + version bump + content broadcast.
    *
    * The disk rename is best-effort: if it fails (e.g. cross-platform path
-   * collision, read-only FS) the DB and task_documents still update — the
-   * user-visible name change survives even when the file basename can't be
-   * touched, and the protocol handler still streams from the new path on the
-   * next read-back attempt.
+   * collision, read-only FS) the DB still updates — the user-visible name
+   * change survives even when the file basename can't be touched, and the
+   * protocol handler still streams from the new path on the next read-back
+   * attempt.
    */
   rename(
     id: ULID,
     newName: string,
-    /** Called once per progress / note_md doc whose content was rewritten.
-     *  Receives the doc id + the new full content; throws to abort the
-     *  rename if a write fails. */
-    onRewriteDoc: (docId: ULID, content: string) => void,
+    /** Called once per progress / note_md file whose content was rewritten.
+     *  Receives the task-relative file name + the new full content; throws to
+     *  abort the rename if a write fails. */
+    onRewriteDoc: (fileName: string, content: string) => void,
   ): InboxAttachment {
     const trimmed = newName.trim();
     if (!trimmed) throw new Error('attachment_name_empty');
@@ -225,30 +224,24 @@ export class InboxStore {
         logger.warn(`inbox.rename: filesystem rename failed, keeping DB update: ${(err as Error).message}`);
       }
     }
-    const now = Date.now();
 
     // --- (3) update inbox_attachments.file_path in a single SQL ---
     this.db
       .prepare('UPDATE inbox_attachments SET file_path = ? WHERE id = ?')
       .run(newPath, id);
 
-    // --- (4) update companion task_documents.title (if any) ---
-    this.db
-      .prepare(
-        `UPDATE task_documents SET title = ?, updated_at = ?
-         WHERE kind = 'attachment' AND ref_id = ?`,
-      )
-      .run(trimmed, now, id);
-
-    // --- (5) sweep progress / note_md docs, rewrite inline image alts ---
+    // --- (4) sweep progress / note_md files, rewrite inline image alts ---
     const docs = this.db
-      .prepare<[ULID], { id: string; content: string | null }>(
-        `SELECT d.id AS id, v.content AS content
-         FROM task_documents d
-         LEFT JOIN document_versions v ON v.id = (
-           SELECT MAX(id) FROM document_versions WHERE document_id = d.id
-         )
-         WHERE d.todo_id = ? AND d.kind IN ('progress', 'note_md')`,
+      .prepare<[ULID], { file_name: string; content: string | null }>(
+        `SELECT file_name, (
+           SELECT content FROM document_versions v
+           WHERE v.todo_id = document_versions.todo_id
+             AND v.file_name = document_versions.file_name
+           ORDER BY v.id DESC LIMIT 1
+         ) AS content
+         FROM document_versions
+         WHERE todo_id = ? AND file_name LIKE '%.md'
+         GROUP BY todo_id, file_name`,
       )
       .all(row.todoId);
     // 用一个保守的占位替代原 alt：先把命中区间整体替换成 `\0ULID<i>...<br>`，
@@ -267,7 +260,7 @@ export class InboxStore {
       const replaced = original.replace(re, `![${placeholder}](attachment://${id})`);
       const finalContent = replaced.replaceAll(placeholder, trimmed);
       if (finalContent === original) continue;
-      onRewriteDoc(doc.id, finalContent);
+      onRewriteDoc(doc.file_name, finalContent);
       touched++;
     }
     if (touched > 0) {

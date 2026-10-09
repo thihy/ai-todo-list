@@ -502,19 +502,11 @@ export const MarkdownEditor: React.FC<{
           });
           if (!res.ok) throw new Error(res.message ?? res.code ?? '上传失败');
           const id = res.data.id;
-          // 同步创建 companion task_document 行（kind='attachment'）。
-          // title 一开始就设为 baseName —— 这样后续用户从「附件」面板
-          // 改名（走 inbox.rename）时，main 端扫所有 progress/note_md 文档
-          // content、把 `![oldAlt](attachment://<id>)` 里的 oldAlt 替换成
-          // 新 title 才有意义：oldAlt 一开始就是 baseName，新旧映射干净。
-          // AI 也能按 document id 引用这个附件（与 TodoEditorPane 附件 section
-          // 上传文件的语义一致 —— 那条路径已经这么做了）。
-          void window.todoList.document.create({
-            todoId,
-            kind: 'attachment',
-            title: baseName,
-            refId: id,
-          });
+          // 附件不是文档（schema v21）：它只有 inbox_attachments 一行，没有
+          // 伴随的 document 行，也不需要 —— 用户后续在「附件」面板改名时，
+          // main 端扫同一任务所有 .md 的 content，把
+          // `![oldAlt](attachment://<id>)` 里的 oldAlt 换成新名字，所以这里
+          // 插入的 alt 直接用文件名即可。
           replaceRange(placeholder, `![${baseName}](attachment://${id})`);
         } catch (err) {
           // 落盘失败：把占位行换成一行可见错误提示，方便用户定位是哪张坏了。
@@ -547,7 +539,7 @@ export const MarkdownEditor: React.FC<{
         >
           <IconSave size={14} />
         </button>
-        <HistoryPopover docId={docId} onRestored={() => undefined} />
+        <HistoryPopover todoId={todoId} fileName={docId} onRestored={() => undefined} />
         {view !== 'preview' && (
           <div className="md-editor__toolbar" role="toolbar" aria-label="格式">
               <ToolbarBtn label="H1" title="一级标题 (Ctrl+Alt+1)" onClick={() => doLine('# ')}>

@@ -170,6 +170,49 @@ export async function commitOnSave(
   }
 }
 
+/** Stage + commit **everything** under `todosDir` in one commit.
+ *
+ *  `commitOnSave` only stages a single file, which is fine for the editor's
+ *  per-file history but not for the broader contract: todos/ is the user's
+ *  data root, and a document create / save / delete touches several paths at
+ *  once — the .md or .excalidraw itself, `progress.md`, `todo.json`, the
+ *  thumbnail, plus the deletions git has to notice. Leaving any of those
+ *  uncommitted is how the repo and the working tree drift apart.
+ *
+ *  `git add -A` also picks up **empty** files (git tracks zero-byte files
+ *  fine; it's empty *directories* it ignores) and stage deletions, so an
+ *  untouched-but-empty 文档.md is still under version control.
+ *
+ *  Idempotent: when nothing changed, no commit is created. Returns the new
+ *  SHA, or null when git is unavailable / nothing to commit / the commit
+ *  failed — same contract as commitOnSave, so callers can ignore the result. */
+export async function commitAll(todosDir: string, message: string): Promise<string | null> {
+  if (!(await gitAvailable())) return null;
+  try {
+    // `-A` = stage deletions + additions + modifications under the repo root.
+    await gitExec(['add', '-A', '--', '.'], { cwd: todosDir, timeout: 15_000 });
+  } catch {
+    return null;
+  }
+  try {
+    // --quiet exits 1 when there IS a diff; only 0 (clean) means "skip".
+    const clean = await gitExec(['diff', '--cached', '--quiet'], { cwd: todosDir, timeout: 10_000 }).then(
+      () => true,
+      (err: unknown) => (err as { code?: unknown }).code === 1 ? false : true,
+    );
+    if (clean) return null;
+  } catch {
+    return null;
+  }
+  try {
+    await gitExec(['commit', '-m', message], { cwd: todosDir, timeout: 15_000 });
+    const { stdout: sha } = await gitExec(['rev-parse', 'HEAD'], { cwd: todosDir, timeout: 5_000 });
+    return sha.trim();
+  } catch {
+    return null;
+  }
+}
+
 /** Read the commit log for a single file, newest-first. Uses `--follow` so
  *  renames stay linked across the v1→v2 layout migration (the bridge commit
  *  recorded via git-history.mv keeps `--follow` working when the file moved

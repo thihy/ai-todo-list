@@ -25,7 +25,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { useTodo, useDocuments, useAttachments } from '../hooks/useTodoListApi';
+import { useTodo, useLinks, useAttachments } from '../hooks/useTodoListApi';
 import { useFocusSync } from '../hooks/useFocusSync';
 import { DocumentsView } from '../components/DocumentsView';
 import { InlineTitle } from '../components/InlineTitle';
@@ -37,14 +37,16 @@ import { ProgressInline, ProgressTimeline } from '../components/ProgressView';
 import TodayGlyph from '../components/TodayGlyph';
 import { todayDateKey } from '../components/PlanGuideModal';
 import { IconAttach, IconExternal, IconLink, IconPencil, IconPlus, IconTrash } from '../components/icons';
-import type { InboxAttachment, Priority, TodoStatus, TaskDocument } from '../../shared/todo-types';
+import type { InboxAttachment, Priority, TodoLink, TodoStatus } from '../../shared/todo-types';
 
-/** 链接 section — manages link-kind documents in their own addressable region
- *  (separate from the 文档 workspace, which holds authored content). */
+/** 链接 section — 任务收藏的链接，放在自己的区域里(和「文档」工作区分开，
+ *  那边放的是用户创作的内容)。
+ *
+ *  链接不是文档：它没有文件，吃不了「文件名 = 标签」那套规则，所以住在
+ *  自己的 todo_links 表里(schema v21)，直接查库即可。 */
 const LinksView: React.FC<{ todoId: string }> = ({ todoId }) => {
-  const { documents, refresh } = useDocuments(todoId);
+  const { links, refresh } = useLinks(todoId);
   const [adding, setAdding] = useState(false);
-  const links = documents.filter((d) => d.kind === 'link');
 
   const save = useCallback(
     async (vals: { url: string; title: string; description: string }): Promise<void> => {
@@ -58,9 +60,8 @@ const LinksView: React.FC<{ todoId: string }> = ({ todoId }) => {
           title = vals.url;
         }
       }
-      const res = await window.todoList.document.create({
+      const res = await window.todoList.link.add({
         todoId,
-        kind: 'link',
         title,
         url: vals.url,
         description: vals.description || null,
@@ -75,7 +76,7 @@ const LinksView: React.FC<{ todoId: string }> = ({ todoId }) => {
     <div className="links-view">
       <ul className="links-view__list">
         {links.map((l) => (
-          <LinkRow key={l.id} doc={l} onRemoved={refresh} />
+          <LinkRow key={l.id} link={l} onRemoved={refresh} />
         ))}
       </ul>
       <button
@@ -212,49 +213,47 @@ const AddLinkDialog: React.FC<{
   );
 };
 
-const LinkRow: React.FC<{ doc: TaskDocument; onRemoved: () => Promise<void> }> = ({ doc, onRemoved }) => (
+const LinkRow: React.FC<{ link: TodoLink; onRemoved: () => Promise<void> }> = ({ link, onRemoved }) => (
   <li
     className="links-view__item"
-    title={doc.title && doc.url ? `${doc.title}\n${doc.url}` : (doc.title ?? doc.url ?? '')}
+    title={link.title && link.url ? `${link.title}\n${link.url}` : (link.title ?? link.url ?? '')}
   >
     <div className="links-view__main">
       <IconLink size={14} />
-      <a className="links-view__url" href={doc.url ?? '#'} target="_blank" rel="noreferrer" title={doc.url ?? ''}>
-        {doc.title || doc.url}
+      <a className="links-view__url" href={link.url ?? '#'} target="_blank" rel="noreferrer" title={link.url ?? ''}>
+        {link.title || link.url}
       </a>
       <button
         type="button"
         className="links-view__remove"
         title="删除链接"
         onClick={() => {
-          if (!window.confirm(`删除链接「${doc.title ?? doc.url}」？`)) return;
-          void window.todoList.document.remove(doc.id).then(onRemoved);
+          if (!window.confirm(`删除链接「${link.title ?? link.url}」？`)) return;
+          void window.todoList.link.remove(link.id).then(onRemoved);
         }}
       >
         ×
       </button>
     </div>
-    {doc.description && <p className="links-view__desc">{doc.description}</p>}
+    {link.description && <p className="links-view__desc">{link.description}</p>}
   </li>
 );
 
+/** 附件的展示名。磁盘路径是 `{ulid}-{原名}.{ext}` —— 去掉 ulid 前缀就是
+ *  用户认识的那个文件名（和 InboxStore.read() 的还原规则一致）。
+ *  附件没有 companion document 行了(schema v21)，展示名只能从这里推导。 */
+function attachmentName(att: InboxAttachment): string {
+  const raw = att.filePath.split(/[\\/]/).pop() ?? '附件';
+  const dash = raw.indexOf('-');
+  return (dash >= 0 ? raw.slice(dash + 1) : raw) || '附件';
+}
+
 /** 附件 section — 与 链接 一致：任务附件文件的扁平列表。
- *  数据来自 `inbox.*`（二进制存在 SQLite inbox_attachments 表），同时每个附件
- *  也作为 kind='attachment' 的 task_document 暴露给 AI（DocumentsView 已过滤）。 */
+ *  数据来自 `inbox.*`（二进制存在 SQLite inbox_attachments 表）。附件不是
+ *  文档，没有任务目录里的文件，所以它不参与「文档」工作区。 */
 const AttachmentsView: React.FC<{ todoId: string }> = ({ todoId }) => {
   const { attachments, refresh } = useAttachments(todoId);
-  const { documents, refresh: refreshDocs } = useDocuments(todoId);
   const fileInputRef = useRef<HTMLInputElement>(null);
-
-  // 通过 refId 把每个附件 blob 与对应的 document 行关联（用来取展示标题
-  // 和定位要删除的 document）。两边共用 refId 这把钥匙。
-  const docByRef = useMemo(() => {
-    const m = new Map<string, TaskDocument>();
-    for (const d of documents) {
-      if (d.kind === 'attachment' && d.refId) m.set(d.refId, d);
-    }
-    return m;
-  }, [documents]);
 
   const pickFiles = useCallback(async (files: FileList | null): Promise<void> => {
     if (!files || files.length === 0) return;
@@ -265,58 +264,43 @@ const AttachmentsView: React.FC<{ todoId: string }> = ({ todoId }) => {
         r.onerror = () => reject(r.error);
         r.readAsDataURL(file);
       });
-      const attRes = await window.todoList.inbox.attachBlob({
+      // attachBlob 一次就够了：它落盘 + 写 inbox_attachments 行，展示名从
+      // 磁盘文件名推导(见 attachmentName)。以前还要补一条 document 行，
+      // 那已经随 schema v21 一起没了。
+      await window.todoList.inbox.attachBlob({
         todoId,
         dataUrl,
         filename: file.name,
         mime: file.type || 'application/octet-stream',
       });
-      if (attRes.ok) {
-        // 同时创建 companion document 行，AI 才能按 id 引用附件，文件名也能带过去
-        await window.todoList.document.create({
-          todoId,
-          kind: 'attachment',
-          title: file.name,
-          refId: attRes.data.id,
-        });
-      }
     }
     await refresh();
-    await refreshDocs();
-  }, [todoId, refresh, refreshDocs]);
+  }, [todoId, refresh]);
 
   const [previewing, setPreviewing] = useState<InboxAttachment | null>(null);
 
   const removeAttachment = useCallback(async (att: InboxAttachment): Promise<void> => {
-    // 用原始文件名（document.title）做提示，磁盘路径带 UUID 后缀不便读
-    const doc = docByRef.get(att.id);
-    const display = doc?.title ?? att.filePath.split(/[\\/]/).pop() ?? '附件';
+    const display = attachmentName(att);
     if (!window.confirm(`删除附件「${display}」？`)) return;
-    // 先删 companion document（如果有），再删 blob 本身
-    if (doc) {
-      await window.todoList.document.remove(doc.id);
-    }
     await window.todoList.inbox.remove({ id: att.id });
     await refresh();
-    await refreshDocs();
-  }, [docByRef, refresh, refreshDocs]);
+  }, [refresh]);
 
   // 附件名 inline 编辑：
   //   - 默认展示文件名（点击触发 openAttachment：图片预览 / 非图片下载）
   //   - 双击或点铅笔按钮 → 切到 input；Enter 提交，Esc 取消，失焦也提交
-  //   - 提交走 inbox.rename —— main 端会同步 task_documents.title + 扫
-  //     同一 task 的所有 progress/note_md 文档替换 inline image alt。
-  //     MarkdownEditor 那边靠 'content' broadcast 自动重读。
+  //   - 提交走 inbox.rename —— main 端搬磁盘文件、更新 file_path，并扫
+  //     同一 task 的所有 .md 替换 inline image alt。MarkdownEditor 那边靠
+  //     'content' broadcast 自动重读。
   //   - 失败时回滚 input 文本并 toast。
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingDraft, setEditingDraft] = useState('');
   const [renaming, setRenaming] = useState(false);
 
   const startEdit = useCallback((a: InboxAttachment): void => {
-    const doc = docByRef.get(a.id);
     setEditingId(a.id);
-    setEditingDraft(doc?.title ?? '');
-  }, [docByRef]);
+    setEditingDraft(attachmentName(a));
+  }, []);
 
   const cancelEdit = useCallback((): void => {
     setEditingId(null);
@@ -325,9 +309,7 @@ const AttachmentsView: React.FC<{ todoId: string }> = ({ todoId }) => {
 
   const commitEdit = useCallback(async (a: InboxAttachment): Promise<void> => {
     const next = editingDraft.trim();
-    const doc = docByRef.get(a.id);
-    const current = doc?.title ?? '';
-    if (!next || next === current) {
+    if (!next || next === attachmentName(a)) {
       cancelEdit();
       return;
     }
@@ -336,7 +318,7 @@ const AttachmentsView: React.FC<{ todoId: string }> = ({ todoId }) => {
       const res = await window.todoList.inbox.rename({ id: a.id, title: next });
       if (!res.ok) throw new Error(res.message ?? res.code ?? '改名失败');
       cancelEdit();
-      // content 广播会触发 useAttachments/useDocuments 重读，但保险起见
+      // content 广播会触发 useAttachments 重读，但保险起见
       // 显式调一下 —— 这里写时序是 rename 已经成功，广播已经发出。
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -344,7 +326,7 @@ const AttachmentsView: React.FC<{ todoId: string }> = ({ todoId }) => {
     } finally {
       setRenaming(false);
     }
-  }, [editingDraft, docByRef, cancelEdit]);
+  }, [editingDraft, cancelEdit]);
 
   // 附件名/预览链接原先用 <a href="attachment://<id>">，点击会让整个
   // BrowserWindow 导航到该协议 URL——Chromium 以黑底渲染裸图片字节、且无
@@ -358,18 +340,16 @@ const AttachmentsView: React.FC<{ todoId: string }> = ({ todoId }) => {
     if (res.ok) {
       const a = document.createElement('a');
       a.href = res.data.dataUrl;
-      a.download = docByRef.get(att.id)?.title
-        ?? att.filePath.split(/[\\/]/).pop() ?? '附件';
+      a.download = attachmentName(att);
       a.click();
     }
-  }, [docByRef]);
+  }, []);
 
   return (
     <div className="attachments-view">
       <ul className="attachments-view__list">
         {attachments.map((a) => {
-          const doc = docByRef.get(a.id);
-          const title = doc?.title ?? a.filePath.split(/[\\/]/).pop() ?? '附件';
+          const title = attachmentName(a);
           const isImage = a.mime.startsWith('image/');
           // title 属性挂详细数据：原始路径 + mime（hover 才展开，不挤占 UI）
           const detail = `${a.filePath}\n${a.mime}`;

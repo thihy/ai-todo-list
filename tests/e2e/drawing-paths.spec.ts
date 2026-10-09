@@ -109,7 +109,8 @@ test.describe('绘图文件命名', () => {
 
       const names = sceneFileNames(handle.dataDir);
       expect(names).toContain('绘图.excalidraw');
-      expect(names).toContain('绘图_2.excalidraw');
+      expect(names).toContain('绘图_1.excalidraw');
+      expect(names).not.toContain('绘图_2.excalidraw');
       expect(names).not.toContain('untitled.excalidraw');
     } finally {
       await handle.app.close();

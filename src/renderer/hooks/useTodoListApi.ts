@@ -9,7 +9,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { TodoListApi, AppEvent, AppEventMap, SettingsPatchArgs } from '../../shared/todo-list-api';
 import type { Todo, TodoFilter, SearchHit, TodoStats } from '../../shared/todo-types';
 import type { ContentVersionEntry, GitHistoryEntry, ProgressLogEntry } from '../../shared/todo-types';
-import type { TaskDocument } from '../../shared/todo-types';
+import type { TaskFileEntry, TodoLink } from '../../shared/todo-types';
 import type { DrawingMeta, DrawingScene, InboxAttachment } from '../../shared/todo-types';
 import type { AIModel, AIStreamEvent } from '../../shared/ai-types';
 import type { SettingsGetRes, TagCatalogRow, TagCatalogEntry, StartupComponentState } from '../../shared/ipc-schema';
@@ -236,8 +236,8 @@ export function useAttachments(todoId: string | null): {
 } {
   const [attachments, setAttachments] = useState<InboxAttachment[]>([]);
   // 'content' scope: inbox.remove broadcasts app:data-changed { scope: 'content' }
-  // (attachments are also surfaced as task_documents of kind 'attachment', so
-  // they share the content scope with the document workspace).
+  // (attachments live in inbox_attachments, which shares the content scope with
+  // the document workspace and the links section).
   const dataVersion = useDataVersion(['content']);
   const refresh = useCallback(async () => {
     if (!todoId) {
@@ -253,13 +253,16 @@ export function useAttachments(todoId: string | null): {
   return { attachments, refresh };
 }
 
-// ----- Multi-document workspace (schema v11) -----
+// ----- Task documents (schema v21: 文档就是文件) -----
 
 /** Git-backed save history for a single document (progress / note_md).
- *  Keyed by document id so each doc has its own log. `available: false`
+ *  Keyed by file name so each doc has its own log. `available: false`
  *  means git isn't on PATH — the History button then hides itself. The
  *  caller can `refresh()` after a save to pull the new commit. */
-export function useGitHistory(docId: string | null): {
+export function useGitHistory(
+  todoId: string | null,
+  fileName: string | null,
+): {
   available: boolean;
   entries: GitHistoryEntry[];
   refresh: () => Promise<void>;
@@ -268,12 +271,12 @@ export function useGitHistory(docId: string | null): {
   const [available, setAvailable] = useState(false);
   const [entries, setEntries] = useState<GitHistoryEntry[]>([]);
   const refresh = useCallback(async () => {
-    if (!docId) {
+    if (!todoId || !fileName) {
       setAvailable(false);
       setEntries([]);
       return;
     }
-    const res = await window.todoList.document.gitHistory(docId);
+    const res = await window.todoList.document.gitHistory(todoId, fileName);
     if (res.ok) {
       setAvailable(res.data.available);
       setEntries(res.data.entries);
@@ -281,7 +284,7 @@ export function useGitHistory(docId: string | null): {
       setAvailable(false);
       setEntries([]);
     }
-  }, [docId]);
+  }, [todoId, fileName]);
 
   useEffect(() => {
     void refresh();
@@ -289,21 +292,24 @@ export function useGitHistory(docId: string | null): {
 
   const restore = useCallback(
     async (sha: string): Promise<boolean> => {
-      if (!docId) return false;
-      const res = await window.todoList.document.gitRestore(docId, sha);
+      if (!todoId || !fileName) return false;
+      const res = await window.todoList.document.gitRestore(todoId, fileName, sha);
       return res.ok;
     },
-    [docId],
+    [todoId, fileName],
   );
 
   return { available, entries, refresh, restore };
 }
 
 export function useDocuments(todoId: string | null): {
-  documents: TaskDocument[];
+  documents: TaskFileEntry[];
   refresh: () => Promise<void>;
+  /** Drop the main-process scan cache and re-read the task directory. Use
+   *  after the user changed files outside the app (editor / sync / terminal). */
+  refreshFromDisk: () => Promise<void>;
 } {
-  const [documents, setDocuments] = useState<TaskDocument[]>([]);
+  const [documents, setDocuments] = useState<TaskFileEntry[]>([]);
   // 'content' scope: document.write/create/remove broadcast app:data-changed
   // { scope: 'content' } so this list + the open editor re-fetch.
   const dataVersion = useDataVersion(['content']);
@@ -313,15 +319,25 @@ export function useDocuments(todoId: string | null): {
       return;
     }
     const res = await window.todoList.document.list(todoId);
-    setDocuments(unwrap(res, []));
+    setDocuments(unwrap(res, { files: [] as TaskFileEntry[] }).files);
+  }, [todoId]);
+  const refreshFromDisk = useCallback(async () => {
+    if (!todoId) return;
+    // 不走缓存：main 会先 invalidate 这个任务目录的扫描缓存再重读，
+    // 所以用户在应用外丢进来的文件会立刻出现。
+    const res = await window.todoList.document.refresh(todoId);
+    setDocuments(unwrap(res, { files: [] as TaskFileEntry[] }).files);
   }, [todoId]);
   useEffect(() => {
     void refresh();
   }, [refresh, dataVersion]);
-  return { documents, refresh };
+  return { documents, refresh, refreshFromDisk };
 }
 
-export function useDocument(docId: string | null): {
+export function useDocument(
+  todoId: string | null,
+  fileName: string | null,
+): {
   content: string;
   version: number | null;
   save: (next: string, expectVersion?: number) => Promise<void>;
@@ -335,25 +351,26 @@ export function useDocument(docId: string | null): {
   const dataVersion = useDataVersion(['content']);
 
   useEffect(() => {
-    if (!docId) {
+    if (!todoId || !fileName) {
       setContent('');
       setVersion(null);
       return;
     }
-    window.todoList.document.read(docId).then((res) => {
+    window.todoList.document.read(todoId, fileName).then((res) => {
       const d = unwrap(res, { content: '', version: 0 });
       setContent(d.content);
       setVersion(d.version);
     });
-  }, [docId, dataVersion]);
+  }, [todoId, fileName, dataVersion]);
 
   const save = useCallback(
     async (next: string, expectVersion?: number) => {
-      if (!docId) return;
+      if (!todoId || !fileName) return;
       setSaving(true);
       setError(null);
       const res = await window.todoList.document.write(
-        docId,
+        todoId,
+        fileName,
         next,
         expectVersion ?? version ?? undefined,
       );
@@ -364,10 +381,34 @@ export function useDocument(docId: string | null): {
       }
       setSaving(false);
     },
-    [docId, version],
+    [todoId, fileName, version],
   );
 
   return { content, version, save, saving, error };
+}
+
+// ----- Links (todo_links) -----
+//
+// 链接有自己的表：它没有文件，所以推导不出来，只能查 DB。
+
+export function useLinks(todoId: string | null): {
+  links: TodoLink[];
+  refresh: () => Promise<void>;
+} {
+  const [links, setLinks] = useState<TodoLink[]>([]);
+  const dataVersion = useDataVersion(['content']);
+  const refresh = useCallback(async () => {
+    if (!todoId) {
+      setLinks([]);
+      return;
+    }
+    const res = await window.todoList.link.list(todoId);
+    setLinks(unwrap(res, []));
+  }, [todoId]);
+  useEffect(() => {
+    void refresh();
+  }, [refresh, dataVersion]);
+  return { links, refresh };
 }
 
 export function useDrawing(id: string | null): { scene: DrawingScene | null } {

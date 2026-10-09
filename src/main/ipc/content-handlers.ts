@@ -50,6 +50,15 @@ export function registerContentHandlers(
     }
   };
 
+  // 绘图的新建 / 保存 / 删除 / 改名都会动磁盘上的文件，结束时要给整个
+  // todos/ 目录记一次 git（缩略图、todo.json、删除都算在里面）。没东西可
+  // 提交时不建 commit；失败静默 —— git 挂了绝不能让用户的编辑失败。
+  const commitAllToGit = (message: string): void => {
+    void gitHistory.commitAll(todosDir, message).catch(() => {
+      /* swallow — git is best-effort */
+    });
+  };
+
   register('content.readBody', (_e, req) => {
     try {
       return Promise.resolve(okResult(md.readBody(req.id)));
@@ -66,6 +75,8 @@ export function registerContentHandlers(
       // must NOT surface as a write failure to the user (the body is already
       // safely on disk + in the DB).
       void commitWriteToGit(req.id, res.version);
+      // 进展正文之外的附带改动（todo.json 等）一并入库。
+      commitAllToGit(`保存正文 ${repo.get(req.id)?.title ?? 'task'}`);
       return Promise.resolve(okResult(res));
     } catch (err) {
       const message = (err as Error).message;
@@ -133,9 +144,9 @@ export function registerContentHandlers(
 
   register('drawing.save', (_e, req) => {
     try {
-      return Promise.resolve(
-        okResult(drawings.save(req.todoId, req.scene, req.id, req.title)),
-      );
+      const meta = drawings.save(req.todoId, req.scene, req.id, req.title);
+      commitAllToGit(`${req.id ? '保存' : '新增'}绘图 ${meta.title ?? '绘图'}`);
+      return Promise.resolve(okResult(meta));
     } catch (err) {
       return Promise.resolve(failResult('save_failed', (err as Error).message));
     }
@@ -143,7 +154,9 @@ export function registerContentHandlers(
 
   register('drawing.delete', (_e, req) => {
     try {
+      const before = drawings.get(req.id);
       drawings.delete(req.id);
+      commitAllToGit(`删除绘图 ${before?.title ?? req.id}`);
       return Promise.resolve(okResult(undefined as never));
     } catch (err) {
       return Promise.resolve(failResult('delete_failed', (err as Error).message));
@@ -157,6 +170,7 @@ export function registerContentHandlers(
       // without a second round-trip (mirrors document.rename).
       const meta = drawings.get(req.id);
       if (!meta) return Promise.resolve(failResult('rename_failed', 'drawing not found after rename'));
+      commitAllToGit(`重命名绘图 ${meta.title ?? req.id}`);
       return Promise.resolve(okResult(meta));
     } catch (err) {
       return Promise.resolve(failResult('rename_failed', (err as Error).message));
@@ -166,6 +180,8 @@ export function registerContentHandlers(
   register('drawing.setThumb', (_e, req) => {
     try {
       drawings.setThumb(req.id, req.dataUrl);
+      // 缩略图也是 todos/ 下的文件，得跟着提交，否则工作区和仓库会分家。
+      commitAllToGit('更新绘图缩略图');
       return Promise.resolve(okResult(undefined as never));
     } catch (err) {
       return Promise.resolve(failResult('thumb_failed', (err as Error).message));

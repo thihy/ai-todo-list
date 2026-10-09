@@ -10,9 +10,9 @@
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { openDb } from '../../src/main/db/schema';
 import { TodoRepo } from '../../src/main/db/todo-repo';
 import { InboxStore } from '../../src/main/files/inbox';
@@ -111,23 +111,18 @@ describe('InboxStore per-task layout', () => {
     }).toThrow(/attachment_not_found/);
   });
 
-  // --- rename: 改附件名 → 改 task_documents.title + 扫所有 progress/note_md
-  // 文档替换 ![old](attachment://<id>) 的 alt 文本 ---
+  // --- rename: 改附件名 → 扫同一任务所有 .md 的正文替换
+  //     ![old](attachment://<id>) 的 alt 文本 ---
 
-  /** Helper: 在数据库里直接塞一个 progress doc + 一条 content version。 */
-  function seedProgressDoc(todoId: string, docId: string, content: string): void {
+  /** Helper: 造一个任务目录 + 往 document_versions 里塞一条 content version。
+   *  schema v21 之后文档就是文件，版本按 (todoId, fileName) 存。 */
+  function seedProgressDoc(todoId: string, fileName: string, content: string): void {
     const now = Date.now();
     handle.db
       .prepare(
-        `INSERT INTO task_documents (id, todo_id, kind, title, ref_id, created_at, updated_at)
-         VALUES (?, ?, 'progress', '进展', NULL, ?, ?)`,
+        `INSERT INTO document_versions (todo_id, file_name, content, saved_at) VALUES (?, ?, ?, ?)`,
       )
-      .run(docId, todoId, now, now);
-    handle.db
-      .prepare(
-        `INSERT INTO document_versions (document_id, content, saved_at) VALUES (?, ?, ?)`,
-      )
-      .run(docId, content, now);
+      .run(todoId, fileName, content, now);
   }
 
   it('rename：磁盘文件 {ulid}-{old}.{ext} 改名为 {ulid}-{new}.{ext}，inbox_attachments.file_path 跟上', () => {
@@ -151,27 +146,60 @@ describe('InboxStore per-task layout', () => {
     expect(reloaded.filePath).toContain(att.id);
   });
 
-  it('rename：同步更新 companion task_documents.title（kind=attachment, ref_id=id）', () => {
+  it('rename：附件只改自己那一行的 file_path，没有 companion document 行（schema v21）', () => {
     const t = repo.create({ title: 'T' }, 'x');
     const src = join(dir, 'a.png');
     writeFileSync(src, 'p', 'utf8');
     const att = inbox.attach(t.id, src, 'image/png');
-    // companion doc —— 与 TodoEditorPane pickFiles 路径一致。
-    handle.db
-      .prepare(
-        `INSERT INTO task_documents (id, todo_id, kind, title, ref_id, created_at, updated_at)
-         VALUES (?, ?, 'attachment', 'pasted-20260101-120000-1', ?, ?, ?)`,
-      )
-      .run('attdoc-1', t.id, att.id, Date.now(), Date.now());
+    const oldPath = att.filePath;
 
     inbox.rename(att.id, '截图-设计稿', () => undefined);
 
-    const row = handle.db
-      .prepare<[string], { title: string | null }>(
-        `SELECT title FROM task_documents WHERE id = ?`,
+    // 附件的展示名完全由 file_path 推导（见 TodoEditorPane 的 attachmentName）：
+    // 去掉 `{id}-` 前缀就是用户看到的文件名。
+    //
+    // 中文名要原样留在磁盘上 —— sanitizeName() 只剔除 Windows 非法字符和控制
+    // 字符（以及用户点名的 `[]`），不再用 ASCII 白名单把中文打成下划线。
+    // 旧实现下这里会是 `__-___.png`，用户在文件管理器里认不出自己的附件。
+    const reloaded = inbox.get(att.id)!;
+    const base = basename(reloaded.filePath);
+    expect(base.startsWith(`${att.id}-`)).toBe(true);
+    expect(base.endsWith('.png')).toBe(true);
+    expect(base).toContain('截图-设计稿');
+    expect(reloaded.filePath).not.toBe(oldPath);
+    // ulid 前缀保持 —— InboxStore.read 还要靠它定位文件。
+    expect(reloaded.filePath).toContain(att.id);
+    // 旧文件没了，新文件在，字节也跟着搬过去（attachment:// 仍读得到）。
+    expect(existsSync(oldPath)).toBe(false);
+    expect(existsSync(reloaded.filePath)).toBe(true);
+    expect(readFileSync(reloaded.filePath, 'utf8')).toBe('p');
+    // task_documents 已经不存在了 —— 附件不再伪装成文档。
+    const tables = handle.db
+      .prepare<[], { name: string }>(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'task_documents'",
       )
-      .get('attdoc-1');
-    expect(row?.title).toBe('截图-设计稿');
+      .all();
+    expect(tables).toHaveLength(0);
+  });
+
+  it('rename：中文新名原样落进正文 alt（磁盘名才走 sanitizeName）', () => {
+    const t = repo.create({ title: 'T' }, 'x');
+    const src = join(dir, 'p.png');
+    writeFileSync(src, 'p', 'utf8');
+    const att = inbox.attach(t.id, src, 'image/png');
+    seedProgressDoc(t.id, 'progress.md', `# 进展\n\n![pasted](attachment://${att.id})\n`);
+
+    const rewrites: string[] = [];
+    inbox.rename(att.id, '截图-设计稿', (_fileName, content) => {
+      rewrites.push(content);
+    });
+
+    // 正文 alt 用的是**原始**输入名（不做 sanitize），中文完整保留 —— 这是
+    // 上一条用例里磁盘名丢掉中文之后，用户仍然看得到中文的地方。
+    expect(rewrites).toHaveLength(1);
+    expect(rewrites[0]!).toContain(`![截图-设计稿](attachment://${att.id})`);
+    expect(rewrites[0]!).not.toContain('![pasted]');
+    expect(rewrites[0]!).toContain('# 进展');
   });
 
   it('rename：扫到 progress/note_md 文档的 ![old](attachment://<id>) → callback 拿到新 alt 的版本', () => {
@@ -179,20 +207,20 @@ describe('InboxStore per-task layout', () => {
     const src = join(dir, 'p.png');
     writeFileSync(src, 'p', 'utf8');
     const att = inbox.attach(t.id, src, 'image/png');
-    const docId = `${t.id}:progress`;
     const before = `# 进展\n\n` +
       `![pasted-20260101-120000-1](attachment://${att.id})\n` +
       `\n看看这段截图：\n` +
       `![pasted-20260101-120000-1](attachment://${att.id})\n`;
-    seedProgressDoc(t.id, docId, before);
+    seedProgressDoc(t.id, 'progress.md', before);
 
-    const rewrites: Array<{ id: string; content: string }> = [];
-    inbox.rename(att.id, 'login-page-design', (id, content) => {
-      rewrites.push({ id, content });
+    const rewrites: Array<{ fileName: string; content: string }> = [];
+    inbox.rename(att.id, 'login-page-design', (fileName, content) => {
+      rewrites.push({ fileName, content });
     });
 
     expect(rewrites).toHaveLength(1);
-    expect(rewrites[0]!.id).toBe(docId);
+    // schema v21：回调带的是任务目录里的**文件名**，不是文档行 id。
+    expect(rewrites[0]!.fileName).toBe('progress.md');
     // 两处 alt 都换成新名，attachment id 保持不变
     const after = rewrites[0]!.content;
     expect(after).toContain(`![login-page-design](attachment://${att.id})`);
@@ -202,19 +230,36 @@ describe('InboxStore per-task layout', () => {
     expect(after).toContain('# 进展');
   });
 
+  it('rename：扫的是任务下所有 .md（不止 progress.md），每个文件各回调一次', () => {
+    const t = repo.create({ title: 'T' }, 'x');
+    const src = join(dir, 'p.png');
+    writeFileSync(src, 'p', 'utf8');
+    const att = inbox.attach(t.id, src, 'image/png');
+    seedProgressDoc(t.id, 'progress.md', `![p](attachment://${att.id})`);
+    seedProgressDoc(t.id, '设计.md', `![p](attachment://${att.id})`);
+    // 一个没有这个附件的文档 —— 不该被回调。
+    seedProgressDoc(t.id, '无关.md', '# 无关');
+
+    const rewrites: string[] = [];
+    inbox.rename(att.id, 'renamed', (fileName) => {
+      rewrites.push(fileName);
+    });
+
+    expect(rewrites.sort()).toEqual(['progress.md', '设计.md']);
+  });
+
   it('rename：新名字包含 markdown 元字符 [ / ( 时仍安全（占位两段替换避免二次破坏）', () => {
     const t = repo.create({ title: 'T' }, 'x');
     const src = join(dir, 'p.png');
     writeFileSync(src, 'p', 'utf8');
     const att = inbox.attach(t.id, src, 'image/png');
-    const docId = `${t.id}:progress`;
     const before = `before ![p](attachment://${att.id}) after`;
-    seedProgressDoc(t.id, docId, before);
+    seedProgressDoc(t.id, 'progress.md', before);
 
     // 新名字含 ] 和 ) —— naive 的「oldAlt → newTitle」会把 markdown 链接语法碰坏。
     // 占位两段替换保证「先标占位、再统一换回」一定走完整遍。
     const captured: string[] = [];
-    inbox.rename(att.id, 'has]bracket(and)paren', (id, content) => {
+    inbox.rename(att.id, 'has]bracket(and)paren', (_fileName, content) => {
       captured.push(content);
     });
 

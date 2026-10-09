@@ -24,7 +24,6 @@ import { resolveEndpoint, healthCheck } from './endpoints';
 import type { TodoRepo } from '../db/todo-repo';
 import type { MarkdownStore } from '../files/markdown';
 import type { DrawingStore } from '../files/drawings';
-import type { DocumentStore } from '../files/documents';
 import { getFocus } from '../app-context';
 import type { ConversationRepo } from '../db/conversation-repo';
 import type { SettingsStore } from '../settings/store';
@@ -61,9 +60,6 @@ export interface DshRuntimeDeps {
   repo: TodoRepo;
   md: MarkdownStore;
   drawings: DrawingStore;
-  /** DocumentStore —— 给 `app_currentContext` 工具补齐 document 类焦点
-   *  对应的 task_documents 完整行 */
-  docs: DocumentStore;
   /** 让 DSH session-title 服务能把 AI 生成的反向标题写回渲染端的会话列表 */
   conversations: ConversationRepo;
   /** inbox_attachments 写库用的原始 better-sqlite3 handle。inbox schema 很窄，
@@ -2330,7 +2326,7 @@ function registerDomainTools(
   ctx: DshContext,
 ): () => void {
   const disposers: Array<() => void> = [];
-  const { repo, md, drawings, conversations, db, attachmentsDir, settings, docs } = deps;
+  const { repo, md, drawings, conversations, db, attachmentsDir, settings } = deps;
   const reg = (def: unknown) => disposers.push(tools.register(def));
 
   // DSH 的 output.render(args, value) 决定工具结果中"模型看得到"的内容。
@@ -2989,8 +2985,18 @@ function registerDomainTools(
       }
       if (f.kind === 'document') {
         const t = repo.get(f.todoId as never);
-        const d = docs.get(f.documentId as never);
-        return { kind: 'document', task: t, document: d };
+        // 文档就是文件（schema v21）—— 没有 DB 行可查，焦点指针里带的
+        // 文件名 / 标签就是全部信息，AI 拿它去 content_* / document_write
+        // 操作即可。
+        return {
+          kind: 'document',
+          task: t,
+          document: {
+            fileName: f.documentFileName,
+            kind: f.documentKind,
+            title: f.documentTitle,
+          },
+        };
       }
       if (f.kind === 'drawing') {
         const t = repo.get(f.todoId as never);

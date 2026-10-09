@@ -30,13 +30,14 @@ import { basename, dirname, join } from 'node:path';
 import { newId } from '../db/schema';
 import type { DrawingMeta, ULID } from '../../shared/todo-types';
 import {
+  allocateFileName,
   DEFAULT_DRAWING_TITLE,
   drawingFile,
   drawingFileName,
   thumbFile,
-  uniqueDrawingFileName,
 } from './paths';
 import { logger } from '../logger';
+import type { TaskFileIndex } from './task-files';
 
 interface DrawingRow {
   id: string;
@@ -58,8 +59,17 @@ export class DrawingStore {
      */
     private drawingsDir: string,
     private resolveTaskDir: (todoId: ULID) => string,
+    /** 任务目录的文件扫描索引 —— 与 DocumentStore 共用同一个实例。绘图
+     *  写完 / 搬完文件后必须让它忘掉旧缓存，否则 tab 列表还会显示已经不在
+     *  磁盘上的绘图。没传就退化成「不参与缓存」（只在测试里出现）。 */
+    private files?: TaskFileIndex,
   ) {
     mkdirSync(drawingsDir, { recursive: true });
+  }
+
+  /** 绘图文件动了(新建 / 改名 / 删除)之后让扫描缓存失效。 */
+  private invalidate(taskDir: string): void {
+    this.files?.invalidate(taskDir);
   }
 
   /** Resolve on each operation so a successful task-directory rename is
@@ -148,21 +158,25 @@ export class DrawingStore {
     if (existing) {
       newTitle = title === undefined ? (existing.title ?? '') : title.trim();
     } else {
-      newTitle = title === undefined ? this.nextDefaultTitle(todoId) : title.trim();
-      if (!newTitle) newTitle = this.nextDefaultTitle(todoId);
+      newTitle = title === undefined ? DEFAULT_DRAWING_TITLE : title.trim();
+      if (!newTitle) newTitle = DEFAULT_DRAWING_TITLE;
     }
 
     // 文件名：已有行走「改名 → 成功才更新 path」，新行走一次唯一名分配。
     const relPath = existing
       ? this.moveScene(taskDir, existing, newTitle, drawingId)
-      : uniqueDrawingFileName(
-          taskDir,
-          drawingFileName(newTitle),
-          this.claimedPaths(todoId),
-          drawingId,
-        );
+      : allocateFileName(taskDir, drawingFileName(newTitle), this.claimedPaths(todoId));
+
+    // 调用方没给标签时（新建 / 自动保存），标签直接取自分配到的文件名：
+    // 「文件名 = 标签名」必须严格成立，撞名时标签跟着变成 绘图_1 / 文档_1。
+    // 先算出标签再算文件名会绕一圈产生「绘图 2 → 绘图_2.md」这种标签与
+    // 文件名对不上的中间态。
+    if (!existing && (title === undefined || !title.trim())) {
+      newTitle = relPath.slice(0, -'.excalidraw'.length);
+    }
 
     this.writeScene(taskDir, relPath, scene);
+    this.invalidate(taskDir);
 
     if (existing) {
       this.db
@@ -191,6 +205,7 @@ export class DrawingStore {
     // 磁盘改名失败过的老数据：映射还指在旧文件名上，顺手把它也清掉。
     this.bestEffortUnlink(join(taskDir, this.legacyFileName(row)));
     this.bestEffortUnlink(thumbFile(taskDir, id));
+    this.invalidate(taskDir);
   }
 
   /** Rename a drawing's title — the label and the file name move together.
@@ -203,6 +218,7 @@ export class DrawingStore {
     const newTitle = (title ?? '').trim();
     const taskDir = this.taskDirFor(before.todo_id);
     const relPath = this.moveScene(taskDir, before, newTitle, id);
+    this.invalidate(taskDir);
     this.db
       .prepare('UPDATE drawings SET title = ?, path = ?, updated_at = ? WHERE id = ?')
       .run(newTitle || null, relPath, Date.now(), id);
@@ -288,26 +304,7 @@ export class DrawingStore {
     return out;
   }
 
-  /** 下一个默认标签：绘图 / 绘图 2 / 绘图 3 …。名字干净，也天然避开撞名。 */
-  private nextDefaultTitle(todoId: ULID): string {
-    const taken = new Set(
-      this.db
-        .prepare<[ULID], { title: string | null }>(
-          'SELECT title FROM drawings WHERE todo_id = ? AND title IS NOT NULL',
-        )
-        .all(todoId)
-        .map((r) => (r.title ?? '').trim()),
-    );
-    if (!taken.has(DEFAULT_DRAWING_TITLE)) return DEFAULT_DRAWING_TITLE;
-    for (let n = 2; n < 1000; n++) {
-      const candidate = `${DEFAULT_DRAWING_TITLE} ${n}`;
-      if (!taken.has(candidate)) return candidate;
-    }
-    return DEFAULT_DRAWING_TITLE;
-  }
-
-  /** Where this drawing's scene lives right now: DB mapping first, legacy
-   *  title-derived name only as a last-resort fallback. */
+  /** Locate this drawing's scene file. */
   private locateScene(row: DrawingRow): { absolute: string; relPath: string } {
     const taskDir = this.taskDirFor(row.todo_id);
     const relPath = row.path ? basename(row.path) : drawingFileName(row.title);
@@ -336,11 +333,10 @@ export class DrawingStore {
    *  scene file was missing to begin with (then the next write recreates it). */
   private moveScene(taskDir: string, row: DrawingRow, title: string, drawingId: string): string {
     const stored = row.path ? basename(row.path) : drawingFileName(row.title);
-    const desired = uniqueDrawingFileName(
+    const desired = allocateFileName(
       taskDir,
       drawingFileName(title),
       this.claimedPaths(row.todo_id, drawingId),
-      drawingId,
       stored,
     );
     if (desired === stored) return stored;
@@ -392,11 +388,10 @@ export class DrawingStore {
       for (let i = 1; i < ids.length; i++) {
         const id = ids[i]!;
         try {
-          const copy = uniqueDrawingFileName(
+          const copy = allocateFileName(
             taskDir,
-            `${stem}-${id.slice(0, 6) || 'draw'}.excalidraw`,
+            `${stem}.excalidraw`,
             this.claimedPaths(todoId, id),
-            id,
           );
           copyFileSync(src, join(taskDir, copy));
           current.set(id, copy);
@@ -414,13 +409,7 @@ export class DrawingStore {
       const file = current.get(row.id);
       if (!file) continue;
       const title = (row.title ?? '').trim() || DEFAULT_DRAWING_TITLE;
-      const target = uniqueDrawingFileName(
-        taskDir,
-        drawingFileName(title),
-        targets,
-        row.id,
-        file,
-      );
+      const target = allocateFileName(taskDir, drawingFileName(title), targets, file);
       targets.add(target);
       if (target !== file) {
         try {

@@ -265,6 +265,16 @@ export const IconFullscreenExit: React.FC<IconProps> = (p) => (
   </Svg>
 );
 
+/** Circular arrow — "re-read from source". Used by the DocumentsView tab
+ *  bar's rescan button, which drops the main-process directory-scan cache so
+ *  files the user added / removed outside the app show up. */
+export const IconRefresh: React.FC<IconProps> = (p) => (
+  <Svg {...p}>
+    <path d="M14 8a6 6 0 1 1-1.8-4.3" />
+    <path d="M14 2v3h-3" />
+  </Svg>
+);
+
 /** External link / open in new window — used for "open task directory". */
 export const IconExternal: React.FC<IconProps> = (p) => (
   <Svg {...p}>

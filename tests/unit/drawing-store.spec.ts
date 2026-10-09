@@ -102,17 +102,18 @@ describe('DrawingStore per-task layout', () => {
     expect(existsSync(join(taskDir, 'untitled.excalidraw'))).toBe(false);
   });
 
-  it('第二张绘图拿到 绘图 2，文件名仍是标签的 slug', () => {
+  it('第二张绘图拿到 绘图_1，标签与文件名严格一致', () => {
     const t = repo.create({ title: 'T' }, 'x');
     const taskDir = paths.uniqueTodoDir(todosDir, paths.slugify(t.title), t.id);
     const first = drawings.save(t.id, { n: 1 });
     const second = drawings.save(t.id, { n: 2 });
     expect(first.title).toBe('绘图');
-    expect(second.title).toBe('绘图 2');
+    // 标签直接取自分配到的文件名，所以「文件名 = 标签名」严格成立
+    expect(second.title).toBe('绘图_1');
     expect(dbPath(first.id)).toBe('绘图.excalidraw');
-    expect(dbPath(second.id)).toBe('绘图_2.excalidraw');
+    expect(dbPath(second.id)).toBe('绘图_1.excalidraw');
     expect(existsSync(join(taskDir, '绘图.excalidraw'))).toBe(true);
-    expect(existsSync(join(taskDir, '绘图_2.excalidraw'))).toBe(true);
+    expect(existsSync(join(taskDir, '绘图_1.excalidraw'))).toBe(true);
     expect(drawings.read(first.id)).toEqual({ n: 1 });
     expect(drawings.read(second.id)).toEqual({ n: 2 });
   });

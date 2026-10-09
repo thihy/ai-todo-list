@@ -27,7 +27,9 @@ import { TagRepo } from './db/tag-repo';
 import { ConversationRepo } from './db/conversation-repo';
 import { MarkdownStore } from './files/markdown';
 import { DrawingStore } from './files/drawings';
-import { DocumentStore } from './files/documents';
+import { DocumentStore, LinkStore } from './files/documents';
+import { TaskFileIndex } from './files/task-files';
+import * as gitHistory from './git-history';
 import { InboxStore } from './files/inbox';
 import * as composerInbox from './ai/composer-inbox';
 import { SettingsStore } from './settings/store';
@@ -299,8 +301,14 @@ function bootstrap(): void {
     // title change or a failed filesystem rename.
     const resolveTaskDir = (id: ULID): string => taskDirectories.resolve(id);
     const md = new MarkdownStore(handle.db, todosDir, resolveTaskDir);
-    const drawings = new DrawingStore(handle.db, drawingsDir, resolveTaskDir);
-    const docs = new DocumentStore(handle.db);
+    // 任务目录的文件扫描索引：整个进程**只建一个**。DocumentStore 用它派生
+    // 文档列表 + 分配不撞名的文件名，DrawingStore 写完文件后靠它清缓存 ——
+    // 多个实例会让「分配名字」和「扫描目录」看到两份不同的状态，
+    // 于是刚分配出来的名字可能被自己撞掉。
+    const taskFiles = new TaskFileIndex();
+    const drawings = new DrawingStore(handle.db, drawingsDir, resolveTaskDir, taskFiles);
+    const docs = new DocumentStore(handle.db, taskFiles);
+    const links = new LinkStore(handle.db);
     const inbox = new InboxStore(handle.db, attachmentsDir, todosDir, resolveTaskDir);
     mark('file-stores-constructed');
 
@@ -313,6 +321,10 @@ function bootstrap(): void {
     } catch (err) {
       logger.warn(`drawing-paths: repairFilePaths failed: ${(err as Error).message}`);
     }
+
+    // 绘图文件名刚被搬过，任何「建索引之后扫过的目录」都可能记着旧文件名。
+    // 全清一次，下一次读取一律走磁盘 —— 文件才是真相。
+    taskFiles.invalidateAll();
 
     // UX-01 — the IPC handler receives an object so it can dereference
     // `retryAi` on every call. We pre-bind the object with placeholder
@@ -347,12 +359,12 @@ function bootstrap(): void {
     registerStartupHandler(retryHooks);
     registerTodoHandlers(repo, md, handle.db, todosDir, resolveTaskDir, taskDirectories);
     registerContentHandlers(md, drawings, repo);
-    registerDocumentHandlers(docs, resolveTaskDir, todosDir);
+    registerDocumentHandlers(docs, links, resolveTaskDir, todosDir);
     registerLinkHandlers();
     // docs 注入给 inbox.rename —— 改附件名时要把同一个 todo 的 progress /
     // note_md 文档里的 inline image alt 同步替换成新名字，调用走 DocumentStore
     // 才能保留版本号 + git commit + content broadcast。
-    registerInboxHandlers(inbox, docs, resolveTaskDir);
+    registerInboxHandlers(inbox, docs, resolveTaskDir, todosDir);
     registerTagHandlers(tagRepo);
 
     // attachment://<id> → serve the inbox_attachments file bytes. Registered
@@ -475,10 +487,10 @@ function bootstrap(): void {
             await import('./dsh/dsh-runtime');
           await resetDshRuntimeForRetry();
           const { initDshContainer } = await import('./dsh/container');
-          const dsh = await initDshContainer({ repo, md, drawings, settings, db: handle.db, docs });
+          const dsh = await initDshContainer({ repo, md, drawings, settings, db: handle.db });
           const { registerAiHandlers, bindAiDeps } = await import('./ipc/ai-handlers');
           registerAiHandlers(dsh);
-          bindAiDeps({ dsh, settings, repo, conversations, md, drawings, docs, db: handle.db, attachmentsDir, rootDir });
+          bindAiDeps({ dsh, settings, repo, conversations, md, drawings, db: handle.db, attachmentsDir, rootDir });
           logger.info(`startup[ai]: DSH handlers registered (${reason}) @ ${Date.now() - aiStart}ms`);
 
           // The splash gate. warmupDshRuntime awaits the live DSH
@@ -489,7 +501,6 @@ function bootstrap(): void {
             repo,
             md,
             drawings,
-            docs,
             conversations,
             db: handle.db,
             attachmentsDir,
@@ -829,10 +840,15 @@ function registerInboxHandlers(
   inbox: InboxStore,
   docs: DocumentStore,
   resolveTaskDir: (id: string) => string,
+  todosDir: string,
 ): void {
   register('inbox.attach', async (_e, req) => {
     try {
-      return okResult(inbox.attach(req.id, req.filePath, req.mime));
+      const att = inbox.attach(req.id, req.filePath, req.mime);
+      // 附件落在 {taskDir}/attachments/ 下，本来就在 todos/ 里面 —— 一样要
+      // 提交，否则工作区里有文件、仓库里没有。
+      void gitHistory.commitAll(todosDir, `新增附件 ${basename(att.filePath)}`).catch(() => undefined);
+      return okResult(att);
     } catch (err) {
       return failResult('attach_failed', (err as Error).message);
     }
@@ -841,37 +857,32 @@ function registerInboxHandlers(
   // Pasted image from the renderer arrives as a data: URL. Decode + persist.
   register('inbox.attachBlob', async (_e, req) => {
     try {
-      return okResult(inbox.attachBlob(req.todoId, req.dataUrl, req.filename, req.mime));
+      const att = inbox.attachBlob(req.todoId, req.dataUrl, req.filename, req.mime);
+      void gitHistory.commitAll(todosDir, `新增附件 ${basename(att.filePath)}`).catch(() => undefined);
+      return okResult(att);
     } catch (err) {
       return failResult('attach_blob_failed', (err as Error).message);
     }
   });
 
-  // Rename an attachment: update companion task_documents.title + sweep
-  // progress/note_md inline image alts + best-effort disk rename. The sweep
-  // routes through DocumentStore.write so version bump + git commit +
-  // content broadcast all happen for free.
+  // Rename an attachment: best-effort disk rename + sweep progress/note_md
+  // inline image alts. The sweep routes through DocumentStore.saveContent so
+  // version bump + disk mirror + content broadcast all happen for free.
   register('inbox.rename', async (_e, req) => {
     try {
-      const result = inbox.rename(req.id, req.title, (docId, content) => {
-        const existing = docs.read(docId);
-        docs.write(docId, content, existing.version);
-        // Mirror to disk so git history + file explorer see the change too.
-        const doc = docs.get(docId);
-        if (doc && (doc.kind === 'progress' || doc.kind === 'note_md')) {
-          try {
-            docs.writeToFile(
-              resolveTaskDir(doc.todoId),
-              doc.kind,
-              doc.title ?? '',
-              content,
-            );
-          } catch (err) {
-            logger.warn(`inbox.rename: doc ${docId} disk mirror failed: ${(err as Error).message}`);
-          }
-        }
+      // 扫正文需要 todoId，而回调只带文件名 —— 先把附件行取出来认下归属。
+      const att = inbox.get(req.id);
+      if (!att) return failResult('inbox_rename_failed', `attachment_not_found: ${req.id}`);
+      const taskDir = resolveTaskDir(att.todoId);
+      const result = inbox.rename(req.id, req.title, (fileName, content) => {
+        const existing = docs.read(att.todoId, fileName);
+        docs.saveContent(taskDir, att.todoId, fileName, content, existing.version);
         broadcastDataChanged('content');
       });
+      // 附件文件本身也搬了名 —— 和被改写的正文一起提交。
+      void gitHistory
+        .commitAll(todosDir, `重命名附件 ${req.title}`)
+        .catch(() => undefined);
       broadcastDataChanged('content');
       return okResult(result);
     } catch (err) {

@@ -17,13 +17,18 @@ import { IconHistory } from './icons';
 import type { GitHistoryEntry } from '../../shared/todo-types';
 
 export const HistoryPopover: React.FC<{
-  docId: string;
+  /** 所属任务 id —— 文档版本按 (todoId, fileName) 定位。缺省(比如旧调用方)
+   *  拿不到 todoId)时 History 就不可用。 */
+  todoId?: string;
+  /** 文档在任务目录里的文件名。schema v21 之后文档就是文件，文件名才是
+   *  它的身份。 */
+  fileName?: string;
   /** Called after a successful restore so the editor can re-read its body
    *  and reset its `dirty` flag. */
   onRestored?: () => void;
-}> = ({ docId, onRestored }) => {
+}> = ({ todoId, fileName, onRestored }) => {
   const [open, setOpen] = useState(false);
-  const { available, entries, refresh, restore } = useGitHistory(docId);
+  const { available, entries, refresh, restore } = useGitHistory(todoId ?? null, fileName ?? null);
   const [busy, setBusy] = useState<string | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
 

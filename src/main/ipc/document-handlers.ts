@@ -1,12 +1,18 @@
-// IPC handlers for document.* channels (multi-document workspace, schema v11).
+// IPC handlers for document.* channels (schema v21: 文档就是文件)。
+//
+// 所有写操作(新建 / 保存 / 删除 / 改名)结尾都会 best-effort 地 git commit
+// 一次**整个** todos/ 目录 —— 一次文档操作往往同时动好几个路径(正文文件、
+// todo.json、缩略图、以及 git 需要知道的删除)，只提交单个文件会让仓库和
+// 工作区慢慢对不上。commitAll 没东西可提交时不建 commit，git 不可用时静默
+// 返回 null：git 失败绝不能让用户的保存失败。
 
 import { BrowserWindow } from 'electron';
-import { relative, sep } from 'node:path';
+import { join, relative, sep } from 'node:path';
 import { okResult, failResult, register } from './router';
-import type { DocumentStore } from '../files/documents';
+import type { DocumentStore, LinkStore } from '../files/documents';
 import * as gitHistory from '../git-history';
-import * as paths from '../files/paths';
-import type { TaskDocument, ULID } from '../../shared/todo-types';
+import { labelForFileName } from '../files/task-files';
+import type { ULID } from '../../shared/todo-types';
 import { logger } from '../logger';
 
 /** Broadcast a content-scope data-changed so any open editor refetches its
@@ -23,6 +29,7 @@ export type ResolveTaskDir = (todoId: ULID) => string;
 
 export function registerDocumentHandlers(
   docs: DocumentStore,
+  links: LinkStore,
   resolveTaskDir: ResolveTaskDir,
   todosDir: string,
 ): void {
@@ -34,51 +41,49 @@ export function registerDocumentHandlers(
     /* swallow — see comment above */
   });
 
-  // Resolve the git relPath (path of the doc's file relative to the todosDir
-  // repo root) for a given document. Progress → {slug}/progress.md;
-  // note_md → {slug}/{slugified-title}.md. Forward slashes for git.
-  const docRelPath = (doc: TaskDocument): string => {
-    const taskDir = resolveTaskDir(doc.todoId);
-    const abs =
-      doc.kind === 'progress'
-        ? paths.progressFile(taskDir)
-        : paths.noteFile(taskDir, doc.title ?? '');
-    return relative(todosDir, abs).split(sep).join('/');
+  // git 记账：一次提交覆盖 todos/ 下的全部改动。没东西可提交时不建 commit，
+  // git 不可用 / 提交失败时返回 null —— 一律吞掉，绝不让用户的保存失败。
+  const commitAllToGit = (message: string): void => {
+    void gitHistory.commitAll(todosDir, message).catch(() => {
+      /* swallow — git is best-effort */
+    });
   };
 
-  // Best-effort commit after a write/restore. Swallowed on every error path so
-  // a failed git commit never surfaces as a write failure (content is already
-  // safe on disk + in the DB).
-  const commitDocToGit = async (doc: TaskDocument, version: number): Promise<void> => {
-    try {
-      if (!(await gitHistory.gitAvailable())) return;
-      if (doc.kind !== 'progress' && doc.kind !== 'note_md') return;
-      await gitHistory.commitOnSave(todosDir, docRelPath(doc), doc.title ?? doc.kind, version);
-    } catch {
-      /* swallow — git is best-effort */
-    }
-  };
+  // Resolve the git relPath (the doc's file relative to the todosDir repo
+  // root). Forward slashes for git.
+  const docRelPath = (todoId: ULID, fileName: string): string =>
+    relative(todosDir, join(resolveTaskDir(todoId), fileName)).split(sep).join('/');
 
   register('document.list', (_e, req) => {
     try {
-      // Ensure the default progress doc exists — covers todos created after
-      // the v11 migration (which only back-fills pre-existing todos).
-      docs.ensureDefaultDocs(req.todoId);
-      return Promise.resolve(okResult(docs.list(req.todoId)));
+      const taskDir = resolveTaskDir(req.todoId);
+      // 确保进展文档存在 —— 覆盖 v11 迁移之后新建的任务(那个迁移只回填了
+      // 迁移时已存在的任务)。
+      docs.ensureDefaultDocs(req.todoId, taskDir);
+      return Promise.resolve(okResult({ files: docs.listFiles(taskDir) }));
     } catch (err) {
       return Promise.resolve(failResult('document_list_failed', (err as Error).message));
     }
   });
 
+  // 刷新按钮：清掉扫描缓存后重读目录，把用户在应用外新建 / 删除的文件
+  // 显出来。DB 里没有需要 reconcile 的东西 —— 文件本身就是全部真相。
+  register('document.refresh', (_e, req) => {
+    try {
+      const taskDir = resolveTaskDir(req.todoId);
+      return Promise.resolve(okResult({ files: docs.refreshFiles(taskDir) }));
+    } catch (err) {
+      return Promise.resolve(failResult('document_refresh_failed', (err as Error).message));
+    }
+  });
+
   register('document.create', (_e, req) => {
     try {
-      const doc = docs.create(req.todoId, req.kind, req.title ?? null, {
-        refId: req.refId,
-        url: req.url,
-        description: req.description,
-      });
+      const taskDir = resolveTaskDir(req.todoId);
+      const entry = docs.createNoteFile(taskDir, req.title ?? null);
+      commitAllToGit(`新增文档 ${entry.label}`);
       broadcastDataChanged('content');
-      return Promise.resolve(okResult(doc));
+      return Promise.resolve(okResult(entry));
     } catch (err) {
       return Promise.resolve(failResult('document_create_failed', (err as Error).message));
     }
@@ -86,7 +91,7 @@ export function registerDocumentHandlers(
 
   register('document.read', (_e, req) => {
     try {
-      return Promise.resolve(okResult(docs.read(req.id)));
+      return Promise.resolve(okResult(docs.read(req.todoId, req.fileName)));
     } catch (err) {
       return Promise.resolve(failResult('document_read_failed', (err as Error).message));
     }
@@ -94,22 +99,12 @@ export function registerDocumentHandlers(
 
   register('document.write', (_e, req) => {
     try {
-      const res = docs.write(req.id, req.content, req.expectVersion);
-      // Mirror to disk for git-history + file explorer. Only progress +
-      // note_md carry versioned text; other kinds have no file backing.
-      const doc = docs.get(req.id);
-      if (doc && (doc.kind === 'progress' || doc.kind === 'note_md')) {
-        docs.writeToFile(
-          resolveTaskDir(doc.todoId),
-          doc.kind,
-          doc.title ?? '',
-          req.content,
-        );
-        // Commit to git so the per-document History popover has something
-        // to show. Best-effort: a failed commit must NOT surface as a write
-        // failure (the body is already on disk + in the DB).
-        void commitDocToGit(doc, res.version);
-      }
+      const taskDir = resolveTaskDir(req.todoId);
+      // 先记版本再落文件：版本历史是用户输入的唯一一份拷贝，文件写失败
+      // (只读盘 / 同步软件锁) 时至少内容还在，saveContent 里的 writeToFile
+      // 是 best-effort 的。
+      const res = docs.saveContent(taskDir, req.todoId, req.fileName, req.content, req.expectVersion);
+      commitAllToGit(`保存文档 ${labelForFileName(req.fileName)}`);
       broadcastDataChanged('content');
       return Promise.resolve(okResult(res));
     } catch (err) {
@@ -123,19 +118,11 @@ export function registerDocumentHandlers(
 
   register('document.rename', (_e, req) => {
     try {
-      const before = docs.get(req.id);
-      docs.rename(req.id, req.title);
-      const after = docs.get(req.id)!;
-      // Rename the on-disk file for note_md docs (progress.md never moves).
-      if (before && (before.kind === 'progress' || before.kind === 'note_md')) {
-        docs.renameFile(
-          resolveTaskDir(after.todoId),
-          before.kind,
-          before.title ?? '',
-          req.title,
-        );
-      }
-      return Promise.resolve(okResult(after));
+      const taskDir = resolveTaskDir(req.todoId);
+      // 文件名就是标签：改名 = 搬文件。返回实际落地的文件名，标签跟着它走。
+      const fileName = docs.renameFile(taskDir, req.fileName, req.title);
+      if (fileName !== req.fileName) commitAllToGit(`重命名文档 ${labelForFileName(req.fileName)}`);
+      return Promise.resolve(okResult({ fileName, label: labelForFileName(fileName) }));
     } catch (err) {
       return Promise.resolve(failResult('document_rename_failed', (err as Error).message));
     }
@@ -143,15 +130,9 @@ export function registerDocumentHandlers(
 
   register('document.remove', (_e, req) => {
     try {
-      const before = docs.get(req.id);
-      docs.remove(req.id);
-      if (before && (before.kind === 'progress' || before.kind === 'note_md')) {
-        docs.removeFile(
-          resolveTaskDir(before.todoId),
-          before.kind,
-          before.title ?? '',
-        );
-      }
+      const taskDir = resolveTaskDir(req.todoId);
+      docs.removeFile(taskDir, req.fileName);
+      commitAllToGit(`删除文档 ${labelForFileName(req.fileName)}`);
       broadcastDataChanged('content');
       return Promise.resolve(okResult(undefined as never));
     } catch (err) {
@@ -161,42 +142,36 @@ export function registerDocumentHandlers(
 
   register('document.history', (_e, req) => {
     try {
-      return Promise.resolve(okResult(docs.history(req.id)));
+      return Promise.resolve(okResult(docs.history(req.todoId, req.fileName)));
     } catch (err) {
       return Promise.resolve(failResult('document_history_failed', (err as Error).message));
     }
   });
 
-  register('document.restoreVersion', async (_e, req) => {
+  register('document.restoreVersion', (_e, req) => {
     try {
-      const before = docs.get(req.id);
-      docs.restoreVersion(req.id, req.versionId);
-      // Re-mirror to disk so git-history reflects the restored content, and
-      // commit it as a new save so the History popover shows the restore.
-      if (before && (before.kind === 'progress' || before.kind === 'note_md')) {
-        const current = docs.read(req.id);
-        docs.writeToFile(
-          resolveTaskDir(before.todoId),
-          before.kind,
-          before.title ?? '',
-          current.content,
-        );
-        void commitDocToGit(before, current.version);
-      }
+      const taskDir = resolveTaskDir(req.todoId);
+      // 恢复也重新落一次盘，让 git 历史记录下这次恢复。
+      const current = docs.read(req.todoId, req.fileName);
+      docs.restoreVersion(req.todoId, req.fileName, req.versionId);
+      docs.writeToFile(taskDir, req.fileName, docs.read(req.todoId, req.fileName).content);
+      commitAllToGit(`恢复版本 ${labelForFileName(req.fileName)} v${current.version}`);
       broadcastDataChanged('content');
       return Promise.resolve(okResult(undefined as never));
     } catch (err) {
-      return Promise.resolve(failResult('document_restore_failed', (err as Error).message));
+      const message = (err as Error).message;
+      const isMissing = message.startsWith('version_not_found');
+      return Promise.resolve(
+        failResult(isMissing ? 'version_not_found' : 'document_restore_failed', message),
+      );
     }
   });
 
   register('document.gitHistory', async (_e, req) => {
     try {
-      const doc = docs.get(req.id);
-      if (!doc) return failResult('document_not_found', `document ${req.id} not found`);
       const available = await gitHistory.gitAvailable();
       if (!available) return okResult({ available: false, entries: [] });
-      const entries = (await gitHistory.getFileLog(todosDir, docRelPath(doc))) ?? [];
+      const entries = (await gitHistory.getFileLog(todosDir, docRelPath(req.todoId, req.fileName))) ?? [];
       return okResult({ available: true, entries });
     } catch (err) {
       return failResult('git_history_failed', (err as Error).message);
@@ -205,17 +180,13 @@ export function registerDocumentHandlers(
 
   register('document.gitRestore', async (_e, req) => {
     try {
-      const doc = docs.get(req.id);
-      if (!doc) return failResult('document_not_found', `document ${req.id} not found`);
-      if (doc.kind !== 'progress' && doc.kind !== 'note_md') {
-        return failResult('git_restore_failed', `document kind ${doc.kind} has no file backing`);
-      }
-      const content = await gitHistory.getFileAtSha(todosDir, docRelPath(doc), req.sha);
+      const taskDir = resolveTaskDir(req.todoId);
+      const content = await gitHistory.getFileAtSha(todosDir, docRelPath(req.todoId, req.fileName), req.sha);
       if (content == null) return failResult('git_restore_failed', `no content at ${req.sha}`);
-      // Write the restored content back as a new DB version (mirrors to disk +
-      // keeps FTS index in sync), then commit so the restore itself is logged.
-      const res = docs.write(req.id, content);
-      void commitDocToGit(doc, res.version);
+      // 恢复出来的内容作为一个新版本写回(镜像到磁盘 + FTS 同步)，再提交，
+      // 这样恢复本身也出现在历史里。
+      docs.saveContent(taskDir, req.todoId, req.fileName, content);
+      commitAllToGit(`从 git 恢复文档 ${labelForFileName(req.fileName)}`);
       broadcastDataChanged('content');
       return okResult(undefined as never);
     } catch (err) {
@@ -223,5 +194,38 @@ export function registerDocumentHandlers(
     }
   });
 
-  logger.info('document.* handlers registered');
+  // ----- link.* -----
+  //
+  // 链接有自己的表 todo_links：它没有文件，所以吃不了「文件名 = 标签」那套
+  // 规则，也就无法从任务目录推导出来。CRUD 都在这里。
+
+  register('link.list', (_e, req) => {
+    try {
+      return Promise.resolve(okResult(links.list(req.todoId)));
+    } catch (err) {
+      return Promise.resolve(failResult('link_list_failed', (err as Error).message));
+    }
+  });
+
+  register('link.add', (_e, req) => {
+    try {
+      const link = links.add(req.todoId, req.url, req.title ?? null, req.description ?? null);
+      broadcastDataChanged('content');
+      return Promise.resolve(okResult(link));
+    } catch (err) {
+      return Promise.resolve(failResult('link_add_failed', (err as Error).message));
+    }
+  });
+
+  register('link.remove', (_e, req) => {
+    try {
+      links.remove(req.id);
+      broadcastDataChanged('content');
+      return Promise.resolve(okResult(undefined as never));
+    } catch (err) {
+      return Promise.resolve(failResult('link_remove_failed', (err as Error).message));
+    }
+  });
+
+  logger.info('document.* + link.* handlers registered');
 }

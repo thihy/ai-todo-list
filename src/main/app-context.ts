@@ -19,7 +19,10 @@
 import type { ULID } from '../shared/todo-types';
 
 export type FocusKind =
-  | { kind: 'document'; todoId: ULID; documentId: ULID; documentKind: string; documentTitle: string | null }
+  // 文档的身份是**文件名**（schema v21 之后没有 task_documents 行了）。
+  // 标签会改，文件名只在文件真的被搬走时才变 —— 所以焦点指向文件名，
+  // AI 才能确定地读回同一篇文档。
+  | { kind: 'document'; todoId: ULID; documentFileName: string; documentKind: string; documentTitle: string | null }
   | { kind: 'drawing'; todoId: ULID; drawingId: ULID; drawingTitle: string | null }
   | { kind: 'task'; todoId: ULID; taskTitle: string | null }
   | null;

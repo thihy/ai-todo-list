@@ -27,6 +27,14 @@ export const UNTITLED_SLUG = 'untitled';
  *  旧版自动保存把「没传 title」当成清空标题，文件就一路退化成了那个名字。 */
 export const DEFAULT_DRAWING_TITLE = '绘图';
 
+/** 新建 Markdown 文档的默认标签 → `{taskDir}/文档.md`。
+ *  同名文档按 allocateFileName() 递增成 文档_1.md / 文档_2.md。 */
+export const DEFAULT_NOTE_TITLE = '文档';
+
+/** 进展文档的文件名固定为这个，**不参与**「文件名 = 标签名」的规则：
+ *  每个任务只有一个进展文档，改名不会动它。 */
+export const PROGRESS_FILE_NAME = 'progress.md';
+
 /** 把用户标题清洗成安全的目录 / 文件名组件。
  *
  *  规则：
@@ -106,10 +114,12 @@ export function todoDir(todosDir: string, title: string, ulid: string): string {
  *  标题不参与命名——这是和 note_md / drawing 的最大区别。
  *  内容为 Markdown，磁盘投影仅作 git 历史/文件管理器之用，DB 才是权威。 */
 export function progressFile(taskDir: string): string {
-  return join(taskDir, 'progress.md');
+  return join(taskDir, PROGRESS_FILE_NAME);
 }
 
-/** 文档（kind=note_md）路径：按文档标题的 slug 加 .md。 */
+/** 文档（kind=note_md）路径：按文档标题的 slug 加 .md。
+ *  ⚠️ 这是「纯 slugify」的路径函数，同名文档会算出同一个路径。带碰撞避让
+ *  的分配请用 allocateFileName()，别再直接调用。 */
 export function noteFile(taskDir: string, docTitle: string): string {
   return join(taskDir, `${slugify(docTitle)}.md`);
 }
@@ -130,36 +140,45 @@ export function drawingFileName(drawingTitle: string | null | undefined): string
   return `${slugify(label || DEFAULT_DRAWING_TITLE)}.excalidraw`;
 }
 
-/** 给一张绘图挑一个没被占用的文件名。
+/** 文档文件名（不含目录）：标签 slug + .md，空标签回退到
+ *  DEFAULT_NOTE_TITLE。DocumentStore 把它写进 task_documents.path。 */
+export function noteFileName(docTitle: string | null | undefined): string {
+  const label = (docTitle ?? '').trim();
+  return `${slugify(label || DEFAULT_NOTE_TITLE)}.md`;
+}
+
+/** 选一个当前没被占用的文件名，重名时按 `_1` `_2` `_3` 递增。
  *
  *  @param taskDir   任务目录（占用判断会看真实文件系统）
- *  @param base      期望的文件名，一般来自 drawingFileName()
- *  @param taken     同一任务下**其它**绘图已在 DB 登记的 path
- *  @param drawingId 撞名时用来生成稳定后缀
- *  @param selfFile  这一行自己当前占用的文件名（不把它算作冲突），
- *                   否则「标签没变」也会被误判成撞名而白白改名
+ *  @param base      期望的文件名，一般来自 noteFileName() / drawingFileName()
+ *  @param taken     同一任务下**其它**文档/绘图已在 DB 登记的 path
+ *  @param selfFile  这一行自己当前占用的文件名（不把它算作冲突），否则
+ *                   「标签没变」也会被误判成重名而白白改名
  *
- *  占用判断同时看 DB 映射和磁盘实况：孤儿文件（磁盘上有、DB 没登记）也不能
- *  覆盖。数据安全优先于「文件名和标签完全一致」的观感——真撞上了就退化成
- *  `{stem}-{id 前 6 位}.excalidraw`，仍然能一眼看出是谁的。 */
-export function uniqueDrawingFileName(
+ *  占用判断同时看 DB 映射和磁盘实况：孤儿文件（磁盘上有、DB 没登记）也
+ *  不能覆盖。**绝不覆盖已有文件**是这里的硬要求 —— 同名文档必须各有各的
+ *  文件，否则后一张 tab 会写穿前一张的内容。
+ *
+ *  注意 `_1` 形式而不是 `-{id}`：用户看到的是一串递增编号，能立刻理解
+ *  「这是第 2 个同名文档」，而 id 后缀既不可读也不可预测。 */
+export function allocateFileName(
   taskDir: string,
   base: string,
   taken: ReadonlySet<string>,
-  drawingId: string,
   selfFile?: string,
 ): string {
   const free = (name: string): boolean =>
     !taken.has(name) && (name === selfFile || !existsSync(join(taskDir, name)));
   if (free(base)) return base;
-  const ext = base.endsWith('.excalidraw') ? '.excalidraw' : '';
-  const stem = ext ? base.slice(0, -ext.length) : base;
-  const tail = drawingId.slice(0, 6) || 'draw';
-  for (let n = 1; n <= 999; n++) {
-    const candidate = `${stem}-${tail}${n > 1 ? `-${n}` : ''}${ext}`;
+  const dot = base.lastIndexOf('.');
+  const ext = dot > 0 ? base.slice(dot) : '';
+  const stem = dot > 0 ? base.slice(0, dot) : base;
+  for (let n = 1; n <= 9999; n++) {
+    const candidate = `${stem}_${n}${ext}`;
     if (free(candidate)) return candidate;
   }
-  return `${stem}-${tail}-${Date.now()}${ext}`;
+  // 递增到 9999 还撞名（几乎不可能）：用时间戳保证唯一，仍然不覆盖。
+  return `${stem}_${Date.now()}${ext}`;
 }
 
 /** 绘图缩略图路径：放在 taskDir/thumbs/ 子目录里。thumbs 命名跟 drawing id

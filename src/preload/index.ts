@@ -114,14 +114,17 @@ const api: TodoListApi = {
   document: {
     list: (todoId) => invoke('document.list', { todoId }),
     create: (req) => invoke('document.create', req),
-    read: (id) => invoke('document.read', { id }),
-    write: (id, content, expectVersion) => invoke('document.write', { id, content, expectVersion }),
-    rename: (id, title) => invoke('document.rename', { id, title }),
-    remove: (id) => invoke('document.remove', { id }),
-    history: (id) => invoke('document.history', { id }),
-    restoreVersion: (id, versionId) => invoke('document.restoreVersion', { id, versionId: Number(versionId) }),
-    gitHistory: (id) => invoke('document.gitHistory', { id }),
-    gitRestore: (id, sha) => invoke('document.gitRestore', { id, sha }),
+    refresh: (todoId) => invoke('document.refresh', { todoId }),
+    read: (todoId, fileName) => invoke('document.read', { todoId, fileName }),
+    write: (todoId, fileName, content, expectVersion) =>
+      invoke('document.write', { todoId, fileName, content, expectVersion }),
+    rename: (todoId, fileName, title) => invoke('document.rename', { todoId, fileName, title }),
+    remove: (todoId, fileName) => invoke('document.remove', { todoId, fileName }),
+    history: (todoId, fileName) => invoke('document.history', { todoId, fileName }),
+    restoreVersion: (todoId, fileName, versionId) =>
+      invoke('document.restoreVersion', { todoId, fileName, versionId: Number(versionId) }),
+    gitHistory: (todoId, fileName) => invoke('document.gitHistory', { todoId, fileName }),
+    gitRestore: (todoId, fileName, sha) => invoke('document.gitRestore', { todoId, fileName, sha }),
   },
   drawing: {
     list: (todoId) => invoke('drawing.list', { todoId }),
@@ -133,6 +136,9 @@ const api: TodoListApi = {
     setThumb: (id, dataUrl) => invoke('drawing.setThumb', { id, dataUrl }),
   },
   link: {
+    list: (todoId) => invoke('link.list', { todoId }),
+    add: (req) => invoke('link.add', req),
+    remove: (id) => invoke('link.remove', { id }),
     fetchMeta: (url) => invoke('link.fetchMeta', { url }),
   },
   inbox: {

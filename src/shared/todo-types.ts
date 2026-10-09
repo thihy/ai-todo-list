@@ -175,47 +175,59 @@ export interface ProgressLogEntry {
   createdAt: number;
 }
 
-// ----- Multi-document workspace (schema v11) -----
+// ----- Task documents (schema v21) -----
 //
-// A task owns a list of `task_documents` rows. Each row is one document the
-// user can open in the detail body workspace. `kind` decides where the
-// content lives and which editor renders it:
+// 一个任务的文档就是它目录里的文件。标签和文件名是同一个东西(除了
+// progress.md)，所以 DB 不再存第二份「有哪些文档 / 叫什么」的映射 ——
+// 那会让两份真相迟早打架，而且打架时没人知道该信谁。
 //
-//   progress   — the default WYSIWYG rich-text doc (one per task, auto-created).
-//                 Content (HTML) is versioned in `document_versions`.
-//   note_md    — a Markdown doc. Content versioned in `document_versions`.
-//   drawing    — an Excalidraw drawing; refId → rows in the `drawings` table.
-//   attachment — a file (incl. pasted images); refId → `inbox_attachments`.
-//   link       — a hyperlink; `url` holds the URL, no file.
+//   progress   — 唯一的进展文档，文件名固定 progress.md，标签固定「进展」。
+//                不参与重命名，也不参与 `_N` 递增。
+//   note_md    — 一篇 Markdown，文件 {label}.md。
+//   drawing    — 一张 Excalidraw，文件 {label}.excalidraw。
+//
+// 链接和附件**不是**文档：链接有自己的表(见 TodoLink)，附件有自己的表
+// (InboxAttachment)。它们没有文件，所以也不吃「文件名 = 标签」这套规则。
 
-export type DocumentKind = 'progress' | 'note_md' | 'drawing' | 'attachment' | 'link';
+export type DocumentKind = 'progress' | 'note_md' | 'drawing';
 
-export interface TaskDocument {
-  id: ULID;
-  todoId: ULID;
+/** One file in a task's document directory — the authoritative shape of a
+ *  "document". Produced by scanning the directory; there is no DB row. */
+export interface TaskFileEntry {
+  /** Task-relative file name, e.g. `架构图_1.md`, `绘图.excalidraw`. */
+  fileName: string;
+  /** Display label. For everything but progress this is exactly the file
+   *  name minus its extension —— 文件名与标签名一一对应。 */
+  label: string;
   kind: DocumentKind;
-  title: string | null;
-  /** Points to the kind-specific record: a drawings.id (drawing) or an
-   *  inbox_attachments.id (attachment). null for progress / note_md / link. */
-  refId: string | null;
-  /** URL for kind === 'link'. null otherwise. */
-  url: string | null;
-  /** Short page description for kind === 'link' — the fetched <meta
-   *  description> / og:description, shown as a subtitle under the link
-   *  title. null when the page had none or the fetch failed (best-effort).
-   *  Unused (null) for other kinds. */
-  description: string | null;
-  /** Display order within the task (0 = first; progress is always 0). */
-  ord: number;
-  createdAt: number;
-  updatedAt: number;
+  sizeBytes: number;
+  /** File mtime, ms. Lets callers tell "changed on disk" from "unchanged"
+   *  without re-reading content. */
+  mtimeMs: number;
 }
 
 export interface DocumentVersionEntry {
   id: number;
-  documentId: ULID;
+  todoId: ULID;
+  /** 文件名才是文档的稳定身份(标签会改，文件名只在重命名时变)。 */
+  fileName: string;
   content: string;
   savedAt: number;
+}
+
+/** A task's saved link. Lives in its own table — a link has no file, so it
+ *  can't be derived from the task directory the way a document is. */
+export interface TodoLink {
+  id: ULID;
+  todoId: ULID;
+  title: string | null;
+  url: string;
+  /** Short page description (the fetched <meta description> / og:description),
+   *  shown as a subtitle under the link title. null when the page had none or
+   *  the fetch failed (best-effort). */
+  description: string | null;
+  createdAt: number;
+  updatedAt: number;
 }
 
 export interface DrawingMeta {

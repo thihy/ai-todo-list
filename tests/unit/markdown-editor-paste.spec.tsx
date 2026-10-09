@@ -318,7 +318,7 @@ describe('MarkdownEditor image paste', () => {
     expect(captured.resolved['missing']).toBeUndefined();
   });
 
-  it('粘贴：用「pasted-YYYYMMDD-HHMMSS-i」作为 alt + filename + companion doc title', async () => {
+  it('粘贴：用「pasted-YYYYMMDD-HHMMSS-i」作为 alt + filename', async () => {
     let resolveUpload!: (value: { ok: true; data: { id: string } }) => void;
     attachBlob.mockImplementation(
       () => new Promise((resolve) => { resolveUpload = resolve; }),
@@ -352,14 +352,11 @@ describe('MarkdownEditor image paste', () => {
     const expectedAlt = filename; // 时间戳名字 = alt
     expect(getTextarea().value).toContain(`![${expectedAlt}](attachment://att-abc)`);
 
-    // document.create({kind:'attachment', title, refId}) 也被调，title 与
-    // alt 完全一致 —— 这是 inbox.rename 同步替换 MD alt 的起点。
-    expect(documentCreate).toHaveBeenCalledWith({
-      todoId: 'todo-named',
-      kind: 'attachment',
-      title: expectedAlt,
-      refId: 'att-abc',
-    });
+    // schema v21 起附件**不是文档**：inbox.attachBlob 落盘 + 写
+    // inbox_attachments 就结束了，不再补一条 document 行。展示名由磁盘上
+    // 的 `{id}-{文件名}` 反推，inbox.rename 扫 alt 时也只按 id 匹配，所以
+    // 这里不该有任何 document.create。
+    expect(documentCreate).not.toHaveBeenCalled();
   });
 
   it('多图粘贴：每张 alt 是 pasted-YYYYMMDD-HHMMSS-i，i 递增', async () => {
@@ -392,17 +389,7 @@ describe('MarkdownEditor image paste', () => {
     expect(f2).toMatch(/pasted-\d{8}-\d{6}-2$/);
     expect(getTextarea().value).toContain(`![${f1}](attachment://att-1)`);
     expect(getTextarea().value).toContain(`![${f2}](attachment://att-2)`);
-    // companion doc 各建一条
-    expect(documentCreate).toHaveBeenCalledTimes(2);
-    expect(documentCreate.mock.calls[0]![0]).toMatchObject({
-      kind: 'attachment',
-      title: f1,
-      refId: 'att-1',
-    });
-    expect(documentCreate.mock.calls[1]![0]).toMatchObject({
-      kind: 'attachment',
-      title: f2,
-      refId: 'att-2',
-    });
+    // 附件不建 document 行（schema v21），每张图只产生一条 inbox 记录。
+    expect(documentCreate).not.toHaveBeenCalled();
   });
 });

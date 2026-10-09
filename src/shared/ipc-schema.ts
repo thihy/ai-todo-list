@@ -10,10 +10,11 @@ import type {
   ProgressLogEntry,
   SearchHit,
   TagDef,
-  TaskDocument,
+  TaskFileEntry,
   Todo,
   TodoCreate,
   TodoFilter,
+  TodoLink,
   TodoPatch,
   TodoStats,
   ULID,
@@ -71,50 +72,58 @@ export interface ProgressUpdateNoteReq { entryId: string; note: string | null }
 
 // ----- document.* -----
 //
-// Multi-document workspace (schema v11). Each task owns task_documents rows;
-// progress / note_md docs carry versioned text content in document_versions.
-// document.read/write operate on that versioned content; document.create /
-// remove / rename manage list metadata for ALL kinds (incl. drawing /
-// attachment / link, whose content lives elsewhere via refId / url).
+// Task documents are FILES (schema v21). The task directory is the only
+// source of truth for "what documents exist"; `fileName` is a document's
+// identity everywhere below (labels get renamed, file names only move when
+// the file moves). progress / note_md carry versioned text content in
+// document_versions, keyed by (todo_id, file_name).
 
 export interface DocumentListReq { todoId: ULID }
-export interface DocumentCreateReq {
-  todoId: ULID;
-  kind: TaskDocument['kind'];
-  title?: string | null;
-  refId?: string | null;
-  url?: string | null;
-  /** Short page description for kind === 'link' (fetched <meta description> /
-   *  og:description). Ignored for other kinds. */
-  description?: string | null;
-}
-export interface DocumentReadReq { id: ULID }
+export interface DocumentListRes { files: TaskFileEntry[] }
+/** Create a new note_md document. The main process allocates a collision-free
+ *  file name (`文档` → `文档_1` → …) and returns the entry that actually
+ *  landed on disk — the label always equals the file name. */
+export interface DocumentCreateReq { todoId: ULID; title?: string | null }
+/** Drop the scan cache for one task and re-read the directory. Surfaces files
+ *  the user added / removed outside the app (editor button on the tab bar). */
+export interface DocumentRefreshReq { todoId: ULID }
+export interface DocumentRefreshRes { files: TaskFileEntry[] }
+export interface DocumentReadReq { todoId: ULID; fileName: string }
 export interface DocumentReadRes { content: string; version: number }
-export interface DocumentWriteReq { id: ULID; content: string; expectVersion?: number }
+export interface DocumentWriteReq { todoId: ULID; fileName: string; content: string; expectVersion?: number }
 export interface DocumentWriteRes { version: number; updatedAt: number }
-export interface DocumentRenameReq { id: ULID; title: string }
-export interface DocumentRemoveReq { id: ULID }
-export interface DocumentHistoryReq { id: ULID }
-export interface DocumentRestoreVersionReq { id: ULID; versionId: number }
+/** Rename a document by moving its file. Returns the name that actually
+ *  landed on disk (`架构` → `架构_1` when that name is taken). Renaming
+ *  progress.md is a no-op — its name is fixed. */
+export interface DocumentRenameReq { todoId: ULID; fileName: string; title: string }
+export interface DocumentRenameRes { fileName: string; label: string }
+/** Delete a document by removing its file from the task directory. */
+export interface DocumentRemoveReq { todoId: ULID; fileName: string }
+export interface DocumentHistoryReq { todoId: ULID; fileName: string }
+export interface DocumentRestoreVersionReq { todoId: ULID; fileName: string; versionId: number }
 /** Per-document git-backed save history (mirrors content.gitHistory but
- *  keyed by document id so each progress / note_md doc has its own log).
+ *  keyed by file so each progress / note_md doc has its own log).
  *  `available: false` means git isn't on PATH. */
-export interface DocumentGitHistoryReq { id: ULID }
+export interface DocumentGitHistoryReq { todoId: ULID; fileName: string }
 export interface DocumentGitHistoryRes {
   available: boolean;
   entries: GitHistoryEntry[];
 }
-export interface DocumentGitRestoreReq { id: ULID; sha: string }
+export interface DocumentGitRestoreReq { todoId: ULID; fileName: string; sha: string }
 
 // ----- link.* -----
 //
-// Link preview fetch (schema v12). The renderer can't fetch arbitrary URLs
-// (CORS), so link.fetchMeta runs in the main process: it GETs the URL, parses
-// the first chunk of HTML for <title> + <meta description> / og:description,
-// and returns them so the add-link dialog can prefill the title + description.
-// Best-effort: failures return empty strings, never an error, so the user can
-// still type the fields manually.
+// A task's saved links live in their own table (`todo_links`) — a link has no
+// file, so it can't be derived from the task directory the way a document is.
+// link.fetchMeta runs in the main process: the renderer can't fetch arbitrary
+// URLs (CORS), so main GETs the page, parses the first chunk of HTML for
+// <title> + <meta description> / og:description, and returns them so the
+// add-link dialog can prefill. Best-effort: failures return empty strings,
+// never an error, so the user can still type the fields manually.
 
+export interface LinkListReq { todoId: ULID }
+export interface LinkAddReq { todoId: ULID; title?: string | null; url: string; description?: string | null }
+export interface LinkRemoveReq { id: ULID }
 export interface LinkFetchMetaReq { url: string }
 export interface LinkFetchMetaRes {
   title: string;
@@ -552,17 +561,21 @@ export interface IpcRegistry {
   'progress.list': IpcChannel<ProgressListReq, IpcResult<ProgressLogEntry[]>>;
   'progress.updateNote': IpcChannel<ProgressUpdateNoteReq, IpcResult<ProgressLogEntry | null>>;
 
-  'document.list': IpcChannel<DocumentListReq, IpcResult<TaskDocument[]>>;
-  'document.create': IpcChannel<DocumentCreateReq, IpcResult<TaskDocument>>;
+  'document.list': IpcChannel<DocumentListReq, IpcResult<DocumentListRes>>;
+  'document.create': IpcChannel<DocumentCreateReq, IpcResult<TaskFileEntry>>;
+  'document.refresh': IpcChannel<DocumentRefreshReq, IpcResult<DocumentRefreshRes>>;
   'document.read': IpcChannel<DocumentReadReq, IpcResult<DocumentReadRes>>;
   'document.write': IpcChannel<DocumentWriteReq, IpcResult<DocumentWriteRes>>;
-  'document.rename': IpcChannel<DocumentRenameReq, IpcResult<TaskDocument>>;
+  'document.rename': IpcChannel<DocumentRenameReq, IpcResult<DocumentRenameRes>>;
   'document.remove': IpcChannel<DocumentRemoveReq, IpcResult<void>>;
   'document.history': IpcChannel<DocumentHistoryReq, IpcResult<DocumentVersionEntry[]>>;
   'document.restoreVersion': IpcChannel<DocumentRestoreVersionReq, IpcResult<void>>;
   'document.gitHistory': IpcChannel<DocumentGitHistoryReq, IpcResult<DocumentGitHistoryRes>>;
   'document.gitRestore': IpcChannel<DocumentGitRestoreReq, IpcResult<void>>;
 
+  'link.list': IpcChannel<LinkListReq, IpcResult<TodoLink[]>>;
+  'link.add': IpcChannel<LinkAddReq, IpcResult<TodoLink>>;
+  'link.remove': IpcChannel<LinkRemoveReq, IpcResult<void>>;
   'link.fetchMeta': IpcChannel<LinkFetchMetaReq, IpcResult<LinkFetchMetaRes>>;
 
   'content.readBody': IpcChannel<ContentReadBodyReq, IpcResult<ContentReadBodyRes>>;
@@ -1072,8 +1085,9 @@ export interface UpdaterStatusRes {
 export interface AppFocus {
   kind: 'document' | 'drawing' | 'task';
   todoId: string;
-  /** Set when kind === 'document'. */
-  documentId?: string;
+  /** Set when kind === 'document'. Since schema v21 a document IS a file in
+   *  the task directory, so its identity is the file name — not a DB row id. */
+  documentFileName?: string;
   documentKind?: string;
   documentTitle?: string | null;
   /** Set when kind === 'drawing'. */

@@ -26,7 +26,7 @@ import type {
 import type { Todo, TodoCreate, TodoPatch, TodoFilter, SearchHit, TodoStats } from './todo-types';
 import type { ContentVersionEntry } from './todo-types';
 import type { ProgressLogEntry } from './todo-types';
-import type { DocumentVersionEntry, TaskDocument } from './todo-types';
+import type { DocumentVersionEntry, TaskFileEntry, TodoLink } from './todo-types';
 import type { DrawingMeta, DrawingScene } from './todo-types';
 import type { TagDef } from './todo-types';
 
@@ -216,30 +216,41 @@ export interface TodoListApi {
     updateNote(entryId: string, note: string | null): Promise<IpcResponse<'progress.updateNote'>>;
   };
   document: {
-    /** List a task's documents (progress / note_md / drawing / attachment /
-     *  link), ordered by ord. Ensures the default progress doc exists. */
+    /** A task's documents, derived from its directory on disk (progress /
+     *  note_md / drawing). Ensures progress.md exists before listing. */
     list(todoId: string): Promise<IpcResponse<'document.list'>>;
-    create(req: {
-      todoId: string;
-      kind: TaskDocument['kind'];
-      title?: string | null;
-      refId?: string | null;
-      url?: string | null;
-      description?: string | null;
-    }): Promise<IpcResponse<'document.create'>>;
+    /** Create a new Markdown document. Main allocates a collision-free file
+     *  name and returns the entry that landed on disk, so the returned
+     *  `label` always equals `fileName` minus its extension. */
+    create(req: { todoId: string; title?: string | null }): Promise<IpcResponse<'document.create'>>;
+    /** Clear the scan cache and re-read the directory — picks up files the
+     *  user added / removed outside the app. */
+    refresh(todoId: string): Promise<IpcResponse<'document.refresh'>>;
     /** Read the latest versioned content of a progress / note_md doc. */
-    read(id: string): Promise<IpcResponse<'document.read'>>;
-    write(id: string, content: string, expectVersion?: number): Promise<IpcResponse<'document.write'>>;
-    rename(id: string, title: string): Promise<IpcResponse<'document.rename'>>;
-    remove(id: string): Promise<IpcResponse<'document.remove'>>;
-    history(id: string): Promise<IpcResponse<'document.history'>>;
-    restoreVersion(id: string, versionId: number): Promise<IpcResponse<'document.restoreVersion'>>;
+    read(todoId: string, fileName: string): Promise<IpcResponse<'document.read'>>;
+    write(
+      todoId: string,
+      fileName: string,
+      content: string,
+      expectVersion?: number,
+    ): Promise<IpcResponse<'document.write'>>;
+    /** Move the document's file to the new label's name. Returns the name that
+     *  actually landed (`架构` → `架构_1` when taken). progress.md never moves. */
+    rename(todoId: string, fileName: string, title: string): Promise<IpcResponse<'document.rename'>>;
+    /** Delete a document by unlinking its file from the task directory. */
+    remove(todoId: string, fileName: string): Promise<IpcResponse<'document.remove'>>;
+    history(todoId: string, fileName: string): Promise<IpcResponse<'document.history'>>;
+    restoreVersion(
+      todoId: string,
+      fileName: string,
+      versionId: number,
+    ): Promise<IpcResponse<'document.restoreVersion'>>;
     /** Per-document git-backed save history. `available: false` means git
      *  isn't on PATH — the editor hides the History button. */
-    gitHistory(id: string): Promise<IpcResponse<'document.gitHistory'>>;
+    gitHistory(todoId: string, fileName: string): Promise<IpcResponse<'document.gitHistory'>>;
     /** Restore a document's content to a given git commit SHA by writing it
      *  back as a new DB version (so the editor + FTS index stay in sync). */
-    gitRestore(id: string, sha: string): Promise<IpcResponse<'document.gitRestore'>>;
+    gitRestore(todoId: string, fileName: string, sha: string): Promise<IpcResponse<'document.gitRestore'>>;
   };
   drawing: {
     list(todoId: string): Promise<IpcResponse<'drawing.list'>>;
@@ -255,6 +266,14 @@ export interface TodoListApi {
     setThumb(id: string, dataUrl: string): Promise<IpcResponse<'drawing.setThumb'>>;
   };
   link: {
+    /** A task's saved links. Links live in their own table — they have no
+     *  file, so they can't be derived from the task directory the way a
+     *  document is. */
+    list(todoId: string): Promise<IpcResponse<'link.list'>>;
+    add(req: { todoId: string; title?: string | null; url: string; description?: string | null }): Promise<
+      IpcResponse<'link.add'>
+    >;
+    remove(id: string): Promise<IpcResponse<'link.remove'>>;
     /** Fetch a URL's page metadata (<title> + meta/og:description) from the
      *  main process (the renderer can't due to CORS). Best-effort: on failure
      *  returns empty strings, never rejects — the caller falls back to blank
@@ -521,7 +540,9 @@ export interface TodoListApi {
 export interface AppFocus {
   kind: 'document' | 'drawing' | 'task';
   todoId: string;
-  documentId?: string;
+  /** Set when kind === 'document'. Since schema v21 a document IS a file in
+   *  the task directory, so its identity is the file name — not a DB row id. */
+  documentFileName?: string;
   documentKind?: string;
   documentTitle?: string | null;
   drawingId?: string;
@@ -533,7 +554,7 @@ export interface AppFocus {
 export type { Todo, TodoCreate, TodoPatch, TodoFilter, SearchHit, TodoStats };
 export type { ContentVersionEntry };
 export type { ProgressLogEntry };
-export type { DocumentVersionEntry, TaskDocument };
+export type { DocumentVersionEntry, TaskFileEntry, TodoLink };
 export type { DrawingMeta, DrawingScene };
 export type { AIModel, AIProvider, AICustomProtocol, CustomProviderInput, CustomProviderView, AIStreamEvent, PermissionRequest, UserQuestionRequest, UserQuestionAnswer, UserQuestionItem, UserQuestionOption, UserQuestionAnswerItem, UserApprovalRequest, UserApprovalAnswer };
 export type { IpcChannelName, IpcRequest, IpcResponse };
