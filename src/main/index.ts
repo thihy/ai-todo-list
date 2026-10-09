@@ -43,6 +43,7 @@ import {
   DRAWINGS_SUBDIR,
   ATTACHMENTS_SUBDIR,
   DSH_WORKSPACE_SUBDIR,
+  DSH_ATTACHMENT_HOME_SUBDIR,
   APP_PRODUCT_NAME,
   APP_USER_MODEL_ID,
 } from '../shared/constants';
@@ -237,10 +238,14 @@ function bootstrap(): void {
     // + host `tools/pre-execute` 路径校验的目标）。在 attachmentsDir 之后一并
     // 创建；DSH_WORKSPACE_ROOT env 在 boot DSH container 之前再设置（见下）。
     const dshWorkspaceDir = join(rootDir, DSH_WORKSPACE_SUBDIR);
+    // DSH 持久化附件库根（`ctx.attachments`）。挂载 dsh-attachment-local 后
+    // `read_image` 才注册，AI 才能把图片作为真正的 image block 发给模型。
+    const dshAttachmentHome = join(rootDir, DSH_ATTACHMENT_HOME_SUBDIR);
     mkdirSync(todosDir, { recursive: true });
     mkdirSync(drawingsDir, { recursive: true });
     mkdirSync(attachmentsDir, { recursive: true });
     mkdirSync(dshWorkspaceDir, { recursive: true });
+    mkdirSync(dshAttachmentHome, { recursive: true });
     // Composer inbox lives under the DSH workspace so AI `read` /
     // `read_image` can find it without sandbox policy edits.
     composerInbox.initComposerInbox(rootDir);
@@ -411,6 +416,10 @@ function bootstrap(): void {
     // `process.env.DSH_WORKSPACE_ROOT`（cordis.yml 用 !!js 表达式读取）。
     // 在 import DSH container 之前 set；mkdirSync 已在 data-dir 阶段完成。
     process.env['DSH_WORKSPACE_ROOT'] = dshWorkspaceDir;
+    // 附件库同理：cordis.yml 把 dshHome 读成 `process.env.DSH_ATTACHMENT_HOME`。
+    // 不设的话 dsh-attachment-local 会 fall back 到 `~/.dsh`，把桌面应用的
+    // 持久化数据写进用户家目录。
+    process.env['DSH_ATTACHMENT_HOME'] = dshAttachmentHome;
 
     // Phase: AI runtime. STARTUP-DSH-001 — the splash now waits for the
     // DSH bootstrap to reach a terminal state (ready OR failed) before

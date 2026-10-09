@@ -40,6 +40,7 @@ import { toolInterruptionState } from '../../shared/tool-interruption';
 import type Database from 'better-sqlite3';
 import { mimeExt, sanitizeName } from '../util/mime';
 import { decodeUserMessage, encodeTaskCreationEnvelope, type UserIntent } from '../../shared/task-creation';
+import type { AttachmentStore } from '@deepseek-ai/dsh-attachment';
 
 // DSH 走动态 import：这样即使依赖没装，主 bundle 也能编译；同时启动失败时
 // 渲染端能看到显式的 "DSH unavailable" 而不是 import 阶段崩掉。
@@ -1273,6 +1274,12 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
     getCustomProviders: () => deps.settings.get().customProviders,
     getCustomProviderId: () => deps.settings.get().customProviderId,
     getUserAgent: () => deps.settings.get().userAgent,
+    // The durable attachment store is a cordis service; read it lazily so a
+    // store that mounts after this point still reaches the adapter. Without it
+    // the adapter refuses every image-bearing request, so `read_image` would
+    // commit an image that can never be sent to a model.
+    getAttachments: () =>
+      (ctx as { get?(name: string): unknown }).get?.('attachments') as AttachmentStore | undefined,
   });
   const disposeAdapter = llm.registerAdapter([...REAL_PROVIDER_ROUTES], llmAdapter);
   void REAL_PROVIDER_ROUTES;
@@ -2910,12 +2917,35 @@ function registerDomainTools(
   reg(defineTool({
     name: 'ai_models',
     ...wire('ai_models'),
-    description: 'List the configured model(s) for the active provider. Returns the list of models the user has enabled (per-provider defaults from settings). Useful when the user asks "which model are you?".',
+    description: 'List the configured model(s) for the active provider AND that model\'s real input modalities. Returns the list of models the user has enabled (per-provider defaults from settings) plus `canReadImages`. Useful when the user asks "which model are you?", and — importantly — when `read_image` refused because the model is text-only: call this to confirm the actual capability instead of guessing, then tell the user which model to switch to.',
     parameters: { description: { type: 'string', description: '一句中文意图说明；展示在 UI 卡片标题旁（DSH 原生约定，可选；不填则由 summarizeToolCall 从结果/参数结构化字段派生）' } },
     output: jsonOutput,
     async execute() {
       const s = settings.get();
-      return { model: s.model, provider: s.provider, models: [s.model] };
+      // Resolve the capability from the SAME seam `read_image`'s gate uses
+      // (`llm.resolveModel` → inputModalities). The settings checkbox only
+      // *feeds* that declaration for the hand-written custom route; reading
+      // the fact back out of settings would be a second, divergent source of
+      // truth — exactly the kind of drift that leaves the AI telling the user
+      // "this model can't see images" when it can, or the reverse.
+      let inputModalities: string[] = [];
+      try {
+        const llm = ctx.get('llm') as { resolveModel?: (p: string, m: string) => Promise<{ inputModalities?: readonly string[] }> } | undefined;
+        const resolved = await llm?.resolveModel?.(s.provider, s.model);
+        if (resolved?.inputModalities) inputModalities = [...resolved.inputModalities];
+      } catch (err) {
+        // An unconfigured / unknown model is normal, not an error worth
+        // failing the introspection call over — report text-only so callers
+        // stay fail-closed.
+        logger.debug(`ai_models: resolveModel failed: ${(err as Error).message}`);
+      }
+      return {
+        model: s.model,
+        provider: s.provider,
+        models: [s.model],
+        inputModalities,
+        canReadImages: inputModalities.includes('image'),
+      };
     },
   }));
 

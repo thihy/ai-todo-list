@@ -421,6 +421,7 @@ const CustomProvidersEditor: React.FC<PaneProps> = ({ data, patch }) => {
   const [protocol, setProtocol] = useState<AICustomProtocol>('openai');
   const [baseUrl, setBaseUrl] = useState('');
   const [model, setModel] = useState('');
+  const [supportsImageInput, setSupportsImageInput] = useState(false);
   const [apiKey, setApiKey] = useState('');
   const [showKey, setShowKey] = useState(false);
   // Saving state machine — disables re-entry while a patch is in flight
@@ -440,6 +441,7 @@ const CustomProvidersEditor: React.FC<PaneProps> = ({ data, patch }) => {
     setProtocol(inst?.protocol ?? 'openai');
     setBaseUrl(inst?.baseUrl ?? '');
     setModel(inst?.model ?? '');
+    setSupportsImageInput(inst?.supportsImageInput === true);
     setApiKey('');
     setSaveError(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -496,7 +498,7 @@ const CustomProvidersEditor: React.FC<PaneProps> = ({ data, patch }) => {
     if (!editingId) return;
     const next = toInputs(custom).map((c) =>
       c.id === editingId
-        ? { id: c.id, name, protocol, baseUrl, model, ...(apiKey ? { apiKey } : {}) }
+        ? { id: c.id, name, protocol, baseUrl, model, supportsImageInput, ...(apiKey ? { apiKey } : {}) }
         : c,
     );
     const ok = await runSave(
@@ -530,6 +532,7 @@ const CustomProvidersEditor: React.FC<PaneProps> = ({ data, patch }) => {
       editing.protocol !== protocol ||
       editing.baseUrl !== baseUrl ||
       editing.model !== model ||
+      (editing.supportsImageInput === true) !== supportsImageInput ||
       apiKey.length > 0);
 
   return (
@@ -634,6 +637,21 @@ const CustomProvidersEditor: React.FC<PaneProps> = ({ data, patch }) => {
             />
           </Field>
 
+          <Field
+            label="支持图片输入"
+            hint="勾选后，AI 助手才能直接看图：粘贴的图片会以原始图像内容发给模型（原生视觉理解），而不是把图里的文字抠出来。不勾选时 AI 读图会被明确拒绝并提示换模型 —— 这是为了避免把图片发给纯文本模型换来一个 400。自定义路由的模型档案由我们自己声明视觉能力，所以需要你如实勾选。"
+          >
+            <label className="row checkbox-row">
+              <input
+                type="checkbox"
+                checked={supportsImageInput}
+                onChange={(e) => setSupportsImageInput(e.target.checked)}
+                disabled={busy}
+              />
+              <span>该实例的模型接受图片输入（视觉模型）</span>
+            </label>
+          </Field>
+
           <Field label="API Key" hint="仅保存在本地；渲染层只看到脱敏后的版本。留空保存则保留原 Key。">
             <div className="row">
               <input
@@ -676,9 +694,25 @@ const CustomProvidersEditor: React.FC<PaneProps> = ({ data, patch }) => {
 /** Strip a view list to the writable input shape (no apiKey) so the store merge
  *  preserves existing keys. */
 function toInputs(
-  views: { id: string; name: string; protocol: AICustomProtocol; baseUrl: string; model: string }[],
+  views: {
+    id: string;
+    name: string;
+    protocol: AICustomProtocol;
+    baseUrl: string;
+    model: string;
+    supportsImageInput?: boolean;
+  }[],
 ): CustomProviderInput[] {
-  return views.map((c) => ({ id: c.id, name: c.name, protocol: c.protocol, baseUrl: c.baseUrl, model: c.model }));
+  return views.map((c) => ({
+    id: c.id,
+    name: c.name,
+    protocol: c.protocol,
+    baseUrl: c.baseUrl,
+    model: c.model,
+    // 未勾选落成显式 false：store 侧把它收敛成布尔，undefined 与 false 同义，
+    // 但显式写出省掉一次「旧实例是不是没这个字段」的分支。
+    supportsImageInput: c.supportsImageInput === true,
+  }));
 }
 
 const DataPane: React.FC<PaneProps & { chooseDataDir: () => Promise<string | null> }> = ({

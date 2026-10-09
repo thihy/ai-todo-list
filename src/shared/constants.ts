@@ -61,6 +61,15 @@ export const DSH_WORKSPACE_SUBDIR = 'dsh_workspace';
  *  这跟 DSH `inbox_attach` 工具的 legacy 目录（<rootDir>/.todo-list/inbox-attachments/）
  *  是不同父目录，无冲突——前者给 AI composer 用，后者给 TODO 附件用。 */
 export const COMPOSER_INBOX_SUBDIR = 'inbox';
+/** DSH 持久化附件库（`ctx.attachments`）的根。挂了 dsh-attachment-local
+ *  之后 `read_image` 才会注册，AI 读到的图片以真正的 image content block
+ *  进入下一次模型请求（原生多模态），而不是让模型用 pwsh 去 OCR。
+ *  必须在 cordis.yml 里显式给 dshHome，否则 dsh-attachment-local 会 fall back
+ *  到 `~/.dsh` —— 桌面应用的数据不该跑到用户家目录去。实际存储路径是
+ *  `<DSH_ATTACHMENT_HOME_SUBDIR>/attachments/v1/`，内容寻址、不可变。
+ *  `process.env.DSH_ATTACHMENT_HOME` 在 src/main/index.ts 里 import DSH
+ *  container 之前设置（cordis.yml 的 !!js 表达式在 boot 时读取）。 */
+export const DSH_ATTACHMENT_HOME_SUBDIR = 'dsh_attachments';
 
 export const MAX_BODY_VERSIONS = 20;
 export const THUMB_WIDTH = 320;

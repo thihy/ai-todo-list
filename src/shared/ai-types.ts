@@ -50,6 +50,23 @@ export interface CustomProviderConfig {
   baseUrl: string;
   apiKey: string;
   model: string;
+  /** 该实例当前的 `model` 是否接受图片输入（视觉模型）。
+   *
+   *  视觉能力是**模型**的属性，不是实例的属性，所以这个声明只对当前的
+   *  `model` 字符串有效 —— 改模型会让它重置为 false（见 store 的
+   *  mergeCustomProviders），需要为新模型重新声明。
+   *
+   *  它**喂给** LLM 层而不是充当事实来源：`llm-adapter` 把它写进自定义路由
+   *  手写的模型档案 `input`，之后 `read_image` 的能力 gate 和 `ai_models`
+   *  的 `canReadImages` 都从 `llm.resolveModel()` 读同一个值。声明是入口，
+   *  解析结果才是事实 —— 只有一条真值链，AI 和 UI 不会各说各话。
+   *
+   *  留 false 时 `read_image` 会明确拒绝 —— 这是正确的 fail-closed 行为：把
+   *  图片发给纯文本模型只会换来一个 400。
+   *
+   *  pi-ai 目录路由（deepseek / openai / anthropic）不需要这个字段：它们从
+   *  pi-ai 自带目录直接读到真实能力。 */
+  supportsImageInput?: boolean;
 }
 
 /** Writable shape: apiKey is optional so the renderer can send back the list

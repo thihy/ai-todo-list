@@ -177,14 +177,21 @@ interface HistoryTurnLike {
  *  抛 `binary file`，TurnFailureGuard 随即把整轮停掉 —— 实测用户说「看看这
  *  张图」时就是这么炸的：附件好好落在磁盘上，整轮仍然失败。
  *
- *  读法写成「优先 read_image，没有就 pwsh」而不是无条件点名 read_image：本 app
- *  的 cordis.yml 没有挂载 attachments 服务（@deepseek-ai/dsh-attachment-local
- *  只是未声明的传递依赖），而 dsh-tool-fs 正是在 `ctx.inject(['attachments'], …)`
- *  里才注册 `read_image`，所以它目前**不在**模型工具集里。无条件点名一个调不到
- *  的工具只会让模型绕远路；`pwsh` 确实能读，已验证能正确解出像素。
+ *  图片无条件点名 `read_image`：resources/dsh/cordis.yml 现在挂了
+ *  dsh-attachment-local，`ctx.attachments` 就位，dsh-tool-fs 的
+ *  `ctx.inject(['attachments'])` 会把 `read_image` 注册进模型工具集，
+ *  图片以真正的 image content block 进入下一次请求 —— 原生视觉理解。
+ *
+ *  这里**不**再提示 pwsh 兜底。那条退路是有代价的：模型在 Windows 上会用
+ *  `Windows.Media.Ocr` 把图里的文字抠成文本，等于丢掉布局 / 图表 / 颜色 /
+ *  空间关系，还多烧两轮工具调用，用户看到的就是「AI 只会 OCR」。原生通路既然
+ *  已经通了，就不该再给绕路的选项。
+ *
+ *  模型是纯文本时 `read_image` 会 fail-closed 拒绝，这是正确行为：让 AI 如实
+ *  告诉用户去设置里换成视觉模型，好过把图片发给纯文本模型换一个 400。
  */
 export function attachmentHeader(a: AttachedFile): string {
-  return `[attached: ${a.name} (${a.mime}, ${a.size} 字节) — 别用 read 读它，二进制会报错并中断本轮；优先用 read_image，工具集里没有就用 pwsh 解析]`;
+  return `[attached: ${a.name} (${a.mime}, ${a.size} 字节) — 别用 read 读它，二进制会报错并中断本轮；图片一律用 read_image 直接看图，不要用 OCR 或 pwsh/bash 解析]`;
 }
 
 /** 解析历史 user 消息里的附件引用块。

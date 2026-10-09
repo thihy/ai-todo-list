@@ -45,6 +45,7 @@ import { anthropicMessagesApi } from '@earendil-works/pi-ai/api/anthropic-messag
 import { openAICompletionsApi } from '@earendil-works/pi-ai/api/openai-completions.lazy';
 import { openAIResponsesApi } from '@earendil-works/pi-ai/api/openai-responses.lazy';
 import type { LlmAdapter } from '@deepseek-ai/dsh-llm';
+import type { AttachmentStore } from '@deepseek-ai/dsh-attachment';
 import type { AIProvider, CustomProviderConfig, AICustomProtocol } from '../../shared/ai-types';
 import type { ResolvedEndpoint } from './endpoints';
 import { logger } from '../logger';
@@ -68,6 +69,12 @@ export interface CreateAdaptersDeps {
    *  the adapter default (deepseek-harness/…). Read per operation so a
    *  settings change reaches the next request without restart. */
   getUserAgent(): string;
+  /** The durable attachment store (`ctx.attachments`, mounted by
+   *  dsh-attachment-local in resources/dsh/cordis.yml). Required for image
+   *  input: the adapter projects `read_image` results into the request as
+   *  real image blocks through this store. Read per call because the service
+   *  may mount after the adapter is constructed; undefined when unavailable. */
+  getAttachments(): AttachmentStore | undefined;
 }
 
 /** Resolve the route key for `agentOptions.provider` from the user's
@@ -240,7 +247,12 @@ function buildCustomProfile(
       api: proto.api,
       provider,
       baseUrl,
-      input: ['text'],
+      // 自定义路由的模型档案是我们手写的，没法像 pi-ai 目录那样自动查到
+      // 视觉能力，所以由用户在设置里勾选。`input` 直接决定两件事：
+      // `read_image` 的执行 gate（inputModalities 必须含 'image'）和
+      // PiAiAdapter 发请求前的 `model.input.includes('image')` 校验。
+      // 少写 'image' 会被 fail-closed 拒绝，而不是把图片发给纯文本模型换 400。
+      input: inst.supportsImageInput ? ['text', 'image'] : ['text'],
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
       contextWindow: 262_144,
       maxTokens: 32_768,
@@ -471,6 +483,18 @@ export function createLlmAdapters(deps: CreateAdaptersDeps): {
       credentials: noopCredentialStore,
       authContext: noopAuthContext,
     },
+    // Image support. Without `resolveAttachments` the adapter refuses any
+    // request carrying an image block ("pi-ai image input requires the durable
+    // attachment service"), so `read_image` results could never reach a model.
+    // The accessor is a function, not a captured service, because the store is
+    // a cordis service that may mount after this adapter is constructed.
+    resolveAttachments: () => deps.getAttachments(),
+    // Expose the stored object to model tools. The host path is inside
+    // <dataDir>/dsh_attachments, deliberately OUTSIDE the dsh_workspace
+    // sandbox root, so `mapHostPath` must not claim it — returning undefined
+    // makes the adapter omit the path from the prompt and simply inline the
+    // image bytes, which is the behaviour we want.
+    resolveImageAccess: () => undefined,
   });
   // The PiAiAdapter already implements the LlmAdapter contract; expose as
   // the abstract type so the runtime can register without depending on the

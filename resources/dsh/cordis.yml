@@ -121,11 +121,19 @@
       - 用户附加的文件（输入框粘贴的图片、「+」选的文件）会以
         `[attached: <名字> (<mime>, <字节> 字节) — <读法提示>]` 加绝对路径的形式
         追加在用户消息末尾。读法：
+        - 图片（`image/*`）**一律用 `read_image`**。它会把图片原样提交给模型，
+          你就是用视觉能力直接看这张图 —— 布局、图表、界面、颜色、空间关系都在
+          你的输入里。
+        - **不要用 OCR，也不要用 `pwsh` / `bash` 去解析图片**（包括
+          `Windows.Media.Ocr`、`[IO.File]::ReadAllBytes()` 后手解 PNG/JPEG
+          之类）。那只会把图里的文字抠成文本，视觉信息全部丢失，得到的答案是
+          残缺的，而且要多花两轮工具调用。
         - **绝对不要用 `read` 读图片** —— 读到二进制会报 `binary file`，本轮直接
           被中止（不是可重试的软失败）。
-        - 优先用 `read_image`；若你的工具集里没有它，改用 `pwsh` 读取 / 解析该
-          文件，例如 `[IO.File]::ReadAllBytes()` 后按格式解 PNG / JPEG。
         - 文本 / 代码 / 配置类附件用 `read` 即可。
+        - 若 `read_image` 报"模型不支持图片输入"，**先调 `ai_models` 确认**它在
+          `canReadImages` 上返回什么，再如实告诉用户当前模型与该怎么换。不要凭
+          猜测下结论，更不要改用 OCR 绕过去。
       - 回答简洁，多用要点和短段落；中文。
 
       ## 工具调用风格
@@ -459,7 +467,38 @@
   config:
     cwd: !!js "process.env.DSH_WORKSPACE_ROOT"
 
+# Durable attachment store (`ctx.attachments`) — MUST be mounted for
+# `read_image` to exist. dsh-tool-fs registers read_image inside
+# `ctx.inject(['attachments'], …)`, so without this service the model simply
+# has no image-reading tool and falls back to shelling out (which is how the
+# app ended up OCR-ing screenshots through pwsh).
+#
+# With it mounted, `read_image` commits the image into this store and the PiAi
+# adapter projects it into the next request as a real image content block, so
+# the model sees the picture with its native vision ability — no OCR, no
+# lossy text extraction.
+#
+# Two gates still apply at call time, both fail-closed by design:
+#   1. the exact route/model must declare `image` input, read from the LLM seam
+#      (`llm.resolveModel` → inputModalities) so there is exactly ONE truth
+#      chain. pi-ai catalog routes read it from the catalog; the `custom` route
+#      hand-writes its model profile, so the value is fed by the user's
+#      `supportsImageInput` setting (src/main/dsh/llm-adapter.ts) — that flag
+#      is an input to the fact, not a second source of it. `ai_models` reports
+#      the same resolved value back as `canReadImages`.
+#   2. src/main/dsh/dsh-runtime.ts's path-guard must accept the path, so the
+#      model still cannot read outside <dataDir>/dsh_workspace.
+#
+# dshHome is pinned to <dataDir>/dsh_attachments via DSH_ATTACHMENT_HOME
+# (set in src/main/index.ts before the container import). Omitting it would
+# fall back to `~/.dsh`, putting desktop-app state in the user's home dir.
+- id: attachments
+  name: '@deepseek-ai/dsh-attachment-local'
+  config:
+    dshHome: !!js "process.env.DSH_ATTACHMENT_HOME"
+
 # read / read_image / write / edit — DSH's model-facing fs tools.
+# read_image appears only because `attachments` above is mounted.
 - id: tool-fs
   name: '@deepseek-ai/dsh-tool-fs'
 

@@ -243,6 +243,8 @@ export class SettingsStore {
           ? `${c.apiKey.slice(0, 4)}${'*'.repeat(Math.max(c.apiKey.length - 8, 0))}${c.apiKey.slice(-4)}`
           : '',
         model: c.model,
+        // 渲染端要回显这个勾选状态，缺失就当 false（旧配置即纯文本模型）。
+        supportsImageInput: c.supportsImageInput === true,
       })),
       customProviderId: v.customProviderId,
       userAgent: v.userAgent,
@@ -282,14 +284,26 @@ export class SettingsStore {
    */
   mergeCustomProviders(input: CustomProviderInput[]): PersistedSettings {
     const prevById = new Map(this.cache.customProviders.map((c) => [c.id, c]));
-    const next: CustomProviderConfig[] = input.map((c) => ({
-      id: c.id,
-      name: c.name,
-      protocol: c.protocol,
-      baseUrl: c.baseUrl,
-      apiKey: c.apiKey && c.apiKey.length > 0 ? c.apiKey : prevById.get(c.id)?.apiKey ?? '',
-      model: c.model,
-    }));
+    const next: CustomProviderConfig[] = input.map((c) => {
+      const prev = prevById.get(c.id);
+      return {
+        id: c.id,
+        name: c.name,
+        protocol: c.protocol,
+        baseUrl: c.baseUrl,
+        apiKey: c.apiKey && c.apiKey.length > 0 ? c.apiKey : prev?.apiKey ?? '',
+        model: c.model,
+        // 视觉能力是**模型**的属性，不是实例的属性。同一个实例换模型
+        // （gpt-4o → gpt-3.5-turbo）时把旧勾选继承下去，等于把图片发给
+        // 纯文本模型换 400。所以 model 一变就重置为 false，让用户对新模型
+        // 重新如实声明 —— fail-closed 比静默继承安全。
+        // 注意 `prev === undefined`（新建实例）不算「变了」：没有旧模型可比，
+        // 这时应当尊重用户这次提交的声明，否则新建即丢勾选。
+        // 旧配置没有这个字段，落成 false，与改动前行为一致。
+        supportsImageInput:
+          (prev === undefined || c.model === prev.model) && c.supportsImageInput === true,
+      };
+    });
     this.patch({ customProviders: next });
     const ids = new Set(next.map((c) => c.id));
     if (this.cache.customProviderId && !ids.has(this.cache.customProviderId)) {

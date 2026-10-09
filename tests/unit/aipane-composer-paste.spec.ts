@@ -247,7 +247,7 @@ describe('AIPane composer paste image', () => {
 
 describe('attachmentHeader', () => {
   it(
-    '禁止用 read 读图片，并给出 read_image / pwsh 两条可用退路',
+    '禁止用 read 读图片，并无条件点名 read_image',
     () => {
       const h = attachmentHeader({
         path: 'C:/inbox/a.png',
@@ -256,10 +256,20 @@ describe('attachmentHeader', () => {
         size: 70,
       });
       expect(h).toBe(
-        '[attached: a.png (image/png, 70 字节) — 别用 read 读它，二进制会报错并中断本轮；优先用 read_image，工具集里没有就用 pwsh 解析]',
+        '[attached: a.png (image/png, 70 字节) — 别用 read 读它，二进制会报错并中断本轮；图片一律用 read_image 直接看图，不要用 OCR 或 pwsh/bash 解析]',
       );
       expect(h).toContain('read_image');
-      expect(h).toContain('pwsh');
+    },
+  );
+
+  it(
+    '不再把 pwsh 写成读图的可用退路 —— 那条路只会诱发 OCR',
+    () => {
+      const h = attachmentHeader({ path: 'C:/inbox/a.png', name: 'a.png', mime: 'image/png', size: 70 });
+      // pwsh 仍出现在「不要用」的禁令里，但不能再被表述成「工具集里没有就
+      // 用它」的备选方案。旧文案是「工具集里没有就用 pwsh 解析」。
+      expect(h).not.toContain('工具集里没有');
+      expect(h).toContain('不要用 OCR');
     },
   );
 
@@ -268,7 +278,7 @@ describe('attachmentHeader', () => {
     () => {
       const h = attachmentHeader({ path: 'C:/i/a.txt', name: 'a.txt', mime: 'text/plain', size: 12 });
       expect(h.startsWith('[attached: a.txt (text/plain, 12 字节)')).toBe(true);
-      expect(h).toContain('pwsh');
+      expect(h).toContain('read_image');
     },
   );
 
