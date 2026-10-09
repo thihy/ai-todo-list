@@ -4,6 +4,24 @@ All notable changes to todo-list are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0-rc10] - 2026-10-09
+
+User-visible changes since `1.0.0-rc9`. Theme: documents and drawings stop living in two places at once — the folder on disk is now the single source of truth, and every change to it is version-controlled.
+
+**⚠️ Breaking for anyone upgrading an existing install:** schema migration v21 deletes the `task_documents` table. Links move into a new `todo_links` table (data is copied first, nothing is lost), and the per-document version history is re-keyed onto `(task, file name)`. Back up your data directory before the first launch.
+
+### Changed
+
+- **A drawing's or document's label *is* its file name.** Creating one now writes the file first; the label comes from the file that was actually created. `progress.md` is the single exception — it always means 进展, and never gets a `_1` suffix.
+- **Creating a document never overwrites another.** If the name is taken you get `_1`, `_2`, and so on — `绘图.excalidraw`, then `绘图_1.excalidraw` — and that allocated name becomes the label too. The check considers files you added outside the app, so nothing you dropped into the folder gets clobbered.
+- **The document list comes from the folder**, with a cache so it does not re-scan on every render. A new **refresh button** on the right of the tab bar clears the cache and re-reads, so files you created or deleted outside the app show up.
+- **Every create, save, rename and delete is committed to git.** The commit covers the whole `todos/` folder, including empty documents, `todo.json`, thumbnails and deletions — previously only single-file saves were committed.
+- **Attachment names keep their Chinese characters.** A file named 「设计稿-终版.png」 stayed that way on disk. Only genuinely risky characters are stripped now (Windows-illegal characters, control characters and `[]`); the old sanitizer turned the whole name into underscores, so you could not recognise your own files in the file manager.
+
+### Fixed
+
+- Renaming a document to a name that reduced to the name it already had (`A_B` → `A B`) silently renamed the file to `A_1`/`A_2`. The occupied-name check now excludes the document being renamed.
+
 ## [1.0.0-rc9] - 2026-10-09
 
 User-visible changes since `1.0.0-rc8`. Theme: drawings stop losing their labels on disk — a drawing's file name now follows its label, the mapping lives in the database, and Ctrl+S saves instead of opening a "save as" dialog.
