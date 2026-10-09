@@ -18,7 +18,9 @@ export const DrawingPane: React.FC<{
   const onNew = async (): Promise<void> => {
     setCreating(true);
     try {
-      const res = await window.todoList.drawing.save(todoId, { elements: [], appState: {} }, undefined, '新绘图');
+      // 标题留给 main 端的 DrawingStore 决定（默认「绘图」），磁盘文件名才会是
+      // 绘图.excalidraw。
+      const res = await window.todoList.drawing.save(todoId, { elements: [], appState: {} });
       if (res.ok) {
         await refresh();
         const d = res.data as { id: string };

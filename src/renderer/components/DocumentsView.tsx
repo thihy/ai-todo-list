@@ -304,13 +304,10 @@ export const DocumentsView: React.FC<{
   // 绘图: create the drawing in-place, refresh the tab list, and select it.
   // The Excalidraw editor mounts directly inside the tab body — no separate
   // page navigation. (DrawingPane still exists for deep-link back-compat.)
+  // 标题交给 main 端的 DrawingStore 决定（默认「绘图」）：在这里写死一个
+  // '新绘图' 会让磁盘文件名变成 新绘图.excalidraw，和默认规则对不上。
   const addDrawing = useCallback(async (): Promise<void> => {
-    const res = await window.todoList.drawing.save(
-      todoId,
-      { elements: [], appState: {} },
-      undefined,
-      '新绘图',
-    );
+    const res = await window.todoList.drawing.save(todoId, { elements: [], appState: {} });
     if (res.ok) {
       await refreshDrawings();
       const d = res.data as { id: string };

@@ -10,6 +10,7 @@
 import React, { useEffect, useRef } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { useDrawing } from '../hooks/useTodoListApi';
+import { useToastBus } from './Toast';
 
 // Excalidraw's vendor CSS. The package ships its CSS as a separate
 // `index.css` entry (not auto-injected by the JS bundle), so it must be
@@ -71,12 +72,20 @@ export const ExcalidrawEditor: React.FC<{
   onSave?: (drawingId: string, scene: { elements?: unknown; appState?: unknown }) => void;
 }> = ({ todoId, drawingId, className, onSave }) => {
   const { scene } = useDrawing(drawingId);
+  const toast = useToastBus();
   const hostRef = useRef<HTMLDivElement>(null);
   const rootRef = useRef<Root | null>(null);
+  // Excalidraw imperative API (set via the `excalidrawAPI` prop) — Ctrl+S
+  // reads the live scene through it instead of waiting for the debounced
+  // onChange, so an explicit save always persists the newest stroke.
+  const apiRef = useRef<{ getSceneElements: () => unknown[]; getAppState: () => unknown } | null>(null);
 
   useEffect(() => {
     if (!drawingId || !scene || !hostRef.current) return;
     let cancelled = false;
+    // Registered synchronously below / after the dynamic import resolves; the
+    // effect cleanup has to be able to detach it either way.
+    let removeKeyDown: (() => void) | null = null;
     (async () => {
       // Must be set before import('@excalidraw/excalidraw'): excalidraw reads
       // ASSETS_FALLBACK_URL (default https://esm.sh/...) at module load and
@@ -139,6 +148,21 @@ export const ExcalidrawEditor: React.FC<{
       root.render(
         React.createElement(Excalidraw, {
           initialData,
+          excalidrawAPI: (api: unknown) => {
+            apiRef.current = api as {
+              getSceneElements: () => unknown[];
+              getAppState: () => unknown;
+            };
+          },
+          // Excalidraw binds Ctrl+S to its File-System-Access "save to
+          // active file" action, which in Electron pops a 另存为 dialog —
+          // wrong for a document that already has a home in the task dir.
+          // Turning both disk actions off here keeps the shortcut (and the
+          // menu) inert; the capture-phase listener below owns Ctrl+S and
+          // writes through the same IPC the autosave uses.
+          UIOptions: {
+            canvasActions: { saveFileToDisk: false, saveToActiveFile: false },
+          },
           onChange: debounced(async (els, st) => {
             await save(drawingId, {
               elements: els,
@@ -152,12 +176,39 @@ export const ExcalidrawEditor: React.FC<{
           }, 600),
         }),
       );
+
+      // Ctrl+S / Cmd+S → 保存到任务目录。Capture phase on window so we run
+      // before Excalidraw's own container-level handler and can stop it from
+      // ever reaching the file-save path; preventDefault also stops
+      // Chromium's own "save page as" fallback.
+      const onKeyDown = (e: KeyboardEvent): void => {
+        if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 's') return;
+        e.preventDefault();
+        e.stopPropagation();
+        void (async () => {
+          const api = apiRef.current;
+          try {
+            await save(drawingId, {
+              elements: (api?.getSceneElements() ?? []) as never,
+              appState: stripHostDimensions((api?.getAppState() ?? {}) as Record<string, unknown>),
+            });
+            toast.push({ kind: 'success', message: '绘图已保存', ttl: 1500 });
+          } catch (err) {
+            const reason = err instanceof Error && err.message ? err.message : '未知错误';
+            toast.push({ kind: 'error', message: `保存绘图失败：${reason}`, ttl: 3000 });
+          }
+        })();
+      };
+      window.addEventListener('keydown', onKeyDown, true);
+      removeKeyDown = (): void => window.removeEventListener('keydown', onKeyDown, true);
     })().catch((err) => {
       // eslint-disable-next-line no-console
       console.error('excalidraw load failed', err);
     });
     return () => {
       cancelled = true;
+      removeKeyDown?.();
+      apiRef.current = null;
       const root = rootRef.current;
       rootRef.current = null;
       const host = hostRef.current;

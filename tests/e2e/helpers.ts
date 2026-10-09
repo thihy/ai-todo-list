@@ -14,6 +14,9 @@ import { join } from 'node:path';
 export interface AppHandle {
   app: ElectronApplication;
   win: Page;
+  /** Isolated data root the app booted with (see launchApp). Node-side tests
+   *  assert on the on-disk projection through it. */
+  dataDir: string;
 }
 
 export interface StreamEvt {
@@ -67,7 +70,7 @@ export async function launchApp(): Promise<AppHandle> {
     app.on('close', () => {
       rmSync(userDataDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
     });
-    return { app, win };
+    return { app, win, dataDir: join(userDataDir, 'data') };
   } catch (error) {
     const logPath = join(userDataDir, 'todo-list.log');
     const appLog = existsSync(logPath) ? readFileSync(logPath, 'utf8') : '';

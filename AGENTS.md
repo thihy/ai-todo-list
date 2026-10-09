@@ -64,6 +64,13 @@ Important implementation points:
 - Attachment projection: `src/main/files/inbox.ts`
 - Schema and migrations: `src/main/db/schema.ts`
 
+A drawing's label and its file name are one thing: `drawings.path` holds the
+authoritative task-relative file name, a new drawing defaults to the label
+`绘图` (`绘图.excalidraw`, never `untitled.excalidraw`), and a label rename
+updates `path` only after the filesystem rename succeeds. Reads go through
+`path` — never re-derive the name from the current title. Historical rows are
+reconciled once at startup by `DrawingStore.repairFilePaths()`.
+
 The storage sections in `docs/architecture.md` describe an older flat-file
 layout and must not be used as the implementation contract.
 

@@ -304,6 +304,16 @@ function bootstrap(): void {
     const inbox = new InboxStore(handle.db, attachmentsDir, todosDir, resolveTaskDir);
     mark('file-stores-constructed');
 
+    // 把历史绘图的文件名对齐到当前规则（untitled.excalidraw → 绘图.excalidraw，
+    // 标签改名后文件名没跟上的老数据也会一起修正），并把映射写回 drawings.path。
+    // 纯 best-effort：失败只记日志，不阻塞启动。
+    try {
+      drawings.repairFilePaths();
+      mark('drawing-paths-repaired');
+    } catch (err) {
+      logger.warn(`drawing-paths: repairFilePaths failed: ${(err as Error).message}`);
+    }
+
     // UX-01 — the IPC handler receives an object so it can dereference
     // `retryAi` on every call. We pre-bind the object with placeholder
     // closures, then mutate the fields after `bootAiAndDispatch` is defined.

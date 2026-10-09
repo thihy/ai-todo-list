@@ -251,9 +251,22 @@ note best-effort renames its file inside the same task directory.
 
 ### Drawings
 
-Drawing scenes are `{slugifiedDrawingTitle}.excalidraw`. The drawing DB row
-stores task-relative path metadata. Thumbnails use the drawing ID and remain in
+Drawing scenes are `{slugifiedDrawingTitle}.excalidraw`. Thumbnails use the drawing ID and remain in
 `thumbs/` when a drawing title changes.
+
+The `drawings.path` column is the authoritative label → file mapping. Concretely:
+
+- a new drawing without an explicit title gets the default label `绘图`, so its
+  file is `绘图.excalidraw` (never `untitled.excalidraw`);
+- a second untitled drawing in the same task becomes `绘图 2` → `绘图_2.excalidraw`;
+- a title rename renames the file first and only then writes the new `path`; a
+  failed filesystem rename keeps the old file name so the row stays readable;
+- reads resolve through `path` and never re-derive the file name from the
+  current title, so the two can only differ after a failed rename;
+- `DrawingStore.repairFilePaths()` (run once at startup) reconciles historical
+  rows: empty titles fall back to `绘图`, stale mappings adopt the file that is
+  really on disk, and drawings that used to share one `untitled.excalidraw` are
+  split into independent files.
 
 ### Attachments
 

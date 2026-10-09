@@ -2691,13 +2691,13 @@ function registerDomainTools(
   reg(defineTool({
     name: 'drawing_save',
     ...wire('drawing_save'),
-    description: 'Save (create or update) an Excalidraw drawing for a TODO. Pass `id` to update an existing drawing; omit to create a new one. The `scene` is the full Excalidraw scene JSON.',
+    description: 'Save (create or update) an Excalidraw drawing for a TODO. Pass `id` to update an existing drawing; omit to create a new one (label defaults to 绘图 → 绘图.excalidraw). Changing `title` renames the drawing AND its file on disk. The `scene` is the full Excalidraw scene JSON.',
     parameters: {
       description: { type: 'string', description: '一句中文意图说明；展示在 UI 卡片标题旁（DSH 原生约定，可选；不填则由 summarizeToolCall 从结果/参数结构化字段派生）' },
       todoId: { type: 'string', required: true, description: 'TODO id this drawing belongs to' },
       scene: { type: 'json', required: true, description: 'Excalidraw scene JSON: { elements, appState, ... }' },
       id: { type: 'string', description: 'Existing drawing id to update (omit to create)' },
-      title: { type: 'string', description: 'Optional human-readable title' },
+      title: { type: 'string', description: 'Label for the drawing; also renames the file. Omit on update to keep the current label, omit on create to get the default 绘图.' },
     },
     output: jsonOutput,
     async execute(args: { todoId: string; scene: unknown; id?: string; title?: string }) {
