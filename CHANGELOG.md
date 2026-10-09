@@ -4,6 +4,15 @@ All notable changes to todo-list are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0-rc9] - 2026-10-09
+
+User-visible changes since `1.0.0-rc8`. Theme: drawings stop losing their labels on disk — a drawing's file name now follows its label, the mapping lives in the database, and Ctrl+S saves instead of opening a "save as" dialog.
+
+### Fixed
+
+- **Drawings are saved as `绘图.excalidraw` instead of `untitled.excalidraw`.** The canvas autosave called `drawing.save` without a title, and the store read that as "clear the title" — so every stroke renamed the file to `untitled.excalidraw` and wiped the label. Saving a scene without a title now keeps the label and the file name. A new drawing defaults to the label `绘图`; a second untitled drawing in the same task becomes `绘图 2`. Renaming a drawing's label renames its file to match, and the mapping is recorded in `drawings.path` rather than re-derived from the title, so a file that can't be renamed is never silently orphaned. Existing drawings are reconciled once at startup, and drawings that used to share one file are split into independent files.
+- **Ctrl+S saves the drawing.** It previously triggered Excalidraw's "save to active file" action, which opened a "save as" dialog for a document that already has a home in its task directory. It now saves through the same path as autosave and confirms with 「绘图已保存」.
+
 ## [1.0.0-rc8] - 2026-10-01
 
 User-visible changes since `1.0.0-rc7`. Theme: the task list gets a real visual hierarchy and an empty state, the window becomes genuinely responsive instead of clipping, and the AI assistant learns to tell "that one's done" apart from "here's something new".
