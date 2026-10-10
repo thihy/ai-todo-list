@@ -3792,8 +3792,8 @@ a:hover {
   padding: var(--space-lg) var(--space-xl);
 }
 
-/* ===== Plan guide modal (浠婃棩寰呭姙 / 鍏ㄥ睆寮曞) =====
-   澶嶇敤 .settings-modal 鐨?backdrop / header / dialog 閿氱偣锛涘彧瑕嗙洊宸紓銆?*/
+/* ===== Plan guide modal (今日待办 / 全屏引导) =====
+   复用 .settings-modal 的 backdrop / header / dialog 锚点；只覆盖差异。 */
 .plan-guide-modal__dialog {
   width: min(560px, 92vw);
   height: min(620px, 86vh);
