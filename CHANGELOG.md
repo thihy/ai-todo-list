@@ -4,6 +4,15 @@ All notable changes to todo-list are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0-rc11] - 2026-10-10
+
+Bug-fix release. `1.0.0-rc10` was tagged before these two fixes landed, so its installer does not contain them — upgrade rather than reinstalling the same version.
+
+### Fixed
+
+- **Creating a drawing did not show up until you refreshed.** The drawing was written to the task folder and committed to git correctly, but the tab list is now derived from a directory scan, and the drawing handlers never broadcast the data-changed event that makes the list re-read. Renaming, deleting, and adding attachments had the same gap; all of them now refresh immediately.
+- **The installed program was named `AI寰呭姙`.** The `productName` and `shortcutName` values in `package.json` had been mangled into mojibake, and electron-builder copied them verbatim, so the executable and the Start-menu shortcut came out garbled. The in-app name was always correct.
+
 ## [1.0.0-rc10] - 2026-10-09
 
 User-visible changes since `1.0.0-rc9`. Theme: documents and drawings stop living in two places at once — the folder on disk is now the single source of truth, and every change to it is version-controlled.
