@@ -2,6 +2,7 @@
 
 import { relative, sep } from 'node:path';
 import { okResult, failResult, register } from './router';
+import { broadcastDataChanged } from './broadcast';
 import type { MarkdownStore } from '../files/markdown';
 import type { DrawingStore } from '../files/drawings';
 import type { TodoRepo } from '../db/todo-repo';
@@ -77,6 +78,7 @@ export function registerContentHandlers(
       void commitWriteToGit(req.id, res.version);
       // 进展正文之外的附带改动（todo.json 等）一并入库。
       commitAllToGit(`保存正文 ${repo.get(req.id)?.title ?? 'task'}`);
+      broadcastDataChanged('content');
       return Promise.resolve(okResult(res));
     } catch (err) {
       const message = (err as Error).message;
@@ -98,6 +100,7 @@ export function registerContentHandlers(
   register('content.restoreVersion', (_e, req) => {
     try {
       md.restoreVersion(req.id, req.versionId);
+      broadcastDataChanged('content');
       return Promise.resolve(okResult(undefined as never));
     } catch (err) {
       return Promise.resolve(failResult('restore_failed', (err as Error).message));
@@ -120,6 +123,7 @@ export function registerContentHandlers(
       const ok = await gitHistory.restoreFileAtSha(todosDir, progressRelPath(req.id), req.sha);
       if (!ok) return failResult('git_restore_failed', `git restore failed for ${req.sha}`);
       // After a restore, the renderer re-reads the body via content.readBody.
+      broadcastDataChanged('content');
       return okResult(undefined as never);
     } catch (err) {
       return failResult('git_restore_failed', (err as Error).message);
@@ -146,6 +150,10 @@ export function registerContentHandlers(
     try {
       const meta = drawings.save(req.todoId, req.scene, req.id, req.title);
       commitAllToGit(`${req.id ? '保存' : '新增'}绘图 ${meta.title ?? '绘图'}`);
+      // 必须广播：tab 列表现在是按目录扫描出来的（TaskFileIndex），绘图的新建 /
+      // 改名 / 删除都会改变磁盘上的文件集合。不广播的话 useDocuments 不会重拉，
+      // 用户就得手动点刷新才能看到自己刚建的绘图。
+      broadcastDataChanged('content');
       return Promise.resolve(okResult(meta));
     } catch (err) {
       return Promise.resolve(failResult('save_failed', (err as Error).message));
@@ -157,6 +165,7 @@ export function registerContentHandlers(
       const before = drawings.get(req.id);
       drawings.delete(req.id);
       commitAllToGit(`删除绘图 ${before?.title ?? req.id}`);
+      broadcastDataChanged('content');
       return Promise.resolve(okResult(undefined as never));
     } catch (err) {
       return Promise.resolve(failResult('delete_failed', (err as Error).message));
@@ -171,6 +180,8 @@ export function registerContentHandlers(
       const meta = drawings.get(req.id);
       if (!meta) return Promise.resolve(failResult('rename_failed', 'drawing not found after rename'));
       commitAllToGit(`重命名绘图 ${meta.title ?? req.id}`);
+      // 改名搬动了文件，文件名就是标签 —— 列表要跟着重拉。
+      broadcastDataChanged('content');
       return Promise.resolve(okResult(meta));
     } catch (err) {
       return Promise.resolve(failResult('rename_failed', (err as Error).message));

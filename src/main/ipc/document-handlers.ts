@@ -6,22 +6,14 @@
 // 工作区慢慢对不上。commitAll 没东西可提交时不建 commit，git 不可用时静默
 // 返回 null：git 失败绝不能让用户的保存失败。
 
-import { BrowserWindow } from 'electron';
 import { join, relative, sep } from 'node:path';
 import { okResult, failResult, register } from './router';
+import { broadcastDataChanged } from './broadcast';
 import type { DocumentStore, LinkStore } from '../files/documents';
 import * as gitHistory from '../git-history';
 import { labelForFileName } from '../files/task-files';
 import type { ULID } from '../../shared/todo-types';
 import { logger } from '../logger';
-
-/** Broadcast a content-scope data-changed so any open editor refetches its
- *  documents after a mutation (mirrors the todo/progress broadcast pattern). */
-function broadcastDataChanged(scope: 'content'): void {
-  for (const w of BrowserWindow.getAllWindows()) {
-    if (!w.isDestroyed()) w.webContents.send('app:data-changed', { scope });
-  }
-}
 
 /** Resolver injected from src/main/index.ts so handlers don't reach back into
  *  the wiring layer. Mirrors the same closure given to MarkdownStore. */
@@ -121,7 +113,11 @@ export function registerDocumentHandlers(
       const taskDir = resolveTaskDir(req.todoId);
       // 文件名就是标签：改名 = 搬文件。返回实际落地的文件名，标签跟着它走。
       const fileName = docs.renameFile(taskDir, req.fileName, req.title);
-      if (fileName !== req.fileName) commitAllToGit(`重命名文档 ${labelForFileName(req.fileName)}`);
+      if (fileName !== req.fileName) {
+        commitAllToGit(`重命名文档 ${labelForFileName(req.fileName)}`);
+        // 改名 = 搬文件，目录扫描出来的列表变了，必须广播让 tab 重新拉。
+        broadcastDataChanged('content');
+      }
       return Promise.resolve(okResult({ fileName, label: labelForFileName(fileName) }));
     } catch (err) {
       return Promise.resolve(failResult('document_rename_failed', (err as Error).message));
