@@ -28,6 +28,11 @@ import type { ContentVersionEntry } from './todo-types';
 import type { ProgressLogEntry } from './todo-types';
 import type { DocumentVersionEntry, TaskFileEntry, TodoLink } from './todo-types';
 import type { DrawingMeta, DrawingScene } from './todo-types';
+import type {
+  DrawingAppliedPayload,
+  DrawingApplyPayload,
+  DrawingCanvasReadyPayload,
+} from './drawing-spec';
 import type { TagDef } from './todo-types';
 
 // --- App events pushed from main ---
@@ -47,6 +52,7 @@ export type AppEvent =
   // payload carries the affected todo id list so the renderer can
   // refresh those rows directly instead of a full re-fetch.
   | 'app:tags-changed'
+  | 'app:drawing-apply'
   | 'ai:stream'
   | 'ai:permission-request'
   // L4-G: human-in-the-loop bridges for DSH user-questions + user-approval.
@@ -93,6 +99,11 @@ export interface AppEventMap {
    *  many tasks; other operations pass an empty list since they don't
    *  mutate the association table — only the catalog row's retired_at). */
   'app:tags-changed': { affectedTodoIds?: string[] };
+  /** main 让渲染进程把一批骨架元素追加到指定画布（B 版「看着 AI 画」）。
+   *  渲染进程收到后必须用 convertToExcalidrawElements 转换、updateScene 应用，
+   *  然后**显式落盘**并回执 drawing.applied —— 不要依赖 updateScene 触发
+   *  onChange，那条路是否触发没有公开保证。 */
+  'app:drawing-apply': DrawingApplyPayload;
   'ai:stream': AIStreamEvent;
   'ai:permission-request': PermissionRequest;
   'ai:user-question-request': UserQuestionRequest;
@@ -264,6 +275,14 @@ export interface TodoListApi {
     delete(id: string): Promise<IpcResponse<'drawing.delete'>>;
     rename(id: string, title: string): Promise<IpcResponse<'drawing.rename'>>;
     setThumb(id: string, dataUrl: string): Promise<IpcResponse<'drawing.setThumb'>>;
+    /** 画布挂载完成、拿到 Excalidraw imperative API 后上报一次。main 靠这个
+     *  判断「能不能现在把 AI 的绘制送进去」；不报就永远收不到 apply。 */
+    canvasReady(payload: DrawingCanvasReadyPayload): Promise<IpcResponse<'drawing.canvasReady'>>;
+    /** 画布卸载时上报。main 据此把它从在世集合里摘掉，下次绘制会重新导航。 */
+    canvasGone(drawingId: string): Promise<IpcResponse<'drawing.canvasGone'>>;
+    /** apply 执行完毕后回执。必须真的落盘之后再回 —— main 的工具返回给模型
+     *  的 ok 依赖这个回执。 */
+    applied(payload: DrawingAppliedPayload): Promise<IpcResponse<'drawing.applied'>>;
   };
   link: {
     /** A task's saved links. Links live in their own table — they have no

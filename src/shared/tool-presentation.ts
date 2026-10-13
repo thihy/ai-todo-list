@@ -99,6 +99,7 @@ export type ToolName =
   | 'drawing_save'
   | 'drawing_delete'
   | 'drawing_setThumb'
+  | 'drawing_draw'
   | 'inbox_attach'
   | 'inbox_attachBlob'
   | 'conversation_list'
@@ -149,6 +150,7 @@ const kindByTool: Record<ToolName, ToolCallKind> = {
   'drawing_save': 'edit',
   'drawing_delete': 'delete',
   'drawing_setThumb': 'edit',
+  'drawing_draw': 'edit',
   'inbox_attach': 'edit',
   'inbox_attachBlob': 'edit',
   'conversation_list': 'read',
@@ -348,6 +350,16 @@ export function summarizeToolCall(
     }
     case 'drawing_save':
       return truncate(stringField(a, 'title') ?? stringField(result, 'title') ?? '', 60);
+    case 'drawing_draw': {
+      // 模型往往只给 description（中文意图），没有 title。给它一句
+      // 「画了 N 个元素」比空标题有用。args 整体可能缺（orphan turn），
+      // 所以先兜住再取字段。
+      const args = (typeof a === 'object' && a !== null ? a : {}) as Record<string, unknown>;
+      const n = asArray(args.nodes).length;
+      const e = asArray(args.edges).length;
+      if (n > 0) return `${n} 个元素 · ${e} 条连线`;
+      return stringField(result, 'title') ?? '';
+    }
     case 'inbox_attach':
     case 'inbox_attachBlob':
       return truncate(
@@ -451,6 +463,7 @@ function titleFor(toolName: string): string {
     'drawing_save': '保存画板',
     'drawing_delete': '删除画板',
     'drawing_setThumb': '更新缩略图',
+  'drawing_draw': 'AI 画图',
     'inbox_attach': '添加附件',
     'inbox_attachBlob': '添加附件',
     'conversation_list': '列出会话',

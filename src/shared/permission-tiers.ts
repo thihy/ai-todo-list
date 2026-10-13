@@ -30,6 +30,9 @@ export const NOTIFY_UNDO_TOOLS: ReadonlySet<string> = new Set([
   'content_writeBody',
   'drawing_save',
   'drawing_setThumb',
+  // AI 画流程图：新建/追加元素，不覆盖既有场景。与 drawing_save 同级 ——
+  // 破坏性的只有 drawing_delete。
+  'drawing_draw',
 ]);
 
 export const DESTRUCTIVE_TOOLS: ReadonlySet<string> = new Set([

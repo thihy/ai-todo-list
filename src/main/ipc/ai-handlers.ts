@@ -217,13 +217,13 @@ export function registerAiHandlers(dsh: DshHandle): void {
             const d = e.data as { name?: string } | undefined;
             const name = d?.name;
             if (name) {
-              const scope = mutatingScope(name);
-              if (scope) {
-                broadcastDataChanged(scope);
+              const scopes = mutatingScopes(name);
+              if (scopes.length > 0) {
+                for (const scope of scopes) broadcastDataChanged(scope);
               } else {
                 // Unknown successful tool call — broadcast a broad 'todos'
                 // signal as a safety net so future tools added without a
-                // mutatingScope() entry still cause the most-critical
+                // mutatingScopes() entry still cause the most-critical
                 // surfaces (task list / detail header) to refresh. Tools
                 // that should ONLY touch content/drawings should declare so
                 // explicitly above; this fallback only kicks in for tools
@@ -950,18 +950,26 @@ export function bindAiDeps(d: HandlerDeps): void {
 
 export type { HandlerDeps };
 
-/** Map an AI tool name to the data scope it mutates (null = read-only/no refresh).
- *  The `conversations` scope is also updated by the DSH session-title listener in
- *  dsh-runtime.ts (it pushes app:data-changed directly), but we still keep the
- *  map here as the single source of truth so adding a new mutating tool is a
- *  one-line change.
+/** Map an AI tool name to the data scopes it mutates (empty = read-only/no
+ *  refresh). The `conversations` scope is also updated by the DSH session-title
+ *  listener in dsh-runtime.ts (it pushes app:data-changed directly), but we
+ *  still keep the map here as the single source of truth so adding a new
+ *  mutating tool is a one-line change.
+ *
+ *  为什么是数组而不是单个 scope：绘图同时住着**两个**订阅方，广播一个是不够的。
+ *  - `drawings` —— useDrawings（绘图列表）+ useDrawing（打开中的画布场景）
+ *  - `content`  —— useDocuments（tab 列表，它扫的是任务目录里的文件集合）
+ *
+ *  `drawing_save` 之前只广播 `drawings`，于是 AI 新建的绘图在 tab 列表里不出现
+ *  —— 这正是 cb97bae 在 IPC 侧修过的同一个 bug（那边 drawing.save 广播的是
+ *  `content`），AI 路径漏了。所以绘图类工具一律两个都推。
  *
  *  历史：早期版本用带点名字（`todo.create`），与 DSH tool registry（下划线
- *  名）脱节，case 永远 miss，所有 mutate 都走 default → null → 不广播。
+ *  名）脱节，case 永远 miss，所有 mutate 都走 default → 空数组 → 不广播。
  *  这是「ai.ask 后左栏不刷新」的根因之一（另一个根因是会话级 agent 在
  *  detach / resume 之间的 stream listener 链路，详见 attachLiveListener
  *  注释）。改名与 registerDomainTools 一一对应。 */
-function mutatingScope(name: string): DataScope | null {
+export function mutatingScopes(name: string): DataScope[] {
   switch (name) {
     case 'todo_create':
     case 'todo_update':
@@ -970,22 +978,25 @@ function mutatingScope(name: string): DataScope | null {
     case 'todo_batchUpdate':
     case 'todo_planForToday':
     case 'todo_unplan':
-      return 'todos';
+      return ['todos'];
     case 'content_writeBody':
     case 'content_restoreVersion':
-      return 'content';
+      return ['content'];
     case 'drawing_save':
     case 'drawing_delete':
     case 'drawing_setThumb':
-      return 'drawings';
+    case 'drawing_draw':
+      // 见上面的注释：绘图的文件集合影响 tab 列表（content），场景本身
+      // 影响列表和打开中的画布（drawings）。
+      return ['drawings', 'content'];
     case 'conversation_create':
     case 'conversation_rename':
     case 'conversation_archive':
     case 'conversation_unarchive':
     case 'conversation_delete':
-      return 'conversations';
+      return ['conversations'];
     // DSH 自带的 fs / shell 工具（`write` / `edit` / `bash` / `pwsh` /
-    // `grep` / `glob` / `read` / `read_image`）一律返回 null：它们修改
+    // `grep` / `glob` / `read` / `read_image`）一律返回空：它们修改
     // 的是 dsh_workspace 下的文件，不在我们的 store；broadcast
     // app:data-changed 渲染端无 handler，纯 no-op。还不如别推。
     case 'write':
@@ -996,8 +1007,8 @@ function mutatingScope(name: string): DataScope | null {
     case 'glob':
     case 'read':
     case 'read_image':
-      return null;
+      return [];
     default:
-      return null;
+      return [];
   }
 }

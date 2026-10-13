@@ -59,6 +59,9 @@ const APP_EVENTS: AppEvent[] = [
   // read tag.* state should re-fetch on this event; affectedTodoIds
   // narrows the refresh to the tasks whose tag list actually moved.
   'app:tags-changed',
+  // AI 绘图（B 版）：main 把算好的骨架元素推过来，渲染进程用 Excalidraw
+  // 官方 convertToExcalidrawElements 转换后 updateScene 应用。
+  'app:drawing-apply',
   'ai:stream',
   'ai:permission-request',
   // L4-G: human-in-the-loop events. The main-process waterfall listener
@@ -134,6 +137,15 @@ const api: TodoListApi = {
     delete: (id) => invoke('drawing.delete', { id }),
     rename: (id, title) => invoke('drawing.rename', { id, title }),
     setThumb: (id, dataUrl) => invoke('drawing.setThumb', { id, dataUrl }),
+    canvasReady: (payload) => invoke('drawing.canvasReady', { drawingId: payload.drawingId }),
+    canvasGone: (drawingId) => invoke('drawing.canvasGone', { drawingId }),
+    applied: (payload) =>
+      invoke('drawing.applied', {
+        opId: payload.opId,
+        drawingId: payload.drawingId,
+        ok: payload.ok,
+        error: payload.error,
+      }),
   },
   link: {
     list: (todoId) => invoke('link.list', { todoId }),

@@ -24,6 +24,7 @@ import { resolveEndpoint, healthCheck } from './endpoints';
 import type { TodoRepo } from '../db/todo-repo';
 import type { MarkdownStore } from '../files/markdown';
 import type { DrawingStore } from '../files/drawings';
+import { layoutDrawingSpec } from '../drawing/layout';
 import { getFocus } from '../app-context';
 import type { ConversationRepo } from '../db/conversation-repo';
 import type { SettingsStore } from '../settings/store';
@@ -69,6 +70,10 @@ export interface DshRuntimeDeps {
   attachmentsDir: string;
   /** Settings store —— ai_health / ai_models 工具要看 provider/model/连接态 */
   settings: SettingsStore;
+  /** AI 绘图（B 版）的画布 host。drawing_draw 需要它把骨架元素送进渲染
+   *  进程。做成可选：单测和不装 Excalidraw 的环境不提供它，此时
+   *  drawing_draw 缺席而不是整个 runtime 起不来。 */
+  drawingCanvasHost?: import('../drawing/canvas-host').DrawingCanvasHost | null;
 }
 
 // 一条渲染用的历史条目。从 JSONL 后端 loadHistory() 加载，也由 runTurn 的
@@ -2687,7 +2692,7 @@ function registerDomainTools(
   reg(defineTool({
     name: 'drawing_save',
     ...wire('drawing_save'),
-    description: 'Save (create or update) an Excalidraw drawing for a TODO. Pass `id` to update an existing drawing; omit to create a new one (label defaults to 绘图 → 绘图.excalidraw). Changing `title` renames the drawing AND its file on disk. The `scene` is the full Excalidraw scene JSON.',
+    description: 'ESCAPE HATCH — overwrite an Excalidraw drawing with a full scene JSON. For ANY generated diagram (flowchart, architecture, mind map) use drawing_draw instead: it takes shapes + labels + positions and the app fills in the Excalidraw internals. Only use this to import an externally authored scene. Pass `id` to update an existing drawing; omit to create a new one (label defaults to 绘图 → 绘图.excalidraw). Changing `title` renames the drawing AND its file on disk. The `scene` is the full Excalidraw scene JSON.',
     parameters: {
       description: { type: 'string', description: '一句中文意图说明；展示在 UI 卡片标题旁（DSH 原生约定，可选；不填则由 summarizeToolCall 从结果/参数结构化字段派生）' },
       todoId: { type: 'string', required: true, description: 'TODO id this drawing belongs to' },
@@ -2700,6 +2705,113 @@ function registerDomainTools(
       return drawings.save(args.todoId as never, args.scene as never, args.id as never, args.title);
     },
   }));
+
+  // drawing_draw —— 画流程图 / 架构图的**首选**工具。
+  //
+  // 为什么不让模型直接调 drawing_save：Excalidraw 的每个 element 都要带
+  // id / seed / version / versionNonce / index / angle / strokeColor … 一整套
+  // 机械字段，其中 versionNonce 每次重算都要变。模型徒手产出这套东西只会
+  // 得到空白画布或非法元素。drawing_draw 让模型只描述语义（拓扑 + 文案 +
+  // 栅格位置），排版在 main 算，Excalidraw 的字段由渲染进程的官方
+  // convertToExcalidrawElements 补齐。
+  //
+  // 画布没打开时不需要用户手动去开：工具会自己把应用导航到那张绘图，等
+  // 画布就绪后再把元素送进去 —— 用户能看着 AI 画。
+  const drawingCanvasHost = deps.drawingCanvasHost ?? null;
+  if (drawingCanvasHost) {
+    reg(defineTool({
+      name: 'drawing_draw',
+      ...wire('drawing_draw'),
+      description: [
+        'Draw a diagram (flowchart / architecture / mind map) into an Excalidraw drawing on a task.',
+        'PREFER THIS OVER drawing_save for any generated diagram — describe WHAT to draw, not the Excalidraw JSON.',
+        'You supply nodes (shape + label + grid position) and edges (from/to + optional edge label); the app computes',
+        'coordinates, arrow geometry, and every Excalidraw element field. Give each node a short unique `key` (lowercase',
+        'ascii, e.g. "start", "check") and reference it from edges. `column` runs left-to-right, `row` top-to-bottom;',
+        'leave gaps (column 0, 2, 4) so arrows have room. If the drawing tab is not open the app opens it automatically,',
+        'so the user watches it being drawn.',
+      ].join(' '),
+      parameters: {
+        description: { type: 'string', description: '一句中文意图说明；展示在 UI 卡片标题旁（DSH 原生约定，可选；不填则由 summarizeToolCall 从结果/参数结构化字段派生）' },
+        todoId: { type: 'string', required: true, description: 'TODO id this diagram belongs to' },
+        id: { type: 'string', description: 'Existing drawing id to append to (omit to create a new drawing)' },
+        title: { type: 'string', description: 'Label when creating a new drawing (omit for the default 绘图)' },
+        nodes: {
+          type: 'array',
+          required: true,
+          description: 'Shapes to draw. Each needs a unique `key`, a `kind`, and a grid `column`/`row`.',
+          items: {
+            type: 'object',
+            properties: {
+              key: { type: 'string', description: 'Unique short id used by edges (e.g. "start")' },
+              kind: { type: 'string', description: 'rectangle | ellipse | diamond | text. Use ellipse for start/end, rectangle for a step, diamond for a decision, text for a free-floating label.' },
+              text: { type: 'string', description: 'Label inside the shape' },
+              column: { type: 'number', description: 'Grid column, left to right, from 0' },
+              row: { type: 'number', description: 'Grid row, top to bottom, from 0' },
+            },
+          },
+        },
+        edges: {
+          type: 'array',
+          description: 'Arrows between nodes. Omit for a mind map with no connections.',
+          items: {
+            type: 'object',
+            properties: {
+              from: { type: 'string', description: 'Source node key' },
+              to: { type: 'string', description: 'Target node key' },
+              label: { type: 'string', description: 'Optional arrow label, e.g. "是" / "否"' },
+            },
+          },
+        },
+      },
+      output: jsonOutput,
+      async execute(args: { todoId: string; id?: string; title?: string; nodes?: unknown[]; edges?: unknown[] }) {
+        const host = deps.drawingCanvasHost;
+        if (!host) {
+          throw new Error('drawing_draw unavailable: canvas host not wired');
+        }
+        // 校验 + 排版放最前面：非法 spec 要立刻把可读的原因抛回给模型，
+        // 让它在下一轮纠正，而不是先建出一张空画布。
+        const skeletons = layoutDrawingSpec({
+          nodes: (args.nodes ?? []) as never,
+          edges: (args.edges ?? []) as never,
+        });
+
+        // 目标画布：给了 id 就追加到那张；没给就先建一张空的（文件名按
+        // DrawingStore 的默认规则走，和用户手动新建完全一致），再把内容填进去。
+        const todoId = args.todoId as never;
+        let drawingId = args.id as string | undefined;
+        let created = false;
+        if (!drawingId) {
+          const meta = drawings.save(
+            todoId,
+            { elements: [], appState: {} } as never,
+            undefined,
+            args.title,
+          );
+          drawingId = meta.id as string;
+          created = true;
+        }
+
+        const outcome = await host.applyToCanvas({
+          todoId: args.todoId,
+          drawingId,
+          skeletons,
+          // 新建的绘图滚到内容，追加到已有绘图不动用户的视口。
+          scrollToContent: created,
+        });
+        if (!outcome.ok) {
+          throw new Error(`绘制失败：${outcome.error ?? '未知原因'}`);
+        }
+        return {
+          ok: true,
+          drawingId,
+          created,
+          elements: skeletons.length,
+        };
+      },
+    }));
+  }
 
   reg(defineTool({
     name: 'drawing_delete',

@@ -159,6 +159,17 @@ export interface DrawingSaveReq { todoId: ULID; id?: ULID; title?: string; scene
 export interface DrawingDeleteReq { id: ULID }
 export interface DrawingRenameReq { id: ULID; title: string }
 export interface DrawingThumbSetReq { id: ULID; dataUrl: string }
+/** 画布握手三件套：就绪上报 / 卸载上报 / apply 回执。请求体直接用
+ *  shared/drawing-spec 里的形状，不再重复定义一份 —— 两边一旦漂移，
+ *  回执就会对不上 opId，工具会一直等到超时。 */
+export interface DrawingCanvasReadyReq { drawingId: string }
+export interface DrawingCanvasGoneReq { drawingId: string }
+export interface DrawingAppliedReq {
+  opId: string;
+  drawingId: string;
+  ok: boolean;
+  error?: string;
+}
 
 // ----- inbox.* -----
 
@@ -591,6 +602,9 @@ export interface IpcRegistry {
   'drawing.delete': IpcChannel<DrawingDeleteReq, IpcResult<void>>;
   'drawing.rename': IpcChannel<DrawingRenameReq, IpcResult<DrawingMeta>>;
   'drawing.setThumb': IpcChannel<DrawingThumbSetReq, IpcResult<void>>;
+  'drawing.canvasReady': IpcChannel<DrawingCanvasReadyReq, IpcResult<void>>;
+  'drawing.canvasGone': IpcChannel<DrawingCanvasGoneReq, IpcResult<void>>;
+  'drawing.applied': IpcChannel<DrawingAppliedReq, IpcResult<void>>;
 
   'inbox.attach': IpcChannel<InboxAttachReq, IpcResult<InboxAttachment>>;
   'inbox.attachBlob': IpcChannel<InboxAttachBlobReq, IpcResult<InboxAttachment>>;

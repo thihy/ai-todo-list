@@ -413,6 +413,13 @@ export function useLinks(todoId: string | null): {
 
 export function useDrawing(id: string | null): { scene: DrawingScene | null } {
   const [scene, setScene] = useState<DrawingScene | null>(null);
+  // 'drawings' scope: AI 的 drawing_save / drawing_delete / drawing_setThumb
+  // 会广播这个 scope（ai-handlers.ts 的 mutatingScopes）。少了这行订阅，DSH
+  // 写完场景后**已经打开的画布不会重载** —— 用户看到的还是旧画面，接着
+  // 随手画一笔，ExcalidrawEditor 里的 600ms autosave 就会把 AI 刚写的场景
+  // 整个覆盖掉。drawing_list（列表）订阅了同一个 scope，所以列表会刷新、
+  // 画布内容却不动，这个不一致在人工操作下完全看不见。
+  const dataVersion = useDataVersion(['drawings']);
   useEffect(() => {
     if (!id) {
       setScene(null);
@@ -422,7 +429,7 @@ export function useDrawing(id: string | null): { scene: DrawingScene | null } {
       const scene = unwrap(res, null) as DrawingScene | null;
       setScene(scene ?? null);
     });
-  }, [id]);
+  }, [id, dataVersion]);
   return { scene };
 }
 

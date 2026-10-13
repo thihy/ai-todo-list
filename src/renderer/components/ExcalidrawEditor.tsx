@@ -11,6 +11,8 @@ import React, { useEffect, useRef } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { useDrawing } from '../hooks/useTodoListApi';
 import { useToastBus } from './Toast';
+import { useAppEvent } from '../hooks/useTodoListApi';
+import { applySkeletonBatch, type MinimalExcalidrawApi } from '../drawing/apply';
 
 // Excalidraw's vendor CSS. The package ships its CSS as a separate
 // `index.css` entry (not auto-injected by the JS bundle), so it must be
@@ -79,6 +81,60 @@ export const ExcalidrawEditor: React.FC<{
   // reads the live scene through it instead of waiting for the debounced
   // onChange, so an explicit save always persists the newest stroke.
   const apiRef = useRef<{ getSceneElements: () => unknown[]; getAppState: () => unknown } | null>(null);
+
+  // AI 绘图（B 版）的跨进程接线。main 拿到 drawingId 之后，如果这张画布
+  // 没挂载，它会先导航过来；这里挂好之后**必须**上报 canvasReady，否则
+  // main 的 applyToCanvas 会一直等到超时 —— 工具就永远返回失败。
+  //
+  // 卸载时报 canvasGone，让 main 把它从在世集合摘掉；否则 main 会以为画布
+  // 还活着，把 apply 发给一个已经不存在的 API，元素就丢了。
+  useEffect(() => {
+    if (!drawingId) return;
+    let disposed = false;
+    void window.todoList.drawing.canvasReady({ drawingId });
+    return () => {
+      disposed = true;
+      void disposed;
+      void window.todoList.drawing.canvasGone(drawingId);
+    };
+  }, [drawingId]);
+
+  // 接单：main 推来骨架元素 → 官方转换 → updateScene → 显式落盘 → 回执。
+  // 回执必须走 IPC 而不是本地 state，因为 main 在等它来决定工具返回什么。
+  useAppEvent('app:drawing-apply', (payload) => {
+    if (payload.drawingId !== drawingId) return;
+    const api = apiRef.current as MinimalExcalidrawApi | null;
+    const save = onSave ?? ((id, s) => defaultSave(todoId, id, s));
+    void (async () => {
+      if (!api) {
+        await window.todoList.drawing.applied({
+          opId: payload.opId,
+          drawingId: payload.drawingId,
+          ok: false,
+          error: '画布尚未就绪。',
+        });
+        return;
+      }
+      const res = await applySkeletonBatch({
+        api,
+        drawingId: payload.drawingId,
+        skeletons: payload.skeletons,
+        save,
+        scrollToContent: payload.scrollToContent,
+      });
+      await window.todoList.drawing.applied({
+        opId: payload.opId,
+        drawingId: payload.drawingId,
+        ok: res.ok,
+        error: res.error,
+      });
+      if (res.ok) {
+        toast.push({ kind: 'success', message: 'AI 已绘制到画布', ttl: 1500 });
+      } else {
+        toast.push({ kind: 'error', message: `AI 绘制失败：${res.error ?? '未知错误'}`, ttl: 3000 });
+      }
+    })();
+  });
 
   useEffect(() => {
     if (!drawingId || !scene || !hostRef.current) return;

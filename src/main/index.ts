@@ -9,6 +9,7 @@ import { userInfo } from 'node:os';
 import { installRouter, okResult, failResult, register } from './ipc/router';
 import { registerTodoHandlers } from './ipc/todo-handlers';
 import { registerContentHandlers } from './ipc/content-handlers';
+import { registerDrawingCanvasHandlers, getDrawingCanvasHost } from './ipc/drawing-canvas-handlers';
 import { registerDocumentHandlers } from './ipc/document-handlers';
 import { registerDiagnosticsHandlers } from './ipc/diagnostics-handler';
 import { registerHealthHandlers } from './ipc/health-handler';
@@ -359,6 +360,10 @@ function bootstrap(): void {
     registerStartupHandler(retryHooks);
     registerTodoHandlers(repo, md, handle.db, todosDir, resolveTaskDir, taskDirectories);
     registerContentHandlers(md, drawings, repo);
+    // AI 绘图（B 版）：画布握手 + apply 派发。与 content.* 分开放是因为它
+    // 持有跨调用的 in-flight 状态（谁在等画布就绪、谁在等回执），和内容
+    // 存储的职责是两回事。
+    registerDrawingCanvasHandlers();
     registerDocumentHandlers(docs, links, resolveTaskDir, todosDir);
     registerLinkHandlers();
     // docs 注入给 inbox.rename —— 改附件名时要把同一个 todo 的 progress /
@@ -373,6 +378,13 @@ function bootstrap(): void {
       try {
         const u = new URL(req.url);
         const id = decodeURIComponent(u.host);
+        if (id === 'composer') {
+          const preview = composerInbox.readComposerPreview(rootDir, decodeURIComponent(u.pathname.slice(1)));
+          if (!preview) return new Response('not found', { status: 404 });
+          return new Response(preview.bytes, {
+            headers: { 'Content-Type': preview.mime, 'Cache-Control': 'no-cache' },
+          });
+        }
         const att = inbox.get(id);
         if (!att) return new Response('not found', { status: 404 });
         const buf = readFileSync(att.filePath);
@@ -505,6 +517,7 @@ function bootstrap(): void {
             db: handle.db,
             attachmentsDir,
             settings,
+            drawingCanvasHost: getDrawingCanvasHost(),
           });
           logger.info(`startup[ai]: DSH runtime warmed (${reason}) @ ${Date.now() - aiStart}ms`);
 
@@ -848,6 +861,8 @@ function registerInboxHandlers(
       // 附件落在 {taskDir}/attachments/ 下，本来就在 todos/ 里面 —— 一样要
       // 提交，否则工作区里有文件、仓库里没有。
       void gitHistory.commitAll(todosDir, `新增附件 ${basename(att.filePath)}`).catch(() => undefined);
+      // 附件列表订阅了 content 作用域的广播；不广播的话新附件要手动刷新才出现。
+      broadcastDataChanged('content');
       return okResult(att);
     } catch (err) {
       return failResult('attach_failed', (err as Error).message);
@@ -859,6 +874,7 @@ function registerInboxHandlers(
     try {
       const att = inbox.attachBlob(req.todoId, req.dataUrl, req.filename, req.mime);
       void gitHistory.commitAll(todosDir, `新增附件 ${basename(att.filePath)}`).catch(() => undefined);
+      broadcastDataChanged('content');
       return okResult(att);
     } catch (err) {
       return failResult('attach_blob_failed', (err as Error).message);
