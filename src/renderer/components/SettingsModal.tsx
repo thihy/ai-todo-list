@@ -21,7 +21,7 @@ import {
 } from '../../shared/ai-types';
 import { TagManagementPane } from './TagManagementPane';
 
-type Category = 'general' | 'model' | 'data' | 'tags' | 'hotkeys' | 'reminder' | 'integration' | 'health' | 'about';
+type Category = 'general' | 'model' | 'data' | 'tags' | 'hotkeys' | 'reminder' | 'integration' | 'ai-access' | 'health' | 'about';
 
 const CATEGORIES: { key: Category; label: string }[] = [
   { key: 'general', label: '通用' },
@@ -31,6 +31,7 @@ const CATEGORIES: { key: Category; label: string }[] = [
   { key: 'hotkeys', label: '快捷键' },
   { key: 'reminder', label: '提醒' },
   { key: 'integration', label: '外部访问' },
+  { key: 'ai-access', label: 'AI 文件与技能' },
   { key: 'health', label: '健康' },
   { key: 'about', label: '关于' },
 ];
@@ -117,6 +118,8 @@ export const SettingsModal: React.FC<{ open: boolean; onClose: () => void }> = (
               // user isn't surprised when the socket doesn't bind/unbind
               // immediately.
               <BridgePane data={data} />
+            ) : cat === 'ai-access' ? (
+              <FileAccessPane data={data} patch={patch} />
             ) : cat === 'health' ? (
               // QUALITY-01 — deterministic task health. Read-only; the
               // pane re-queries when the user clicks "刷新" or after a
@@ -139,6 +142,12 @@ interface PaneProps {
 
 const GeneralPane: React.FC<PaneProps> = ({ data, patch }) => (
   <div className="settings-pane">
+    <Field label="AI 消息快捷键" hint="AI 回复期间，排队消息在当前回复结束后依次发送；Steer 在下一步引导当前任务。空闲时两种按键都直接发送，Shift+Enter 换行。">
+      <select className="input" aria-label="AI 消息快捷键" value={data.aiEnterAction ?? 'queue'} onChange={(event) => void patch({ aiEnterAction: event.target.value as 'queue' | 'steer' })}>
+        <option value="queue">Enter 排队 · Ctrl+Enter 引导</option>
+        <option value="steer">Enter 引导 · Ctrl+Enter 排队</option>
+      </select>
+    </Field>
     <Field label="主题" hint="当前应用使用浅色主题。">
       <select
         className="input"
@@ -714,6 +723,45 @@ function toInputs(
     supportsImageInput: c.supportsImageInput === true,
   }));
 }
+
+const FileAccessPane: React.FC<PaneProps> = ({ data, patch }) => {
+  const [mode, setMode] = useState(data.externalFileAccess ?? 'deny');
+  const [reads, setReads] = useState((data.externalReadDirs ?? []).join('\n'));
+  const [skills, setSkills] = useState((data.skillDirs ?? []).join('\n'));
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState('');
+  const save = async (): Promise<void> => {
+    setBusy(true);
+    setNotice('');
+    try {
+      const lines = (text: string): string[] => text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+      await patch({ externalFileAccess: mode, externalReadDirs: lines(reads), skillDirs: lines(skills) });
+      setNotice('已保存。文件读取规则立即生效；额外技能目录在重启应用后生效。');
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : '保存失败，草稿已保留');
+    } finally { setBusy(false); }
+  };
+  return <div className="settings-pane">
+    <Field label="工作区外的文件读取" hint="适用于受限模式和 Auto。完全访问模式允许外部文件；写入仍由当前会话的沙箱规则控制。">
+      <select className="input" aria-label="工作区外的文件读取" value={mode} disabled={busy} onChange={(event) => setMode(event.target.value as 'deny' | 'ask')}>
+        <option value="deny">仅工作区、技能目录与只读白名单</option>
+        <option value="ask">其他路径逐次确认</option>
+      </select>
+    </Field>
+    <Field label="只读目录白名单" hint="每行一个绝对目录路径，可使用 ~/。允许读取其子目录；不授予写入权限。">
+      <textarea className="input mono" rows={4} aria-label="只读目录白名单" value={reads} disabled={busy} onChange={(event) => setReads(event.target.value)} />
+    </Field>
+    <Field label="标准技能目录" hint="自动发现用户级 ~/.agents/skills 和工作区项目级 .agents/skills。技能按需加载；脚本执行和写入遵循会话权限。">
+      <input className="input mono" aria-label="标准技能目录" value={data.standardSkillDir ?? '~/.agents/skills'} readOnly />
+    </Field>
+    <Field label="额外技能目录" hint="每行填写一个包含技能子目录的绝对路径。每个技能目录内应有 SKILL.md；配置后重启生效。">
+      <textarea className="input mono" rows={4} aria-label="额外技能目录" value={skills} disabled={busy} onChange={(event) => setSkills(event.target.value)} />
+    </Field>
+    <p className="muted">逐次确认模式下，Auto 的 Shell 命令也会请求确认，便于核对命令中的外部文件访问。</p>
+    <button type="button" className="btn-primary" disabled={busy} onClick={() => void save()}>{busy ? '保存中…' : '保存访问设置'}</button>
+    {notice && <div className="notice" role="status">{notice}</div>}
+  </div>;
+};
 
 const DataPane: React.FC<PaneProps & { chooseDataDir: () => Promise<string | null> }> = ({
   data,

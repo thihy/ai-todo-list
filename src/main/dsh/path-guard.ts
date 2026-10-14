@@ -58,8 +58,25 @@ export function isWithinWorkspace(workspace: string, requested: string): boolean
   // If the path doesn't exist yet (write targets, fresh-workspace reads),
   // fall back to the resolved path 閳?the file can't be a symlink yet because
   // it doesn't exist.
-  const realResolved = safeRealpath(resolved) ?? resolved;
-  return isContained(workspace, realWorkspace, realResolved);
+  // Resolve the deepest existing ancestor as well: a missing file below an
+  // existing junction must not fall back to the unchecked lexical prefix.
+  const realResolved = resolveWithAncestors(resolved);
+  return realResolved !== null && isContained(realWorkspace, realWorkspace, realResolved);
+}
+
+function resolveWithAncestors(target: string): string | null {
+  try {
+    return fs.realpathSync.native(target);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') return null;
+    // A dangling symlink exists lexically; never reinterpret it as a missing
+    // ordinary path whose parent can grant access.
+    try { if (fs.lstatSync(target).isSymbolicLink()) return null; } catch { /* missing */ }
+    const parent = path.dirname(target);
+    if (parent === target) return null;
+    const realParent = resolveWithAncestors(parent);
+    return realParent === null ? null : path.join(realParent, path.basename(target));
+  }
 }
 
 /** Pure containment decision, split out so it can be tested without a real

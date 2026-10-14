@@ -9,7 +9,7 @@
 // 本来就支持折叠成 rail，响应式只是替用户按了一次折叠按钮，并不是
 // 把面板藏起来。
 
-import React, { Suspense } from 'react';
+import React, { Suspense, useRef } from 'react';
 import { IconChevronLeft, IconSparkle } from '../components/icons';
 import type { ExternalAiSubmitDetail } from '../components/Composer';
 
@@ -28,6 +28,8 @@ export const AIPanel: React.FC<{
   externalSubmit?: ExternalAiSubmitDetail | null;
   onExternalSubmitConsumed?: () => void;
 }> = ({ open, width, onToggle, externalSubmit, onExternalSubmitConsumed }) => {
+  const hasOpened = useRef(false);
+  if (open) hasOpened.current = true;
   return (
     <aside
       className={`ai-panel${open ? ' is-open' : ''}`}
@@ -37,21 +39,19 @@ export const AIPanel: React.FC<{
       // open default and the 40px rail floated at its left with a gap.
       style={open ? { width } : { width: 'var(--ai-rail-w)' }}
     >
-      {open ? (
-        // Collapse affordance lives INSIDE the AIPane header (right edge of
-        // its title row) — not in a separate grip divider column. The user
-        // perceives the IconCollapseBar as "part of the area" they're
-        // looking at, not as a chrome handle on a separate strip. Passed
-        // down as onCollapse so AIPane renders the button in its own
-        // chrome rather than the parent layering an overlay on top.
-        <Suspense fallback={<div className="ai-panel__loading" role="status" aria-live="polite">加载中…</div>}>
-          <AIPane
-            onCollapse={onToggle}
-            externalSubmit={externalSubmit}
-            onExternalSubmitConsumed={onExternalSubmitConsumed}
-          />
-        </Suspense>
-      ) : (
+      {hasOpened.current && (
+        <div style={{ display: open ? 'contents' : 'none' }}>
+          {/* Keep the loaded pane alive on collapse; its header owns the toggle. */}
+          <Suspense fallback={<div className="ai-panel__loading" role="status" aria-live="polite">加载中…</div>}>
+            <AIPane
+              onCollapse={onToggle}
+              externalSubmit={externalSubmit}
+              onExternalSubmitConsumed={onExternalSubmitConsumed}
+            />
+          </Suspense>
+        </div>
+      )}
+      {!open && (
         <button
           type="button"
           className="ai-rail"

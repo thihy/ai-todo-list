@@ -226,7 +226,7 @@ describe('画布中途被关闭', () => {
     const { host, navigations } = makeHost();
     host.canvasReady({ drawingId: 'd1' });
     host.canvasGone('d1');
-    const p = host.applyToCanvas({ todoId: 't1', drawingId: 'd1', skeletons: SKELETONS });
+    void host.applyToCanvas({ todoId: 't1', drawingId: 'd1', skeletons: SKELETONS });
     await vi.advanceTimersByTimeAsync(0);
     expect(navigations).toHaveLength(1);
   });

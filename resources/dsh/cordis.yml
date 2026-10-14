@@ -396,14 +396,15 @@
 # Filesystem skill provider: watches `~/.dsh/skills` and `~/.agents/skills` (and
 # any customSkillDirs) via chokidar, registers each discovered skill on
 # ctx.skills. dshHome/agentsHome are required by the schema; empty strings fall
-# through to defaults — `resolveDshHome('')` → `~/.dsh`, agentsHome → `~/.agents`.
+# through for dshHome only; agentsHome MUST be an explicit ~/.agents path.
 # If those dirs don't exist chokidar just sits on them silently (no events).
 # Add `customSkillDirs: ['<path>']` to ship a private app-owned skill catalog.
 - id: skill-filesystem
   name: '@deepseek-ai/dsh-skill-filesystem'
   config:
     dshHome: ''
-    agentsHome: ''
+    agentsHome: !!js "process.env.DSH_AGENTS_HOME || ((process.env.USERPROFILE || process.env.HOME) + '/.agents')"
+    customSkillDirs: !!js "JSON.parse(process.env.DSH_CUSTOM_SKILL_DIRS || '[]')"
 
 # Model-facing skill loader: registers the tool that lets the agent pick +
 # load a skill at runtime, plus a durable session catalog projection so

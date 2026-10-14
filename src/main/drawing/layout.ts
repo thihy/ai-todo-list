@@ -36,7 +36,7 @@ const TEXT_PAD = 12;
 function estimateTextWidth(text: string): number {
   // 中文按 1 个字宽、ASCII 按 0.55 个字宽粗估。
   let units = 0;
-  for (const ch of text) units += /[\x00-\x7f]/.test(ch) ? 0.55 : 1;
+  for (const ch of text) units += ch.charCodeAt(0) <= 0x7f ? 0.55 : 1;
   return Math.max(MIN_TEXT_W, Math.ceil(units * CHAR_W));
 }
 

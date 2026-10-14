@@ -1,0 +1,9 @@
+- [x] Permit attachment-only submission after clipboard imports settle.
+- [x] Render composer and turn thumbnails through an indexed raster protocol.
+- [x] Verify security and submission regressions, typecheck and build.
+- [x] Confirm the active custom model supports images and enable its local capability declaration with user authorization.
+- [x] Start the app, verify the visible image switch and loaded thumbnails, and exercise read_image with a local model fixture.
+- [x] Repair nested drawing tool schemas that prevented DSH boot; add a registration regression test.
+- [x] Restore the real model configuration after testing; report the gateway's VIRTUAL_MODEL_NO_BACKENDS failure.
+- [x] Update cached and resumed conversations to use the configured model on their next turn.
+- [x] Replace sent-image capsules with readable previews and subdued filenames; verify in the running app.

@@ -14,6 +14,7 @@ import { randomBytes } from 'node:crypto';
 import { DEFAULT_CAPTURE_HOTKEY, ROOT_DIR_NAME, CONFIG_FILENAME, DEFAULT_PROVIDER, DEFAULT_AI_USER_AGENT, DSH_WORKSPACE_SUBDIR } from '../../shared/constants';
 import type { AIModel, AIProvider, CustomProviderConfig, CustomProviderInput, LogLevel } from '../../shared/ai-types';
 import type { TagDef } from '../../shared/todo-types';
+import { validateFileAccessPatch, standardSkillRoot } from '../dsh/file-access';
 
 export interface PersistedSettings {
   provider: AIProvider;
@@ -99,6 +100,10 @@ export interface PersistedSettings {
    *  在 settings 改成自己已有的工作目录（共享给其他工具）；默认 null 走
    *  `<dataDir>/dsh_workspace`，与 DSH_SESSIONS_ROOT / 附件 / 画板完全隔离。 */
   dshWorkspaceDir: string | null;
+  aiEnterAction: 'queue' | 'steer';
+  externalFileAccess: 'deny' | 'ask';
+  externalReadDirs: string[];
+  skillDirs: string[];
   /** Main 进程 logger 阈值。`debug` 把 chunk / TTFB / abort 等诊断行也写
    *  进 todo-list.log——用于 stop-stuck 这类需要在用户机器上抓现场的场景。
    *  默认 `info`；用户可在 Settings → 通用 → 日志级别 切换，立即生效。
@@ -129,6 +134,10 @@ const DEFAULTS: PersistedSettings = {
   maxConversations: 100,
   aiGrantedTools: {},
   dshWorkspaceDir: null,
+  aiEnterAction: 'queue',
+  externalFileAccess: 'deny',
+  externalReadDirs: [],
+  skillDirs: [],
   logLevel: 'info',
 };
 
@@ -184,6 +193,14 @@ export class SettingsStore {
       delete (merged as Record<string, unknown>).taskAppearanceCustomPresets;
       // logLevel：损坏字面量 / 缺失字段都回退到 'info'，不让 logger 阈值被脏值卡住。
       merged.logLevel = normaliseLogLevel(raw.logLevel);
+      merged.aiEnterAction = raw.aiEnterAction === 'steer' ? 'steer' : 'queue';
+      try {
+        Object.assign(merged, validateFileAccessPatch(raw));
+      } catch {
+        merged.externalFileAccess = 'deny';
+        merged.externalReadDirs = [];
+        merged.skillDirs = [];
+      }
       return merged;
     } catch {
       return { ...DEFAULTS };
@@ -273,6 +290,11 @@ export class SettingsStore {
       // 当前实际生效的位置。`dshWorkspaceDir: null` 的语义是"未覆盖"，
       // 但 UI 不该把 null 展示成"未配置"——它仍有一个默认根。
       dshWorkspaceDir: v.dshWorkspaceDir ?? join(this.getDataDir(), DSH_WORKSPACE_SUBDIR),
+      externalFileAccess: v.externalFileAccess,
+      aiEnterAction: v.aiEnterAction,
+      externalReadDirs: [...v.externalReadDirs],
+      skillDirs: [...v.skillDirs],
+      standardSkillDir: standardSkillRoot(),
     };
   }
 
@@ -313,6 +335,8 @@ export class SettingsStore {
   }
 
   patch(patch: Partial<PersistedSettings>): PersistedSettings {
+    if (patch.aiEnterAction !== undefined && patch.aiEnterAction !== 'queue' && patch.aiEnterAction !== 'steer') throw new Error('消息发送快捷键无效');
+    patch = { ...patch, ...validateFileAccessPatch(patch) };
     const next: PersistedSettings = { ...this.cache, ...patch };
     // Never let streaming default override true if patch omits it
     if (patch.streaming === undefined && DEFAULTS.streaming) next.streaming = DEFAULTS.streaming;

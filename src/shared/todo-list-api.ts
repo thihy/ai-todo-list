@@ -1,4 +1,5 @@
 // Renderer-side typed facade for the contextBridge `window.todoList` API.
+import type { CaptureRect } from './screenshot';
 
 import type {
   IpcChannelName,
@@ -147,6 +148,10 @@ export interface InboxRemoveArgs { id: string }
 export interface InboxRenameArgs { id: string; title: string }
 
 export interface SettingsPatchArgs {
+  aiEnterAction?: 'queue' | 'steer';
+  externalFileAccess?: 'deny' | 'ask';
+  externalReadDirs?: string[];
+  skillDirs?: string[];
   provider?: AIProvider;
   apiKey?: string;
   model?: AIModel;
@@ -325,6 +330,7 @@ export interface TodoListApi {
      * stream it. Returns `{ canceled:true }` if the user dismisses the dialog.
      */
     pickFile(): Promise<IpcResponse<'app.pickFile'>>;
+    screenshot(args: { conversationId: string | null }): Promise<IpcResponse<'app.screenshot'>>;
     /**
      * Drop a renderer-side Blob (e.g. pasted image) into the AI composer
      * inbox. Caller has already encoded it to a `data:` URL; main decodes
@@ -435,6 +441,7 @@ export interface TodoListApi {
     submit(args: CaptureSubmitArgs): Promise<IpcResponse<'capture.submit'>>;
   };
   ai: {
+    steer(req: { conversationId: string; invocationId: string; prompt: string }): Promise<IpcResponse<'ai.steer'>>;
     health(): Promise<IpcResponse<'ai.health'>>;
     models(): Promise<IpcResponse<'ai.models'>>;
     /** Cancel the in-flight turn on a conversation. The renderer should pass
@@ -454,6 +461,7 @@ export interface TodoListApi {
      * "unknown conversation".
      */
     ask(req: {
+      retryGroupId?: string;
       prompt: string;
       conversationId: string;
       model?: AIModel;
@@ -551,6 +559,10 @@ export interface TodoListApi {
     confirm(req: { preset: string }): Promise<IpcResponse<'ai.permissionPreset.confirm'>>;
   };
   on<E extends AppEvent>(event: E, cb: (payload: AppEventMap[E]) => void): () => void;
+  screenshot: {
+    state(): Promise<IpcResponse<'screenshot.state'>>;
+    finish(args: { rect?: CaptureRect }): Promise<IpcResponse<'screenshot.finish'>>;
+  };
 }
 
 /** Renderer-side mirror of the main `AppFocus` interface. Pushes what the

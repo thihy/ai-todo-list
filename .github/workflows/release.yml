@@ -20,7 +20,7 @@ on:
         type: string
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   release:
@@ -64,7 +64,7 @@ jobs:
       # ABI rebuild must happen explicitly or the packaged app cannot open
       # its database.
       - name: Rebuild native modules for Electron
-        run: pnpm rebuild
+        run: pnpm run rebuild
 
       - name: Build
         run: pnpm build
@@ -93,7 +93,11 @@ jobs:
 
           $existing = gh release view $tag --json tagName --jq .tagName 2>$null
           if (-not $existing) {
-            gh release create $tag --title $tag --generate-notes
+            if ($tag.Contains('-')) {
+              gh release create $tag --title $tag --generate-notes --prerelease
+            } else {
+              gh release create $tag --title $tag --generate-notes
+            }
           }
           gh release upload $tag $($assets.FullName) --clobber
         env:

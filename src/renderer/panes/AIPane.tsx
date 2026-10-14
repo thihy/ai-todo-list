@@ -63,6 +63,7 @@ import { AI_SUBMIT_EVENT, type ExternalAiSubmitDetail } from '../components/Comp
 import { recoverToolResultValue, parseToolArgs } from '../tool-presentation';
 import type { ComposerBlock } from '@deepseek-ai/dsh-client-ui-conversation/client';
 import { AIComposer, type AIComposerAttachment } from '../dsh/AIComposer';
+import { AttachmentPreview } from '../dsh/AttachmentPreview';
 import { blobToDataUrl } from '../utils/blob-to-data-url';
 import { PendingQuestionCard } from '../dsh/PendingQuestionCard';
 import { PendingApprovalCard } from '../dsh/PendingApprovalCard';
@@ -73,6 +74,14 @@ import { normalizeAssistantBlocks } from '../dsh/normalize-assistant-blocks';
 import { decodeUserMessage } from '../../shared/task-creation';
 
 type AttachedFile = AIComposerAttachment;
+interface QueuedMessage {
+  id: string;
+  conversationId: string | null;
+  prompt: string;
+  attached: AttachedFile[];
+  intent?: 'chat' | 'create-task';
+}
+type AiSubmission = Omit<ExternalAiSubmitDetail, 'intent'> & { intent?: 'chat' | 'create-task' };
 
 /** One ordered row inside a turn's body. Mirrors DeepSeek's `AssistantBlock`
  *  union (see packages/client/ui-conversation in deepseek-harness) with our
@@ -99,7 +108,9 @@ interface TurnMetrics {
 }
 
 interface Turn {
+  steering?: { id: string; text: string; attached: AttachedFile[] }[];
   id: string;
+  retryGroupId?: string;
   user: string;
   /** User intent for this turn. `create-task` renders the dedicated
    *  operation card in TurnView; `chat` (or absent) keeps the plain user
@@ -310,6 +321,18 @@ export const AIPane: React.FC<{
   // its id. Stored separately from turnsByConv so events can still resolve
   // a streaming turn after the user navigated to another conversation.
   const [activeStream, setActiveStream] = useState<{ conversationId: string; invocationId: string } | null>(null);
+  const activeStreamRef = useRef(activeStream);
+  activeStreamRef.current = activeStream;
+  const dispatchLockRef = useRef<{ token: symbol; conversationId: string | null } | null>(null);
+  const admissionLockRef = useRef(false);
+  const [messageQueue, setMessageQueue] = useState<QueuedMessage[]>([]);
+  const queueRef = useRef<QueuedMessage[]>([]);
+  const [queuePaused, setQueuePaused] = useState<Record<string, boolean>>({});
+  const [queueNotice, setQueueNotice] = useState('');
+  const updateQueue = (update: (items: QueuedMessage[]) => QueuedMessage[]): void => {
+    queueRef.current = update(queueRef.current);
+    setMessageQueue(queueRef.current);
+  };
   const streamingConvId = activeStream?.conversationId ?? null;
   const streamingTurnId = activeStream?.invocationId ?? null;
 
@@ -851,9 +874,7 @@ export const AIPane: React.FC<{
   //   provider not configured → normal
   //
   // NOTE: a streaming turn (`busy`) does NOT block the composer — the user
-  // can keep typing a follow-up while the AI answers. Enter is suppressed in
-  // AIComposer while `busy`, so the draft neither submits nor queues; it
-  // waits in the textarea until the turn settles or the user hits stop.
+  // can queue a follow-up or steer the active task while the AI answers.
   //
   // We model that as a single nested ternary. `aiStartup.status` is
   // 'pending' until the renderer's first `app.renderer.ready`
@@ -981,6 +1002,24 @@ export const AIPane: React.FC<{
   const removeAttachment = (path: string): void => {
     setAttachments((prev) => prev.filter((a) => a.path !== path));
   };
+  const [screenshotBusy, setScreenshotBusy] = useState(false);
+  const screenshotLockRef = useRef(false);
+  const takeScreenshot = (): void => {
+    if (screenshotLockRef.current) return;
+    screenshotLockRef.current = true;
+    setScreenshotBusy(true);
+    const targetConv = currentIdRef.current;
+    const task: Promise<AttachedFile | null> = window.todoList.app.screenshot({ conversationId: targetConv })
+      .then(r => {
+        if (!r.ok) throw new Error(r.message ?? '截图失败');
+        if (r.data.canceled || currentIdRef.current !== targetConv) return null;
+        const file = { path: r.data.path!, name: r.data.name!, mime: r.data.mime!, size: r.data.size! };
+        setAttachments(prev => [...prev, file]);
+        return file;
+      }).catch((err: unknown) => { setInput(cur => cur || `[无法截图：${err instanceof Error ? err.message : String(err)}]`); return null; })
+      .finally(() => { screenshotLockRef.current = false; setScreenshotBusy(false); inflightPastesRef.current.delete(task); });
+    inflightPastesRef.current.add(task);
+  };
 
   // 粘贴图片走和 `pickFile` 完全相同的落盘通道：字节流先写进
   // <rootDir>/.todo-list/dsh_workspace/inbox/，chip 只留绝对路径 + 元数据，
@@ -1102,7 +1141,9 @@ export const AIPane: React.FC<{
     setRowMenuId(null);
     const confirm = await window.todoList.conversation.confirmDelete(id, row.title);
     if (!confirm.ok || !confirm.data.confirmed) return;
-    await window.todoList.conversation.delete(id);
+    const deleted = await window.todoList.conversation.delete(id);
+    if (!deleted.ok) return;
+    updateQueue((items) => items.filter((item) => item.conversationId !== id));
     setTurnsByConv((prev) => {
       const next = { ...prev };
       delete next[id];
@@ -1229,6 +1270,9 @@ export const AIPane: React.FC<{
     const conv = streamingConvId;
     const turnId = streamingTurnId;
     if (!conv) return;
+    setQueuePaused((previous) => ({ ...previous, [conv]: true }));
+    dispatchLockRef.current = null;
+    activeStreamRef.current = null;
 
     // 1) Settle the OLD turn right now. We don't have access to a
     //    fresh projection after Stop (the useEffect bailed), so we
@@ -1319,7 +1363,8 @@ export const AIPane: React.FC<{
   // modal (which dispatches a window event). Takes an optional override so
   // the Composer path can supply its own prompt + image attachments without
   // having to populate the textarea first.
-  const runSubmit = async (override?: ExternalAiSubmitDetail): Promise<void> => {
+  const retryLockRef = useRef(false);
+  const runSubmit = async (override?: AiSubmission, retryTurn?: Turn, targetId?: string): Promise<void> => {
     // The visual composer is disabled while a turn or HITL request is active,
     // but submissions can also arrive from the centre Composer custom event.
     // Enforce the same single-flight rule at the shared action boundary so no
@@ -1327,14 +1372,20 @@ export const AIPane: React.FC<{
     // gate on needsAiSetup so an external submission can't slip past the
     // disabled textarea when the user has no provider configured yet.
     if (
-      streamingTurnId !== null ||
+      activeStreamRef.current !== null || dispatchLockRef.current !== null ||
       activeQuestion?.convId === currentId ||
       activeApproval?.convId === currentId ||
       needsAiSetup
     ) return;
+    const dispatchToken = Symbol('submit');
+    dispatchLockRef.current = { token: dispatchToken, conversationId: targetId ?? currentId };
+    try {
     let prompt: string;
     let attached: AttachedFile[];
-    if (override) {
+    if (retryTurn) {
+      prompt = retryTurn.user;
+      attached = retryTurn.attached ?? [];
+    } else if (override) {
       // Composer→AIPane path. The user typed into the modal; we route
       // their text + attached images here without going through the
       // inline textarea. The image markdown is built inline so a
@@ -1358,7 +1409,6 @@ export const AIPane: React.FC<{
       }));
     } else {
       prompt = stripLeadingSlashCommand(input.trim());
-      if (!prompt) return;
       // 把归一化结果写回输入框,用户能看到 `/` 被吃掉,不是凭空消失
       if (input.trim() !== prompt) setInput(prompt);
       // 粘完立刻回车时 `attachments` 还是旧快照（importBlob 没返回），
@@ -1369,23 +1419,27 @@ export const AIPane: React.FC<{
         ...attachments,
         ...settled.filter((a) => !attachments.some((b) => b.path === a.path)),
       ];
+      if (!prompt && attached.length === 0) return;
     }
 
     // User intent drives how main wraps the wire prompt: `create-task`
     // becomes a tiny JSON envelope (the ten fixed rules live in the DSH
     // system prompt), plain chat goes through verbatim. The renderer
     // stays out of envelope construction — see `src/shared/task-creation.ts`.
-    const userIntent: 'chat' | 'create-task' | undefined = override?.intent;
+    const userIntent: 'chat' | 'create-task' | undefined = retryTurn?.userIntent ?? override?.intent;
 
-    let convId = currentId;
+    let convId = targetId ?? currentId;
     if (!convId) {
       const r = await window.todoList.conversation.create();
-      if (!r.ok) return;
+      if (!r.ok) throw new Error(r.message ?? '创建对话失败');
       convId = r.data.conversation.id;
       setConversations((prev) => [r.data.conversation, ...prev]);
       setTurnsByConv((prev) => ({ ...prev, [convId!]: [] }));
       setHistoryLoaded((prev) => new Set(prev).add(convId!));
       setCurrentId(convId);
+      currentIdRef.current = convId;
+      dispatchLockRef.current = { token: dispatchToken, conversationId: convId };
+      updateQueue((items) => items.map((item) => item.conversationId === null ? { ...item, conversationId: convId } : item));
       // 通知 Composer：当前活跃 convId 已经落地（之前是 draft），
       // 后续粘贴图片走 importBlob 时会写到正确的 convId key。
       window.dispatchEvent(
@@ -1403,7 +1457,7 @@ export const AIPane: React.FC<{
       }
     }
 
-    if (!override) setAttachments([]);
+    if (!override && !retryTurn) setAttachments([]);
 
     // 把 draft 期间写入的「c-draft-...」路径挪到正式 convId 下，让
     // cleanupForConv(convId) 之后能找到并 unlink。Composer 已经把数据写到
@@ -1458,30 +1512,35 @@ export const AIPane: React.FC<{
       ]);
 
     const id = crypto.randomUUID();
+    const retryGroupId = retryTurn?.retryGroupId ?? retryTurn?.id ?? id;
+    const nextTurn: Turn = { id, retryGroupId, user: prompt, userIntent, blocks: [], status: 'streaming', attached: attached.length > 0 ? attached : undefined, metrics: { startMs: Date.now() } };
     setTurnsByConv((prev) => ({
       ...prev,
-      [convId!]: [
+      [convId!]: retryTurn ? (prev[convId!] ?? []).map(t => t.id === retryTurn.id ? nextTurn : t) : [
         ...(prev[convId!] ?? []),
         // Display the user's literal prompt in the bubble, NOT the wrapped
         // system-instruction version — the user should see exactly what
         // they typed. For create-task the literal text becomes the card
         // description (not a chat bubble).
-        { id, user: prompt, userIntent, blocks: [], status: 'streaming', attached: attached.length > 0 ? attached : undefined, metrics: { startMs: Date.now() } },
+        nextTurn,
       ],
     }));
-    if (!override) {
+    if (!override && !retryTurn) {
       setInput('');
-      clear();
     }
+    clear();
     openedCreatedTodoIdRef.current = null;
     setActiveStream({ conversationId: convId, invocationId: id });
+    activeStreamRef.current = { conversationId: convId, invocationId: id };
     // The user message has now been admitted into the target conversation's
     // list. Ask the auto-follow hook to pin to bottom on the next frame so
     // the bubble is visible — only valid because validation above passed
     // (convId resolved, message added). Invalid submits (empty / blocked /
     // AI-not-configured) bailed out earlier, so this is safe.
     requestFollow(convId);
-    const res = await window.todoList.ai.ask({ prompt: finalWire, conversationId: convId, invocationId: id, history: priorTurns, tools: undefined, intent: userIntent });
+    const res = await window.todoList.ai.ask({ prompt: finalWire, conversationId: convId, invocationId: id, retryGroupId, history: priorTurns, tools: undefined, intent: userIntent })
+      .catch((err: unknown) => ({ ok: false as const, message: err instanceof Error ? err.message : String(err) }));
+    if (!res.ok && activeStreamRef.current?.invocationId === id) setQueuePaused((previous) => ({ ...previous, [convId!]: true }));
     // L6-A: the turn's status flip is authoritative HERE, not in the
     // streaming useEffect. The ai:stream `done` event and this IPC reply
     // race: if the IPC resolves first, runSubmit clears streamingTurnId
@@ -1552,7 +1611,82 @@ export const AIPane: React.FC<{
     // A stopped request can finish after its replacement has started.
     // Clear both identifiers together, and only for this exact invocation.
     setActiveStream((current) => current?.invocationId === id ? null : current);
+    if (activeStreamRef.current?.invocationId === id) activeStreamRef.current = null;
     void refreshList();
+    } finally {
+      if (dispatchLockRef.current?.token === dispatchToken) dispatchLockRef.current = null;
+    }
+  };
+
+  const submitMessage = async (mode: 'queue' | 'steer' = 'queue', override?: ExternalAiSubmitDetail): Promise<void> => {
+    if (admissionLockRef.current || composerBlock || showAiRetryBanner) return;
+    admissionLockRef.current = true;
+    const draft = input;
+    const target = currentIdRef.current;
+    let capturedAttachments: AttachedFile[] = [];
+    try {
+      const settled = override ? [] : await settlePendingPastes();
+      const attached = override ? override.images : [...attachments, ...settled.filter((item) => !attachments.some((other) => other.path === item.path))];
+      capturedAttachments = [...attached];
+      const prompt = stripLeadingSlashCommand((override?.prompt ?? draft).trim());
+      if (!prompt && attached.length === 0) return;
+      const message: QueuedMessage = { id: crypto.randomUUID(), conversationId: target ?? dispatchLockRef.current?.conversationId ?? null, prompt, attached: [...attached], intent: override?.intent };
+      const active = activeStreamRef.current;
+      if (!active && !dispatchLockRef.current && !queueRef.current.some((item) => item.conversationId === target)) {
+        if (!override) { setInput((value) => value === draft ? '' : value); setAttachments((items) => items.filter((item) => !attached.some((sent) => sent.path === item.path))); }
+        // Release input admission while the response streams; dispatch has its
+        // own synchronous lock, so subsequent sends can enter the queue.
+        admissionLockRef.current = false;
+        await runSubmit({ prompt, images: attached, intent: override?.intent }, undefined, target ?? undefined);
+        return;
+      }
+      if (mode === 'steer' && active?.conversationId === target && !override?.intent) {
+        const wire = attached.length ? `${prompt}\n\n---\n\n${attached.map((item) => `${attachmentHeader(item)}\n${item.path}`).join('\n\n---\n\n')}` : prompt;
+        const result = await window.todoList.ai.steer({ conversationId: active.conversationId, invocationId: active.invocationId, prompt: wire });
+        if (!result.ok) { setQueueNotice(result.message ?? '引导失败，草稿已保留'); return; }
+        if (result.data.accepted) {
+          setTurnsByConv((previous) => ({ ...previous, [active.conversationId]: (previous[active.conversationId] ?? []).map((turn) => turn.id === active.invocationId ? { ...turn, steering: [...(turn.steering ?? []), { id: message.id, text: prompt, attached: [...attached] }] } : turn) }));
+          setQueueNotice('引导已提交，将在当前任务的下一步生效。');
+        } else {
+          updateQueue((items) => [...items, message]);
+          setQueueNotice('当前任务已结束，引导消息转入队列。');
+        }
+      } else {
+        updateQueue((items) => [...items, message]);
+        setQueueNotice('');
+      }
+      if (!override) { setInput((value) => value === draft ? '' : value); setAttachments((items) => items.filter((item) => !attached.some((sent) => sent.path === item.path))); }
+    } catch (error) {
+      setQueueNotice(error instanceof Error ? error.message : '发送失败，草稿已保留');
+      if (!override && currentIdRef.current === target) {
+        setInput((value) => value || draft);
+        setAttachments((items) => [...items, ...capturedAttachments.filter((item) => !items.some((other) => other.path === item.path))]);
+      }
+    } finally { admissionLockRef.current = false; }
+  };
+
+  useEffect(() => {
+    if (busy || dispatchLockRef.current || composerBlock || showAiRetryBanner) return;
+    const message = messageQueue.find((item) => item.conversationId && !queuePaused[item.conversationId] && conversations.some((conv) => conv.id === item.conversationId && !conv.archived));
+    if (!message) return;
+    if (!message.prompt.trim() && message.attached.length === 0) {
+      setQueuePaused((previous) => ({ ...previous, [message.conversationId!]: true }));
+      setQueueNotice('排队消息为空，请编辑或移除后继续。');
+      return;
+    }
+    updateQueue((items) => items.filter((item) => item.id !== message.id));
+    void runSubmit({ prompt: message.prompt, images: message.attached, intent: message.intent }, undefined, message.conversationId ?? undefined).catch(() => {
+      updateQueue((items) => [message, ...items]);
+      if (message.conversationId) setQueuePaused((previous) => ({ ...previous, [message.conversationId!]: true }));
+      setQueueNotice('发送失败，消息保留在队列中。');
+    });
+  }, [busy, messageQueue, queuePaused, currentId, conversations, composerBlock?.reason, showAiRetryBanner]);
+
+  const retryTurn = async (turn: Turn): Promise<void> => {
+    if (retryLockRef.current || turn.status !== 'error' || busy || composerBlock || showAiRetryBanner) return;
+    retryLockRef.current = true;
+    try { await runSubmit(undefined, turn); }
+    finally { retryLockRef.current = false; }
   };
 
   // The Composer modal (center "新建任务" surface) dispatches this event
@@ -1563,7 +1697,7 @@ export const AIPane: React.FC<{
       const detail = (e as CustomEvent<ExternalAiSubmitDetail>).detail;
       if (!detail) return;
       if (detail.intent !== 'create-task') return;
-      void runSubmit({ intent: detail.intent, prompt: detail.prompt, images: detail.images });
+      void submitMessage('queue', { intent: detail.intent, prompt: detail.prompt, images: detail.images });
     };
     window.addEventListener(AI_SUBMIT_EVENT, onExternalSubmit);
     return () => window.removeEventListener(AI_SUBMIT_EVENT, onExternalSubmit);
@@ -1588,13 +1722,12 @@ export const AIPane: React.FC<{
     if (aiStartup.status === 'ready' && pendingExternalSubmit) {
       const queued = pendingExternalSubmit;
       setPendingExternalSubmit(null);
-      void runSubmit(queued);
+      void submitMessage('queue', queued);
       return;
     }
     // 2) Otherwise pick up a fresh external submission from App.
     if (!externalSubmit) return;
     if (
-      streamingTurnId !== null ||
       activeQuestion?.convId === currentId ||
       activeApproval?.convId === currentId
     ) return;
@@ -1604,7 +1737,7 @@ export const AIPane: React.FC<{
       return;
     }
     onExternalSubmitConsumed?.();
-    void runSubmit(externalSubmit);
+    void submitMessage('queue', externalSubmit);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [externalSubmit, streamingTurnId, activeQuestion, activeApproval, currentId, dshNotReady, aiStartup.status, pendingExternalSubmit]);
 
@@ -2068,7 +2201,11 @@ export const AIPane: React.FC<{
                   onRemoveAttachment={removeAttachment}
                   onPickAttachment={() => void pickAttachment()}
                   onPasteFiles={pasteAttachments}
-                  onSubmit={() => void runSubmit()}
+                  onScreenshot={takeScreenshot}
+                  screenshotBusy={screenshotBusy}
+                  onSubmit={() => void submitMessage()}
+                  onSteer={() => void submitMessage('steer')}
+                  enterAction={aiSettings?.aiEnterAction ?? 'queue'}
                   onStop={() => void stop()}
                   busy={busy}
                   hasConversation={false}
@@ -2086,7 +2223,9 @@ export const AIPane: React.FC<{
                 hydrates currentTurns. Rendering turns while loading
                 would be a no-op anyway (empty), but the explicit
                 gate keeps the contract clear. */}
-            {!dshNotReady && currentTurns.map((t) => <TurnView key={t.id} turn={t} />)}
+            {!dshNotReady && currentTurns.map((t, index) => <TurnView key={t.id} turn={t}
+              onRetry={index === currentTurns.length - 1 ? () => void retryTurn(t) : undefined}
+              retryDisabled={busy || composerBlock !== undefined || showAiRetryBanner} />)}
           </div>
         </div>
         {showJumpToLatest && currentId && (
@@ -2147,6 +2286,21 @@ export const AIPane: React.FC<{
           `min-height: 0` gives way when a long turn expands the stream.
           The AIComposer primitive owns its own internal layout (.composer-
           card / .composer-actions); the host only needs to position it. */}
+      {messageQueue.some((item) => item.conversationId === currentId) && (
+        <div className="aipane__queue" aria-label="消息队列">
+          <div className="aipane__queue-header"><span>待发送 · {messageQueue.filter((item) => item.conversationId === currentId).length}</span>
+            {currentId && queuePaused[currentId] && <button type="button" className="btn-secondary" onClick={() => setQueuePaused((previous) => ({ ...previous, [currentId]: false }))}>继续发送队列</button>}
+          </div>
+          {messageQueue.filter((item) => item.conversationId === currentId).map((item, index) => <div className="aipane__queue-item" key={item.id}>
+            <span>{index + 1}</span>
+            <textarea className="input" rows={1} aria-label={`编辑排队消息 ${index + 1}`} value={item.prompt} onChange={(event) => updateQueue((items) => items.map((queued) => queued.id === item.id ? { ...queued, prompt: event.target.value } : queued))} />
+            {item.attached.length > 0 && <span title={item.attached.map((file) => file.name).join('\n')}>{item.attached.length} 个附件</span>}
+            <button type="button" className="btn-secondary" aria-label={`移除排队消息 ${index + 1}`} onClick={() => updateQueue((items) => items.filter((queued) => queued.id !== item.id))}>移除</button>
+          </div>)}
+          <span className="muted">当前回复结束后依次发送；停止或失败时暂停队列。</span>
+        </div>
+      )}
+      {queueNotice && <div className="aipane__queue-notice" role="status">{queueNotice}</div>}
       {current !== null && (
         <AIComposer
           ref={textareaRef}
@@ -2156,7 +2310,11 @@ export const AIPane: React.FC<{
           onRemoveAttachment={removeAttachment}
           onPickAttachment={() => void pickAttachment()}
           onPasteFiles={pasteAttachments}
-          onSubmit={() => void runSubmit()}
+          onScreenshot={takeScreenshot}
+          screenshotBusy={screenshotBusy}
+          onSubmit={() => void submitMessage()}
+          onSteer={() => void submitMessage('steer')}
+          enterAction={aiSettings?.aiEnterAction ?? 'queue'}
           onStop={() => void stop()}
           busy={busy}
           hasConversation={current !== null}
@@ -2292,7 +2450,7 @@ function formatTurnMetrics(m: TurnMetrics): string | null {
   return parts.join(' · ');
 }
 
-const TurnView: React.FC<{ turn: Turn }> = ({ turn }) => {
+const TurnView: React.FC<{ turn: Turn; onRetry?: () => void; retryDisabled?: boolean }> = ({ turn, onRetry, retryDisabled }) => {
   const { blocks, status, userIntent } = turn;
   // Create-task intent → dedicated operation card. Plain chat (or absent
   // intent on older turns) keeps the regular user bubble. The card uses
@@ -2304,8 +2462,9 @@ const TurnView: React.FC<{ turn: Turn }> = ({ turn }) => {
       {turn.attached && turn.attached.length > 0 && (
         <div className="turn__attachments" aria-label="已附加的文件">
           {turn.attached.map((a) => (
-            <span key={a.path} className="turn__attach-chip" title={`${a.path}\n${a.mime} · ${a.size} 字节`}>
-              <span aria-hidden="true"><IconPaperclipOutline16 size={11} /></span> {a.name}
+            <span key={a.path} className={`turn__attach-chip${a.mime.startsWith('image/') ? ' turn__attach-chip--image' : ''}`} title={`${a.path}\n${a.mime} · ${a.size} 字节`}>
+              <AttachmentPreview {...a} />
+              <span className="turn__attach-label"><span aria-hidden="true"><IconPaperclipOutline16 size={11} /></span> {a.name}</span>
             </span>
           ))}
         </div>
@@ -2318,6 +2477,18 @@ const TurnView: React.FC<{ turn: Turn }> = ({ turn }) => {
         </div>
       ))}
       <AssistantTurnContent blocks={blocks} status={status} error={turn.error} />
+      {turn.steering?.map((message) => <div key={message.id} className="turn__steering">
+        <span className="muted">引导当前任务</span>
+        <div className="bubble bubble--user">{message.text}{message.attached.length > 0 && <span className="muted"> · {message.attached.map((item) => item.name).join('、')}</span>}</div>
+      </div>)}
+      {status === 'error' && onRetry && (
+        <div className="turn__retry">
+          <button type="button" className="turn__retry-button" onClick={onRetry} disabled={retryDisabled}>
+            重试
+          </button>
+          <span>使用当前模型重新发送</span>
+        </div>
+      )}
       {(() => {
         const line = turn.metrics ? formatTurnMetrics(turn.metrics) : null;
         return line ? <div className="aipane__metrics">{line}</div> : null;

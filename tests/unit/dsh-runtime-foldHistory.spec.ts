@@ -46,6 +46,22 @@ function toolResult(callId: string, ok = true, content: unknown = { ok: true }, 
 function stepEnd() { return { type: 'step/end', data: {} }; }
 
 describe('foldHistory', () => {
+  it('groups explicit retries without dropping the assistant attempt traces', () => {
+    const retry = (id: string) => { const event = userMsg('look at the image', id); return { ...event,
+      data: { ...event.data, source: { kind: 'user', retryGroupId: 'same-display-message' } } }; };
+    const history = foldHistory([retry('attempt-1'), reasoningDelta('first attempt'), stepEnd(), retry('attempt-2'), textDelta('success'), stepEnd()]);
+    expect(history.filter(t => t.type === 'user')).toHaveLength(1);
+    expect(history.filter(t => t.type === 'assistant')).toHaveLength(2);
+  });
+  it('does not collapse repeated user messages without explicit retry metadata', () => {
+    expect(foldHistory([userMsg('hello', 'u1'), userMsg('hello', 'u2')]).filter(t => t.type === 'user')).toHaveLength(2);
+  });
+  it('does not collapse different text sharing a retry group', () => {
+    const history = foldHistory(['first', 'changed'].map((text, index) => ({ type: 'user/message', data: {
+      id: `u${index}`, content: [{ type: 'text', text }], source: { kind: 'user', retryGroupId: 'same-group' },
+    } })));
+    expect(history.filter(t => t.type === 'user')).toHaveLength(2);
+  });
   it.each([
     ['TOOL_OUTCOME_UNKNOWN', 'missing-result'],
     ['ABORTED', 'stopped'],
@@ -308,4 +324,12 @@ describe('foldHistory', () => {
     expect(turns).toEqual([{ type: 'user', text: '今天天气不错' }]);
     expect((turns[0] as { intent?: unknown }).intent).toBeUndefined();
   });
+});
+it('hides generated skill catalogs while preserving literal user text and steering', () => {
+  const events = [
+    { type: 'user/message', data: { content: [{ type: 'text', text: 'catalog' }], source: { kind: 'skill-catalog' } } },
+    { type: 'user/message', data: { content: [{ type: 'text', text: '<available_skills>literal user text</available_skills>' }], source: { kind: 'user' } } },
+    { type: 'user/message', data: { content: [{ type: 'text', text: 'steer this task' }], source: { kind: 'user' } } },
+  ];
+  expect(foldHistory(events as never).filter((turn) => turn.type === 'user').map((turn) => turn.text)).toEqual(['<available_skills>literal user text</available_skills>', 'steer this task']);
 });

@@ -2031,6 +2031,10 @@ a:hover {
   border: 1px solid color-mix(in srgb, var(--accent-danger) 35%, transparent);
   border-radius: var(--radius-md);
 }
+.turn__retry { display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--fg-muted); }
+.turn__retry-button { padding: 6px 14px; border: 1px solid var(--border-default); border-radius: 7px; background: var(--bg-surface); color: var(--fg-primary); cursor: pointer; }
+.turn__retry-button:hover { background: var(--surface-muted); }
+.turn__retry-button:disabled { opacity: .5; cursor: not-allowed; }
 
 /* Create-task operation card 鈥?light operation card used when the user
  * originates a create-task request from the Composer (intent=create-task).
@@ -2220,6 +2224,7 @@ a:hover {
   justify-content: space-between;
   padding-top: 4px;
 }
+.aipane__composer-tools { display: flex; align-items: center; gap: 8px; }
 
 /* + button lives INSIDE the composer card (left edge). Visual style is
    dim-by-default so the user focuses on typing, not the chrome 鈥?brightens
@@ -2365,6 +2370,35 @@ a:hover {
 .aipane__attach-chip-icon {
   font-size: 11px;
   opacity: 0.8;
+}
+.ai-attachment-preview {
+  width: 64px;
+  height: 64px;
+  object-fit: contain;
+  border-radius: 6px;
+  background: var(--surface-muted, #F6F7F9);
+}
+.aipane__attach-chip--image {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 5px;
+  padding: 6px;
+  border-radius: 10px;
+}
+.aipane__attach-chip--image .ai-attachment-preview {
+  width: 104px;
+  height: 80px;
+}
+.aipane__attach-chip--image .aipane__attach-chip-icon { display: none; }
+.aipane__attach-chip--image .aipane__attach-chip-name { max-width: 104px; }
+.aipane__attach-chip--image .aipane__attach-chip-x {
+  position: absolute;
+  right: 3px;
+  top: 3px;
+  background: var(--bg-surface);
+  border-radius: 50%;
 }
 .aipane__attach-chip-name {
   overflow: hidden;
@@ -2563,7 +2597,7 @@ a:hover {
 .turn__attachments {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: 10px;
   margin: 0 0 2px auto;
   justify-content: flex-end;
   max-width: 90%;
@@ -2582,6 +2616,41 @@ a:hover {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.turn__attach-chip--image {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  white-space: normal;
+  max-width: 100%;
+}
+.turn__attach-chip--image .ai-attachment-preview {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: min(280px, 100%);
+  max-height: 240px;
+  object-fit: contain;
+  border: 1px solid var(--border-default);
+  border-radius: 12px;
+}
+.turn__attach-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.turn__attach-chip--image .turn__attach-label {
+  font-size: 11px;
+  color: var(--fg-muted);
 }
 /* L3-B: stop button replaces the Send button while a turn is in flight.
    Distinct treatment (subtle warm tint + 鈴?glyph) so it reads as an
@@ -7194,3 +7263,10 @@ a:hover {
   max-height: 40vh;
   overflow: auto;
 }
+.aipane__send-actions { display: flex; align-items: center; gap: 6px; }
+.aipane__queue { flex: 0 0 auto; max-height: 200px; overflow: auto; padding: 10px 14px; background: var(--bg-secondary, #f3f5f7); border-top: 1px solid var(--border, #dde2e7); font-size: 12px; }
+.aipane__queue-header, .aipane__queue-item { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.aipane__queue-header { justify-content: space-between; }
+.aipane__queue-item textarea { flex: 1; min-width: 0; resize: vertical; }
+.aipane__queue-notice { padding: 4px 14px; font-size: 12px; color: var(--text-muted, #667085); }
+.turn__steering { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; margin: 8px 0; font-size: 12px; }

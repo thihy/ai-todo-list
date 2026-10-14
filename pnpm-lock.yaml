@@ -280,6 +280,9 @@ importers:
       katex:
         specifier: ^0.16.47
         version: 0.16.47
+      koffi:
+        specifier: 3.2.1
+        version: 3.2.1
       marked:
         specifier: ^16.4.2
         version: 16.4.2

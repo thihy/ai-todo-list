@@ -25,6 +25,7 @@ import type { TodoRepo } from '../db/todo-repo';
 import type { MarkdownStore } from '../files/markdown';
 import type { DrawingStore } from '../files/drawings';
 import { layoutDrawingSpec } from '../drawing/layout';
+import type { DrawingCanvasHost } from '../drawing/canvas-host';
 import { getFocus } from '../app-context';
 import type { ConversationRepo } from '../db/conversation-repo';
 import type { SettingsStore } from '../settings/store';
@@ -33,6 +34,7 @@ import { TODO_STATUSES, PRIORITIES } from '../../shared/todo-types';
 import type { UserQuestionAnswer, UserQuestionRequest } from '../../shared/ai-types';
 import { presentToolCall, presentToolResult, recoverToolResultValue } from '@shared/tool-presentation';
 import { isWithinWorkspace, extractStringPath } from './path-guard';
+import { standardSkillRoot, type FileAccessSettings } from './file-access';
 import type { ToolExecution, PreToolDecision } from '@deepseek-ai/dsh-tools';
 import { TurnFailureGuard } from './turn-failure';
 import { configureElectronSubprocess, configureElectronSandboxRunner } from './subprocess-compat';
@@ -41,6 +43,8 @@ import type Database from 'better-sqlite3';
 import { mimeExt, sanitizeName } from '../util/mime';
 import { decodeUserMessage, encodeTaskCreationEnvelope, type UserIntent } from '../../shared/task-creation';
 import type { AttachmentStore } from '@deepseek-ai/dsh-attachment';
+import type { Context } from '@deepseek-ai/cordis';
+import type { ModelSelectionRef } from '@deepseek-ai/dsh-agent';
 
 // DSH 走动态 import：这样即使依赖没装，主 bundle 也能编译；同时启动失败时
 // 渲染端能看到显式的 "DSH unavailable" 而不是 import 阶段崩掉。
@@ -73,7 +77,7 @@ export interface DshRuntimeDeps {
   /** AI 绘图（B 版）的画布 host。drawing_draw 需要它把骨架元素送进渲染
    *  进程。做成可选：单测和不装 Excalidraw 的环境不提供它，此时
    *  drawing_draw 缺席而不是整个 runtime 起不来。 */
-  drawingCanvasHost?: import('../drawing/canvas-host').DrawingCanvasHost | null;
+  drawingCanvasHost?: DrawingCanvasHost | null;
 }
 
 // 一条渲染用的历史条目。从 JSONL 后端 loadHistory() 加载，也由 runTurn 的
@@ -169,7 +173,9 @@ export async function* bridgeLlmStream(
 }
 
 export interface DshRuntime {
+  steer(conversationId: string, invocationId: string, prompt: string): Promise<boolean>;
   runTurn(opts: {
+    retryGroupId?: string;
     prompt: string;
     conversationId: string;
     invocationId: string;
@@ -233,12 +239,15 @@ let resolvedRuntime: DshRuntime | null = null;
 export interface AgentHandle {
   agent: {
     followup(m: unknown): void;
+    steer?(m: unknown): void;
+    readonly status?: 'idle' | 'running';
     whenIdle(): Promise<void>;
     cancel(
       cause: { kind: 'user' } | { kind: 'parent' } | { kind: 'hook'; reason: string } | { kind: 'disposed' },
       options?: { keepInbox?: boolean },
     ): void;
     id: unknown;
+    ctx?: Context;
   };
   dispose(): Promise<void>;
 }
@@ -608,7 +617,7 @@ export async function handlePreExecute(
   exec: ToolExecution,
   next: () => Promise<PreToolDecision>,
   deps: {
-    settings: { get(): { dshWorkspaceDir?: string | null } };
+    settings: { get(): { dshWorkspaceDir?: string | null } & FileAccessSettings };
     currentPreset: (exec: ToolExecution) => string | undefined;
   },
 ): Promise<PreToolDecision> {
@@ -621,12 +630,19 @@ export async function handlePreExecute(
     return { kind: 'deny', reason: WORKSPACE_MUTATION_DENY_REASON };
   }
   if (READ_CLASS_TOOLS.has(toolName)) {
-    const workspace = deps.settings.get().dshWorkspaceDir || process.env.DSH_WORKSPACE_ROOT;
+    const access = deps.settings.get();
+    const workspace = access.dshWorkspaceDir || process.env.DSH_WORKSPACE_ROOT;
     // DSH fs 工具的参数键:`read` / `read_image` 用 `file_path`;
     // `grep` / `glob` 用 `path` 指定搜索根目录;pattern 是匹配表达式。
     const requested = extractStringPath(args, ['file_path', 'path']);
     if (workspace && typeof requested === 'string') {
       if (!isWithinWorkspace(workspace, requested)) {
+        if (deps.currentPreset(exec) === 'danger-full-access') return next();
+        const roots = [standardSkillRoot(), ...(access.skillDirs ?? []), ...(access.externalReadDirs ?? [])];
+        if (roots.some((root) => isWithinWorkspace(root, resolve(workspace, requested)))) return next();
+        if (access.externalFileAccess === 'ask') {
+          return { kind: 'ask', reason: `请求读取工作区外的文件（仅本次调用）：${requested}` };
+        }
         const reason = `PATH_OUTSIDE_WORKSPACE: ${requested} 不在工作区 ${workspace} 内`;
         logger.warn(`tools/pre-execute deny ${toolName}: ${reason}`);
         return { kind: 'deny', reason };
@@ -636,8 +652,12 @@ export async function handlePreExecute(
     return next();
   }
   if (PRE_APPROVE_TOOLS.has(toolName)) {
+    if (deps.currentPreset(exec) === 'danger-full-access') return next();
+    // Shell can read arbitrary files: opt-in external access never silently
+    // approves a shell invocation under Auto; show the actual command first.
+    const confirmShell = deps.settings.get().externalFileAccess === 'ask' && (toolName === 'bash' || toolName === 'pwsh');
     // Auto 预设:放行,让插件(已先于我们返回 next())的 allow 生效。
-    if (decideMutatingToolGate(deps.currentPreset(exec)) === 'auto-passthrough') {
+    if (!confirmShell && decideMutatingToolGate(deps.currentPreset(exec)) === 'auto-passthrough') {
       logger.info(`tools/pre-execute auto-passthrough ${toolName}`);
       return next();
     }
@@ -1036,7 +1056,7 @@ function truncateTitle(s: string, maxChars: number): string {
  *  也不应用作会话标题。 */
 function isInjectionUserMessage(data: unknown): boolean {
   const d = data as { source?: { kind?: string } } | undefined;
-  return d?.source?.kind === 'plugin' || d?.source?.kind === 'system';
+  return d?.source?.kind === 'plugin' || d?.source?.kind === 'system' || d?.source?.kind === 'skill-catalog';
 }
 
 /** 从 DSH 事件流里取第一条 user/message 文本（跳过运行时上下文注入）。
@@ -1554,10 +1574,13 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
 
   interface ConversationEntry {
     id: string;
-    /** LLM 模型名（创建 agent 时锁定），便于 stream/cancel 日志关联。 */
+    /** Model selected for the latest admitted turn, used by stream/cancel logs. */
     model: string;
+    modelSelection: ModelSelectionRef;
     agent: {
       followup(m: unknown): void;
+      steer?(m: unknown): void;
+      readonly status?: 'idle' | 'running';
       whenIdle(): Promise<void>;
       cancel(cause: { kind: 'user' } | { kind: 'parent' } | { kind: 'hook'; reason: string } | { kind: 'disposed' }, options?: { keepInbox?: boolean }): void;
       id: unknown;
@@ -1569,6 +1592,8 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
     dormant: boolean;
     /** Resolves only after the previous invocation detached its listeners. */
     activeTurn?: Promise<void>;
+    activeInvocationId?: string;
+    canSteer?: boolean;
   }
 
   const conversations = new Map<string, ConversationEntry>();
@@ -1577,9 +1602,7 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
     const existing = conversations.get(conversationId);
     if (existing) return existing;
 
-    // 从当前设置选已注册的 PiAiAdapter 路由。每条会话缓存自己的 agent
-    // handle——用户在两轮之间改 settings.provider，新值下次新建会话生效，
-    // 在跑的会话仍走原路由直到 dispose（disposeConversation）。
+    // Keep the agent and history, but route each admitted turn using current settings.
     const { providerRouteFor } = await import('./llm-adapter');
     const provider = providerRouteFor(deps.settings.get().provider) ?? 'deepseek';
 
@@ -1597,11 +1620,17 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
       { provider, model },
     );
 
+    const { installModelSelection } = await import('@deepseek-ai/dsh-agent');
+    if (!handle.agent.ctx) throw new Error('DSH agent has no scoped context for model selection');
+    const modelSelection: ModelSelectionRef = { current: { provider, model }, assembled: undefined };
+    const offModelSelection = installModelSelection(handle.agent.ctx, modelSelection);
+
     const entry: ConversationEntry = {
       id: conversationId,
       model,
+      modelSelection,
       agent: handle.agent,
-      disposeHandle: () => handle.dispose(),
+      disposeHandle: async () => { offModelSelection(); await handle.dispose(); },
       offSession: () => {},
       dormant: true,
     };
@@ -1687,17 +1716,24 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
     // spawning a second Cordis context. Null = plugin missing; migration
     // treats that as a no-op (already documented contract).
     persistence: buildOrphanMigrationFacade(persistenceApi),
-    async runTurn({ prompt, conversationId, invocationId, intent, onEvent, signal }) {
+    async runTurn({ prompt, conversationId, invocationId, intent, retryGroupId, onEvent, signal }) {
       void invocationId; // 留作对外 API 兼容；事件流里的 invocationId 由 ai.ask 自行追踪
       const { createUserMessage } = await import('@deepseek-ai/dsh-llm');
       const endpoint = deps.getEndpoint();
       const model = endpoint?.model ?? 'deepseek-chat';
       const entry = await ensureAgent(conversationId, model);
+      const { providerRouteFor } = await import('./llm-adapter');
       // A Stop click can be followed immediately by Send. Do not attach a
       // second consumer or enqueue input into an agent still cancelling.
       while (entry.activeTurn) await entry.activeTurn;
+      entry.modelSelection.current = {
+        provider: providerRouteFor(deps.settings.get().provider) ?? 'deepseek',
+        model,
+      };
+      entry.model = model;
       let releaseTurn!: () => void;
       entry.activeTurn = new Promise<void>(resolve => { releaseTurn = resolve; });
+      entry.activeInvocationId = invocationId;
       try {
       // LLM 日志点：runTurn 入口。一行把"谁、用什么模型、发什么、打什么意图"
       // 全部打出来。挂在 ask 链路上半段，是分析 stop-stuck / 卡死的第一步：
@@ -1737,6 +1773,7 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
       let stepChunkText = '';
       let firstChunkSeen = false;
       const failure = new TurnFailureGuard(() => {
+        entry.canSteer = false;
         entry.agent.cancel({ kind: 'hook', reason: 'filesystem-tool-failed' });
         drainPendingForConversation(conversationId);
       });
@@ -1786,6 +1823,7 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
         failure.observe(event);
       });
       const onAbort = (): void => {
+        entry.canSteer = false;
         // LLM 日志点：取消信号到达。DISTINGUISH 这两条：
         //   1. abort → onAbort fire → cancel user（软中断）
         //   2. whenIdle 自然 settle（成功或失败）
@@ -1797,13 +1835,14 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
         signal?.throwIfAborted();
         const userMsg = createUserMessage({
           content: [{ type: 'text', text: wirePrompt }],
-          source: { kind: 'user' },
+          source: { kind: 'user', ...(retryGroupId ? { retryGroupId } : {}) },
         });
         // LLM 日志点：实际把 user message 推进 agent loop 的瞬间。stop-stuck
         // 排查时，看到 followup 打了但 whenIdle 没回来 → agent 内部 hang；
         // 看到 followup 都没打 → 卡在更前面（IPC、ensureAgent、createUserMessage）。
         logger.debug(`[LLM turn] followup conv=${conversationId}`);
         entry.agent.followup(userMsg);
+        entry.canSteer = true;
         // 协作式取消：渲染端取消时软中止 agent。L3-A 偏好 agent.cancel
         // ({kind:'user'}) 而非销毁 handle——agent 留下，next followup() 复用
         // 同 session 不必重 resume。whenIdle() 在被中止的轮次收敛到 idle 时
@@ -1829,6 +1868,8 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
       }
       } finally {
         entry.activeTurn = undefined;
+        entry.activeInvocationId = undefined;
+        entry.canSteer = false;
         releaseTurn();
       }
     },
@@ -1846,6 +1887,8 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
         `activeApprovals=${__pendingSnapshotForTest().approvals[conversationId] ?? 0}`,
       );
       if (entry) {
+        entry.activeInvocationId = undefined;
+        entry.canSteer = false;
         // L3-A 软取消：handle 留在缓存里，下次 followup() 走同 agent + 持久化
         // session。硬销毁留给 disposeConversation（ai.conversation_delete 路径）。
         //
@@ -1994,6 +2037,14 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
       return applyPresetToSession(session, stored);
     },
 
+    async steer(conversationId, invocationId, prompt) {
+      const { createUserMessage } = await import('@deepseek-ai/dsh-llm');
+      const entry = conversations.get(conversationId);
+      if (!entry?.activeTurn || !entry.canSteer || entry.activeInvocationId !== invocationId || entry.agent.status !== 'running' || !entry.agent.steer) return false;
+      entry.agent.steer(createUserMessage({ content: [{ type: 'text', text: prompt }], source: { kind: 'user' } }));
+      return true;
+    },
+
     async dispose() {
       // L4-G: 先把挂着的 HITL waterfall 都 drain 掉再拆 cordis fiber——
       // 不然 90s 定时器会往半关闭的 runtime 上 fire，BrowserWindow.getAllWindows()
@@ -2060,6 +2111,7 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
  */
 export function foldHistory(events: ReadonlyArray<{ type: string; data?: unknown }>): HistoryTurn[] {
   const turns: HistoryTurn[] = [];
+  const retryGroups = new Map<string, string>();
 
   // First pass: index tool/result by callId so tool/call can pair with it
   // even when the result landed first (chunks arrive out-of-order under load).
@@ -2163,12 +2215,18 @@ export function foldHistory(events: ReadonlyArray<{ type: string; data?: unknown
       if (isInjectionUserMessage(ev.data)) continue;
       const d = ev.data as {
         content?: Array<{ type?: string; text?: string }>;
+        source?: { retryGroupId?: unknown };
       } | undefined;
       const text = (d?.content ?? [])
         .filter((b) => b?.type === 'text' && typeof b.text === 'string')
         .map((b) => b.text as string)
         .join('');
       if (text) {
+        const group = d?.source?.retryGroupId;
+        if (typeof group === 'string' && group) {
+          if (retryGroups.get(group) === text) continue;
+          retryGroups.set(group, text);
+        }
         // 通过共享解码函数剥离封套前缀 / JSON——卡片只展示 description
         // (description=用户原始描述，attachment 等附加内容剥离)；intent
         // 用来在渲染端挑出 create-task 卡片。解析失败仍保留原始文本
@@ -2742,6 +2800,7 @@ function registerDomainTools(
           description: 'Shapes to draw. Each needs a unique `key`, a `kind`, and a grid `column`/`row`.',
           items: {
             type: 'object',
+            additionalProperties: false,
             properties: {
               key: { type: 'string', description: 'Unique short id used by edges (e.g. "start")' },
               kind: { type: 'string', description: 'rectangle | ellipse | diamond | text. Use ellipse for start/end, rectangle for a step, diamond for a decision, text for a free-floating label.' },
@@ -2756,6 +2815,7 @@ function registerDomainTools(
           description: 'Arrows between nodes. Omit for a mind map with no connections.',
           items: {
             type: 'object',
+            additionalProperties: false,
             properties: {
               from: { type: 'string', description: 'Source node key' },
               to: { type: 'string', description: 'Target node key' },

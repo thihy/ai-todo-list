@@ -170,6 +170,7 @@ const api: TodoListApi = {
     popupMenu: () => invoke('app.popupMenu', undefined as never),
     popupMenuCategory: (category: string) => invoke('app.popupMenuCategory', { category }),
     pickFile: () => invoke('app.pickFile', undefined as never),
+    screenshot: (args) => invoke('app.screenshot', args),
     importBlob: (args: { conversationId: string | null; name: string; mime: string; dataUrl: string }) =>
       invoke('ai.attachment.importBlob', args),
     relinkDraft: (args: { conversationId: string; paths: string[] }) =>
@@ -246,6 +247,7 @@ const api: TodoListApi = {
     cancel: (conversationId, invocationId) =>
       invoke('ai.cancel', { conversationId, invocationId }),
     ask: (req) => invoke('ai.ask', req),
+    steer: (req) => invoke('ai.steer', req),
     parseCapturePreview: (text) => invoke('ai.parseCapturePreview', { text }),
     suggestTags: (req) => invoke('ai.suggestTags', req),
   },
@@ -300,6 +302,10 @@ const api: TodoListApi = {
     reactivate: (name) => invoke('tag.reactivate', { name }),
   },
   on: onAppEvent,
+  screenshot: {
+    state: () => invoke('screenshot.state', undefined as never),
+    finish: args => invoke('screenshot.finish', args),
+  },
 };
 
 contextBridge.exposeInMainWorld('todoList', api);

@@ -19,8 +19,8 @@
 //   - src/main/ipc/ai-handlers.ts 的 `ai.conversation.delete` / `deleteMany` /
 //     `sweep` 路径（cleanupForConv）
 
-import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
-import { basename, join } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { basename, dirname, extname, join } from 'node:path';
 import { newId } from '../db/schema';
 import { COMPOSER_INBOX_SUBDIR, DSH_WORKSPACE_SUBDIR } from '../../shared/constants';
 
@@ -198,6 +198,21 @@ export function listPathsForConv(rootDir: string, conversationId: string): strin
   const { indexPath } = ensureDirs(rootDir);
   const idx = loadIndex(indexPath);
   return idx.conversations[conversationId] ?? [];
+}
+
+/** Serve raster previews only for registered files directly inside this inbox. */
+export function readComposerPreview(rootDir: string, filename: string): { bytes: Uint8Array; mime: string } | null {
+  if (!filename || filename.includes('/') || filename.includes('\\')) return null;
+  const mime = ({ '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+    '.webp': 'image/webp', '.gif': 'image/gif' } as Record<string, string>)[extname(filename).toLowerCase()];
+  if (!mime) return null;
+  const { inboxDir, indexPath } = ensureDirs(rootDir);
+  const target = join(inboxDir, filename);
+  const registered = Object.values(loadIndex(indexPath).conversations)
+    .some((paths) => Array.isArray(paths) && paths.includes(target));
+  if (!registered || !existsSync(target)) return null;
+  if (dirname(realpathSync(target)) !== realpathSync(inboxDir)) return null;
+  return { bytes: new Uint8Array(readFileSync(target)), mime };
 }
 
 /** 测试用：清空模块内缓存（让 ensureDirs 重新读 rootDir）。 */

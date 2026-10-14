@@ -115,7 +115,25 @@ export function registerAiHandlers(dsh: DshHandle): void {
   });
 
   // Streaming "ask AI" used by the AIPane submit; main pushes stream events.
+  register('ai.steer', async (_event, req) => {
+    if (!req || typeof req.prompt !== 'string' || !req.prompt.trim() || req.prompt.length > 1_000_000 || typeof req.conversationId !== 'string' || typeof req.invocationId !== 'string') {
+      return failResult('bad_request', '引导消息参数无效');
+    }
+    if (!deps || !peekDshRuntime()) return failResult('ai_not_ready', 'DSH not initialised');
+    const conv = deps.conversations.get(req.conversationId);
+    if (!conv || conv.archived) return failResult('unknown_conversation', '对话不可用');
+    try {
+      const accepted = await peekDshRuntime()!.steer(req.conversationId, req.invocationId, req.prompt);
+      return okResult({ accepted });
+    } catch {
+      return failResult('steer_failed', '引导消息未提交，请重试');
+    }
+  });
+
   register('ai.ask', async (_e, req) => {
+    if (req.retryGroupId !== undefined && (typeof req.retryGroupId !== 'string' || !req.retryGroupId || req.retryGroupId.length > 128)) {
+      return failResult('bad_request', 'Invalid retry group');
+    }
     if (!deps) return failResult('ai_not_ready', 'DSH not initialised');
     if (!req.conversationId) {
       return failResult('no_conversation_id', 'conversationId required (call ai.conversation.create first)');
@@ -207,6 +225,7 @@ export function registerAiHandlers(dsh: DshHandle): void {
         conversationId: req.conversationId,
         invocationId,
         intent,
+        retryGroupId: req.retryGroupId,
         onEvent: (e) => {
           // 透传：所有 DSH 事件原样发给渲染端。渲染端 useAiStream 负责把
           // assistant/chunk 转成 token/reasoning、把 tool/call + tool/result

@@ -1,5 +1,6 @@
 // Single source of truth for IPC channels. Imported by main (router), preload (expose), renderer (ipc-client).
 // Any channel not declared here is rejected by the router as "unknown_channel".
+import type { CaptureRect, ScreenshotState } from './screenshot';
 
 import type {
   ContentVersionEntry,
@@ -195,6 +196,8 @@ export interface InboxRenameReq { id: ULID; title: string }
 
 /** Renderer -> main: kick off a streaming AI invocation. */
 export interface AIAskReq {
+  /** Stable display-message group across explicit retries; not a task id. */
+  retryGroupId?: string;
   prompt: string;
   /** Required: the user-controlled conversation this turn belongs to. Main
    *  uses it 1:1 as the DSH SessionId and the key for the per-conversation
@@ -412,6 +415,10 @@ export interface PermissionPromptReq {
 
 export type SettingsGetReq = Record<string, never>;
 export interface SettingsSetReq {
+  aiEnterAction?: 'queue' | 'steer';
+  externalFileAccess?: 'deny' | 'ask';
+  externalReadDirs?: string[];
+  skillDirs?: string[];
   provider?: AIProvider;
   model?: AIModel;
   streaming?: boolean;
@@ -451,6 +458,11 @@ export interface SettingsSetReq {
   maxConversations?: number;
 }
 export interface SettingsGetRes extends AISettings {
+  aiEnterAction: 'queue' | 'steer';
+  externalFileAccess: 'deny' | 'ask';
+  externalReadDirs: string[];
+  skillDirs: string[];
+  standardSkillDir: string;
   captureHotkey: string;
   theme: 'system' | 'light' | 'dark';
   dataDir: string;
@@ -615,6 +627,7 @@ export interface IpcRegistry {
 
   'ai.cancel': IpcChannel<AIStreamCancelReq, IpcResult<{ ok: boolean }>>;
   'ai.ask': IpcChannel<AIAskReq, IpcResult<AIAskRes>>;
+  'ai.steer': IpcChannel<{ conversationId: string; invocationId: string; prompt: string }, IpcResult<{ accepted: boolean }>>;
   'ai.health': IpcChannel<undefined, IpcResult<AIHealthRes>>;
   'ai.models': IpcChannel<undefined, IpcResult<AIModelsRes>>;
   'ai.getMemory': IpcChannel<AIGetMemoryReq, IpcResult<AIMemoryEntry[]>>;
@@ -752,6 +765,9 @@ export interface IpcRegistry {
   // metadata — the file stays on disk and the AI uses DSH `read` /
   // `read_image` to stream it. Returns ok=true with canceled=true when
   // the user dismisses the dialog.
+  'app.screenshot': IpcChannel<{ conversationId: string | null }, IpcResponse<'app.pickFile'>>;
+  'screenshot.state': IpcChannel<undefined, IpcResult<ScreenshotState>>;
+  'screenshot.finish': IpcChannel<{ rect?: CaptureRect }, IpcResult<void>>;
   'app.pickFile': IpcChannel<
     undefined,
     IpcResult<{

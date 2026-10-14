@@ -12,7 +12,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import {
   cleanupForConv,
   copyPathToInbox,
@@ -21,6 +21,7 @@ import {
   relinkDraft,
   _resetForTests,
   writeBlobToInbox,
+  readComposerPreview,
 } from '../../src/main/ai/composer-inbox';
 
 describe('ai/composer-inbox', () => {
@@ -33,6 +34,26 @@ describe('ai/composer-inbox', () => {
   afterEach(() => {
     rmSync(rootDir, { recursive: true, force: true });
     _resetForTests();
+  });
+
+  it('serves indexed raster previews before and after draft relinking', async () => {
+    const bytes = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+    const file = await writeBlobToInbox(rootDir, '截图 空格.png', 'image/png', bytes, null);
+    expect(readComposerPreview(rootDir, basename(file.path))).toEqual({ bytes: new Uint8Array(bytes), mime: 'image/png' });
+    await relinkDraft(rootDir, 'conv-1', [file.path]);
+    expect(readComposerPreview(rootDir, basename(file.path))?.bytes).toEqual(new Uint8Array(bytes));
+    await cleanupForConv(rootDir, 'conv-1');
+    expect(readComposerPreview(rootDir, basename(file.path))).toBeNull();
+  });
+
+  it('refuses traversal, unindexed files and non-raster content', async () => {
+    initComposerInbox(rootDir);
+    writeFileSync(join(rootDir, 'dsh_workspace', 'inbox', 'orphan.png'), 'orphan');
+    expect(readComposerPreview(rootDir, 'orphan.png')).toBeNull();
+    expect(readComposerPreview(rootDir, '../outside.png')).toBeNull();
+    expect(readComposerPreview(rootDir, '..\\outside.png')).toBeNull();
+    const file = await writeBlobToInbox(rootDir, 'test.svg', 'image/svg+xml', Buffer.from('<svg/>'), 'conv-1');
+    expect(readComposerPreview(rootDir, basename(file.path))).toBeNull();
   });
 
   describe('copyPathToInbox', () => {

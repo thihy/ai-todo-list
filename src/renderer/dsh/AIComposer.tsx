@@ -1,4 +1,5 @@
 import { forwardRef } from 'react';
+import { AttachmentPreview } from './AttachmentPreview';
 import {
   Button,
   IconCloseOutline16,
@@ -25,10 +26,14 @@ interface AIComposerProps {
   attachments: readonly AIComposerAttachment[];
   onRemoveAttachment: (path: string) => void;
   onPickAttachment: () => void;
+  onScreenshot?: () => void;
+  screenshotBusy?: boolean;
   /** 剪贴板里带 `image/*` 时回调，文件已按剪贴板顺序排列。纯文本
    *  粘贴不触发 —— 那种情况不拦截，textarea 保持默认行为。 */
   onPasteFiles: (files: File[]) => void;
   onSubmit: () => void;
+  onSteer?: () => void;
+  enterAction?: 'queue' | 'steer';
   onStop: () => void;
   busy: boolean;
   hasConversation: boolean;
@@ -49,8 +54,12 @@ export const AIComposer = forwardRef<HTMLTextAreaElement, AIComposerProps>(funct
     attachments,
     onRemoveAttachment,
     onPickAttachment,
+    onScreenshot,
+    screenshotBusy,
     onPasteFiles,
     onSubmit,
+    onSteer,
+    enterAction = 'queue',
     onStop,
     busy,
     hasConversation,
@@ -67,10 +76,11 @@ export const AIComposer = forwardRef<HTMLTextAreaElement, AIComposerProps>(funct
             {attachments.map((attachment) => (
               <span
                 key={attachment.path}
-                className="aipane__attach-chip"
+                className={`aipane__attach-chip${attachment.mime.startsWith('image/') ? ' aipane__attach-chip--image' : ''}`}
                 role="listitem"
                 title={`${attachment.path}\n${attachment.mime} · ${attachment.size} 字节`}
               >
+                <AttachmentPreview {...attachment} />
                 <span className="aipane__attach-chip-icon" aria-hidden="true">
                   <IconPaperclipOutline16 size={11} />
                 </span>
@@ -116,12 +126,10 @@ export const AIComposer = forwardRef<HTMLTextAreaElement, AIComposerProps>(funct
             if (event.nativeEvent.isComposing || event.keyCode === 229) return;
             if (event.key === 'Enter' && !event.shiftKey) {
               event.preventDefault();
-              // While a turn is streaming, Enter must not submit (and must
-              // not queue) — the user is drafting a follow-up that should
-              // wait in the textarea until the turn settles or they hit stop.
-              // preventDefault keeps the newline from being swallowed so the
-              // draft is preserved verbatim.
-              if (!busy) onSubmit();
+              if (blocked) return;
+              const action = event.ctrlKey || event.metaKey ? (enterAction === 'queue' ? 'steer' : 'queue') : enterAction;
+              if (busy && action === 'steer' && onSteer) onSteer();
+              else onSubmit();
               return;
             }
             if (event.key === 'Escape' && busy) {
@@ -132,7 +140,7 @@ export const AIComposer = forwardRef<HTMLTextAreaElement, AIComposerProps>(funct
           placeholder={block
             ? block.reason
             : busy
-              ? 'AI 正在回答，可继续输入，停止后发送…（Esc 停止）'
+              ? (enterAction === 'queue' ? 'Enter 排队 · Ctrl+Enter 引导 · Esc 停止' : 'Enter 引导 · Ctrl+Enter 排队 · Esc 停止')
               : hasConversation
                 ? '输入问题，回车发送…（Shift+Enter 换行，Esc 停止）'
                 : '输入第一条问题，回车即创建对话…'}
@@ -141,6 +149,7 @@ export const AIComposer = forwardRef<HTMLTextAreaElement, AIComposerProps>(funct
           className="aipane__input"
         />
         <div className="aipane__composer-actions">
+          <div className="aipane__composer-tools">
           <Button
             variant="toolbar"
             type="button"
@@ -152,7 +161,17 @@ export const AIComposer = forwardRef<HTMLTextAreaElement, AIComposerProps>(funct
           >
             <IconPlusOutline16 size={22} />
           </Button>
+          {onScreenshot && <Button variant="toolbar" type="button" className="aipane__attach-btn"
+            onClick={onScreenshot} disabled={blocked || screenshotBusy} title="截图（识别窗口或拖动框选）" aria-label="截图">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true">
+              <path d="M4 8h4l2-3h4l2 3h4v12H4z" /><circle cx="12" cy="14" r="3.5" />
+            </svg>
+          </Button>}
+          </div>
           {busy ? (
+            <div className="aipane__send-actions">
+              <Button variant="toolbar" type="button" onClick={onSubmit} disabled={blocked || (!value.trim() && attachments.length === 0)} aria-label="加入消息队列" title={enterAction === 'queue' ? '排队（Enter）' : '排队（Ctrl+Enter）'}>排队</Button>
+              {onSteer && <Button variant="toolbar" type="button" onClick={onSteer} disabled={blocked || (!value.trim() && attachments.length === 0)} aria-label="引导当前任务" title={enterAction === 'steer' ? '引导（Enter）' : '引导（Ctrl+Enter）'}>引导</Button>}
             <Button
               variant="primary"
               type="button"
@@ -163,13 +182,14 @@ export const AIComposer = forwardRef<HTMLTextAreaElement, AIComposerProps>(funct
             >
               <IconStopFill16 size={14} />
             </Button>
+            </div>
           ) : (
             <Button
               variant="primary"
               type="button"
               className="aipane__send"
               onClick={onSubmit}
-              disabled={!value.trim() || blocked}
+              disabled={(!value.trim() && attachments.length === 0) || blocked}
               title={hasConversation ? '发送（Enter）' : '发送并创建对话'}
               aria-label="发送"
             >

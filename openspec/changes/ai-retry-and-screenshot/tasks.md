@@ -1,0 +1,3 @@
+- [x] Implement retry with preserved payload, fresh invocation and retained draft.
+- [x] Implement screenshot overlay, window detection, validated crop and attachment plumbing.
+- [x] Verify tests, typecheck, production build and actual screenshot/retry interaction.

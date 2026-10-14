@@ -28,6 +28,7 @@ const harness = vi.hoisted(() => ({
     value: string;
     onChange(text: string): void;
     onSubmit(): void;
+    onSteer(): void;
     onStop(): void;
     onPasteFiles(files: File[]): void;
     attachments: readonly Attachment[];
@@ -101,7 +102,7 @@ beforeEach(async () => {
   );
   const conversation = { id: 'conv-1', title: 'test', updatedAt: 0, archived: false };
   window.todoList = {
-    ai: { ask, cancel: vi.fn().mockResolvedValue({ ok: true }) },
+    ai: { ask, steer: vi.fn().mockResolvedValue({ ok: true, data: { accepted: true } }), cancel: vi.fn().mockResolvedValue({ ok: true }) },
     conversation: {
       list: vi.fn().mockResolvedValue({ ok: true, data: { conversations: [conversation], total: 1, remaining: 0 } }),
       history: vi.fn().mockResolvedValue({ ok: true, data: { turns: [] } }),
@@ -138,6 +139,145 @@ function png(name = 'image.png'): File {
 }
 
 describe('AIPane composer paste image', () => {
+  it('queues text and image snapshots then sends them in order after completion', async () => {
+    let finish!: (value: unknown) => void;
+    ask.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    await act(async () => { harness.composer!.onChange('first'); });
+    await act(async () => { harness.composer!.onSubmit(); await settle(); });
+    await act(async () => { harness.composer!.onChange('second'); harness.composer!.onPasteFiles([png('queued.png')]); await settle(); });
+    await act(async () => { harness.composer!.onSubmit(); await waitFor(() => importBlob.mock.calls.length === 1); await settle(); });
+    await act(async () => { harness.composer!.onChange('third'); });
+    await act(async () => { harness.composer!.onSubmit(); });
+    expect(ask).toHaveBeenCalledTimes(1);
+    expect(container.querySelectorAll('[aria-label^="编辑排队消息"]')).toHaveLength(2);
+    expect(harness.composer!.value).toBe('');
+    await act(async () => { finish({ ok: true, data: { content: 'done' } }); await settle(); });
+    await act(async () => { await settle(); });
+    expect(ask).toHaveBeenCalledTimes(3);
+    expect(ask.mock.calls[1][0].prompt).toContain('second');
+    expect(ask.mock.calls[1][0].prompt).toContain('queued.png');
+    expect(ask.mock.calls[2][0].prompt).toBe('third');
+    expect(ask.mock.calls.every(([args]) => args.conversationId === 'conv-1')).toBe(true);
+  });
+
+  it('lets the user remove a queued message without affecting the active response', async () => {
+    let finish!: (value: unknown) => void;
+    ask.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    await act(async () => { harness.composer!.onChange('first'); });
+    await act(async () => { harness.composer!.onSubmit(); await settle(); });
+    await act(async () => { harness.composer!.onChange('remove me'); });
+    await act(async () => { harness.composer!.onSubmit(); });
+    await act(async () => { (container.querySelector('[aria-label="移除排队消息 1"]') as HTMLButtonElement).click(); });
+    await act(async () => { finish({ ok: true, data: {} }); await settle(); });
+    expect(ask).toHaveBeenCalledTimes(1);
+  });
+
+  it('pauses queued messages after failure until explicitly resumed', async () => {
+    let finish!: (value: unknown) => void;
+    ask.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    await act(async () => { harness.composer!.onChange('first'); });
+    await act(async () => { harness.composer!.onSubmit(); await settle(); });
+    await act(async () => { harness.composer!.onChange('second'); });
+    await act(async () => { harness.composer!.onSubmit(); });
+    await act(async () => { finish({ ok: false, message: 'offline' }); await settle(); });
+    expect(ask).toHaveBeenCalledTimes(1);
+    const resume = [...container.querySelectorAll('button')].find((button) => button.textContent === '继续发送队列');
+    expect(resume).toBeDefined();
+    await act(async () => { resume!.click(); await settle(); });
+    expect(ask).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps the queue paused after Stop even when the old response settles later', async () => {
+    let finish!: (value: unknown) => void;
+    ask.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    await act(async () => { harness.composer!.onChange('first'); });
+    await act(async () => { harness.composer!.onSubmit(); await settle(); });
+    await act(async () => { harness.composer!.onChange('after stop'); });
+    await act(async () => { harness.composer!.onSubmit(); });
+    await act(async () => { harness.composer!.onStop(); await settle(); });
+    await act(async () => { finish({ ok: true, data: { content: 'late response' } }); await settle(); });
+    expect(ask).toHaveBeenCalledTimes(1);
+    expect(container.querySelector('[aria-label="编辑排队消息 1"]')).not.toBeNull();
+    const resume = [...container.querySelectorAll('button')].find((button) => button.textContent === '继续发送队列');
+    await act(async () => { resume!.click(); await settle(); });
+    expect(ask.mock.calls[1][0].prompt).toBe('after stop');
+  });
+
+  it('uses steer during the active invocation and preserves the draft on rejection', async () => {
+    let finish!: (value: unknown) => void;
+    ask.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    await act(async () => { harness.composer!.onChange('first'); });
+    await act(async () => { harness.composer!.onSubmit(); await settle(); });
+    await act(async () => { harness.composer!.onChange('use Chinese'); });
+    await act(async () => { harness.composer!.onSteer(); await settle(); });
+    expect(window.todoList.ai.steer).toHaveBeenCalledWith({ conversationId: 'conv-1', invocationId: ask.mock.calls[0][0].invocationId, prompt: 'use Chinese' });
+    expect(ask).toHaveBeenCalledTimes(1);
+    expect(container.textContent).toContain('引导当前任务');
+    vi.mocked(window.todoList.ai.steer).mockResolvedValueOnce({ ok: false, code: 'steer_failed', message: 'failed' });
+    await act(async () => { harness.composer!.onChange('keep draft'); });
+    await act(async () => { harness.composer!.onSteer(); await settle(); });
+    expect(harness.composer!.value).toBe('keep draft');
+    await act(async () => { finish({ ok: true, data: {} }); await settle(); });
+  });
+
+  it('falls back to queue when the active invocation ends before steer arrives', async () => {
+    let finish!: (value: unknown) => void;
+    ask.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    vi.mocked(window.todoList.ai.steer).mockResolvedValueOnce({ ok: true, data: { accepted: false } });
+    await act(async () => { harness.composer!.onChange('first'); });
+    await act(async () => { harness.composer!.onSubmit(); await settle(); });
+    await act(async () => { harness.composer!.onChange('racing steer'); });
+    await act(async () => { harness.composer!.onSteer(); await settle(); });
+    expect(ask).toHaveBeenCalledTimes(1);
+    await act(async () => { finish({ ok: true, data: {} }); await settle(); });
+    expect(ask.mock.calls[1][0].prompt).toBe('racing steer');
+  });
+  it('shows retry for rejected IPC requests and leaves retry available after another failure', async () => {
+    ask.mockRejectedValueOnce(new Error('connection lost'));
+    ask.mockResolvedValueOnce({ ok: false, message: 'still unavailable' });
+    await act(async () => { harness.composer!.onChange('重试这个问题'); });
+    await act(async () => { harness.composer!.onSubmit(); });
+    let retry = Array.from(container.querySelectorAll('button')).find(b => b.textContent === '重试')!;
+    expect(retry).toBeDefined();
+    await act(async () => { retry.click(); });
+    retry = Array.from(container.querySelectorAll('button')).find(b => b.textContent === '重试')!;
+    expect(retry).toBeDefined();
+    expect(retry.disabled).toBe(false);
+    expect(ask).toHaveBeenCalledTimes(2);
+    expect(container.querySelectorAll('.turn .bubble--user')).toHaveLength(1);
+  });
+  it('retries a failed image message without losing attachments, duplicating the bubble or clearing the draft', async () => {
+    ask.mockResolvedValueOnce({ ok: false, message: 'temporary failure' });
+    await act(async () => {
+      harness.composer!.onPasteFiles([png()]);
+      await waitFor(() => importBlob.mock.calls.length > 0);
+      await settle();
+    });
+    await act(async () => { harness.composer!.onChange('看看这张图'); });
+    await act(async () => { harness.composer!.onSubmit(); });
+    const original = ask.mock.calls[0]![0];
+    await act(async () => { harness.composer!.onChange('未发送的草稿'); });
+    const retry = Array.from(container.querySelectorAll('button')).find(b => b.textContent === '重试')!;
+    expect(retry).toBeDefined();
+    await act(async () => { retry.click(); retry.click(); });
+    expect(ask).toHaveBeenCalledTimes(2);
+    expect(ask.mock.calls[1]![0].prompt).toBe(original.prompt);
+    expect(ask.mock.calls[1]![0].conversationId).toBe(original.conversationId);
+    expect(ask.mock.calls[1]![0].invocationId).not.toBe(original.invocationId);
+    expect(ask.mock.calls[1]![0].retryGroupId).toBe(original.retryGroupId);
+    expect(container.querySelectorAll('.turn .bubble--user')).toHaveLength(1);
+    expect(harness.composer!.value).toBe('未发送的草稿');
+  });
+  it('只粘贴图片也能发送，等待落盘后将图片路径交给 DSH', async () => {
+    await act(async () => {
+      harness.composer!.onPasteFiles([png()]);
+      harness.composer!.onSubmit();
+      await waitFor(() => ask.mock.calls.length > 0);
+    });
+    expect(ask).toHaveBeenCalledTimes(1);
+    expect(ask.mock.calls[0]![0].prompt).toContain('C:/inbox/pasted-0.png');
+    expect(ask.mock.calls[0]![0].prompt).toContain('read_image');
+  });
   it('落盘到当前会话的 inbox，并以绝对路径进 prompt', async () => {
     await act(async () => {
       harness.composer!.onPasteFiles([png()]);

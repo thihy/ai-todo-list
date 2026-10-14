@@ -1,0 +1,14 @@
+html, body, #root { margin: 0; width: 100%; height: 100%; overflow: hidden; font-family: "Segoe UI", "Microsoft YaHei", sans-serif; }
+.screenshot { position: relative; width: 100%; height: 100%; cursor: crosshair; user-select: none; }
+.screenshot__background { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.screenshot__shade { position: absolute; inset: 0; background: #0007; pointer-events: none; }
+.screenshot__selection { position: absolute; box-sizing: border-box; border: 2px solid #19bc9a; box-shadow: 0 0 0 10000px #0007; pointer-events: none; }
+.screenshot__size { position: absolute; top: -29px; left: -2px; padding: 4px 7px; border-radius: 4px; background: #17212b; color: white; font-size: 12px; white-space: nowrap; }
+.screenshot__instructions { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); padding: 10px 16px; border-radius: 8px; background: #17212be8; color: white; font-size: 13px; z-index: 2; white-space: nowrap; pointer-events: none; }
+.screenshot__toolbar { position: absolute; display: flex; gap: 6px; padding: 6px; border-radius: 8px; background: white; box-shadow: 0 4px 24px #0004; z-index: 3; cursor: default; }
+.screenshot button { border: 0; padding: 9px 12px; background: #f2f4f6; color: #26333f; border-radius: 5px; font-size: 12px; cursor: pointer; }
+.screenshot button:hover { background: #e0e9e7; }
+.screenshot button.screenshot__confirm { background: #087f68; color: white; }
+.screenshot button:focus-visible { outline: 2px solid #087f68; outline-offset: 2px; }
+.screenshot button:disabled { opacity: .6; cursor: wait; }
+.screenshot__error { position: absolute; left: 50%; top: 50%; transform: translate(-50%,-50%); padding: 16px; border-radius: 8px; background: white; color: #b42318; z-index: 4; }

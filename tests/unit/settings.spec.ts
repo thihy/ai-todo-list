@@ -15,6 +15,20 @@ beforeEach(() => {
 });
 
 describe('SettingsStore', () => {
+  it('persists external access and exposes standard skill paths', () => {
+    store.patch({ aiEnterAction: 'steer', externalFileAccess: 'ask', externalReadDirs: [dir], skillDirs: [join(dir, 'skills')] });
+    const reloaded = new SettingsStore(dir).publicView();
+    expect(reloaded.externalFileAccess).toBe('ask');
+    expect(reloaded.aiEnterAction).toBe('steer');
+    expect(reloaded.externalReadDirs).toEqual([dir]);
+    expect(reloaded.skillDirs).toEqual([join(dir, 'skills')]);
+    expect(reloaded.standardSkillDir).toMatch(/[\\/]\.agents[\\/]skills$/);
+  });
+
+  it('rejects invalid access settings before committing other changes', () => {
+    expect(() => store.patch({ model: 'changed', externalReadDirs: ['relative'] } as never)).toThrow();
+    expect(new SettingsStore(dir).get().model).toBe('deepseek-chat');
+  });
   it('returns defaults when config is missing', () => {
     const v = store.get();
     expect(v.model).toBe('deepseek-chat');

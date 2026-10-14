@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { mkdirSync, readFileSync, statSync, readdirSync } from 'node:fs';
 import { cpSync } from 'node:fs';
 import { basename, extname } from 'node:path';
-import { userInfo } from 'node:os';
+import { userInfo, homedir } from 'node:os';
 import { installRouter, okResult, failResult, register } from './ipc/router';
 import { registerTodoHandlers } from './ipc/todo-handlers';
 import { registerContentHandlers } from './ipc/content-handlers';
@@ -33,6 +33,7 @@ import { TaskFileIndex } from './files/task-files';
 import * as gitHistory from './git-history';
 import { InboxStore } from './files/inbox';
 import * as composerInbox from './ai/composer-inbox';
+import { registerScreenshotHandlers } from './screenshot/handlers';
 import { SettingsStore } from './settings/store';
 import { CaptureController } from './shortcuts/capture';
 import { TrayController } from './tray/tray';
@@ -450,6 +451,8 @@ function bootstrap(): void {
     // `process.env.DSH_WORKSPACE_ROOT`（cordis.yml 用 !!js 表达式读取）。
     // 在 import DSH container 之前 set；mkdirSync 已在 data-dir 阶段完成。
     process.env['DSH_WORKSPACE_ROOT'] = dshWorkspaceDir;
+    process.env['DSH_AGENTS_HOME'] = join(homedir(), '.agents');
+    process.env['DSH_CUSTOM_SKILL_DIRS'] = JSON.stringify(settings.get().skillDirs);
     // 附件库同理：cordis.yml 把 dshHome 读成 `process.env.DSH_ATTACHMENT_HOME`。
     // 不设的话 dsh-attachment-local 会 fall back 到 `~/.dsh`，把桌面应用的
     // 持久化数据写进用户家目录。
@@ -924,9 +927,16 @@ function registerInboxHandlers(
     }
   });
 
-  register('inbox.remove', (_e, req) => {
+  register('inbox.remove', async (_e, req) => {
     try {
+      const attachment = inbox.get(req.id);
       inbox.remove(req.id);
+      // Stage deletions too, matching attachment create/rename and document
+      // removal. Capture the name before removing the SQLite row. A repeated
+      // removal of an unknown id must not commit unrelated pending changes.
+      if (attachment) {
+        await gitHistory.commitAll(todosDir, `删除附件 ${basename(attachment.filePath)}`).catch(() => undefined);
+      }
       broadcastDataChanged('content');
       return Promise.resolve(okResult(undefined as never));
     } catch (err) {
@@ -1009,6 +1019,10 @@ function registerSettingsHandlers(
     // already has a typed SettingsPatchError to fall back on.
     try {
       store.patch({
+        ...(req.aiEnterAction !== undefined ? { aiEnterAction: req.aiEnterAction } : {}),
+        ...(req.externalFileAccess !== undefined ? { externalFileAccess: req.externalFileAccess } : {}),
+        ...(req.externalReadDirs !== undefined ? { externalReadDirs: req.externalReadDirs } : {}),
+        ...(req.skillDirs !== undefined ? { skillDirs: req.skillDirs } : {}),
         ...(req.provider ? { provider: req.provider } : {}),
         ...(req.model ? { model: req.model } : {}),
         ...(req.streaming != null ? { streaming: req.streaming } : {}),
@@ -1205,6 +1219,7 @@ function registerCaptureHandlers(repo: TodoRepo, md: MarkdownStore): void {
 }
 
 function registerAppHandlers(rootDir: string, getMainWindow: () => BrowserWindow | null): void {
+  registerScreenshotHandlers(rootDir, getMainWindow);
   // Title-bar 菜单 button: pop the native application menu at the cursor.
   register('app.popupMenu', async () => {
     try {
