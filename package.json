@@ -1,6 +1,6 @@
 {
   "name": "todo-list",
-  "version": "1.0.0-rc12",
+  "version": "1.0.0-rc13",
   "private": true,
   "description": "AI-native Electron TODO list with Markdown content and Excalidraw drawings, built on DeepSeek Harness (DSH)",
   "appId": "com.todolist.app",
@@ -196,7 +196,9 @@
       "url": "https://gitcode.com/ai-sea/ai-todo-list/releases/latest"
     },
     "files": [
-      "out/**",
+      "out/main/**",
+      "out/preload/**",
+      "out/renderer/**",
       "package.json",
       "!**/node_modules/@img/sharp-darwin-*/**",
       "!**/node_modules/@img/sharp-linux*/**",
