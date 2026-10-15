@@ -18,6 +18,7 @@ import { getDshRuntime, peekDshRuntime, answerUserQuestion, answerUserApproval, 
 import { costForUsage } from '../dsh/pricing';
 import type { SettingsStore } from '../settings/store';
 import { BrowserWindow, dialog } from 'electron';
+import { getDrawingCanvasHost } from './drawing-canvas-handlers';
 import { logger } from '../logger';
 import type { AIStreamEvent } from '../../shared/ai-types';
 import type { DataScope } from '../../shared/todo-list-api';
@@ -65,6 +66,7 @@ function buildRuntimeDeps(): DshRuntimeDeps | null {
     db: deps.db,
     attachmentsDir: deps.attachmentsDir,
     settings: deps.settings,
+    drawingCanvasHost: getDrawingCanvasHost(),
   };
 }
 

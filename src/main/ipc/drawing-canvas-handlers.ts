@@ -29,6 +29,7 @@ export function getDrawingCanvasHost(): DrawingCanvasHost {
       send: (payload: DrawingApplyPayload) => {
         broadcast('app:drawing-apply', payload);
       },
+      sendExport: (payload) => broadcast('app:drawing-export', payload),
       // 复用既有的独立绘图路由（App.tsx 的 'todo-drawing' 分支直接挂载
       // ExcalidrawEditor）。走独立路由而不是 DocumentsView 的 tab，是因为
       // 后者的选中 tab 状态在 App 里托管着，从 main 推一个「选中某个绘图
@@ -44,6 +45,10 @@ export function getDrawingCanvasHost(): DrawingCanvasHost {
 
 export function registerDrawingCanvasHandlers(): void {
   const h = getDrawingCanvasHost();
+  register('drawing.exported', (_e, req) => {
+    h.exported(req);
+    return Promise.resolve(okResult(undefined as never));
+  });
 
   register('drawing.canvasReady', (_e, req) => {
     try {

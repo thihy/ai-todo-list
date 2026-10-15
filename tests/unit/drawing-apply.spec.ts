@@ -36,7 +36,7 @@ const SKELETONS: DrawingSkeleton[] = [
     height: 0,
     points: [[0, 0], [80, 0]],
     start: { id: 'ai-node-0' },
-    end: { id: 'ai-node-1' },
+    end: { id: 'ai-node-0' },
   },
 ];
 
@@ -46,8 +46,8 @@ function makeApi(existing: unknown[] = []) {
   const calls: Array<Record<string, unknown>> = [];
   const api: MinimalExcalidrawApi & { calls: Array<Record<string, unknown>> } = {
     calls,
-    updateScene(sceneData, _appState, options) {
-      calls.push({ sceneData, options });
+    updateScene(sceneData) {
+      calls.push({ sceneData });
       current = (sceneData.elements as unknown[]) ?? current;
     },
     getSceneElements: () => current,
@@ -67,6 +67,23 @@ beforeEach(() => {
 });
 
 describe('applySkeletonBatch', () => {
+  it('未知骨架类型在转换前明确失败，不调用画布和保存', async () => {
+    const save = vi.fn();
+    const api = makeApi();
+    const result = await applySkeletonBatch({ api, drawingId: 'd1',
+      skeletons: [{ ...SKELETONS[0]!, type: 'cylinder' } as never], save });
+    expect(result).toMatchObject({ ok: false, error: expect.stringContaining('cylinder') });
+    expect(excalMock.convertToExcalidrawElements).not.toHaveBeenCalled();
+    expect(api.calls).toHaveLength(0);
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it('断开的箭头引用在转换前明确失败', async () => {
+    const result = await applySkeletonBatch({ api: makeApi(), drawingId: 'd1',
+      skeletons: [{ ...SKELETONS[1]!, end: { id: 'missing' } }, SKELETONS[0]!], save: vi.fn() });
+    expect(result).toMatchObject({ ok: false, error: expect.stringContaining('missing') });
+    expect(excalMock.convertToExcalidrawElements).not.toHaveBeenCalled();
+  });
   it('把官方转换的结果追加进场景，而不是替换', async () => {
     const existing = [{ id: 'user-stroke', type: 'freedraw' }];
     const api = makeApi(existing);
@@ -90,6 +107,17 @@ describe('applySkeletonBatch', () => {
     expect(excalMock.convertToExcalidrawElements).toHaveBeenCalledWith(SKELETONS, {
       regenerateIds: false,
     });
+  });
+
+  it('连续追加时重命名冲突 ID，并同步重定向箭头绑定', async () => {
+    const api = makeApi([{ id: 'ai-node-0' }]);
+    const result = await applySkeletonBatch({ api, drawingId: 'd1', skeletons: SKELETONS, save: vi.fn() });
+    expect(result.ok).toBe(true);
+    const batch = excalMock.convertToExcalidrawElements.mock.calls[0]![0] as DrawingSkeleton[];
+    expect(batch[0]!.id).not.toBe('ai-node-0');
+    expect(batch[1]!.start!.id).toBe(batch[0]!.id);
+    const ids = api.getSceneElements().map((element) => (element as { id: string }).id);
+    expect(new Set(ids).size).toBe(ids.length);
   });
 
   it('显式落盘：save 被调用一次，且存的是应用后的完整场景', async () => {
@@ -119,7 +147,7 @@ describe('applySkeletonBatch', () => {
   it('captureUpdate 用 NEVER —— AI 的绘制不进 undo 栈', async () => {
     const api = makeApi();
     await applySkeletonBatch({ api, drawingId: 'd1', skeletons: SKELETONS, save: vi.fn() });
-    expect(api.calls[0]!.options).toEqual({ captureUpdate: 'never' });
+    expect(api.calls[0]!.sceneData).toHaveProperty('captureUpdate', 'never');
   });
 
   it('collaborators 补一个空 Map —— 保持 Excalidraw 的运行时约定', async () => {

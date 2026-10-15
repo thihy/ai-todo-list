@@ -18,6 +18,7 @@
 
 import { convertToExcalidrawElements, CaptureUpdateAction } from '@excalidraw/excalidraw';
 import type { DrawingSkeleton } from '../../shared/drawing-spec';
+import { drawingDocumentState } from './scene-state';
 
 /** Excalidraw 的 imperative API —— 只声明我们真正用到的方法。 */
 export interface MinimalExcalidrawApi {
@@ -25,27 +26,23 @@ export interface MinimalExcalidrawApi {
     elements?: unknown[];
     appState?: Record<string, unknown> | null;
     collaborators?: unknown;
-  }, appState?: Record<string, unknown> | null, options?: { captureUpdate?: unknown }): void;
+    captureUpdate?: unknown;
+  }): void;
   getSceneElements(): unknown[];
   getAppState(): Record<string, unknown>;
+  getFiles?(): Record<string, unknown>;
+  addFiles?(files: unknown[]): void;
   scrollToContent?(elements: unknown[], opts?: Record<string, unknown>): void;
 }
 
 /** 落盘回调（ExcalidrawEditor 传自己的 save）。 */
 export type SceneSaver = (
   drawingId: string,
-  scene: { elements?: unknown; appState?: unknown },
+  scene: { elements?: unknown; appState?: unknown; files?: unknown },
 ) => Promise<void> | void;
 
 /** viewport 尺寸类字段不该进磁盘 —— 见 ExcalidrawEditor 的同名函数。 */
-function stripHostDimensions(appState: Record<string, unknown>): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(appState)) {
-    if (k === 'width' || k === 'height' || k === 'offsetLeft' || k === 'offsetTop') continue;
-    out[k] = v;
-  }
-  return out;
-}
+const stripHostDimensions = drawingDocumentState;
 
 /**
  * 把一批骨架元素追加到画布并落盘。
@@ -63,6 +60,20 @@ export async function applySkeletonBatch(opts: {
     if (!Array.isArray(skeletons) || skeletons.length === 0) {
       return { ok: false, error: '骨架列表为空。' };
     }
+    const supported = new Set(['rectangle', 'ellipse', 'diamond', 'arrow', 'text']);
+    const ids = new Set<string>();
+    for (const element of skeletons) {
+      if (!element || !element.id || !supported.has(element.type)) {
+        return { ok: false, error: `无效绘图元素：${element?.id ?? '缺少 id'}，不支持的类型 ${element?.type ?? '缺少 type'}。` };
+      }
+      if (ids.has(element.id)) return { ok: false, error: `绘图元素 id 重复：${element.id}` };
+      ids.add(element.id);
+    }
+    for (const element of skeletons) {
+      for (const endpoint of [element.start, element.end]) {
+        if (endpoint && !ids.has(endpoint.id)) return { ok: false, error: `连线 ${element.id} 引用了不存在的节点：${endpoint.id}` };
+      }
+    }
 
     const existing = (api.getSceneElements?.() ?? []) as unknown[];
 
@@ -70,16 +81,23 @@ export async function applySkeletonBatch(opts: {
     // 容器自动生成绑定文本元素。regenerateIds:false 是刻意的 —— 我们已经给
     // 了稳定 id（ai-node-N），边靠这些 id 绑定端点；重新生成会让 start/end
     // 的引用落空。
-    const created = convertToExcalidrawElements(skeletons as never, {
+    const usedIds = new Set(existing.map((element) => (element as { id?: string }).id));
+    const remappedIds = new Map(skeletons.map((element) => [element.id,
+      usedIds.has(element.id) ? `${element.id}-${crypto.randomUUID()}` : element.id]));
+    const batch = skeletons.map((element) => ({
+      ...element,
+      id: remappedIds.get(element.id)!,
+      ...(element.start ? { start: { id: remappedIds.get(element.start.id) ?? element.start.id } } : {}),
+      ...(element.end ? { end: { id: remappedIds.get(element.end.id) ?? element.end.id } } : {}),
+    }));
+    const created = convertToExcalidrawElements(batch as never, {
       regenerateIds: false,
     });
 
     const merged = [...existing, ...(created as unknown[])];
 
     api.updateScene(
-      { elements: merged, collaborators: new Map() },
-      null,
-      { captureUpdate: CaptureUpdateAction.NEVER },
+      { elements: merged, collaborators: new Map(), captureUpdate: CaptureUpdateAction.NEVER },
     );
 
     if (scrollToContent && typeof api.scrollToContent === 'function') {
@@ -94,7 +112,7 @@ export async function applySkeletonBatch(opts: {
     // 避免存到「还没应用完」的中间状态。
     const finalElements = (api.getSceneElements?.() ?? merged) as unknown[];
     const finalAppState = stripHostDimensions(api.getAppState?.() ?? {});
-    await save(drawingId, { elements: finalElements, appState: finalAppState });
+    await save(drawingId, { elements: finalElements, appState: finalAppState, files: api.getFiles?.() });
 
     return { ok: true };
   } catch (err) {

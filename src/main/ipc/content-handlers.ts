@@ -10,12 +10,23 @@ import { logger } from '../logger';
 import * as gitHistory from '../git-history';
 import * as paths from '../files/paths';
 import type { ULID } from '../../shared/todo-types';
+import { getDrawingCanvasHost } from './drawing-canvas-handlers';
 
 export function registerContentHandlers(
   md: MarkdownStore,
   drawings: DrawingStore,
   repo: TodoRepo,
 ): void {
+  register('drawing.export', async (_e, req) => {
+    try {
+      const drawing = drawings.get(req.id);
+      if (!drawing) return failResult('export_failed', '找不到绘图。');
+      const result = await getDrawingCanvasHost().exportDrawing(drawing.todoId, req.id);
+      return result.ok ? okResult(result) : failResult('export_failed', result.error ?? '导出失败');
+    } catch (cause) {
+      return failResult('export_failed', cause instanceof Error ? cause.message : String(cause));
+    }
+  });
   // todosDir lives on the MarkdownStore (constructed with it). Resolved here
   // once at boot so commitOnSave + the git history handlers share the path.
   const todosDir = md.todosDirPath;

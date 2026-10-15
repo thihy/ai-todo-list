@@ -100,6 +100,7 @@ export type ToolName =
   | 'drawing_delete'
   | 'drawing_setThumb'
   | 'drawing_draw'
+  | 'drawing_render'
   | 'inbox_attach'
   | 'inbox_attachBlob'
   | 'conversation_list'
@@ -151,6 +152,7 @@ const kindByTool: Record<ToolName, ToolCallKind> = {
   'drawing_delete': 'delete',
   'drawing_setThumb': 'edit',
   'drawing_draw': 'edit',
+  'drawing_render': 'read',
   'inbox_attach': 'edit',
   'inbox_attachBlob': 'edit',
   'conversation_list': 'read',
@@ -464,6 +466,7 @@ function titleFor(toolName: string): string {
     'drawing_delete': '删除画板',
     'drawing_setThumb': '更新缩略图',
   'drawing_draw': 'AI 画图',
+  'drawing_render': '查看绘图效果',
     'inbox_attach': '添加附件',
     'inbox_attachBlob': '添加附件',
     'conversation_list': '列出会话',

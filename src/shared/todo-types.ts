@@ -256,4 +256,5 @@ export interface InboxAttachment {
 export interface DrawingScene {
   elements: unknown[];
   appState: Record<string, unknown>;
+  files?: Record<string, unknown>;
 }

@@ -43,6 +43,8 @@ import type Database from 'better-sqlite3';
 import { mimeExt, sanitizeName } from '../util/mime';
 import { decodeUserMessage, encodeTaskCreationEnvelope, type UserIntent } from '../../shared/task-creation';
 import type { AttachmentStore } from '@deepseek-ai/dsh-attachment';
+import type { ToolRunContext } from '@deepseek-ai/dsh-tools';
+import { renderDrawingForModel, drawingRenderContent } from '../drawing/render';
 import type { Context } from '@deepseek-ai/cordis';
 import type { ModelSelectionRef } from '@deepseek-ai/dsh-agent';
 
@@ -2754,17 +2756,39 @@ function registerDomainTools(
     parameters: {
       description: { type: 'string', description: '一句中文意图说明；展示在 UI 卡片标题旁（DSH 原生约定，可选；不填则由 summarizeToolCall 从结果/参数结构化字段派生）' },
       todoId: { type: 'string', required: true, description: 'TODO id this drawing belongs to' },
-      scene: { type: 'json', required: true, description: 'Excalidraw scene JSON: { elements, appState, ... }' },
+      scene: { type: 'string', required: true, description: 'Serialized Excalidraw scene JSON string, equivalent to JSON.stringify({ elements: [...], appState: {...} }). Preserve arrays, numeric and boolean types inside the JSON. Never encode arrays as {item: ...} or XML. Invalid scenes are rejected without overwriting the drawing.' },
       id: { type: 'string', description: 'Existing drawing id to update (omit to create)' },
       title: { type: 'string', description: 'Label for the drawing; also renames the file. Omit on update to keep the current label, omit on create to get the default 绘图.' },
     },
     output: jsonOutput,
     async execute(args: { todoId: string; scene: unknown; id?: string; title?: string }) {
-      return drawings.save(args.todoId as never, args.scene as never, args.id as never, args.title);
+      const scene = typeof args.scene === 'string' ? JSON.parse(args.scene) : args.scene;
+      return drawings.save(args.todoId as never, scene, args.id as never, args.title);
     },
   }));
 
   // drawing_draw —— 画流程图 / 架构图的**首选**工具。
+  reg(defineTool({
+    name: 'drawing_render',
+    ...wire('drawing_render'),
+    description: 'Render the full current drawing as a PNG and return the actual image for visual inspection. Use after drawing or editing to inspect layout, overlapping labels and arrow crossings; do not infer the rendered result only from JSON. Includes content outside the viewport and current unsaved canvas edits. Requires an image-capable model. The PNG is also saved in the task directory.',
+    parameters: { id: { type: 'string', required: true, description: 'Real drawing id from drawing_list or app_currentContext' } },
+    output: { schema: { type: 'json' }, render: drawingRenderContent,
+      presentationMeta: (_args: unknown, value: unknown) => value },
+    async execute(args: { id: string }, exec: ToolRunContext) {
+      const attachments = ctx.get('attachments') as AttachmentStore | undefined;
+      if (!attachments) throw new Error('图片附件服务不可用。');
+      const route = exec.agent?.session.requestHeader()?.config;
+      const provider = route?.provider ?? exec.agent?.options.provider;
+      const model = route?.model ?? exec.agent?.options.model;
+      const llm = ctx.get('llm') as { resolveModelInfo(p: string, m: string, signal: AbortSignal): Promise<{ inputModalities?: readonly string[] }> } | undefined;
+      if (!provider || !model || !llm) throw new Error('无法确认当前模型的图片输入能力。');
+      const info = await llm.resolveModelInfo(provider, model, exec.signal);
+      if (!info.inputModalities?.includes('image')) throw new Error('当前模型不支持图片输入，请切换支持视觉的模型后查看绘图。');
+      if (!deps.drawingCanvasHost) throw new Error('绘图导出未连接。');
+      return renderDrawingForModel(args.id, { drawings, host: deps.drawingCanvasHost, attachments });
+    },
+  }));
   //
   // 为什么不让模型直接调 drawing_save：Excalidraw 的每个 element 都要带
   // id / seed / version / versionNonce / index / angle / strokeColor … 一整套
@@ -2803,7 +2827,7 @@ function registerDomainTools(
             additionalProperties: false,
             properties: {
               key: { type: 'string', description: 'Unique short id used by edges (e.g. "start")' },
-              kind: { type: 'string', description: 'rectangle | ellipse | diamond | text. Use ellipse for start/end, rectangle for a step, diamond for a decision, text for a free-floating label.' },
+              kind: { type: 'string', description: 'rectangle | ellipse | diamond | text | cylinder. Use ellipse for start/end, rectangle for a step, diamond for a decision, text for a free-floating label. cylinder is accepted for storage/database nodes and rendered as a compatible rectangle; Excalidraw does not have native cylinder elements.' },
               text: { type: 'string', description: 'Label inside the shape' },
               column: { type: 'number', description: 'Grid column, left to right, from 0' },
               row: { type: 'number', description: 'Grid row, top to bottom, from 0' },

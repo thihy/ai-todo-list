@@ -1,0 +1,23 @@
+{
+  "nodes": [
+    {"column":0,"key":"client","kind":"ellipse","row":0,"text":"客户端"},
+    {"column":2,"key":"gateway","kind":"rectangle","row":0,"text":"API 网关"},
+    {"column":2,"key":"auth","kind":"rectangle","row":2,"text":"身份认证"},
+    {"column":4,"key":"service","kind":"rectangle","row":0,"text":"业务服务"},
+    {"column":6,"key":"db","kind":"cylinder","row":0,"text":"主数据库"},
+    {"column":6,"key":"cache","kind":"cylinder","row":2,"text":"缓存"},
+    {"column":4,"key":"queue","kind":"rectangle","row":2,"text":"消息队列"},
+    {"column":6,"key":"worker","kind":"rectangle","row":4,"text":"后台 Worker"},
+    {"column":8,"key":"log","kind":"cylinder","row":4,"text":"日志存储"}
+  ],
+  "edges": [
+    {"from":"client","label":"请求","to":"gateway"},
+    {"from":"gateway","label":"路由","to":"auth"},
+    {"from":"gateway","label":"转发","to":"service"},
+    {"from":"service","label":"读 / 写","to":"db"},
+    {"from":"service","label":"缓存","to":"cache"},
+    {"from":"service","label":"事件","to":"queue"},
+    {"from":"queue","label":"消费","to":"worker"},
+    {"from":"worker","label":"写日志","to":"log"}
+  ]
+}

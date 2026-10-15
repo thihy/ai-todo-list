@@ -62,6 +62,7 @@ const APP_EVENTS: AppEvent[] = [
   // AI 绘图（B 版）：main 把算好的骨架元素推过来，渲染进程用 Excalidraw
   // 官方 convertToExcalidrawElements 转换后 updateScene 应用。
   'app:drawing-apply',
+  'app:drawing-export',
   'ai:stream',
   'ai:permission-request',
   // L4-G: human-in-the-loop events. The main-process waterfall listener
@@ -130,6 +131,8 @@ const api: TodoListApi = {
     gitRestore: (todoId, fileName, sha) => invoke('document.gitRestore', { todoId, fileName, sha }),
   },
   drawing: {
+    export: (id) => invoke('drawing.export', { id }),
+    exported: (payload) => invoke('drawing.exported', payload),
     list: (todoId) => invoke('drawing.list', { todoId }),
     read: (id) => invoke('drawing.read', { id }),
     save: (todoId, scene, id, title) =>

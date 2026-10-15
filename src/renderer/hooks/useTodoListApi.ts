@@ -6,6 +6,7 @@
 // to drop in-flight responses when the consuming component unmounts.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { assertDrawingScene } from '../../shared/drawing-scene';
 import type { TodoListApi, AppEvent, AppEventMap, SettingsPatchArgs } from '../../shared/todo-list-api';
 import type { Todo, TodoFilter, SearchHit, TodoStats } from '../../shared/todo-types';
 import type { ContentVersionEntry, GitHistoryEntry, ProgressLogEntry } from '../../shared/todo-types';
@@ -304,12 +305,14 @@ export function useGitHistory(
 
 export function useDocuments(todoId: string | null): {
   documents: TaskFileEntry[];
+  error: string | null;
   refresh: () => Promise<void>;
   /** Drop the main-process scan cache and re-read the task directory. Use
    *  after the user changed files outside the app (editor / sync / terminal). */
   refreshFromDisk: () => Promise<void>;
 } {
   const [documents, setDocuments] = useState<TaskFileEntry[]>([]);
+  const [error, setError] = useState<string | null>(null);
   // 'content' scope: document.write/create/remove broadcast app:data-changed
   // { scope: 'content' } so this list + the open editor re-fetch.
   const dataVersion = useDataVersion(['content']);
@@ -319,6 +322,7 @@ export function useDocuments(todoId: string | null): {
       return;
     }
     const res = await window.todoList.document.list(todoId);
+    setError(res.ok ? null : res.message ?? '文档加载失败');
     setDocuments(unwrap(res, { files: [] as TaskFileEntry[] }).files);
   }, [todoId]);
   const refreshFromDisk = useCallback(async () => {
@@ -326,12 +330,13 @@ export function useDocuments(todoId: string | null): {
     // 不走缓存：main 会先 invalidate 这个任务目录的扫描缓存再重读，
     // 所以用户在应用外丢进来的文件会立刻出现。
     const res = await window.todoList.document.refresh(todoId);
+    setError(res.ok ? null : res.message ?? '文档刷新失败');
     setDocuments(unwrap(res, { files: [] as TaskFileEntry[] }).files);
   }, [todoId]);
   useEffect(() => {
     void refresh();
   }, [refresh, dataVersion]);
-  return { documents, refresh, refreshFromDisk };
+  return { documents, error, refresh, refreshFromDisk };
 }
 
 export function useDocument(
@@ -411,8 +416,9 @@ export function useLinks(todoId: string | null): {
   return { links, refresh };
 }
 
-export function useDrawing(id: string | null): { scene: DrawingScene | null } {
-  const [scene, setScene] = useState<DrawingScene | null>(null);
+export function useDrawing(id: string | null): { scene: DrawingScene | null; error: string | null } {
+  const [error, setError] = useState<string | null>(null);
+  const [loaded, setLoaded] = useState<{ id: string; scene: DrawingScene | null } | null>(null);
   // 'drawings' scope: AI 的 drawing_save / drawing_delete / drawing_setThumb
   // 会广播这个 scope（ai-handlers.ts 的 mutatingScopes）。少了这行订阅，DSH
   // 写完场景后**已经打开的画布不会重载** —— 用户看到的还是旧画面，接着
@@ -422,15 +428,26 @@ export function useDrawing(id: string | null): { scene: DrawingScene | null } {
   const dataVersion = useDataVersion(['drawings']);
   useEffect(() => {
     if (!id) {
-      setScene(null);
       return;
     }
+    let alive = true;
     window.todoList.drawing.read(id).then((res) => {
+      if (!alive) return;
       const scene = unwrap(res, null) as DrawingScene | null;
-      setScene(scene ?? null);
+      try {
+        if (!res.ok) throw new Error(res.message ?? '读取绘图失败');
+        if (scene) assertDrawingScene(scene);
+        setError(null);
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : String(cause));
+        setLoaded({ id, scene: null });
+        return;
+      }
+      setLoaded({ id, scene: scene ?? null });
     });
+    return () => { alive = false; };
   }, [id, dataVersion]);
-  return { scene };
+  return { scene: loaded?.id === id ? loaded.scene : null, error };
 }
 
 /** Thrown by `useSettings().patch` when the settings store rejects a

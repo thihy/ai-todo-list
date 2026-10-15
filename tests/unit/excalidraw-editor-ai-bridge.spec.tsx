@@ -25,6 +25,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const excalMock = vi.hoisted(() => ({
   convertToExcalidrawElements: vi.fn(),
   CaptureUpdateAction: { NEVER: 'never', IMMEDIATELY: 'immediately' },
+  loading: false,
+  mounts: 0,
+  updateScene: vi.fn(),
 }));
 
 vi.mock('@excalidraw/excalidraw', async () => {
@@ -41,10 +44,11 @@ vi.mock('@excalidraw/excalidraw', async () => {
       onChange?: (els: unknown[], st: Record<string, unknown>) => void;
     }) => {
       react.useEffect(() => {
+        excalMock.mounts++;
         props.excalidrawAPI?.({
-          updateScene: () => undefined,
+          updateScene: excalMock.updateScene,
           getSceneElements: () => [],
-          getAppState: () => ({}),
+          getAppState: () => ({ isLoading: excalMock.loading }),
           scrollToContent: () => undefined,
         });
       }, []);
@@ -69,8 +73,12 @@ const harness = vi.hoisted(() => ({
 }));
 
 import { ExcalidrawEditor } from '../../src/renderer/components/ExcalidrawEditor';
+import { emitDataChanged } from '../../src/renderer/data-bus';
 
 beforeEach(() => {
+  excalMock.loading = false;
+  excalMock.mounts = 0;
+  excalMock.updateScene.mockClear();
   harness.listeners.clear();
   harness.canvasReady = [];
   harness.canvasGone = [];
@@ -117,8 +125,11 @@ function useAppEventBridge(): void {
 let container: HTMLDivElement;
 let root: Root;
 
-afterEach(() => {
-  act(() => root.unmount());
+afterEach(async () => {
+  await act(async () => {
+    root.unmount();
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  });
   container.remove();
 });
 
@@ -140,6 +151,47 @@ describe('ExcalidrawEditor —— 画布握手', () => {
   it('挂载后上报 canvasReady', async () => {
     await mountEditor('d1');
     expect(harness.canvasReady).toContain('d1');
+  });
+
+  it('已有场景格式损坏时显示错误，不挂载卡住的画布', async () => {
+    harness.scene = { elements: { item: [] } as never, appState: {} };
+    await mountEditor('d1');
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('elements');
+    expect(excalMock.mounts).toBe(0);
+    expect(harness.canvasReady).toEqual([]);
+  });
+
+  it('API 初始化完成前不上报 ready', async () => {
+    excalMock.loading = true;
+    await mountEditor('d1');
+    expect(harness.canvasReady).toEqual([]);
+    excalMock.loading = false;
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 30)); });
+    expect(harness.canvasReady).toEqual(['d1']);
+  });
+
+  it('AI 保存触发场景刷新后沿用同一编辑器并保留外部输入焦点', async () => {
+    await mountEditor('d1');
+    const input = document.createElement('input');
+    document.body.appendChild(input);
+    input.focus();
+    harness.scene = { elements: [{ id: 'new-node' }], appState: {} };
+    await act(async () => { emitDataChanged('drawings'); await Promise.resolve(); });
+    expect(excalMock.mounts).toBe(1);
+    expect(harness.canvasGone).toHaveLength(0);
+    expect(document.activeElement).toBe(input);
+    input.remove();
+  });
+
+  it('画布外的保存快捷键不会被绘图编辑器拦截', async () => {
+    await mountEditor('d1');
+    const input = document.createElement('input');
+    document.body.appendChild(input);
+    const event = new KeyboardEvent('keydown', { key: 's', ctrlKey: true, bubbles: true, cancelable: true });
+    input.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(false);
+    expect(harness.saves).toHaveLength(0);
+    input.remove();
   });
 
   it('drawingId 为空时不上报', async () => {
@@ -180,6 +232,29 @@ describe('ExcalidrawEditor —— 接收 apply 并回执', () => {
     });
     expect(harness.applied).toEqual([{ opId: 'op-1', ok: true, error: undefined }]);
     expect(harness.saves.length).toBe(1);
+  });
+
+  it('AI 落盘期间返回的旧场景不会覆盖画布', async () => {
+    await mountEditor('d1');
+    let finishSave!: () => void;
+    const pending = new Promise<void>((resolve) => { finishSave = resolve; });
+    await act(async () => {
+      root.render(<ExcalidrawEditor todoId="t1" drawingId="d1" onSave={() => pending} />);
+    });
+    const originalMounts = excalMock.mounts;
+    await act(async () => {
+      harness.listeners.get('app:drawing-apply')!({ drawingId: 'd1', opId: 'race',
+        skeletons: [{ type: 'rectangle', id: 'new', x: 0, y: 0, width: 10, height: 10 }] });
+      harness.scene = { elements: [{ id: 'old' }], appState: {} };
+      emitDataChanged('drawings');
+      await Promise.resolve();
+    });
+    expect(excalMock.mounts).toBe(originalMounts);
+    expect(excalMock.updateScene).toHaveBeenCalledTimes(1);
+    expect(excalMock.updateScene.mock.calls[0]![0].elements[0].id).toBe('new');
+    expect(harness.applied).toHaveLength(0);
+    await act(async () => { finishSave(); await pending; });
+    expect(harness.applied[0]?.ok).toBe(true);
   });
 
   it('发给别的画布的 apply 一律忽略，不回执', async () => {

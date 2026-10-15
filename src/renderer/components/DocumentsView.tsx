@@ -139,7 +139,8 @@ export const DocumentsView: React.FC<{
   selectedDocId?: string | null;
   onSelectDoc?: ((tabId: string) => void) | null;
 }> = ({ todoId, taskTitle, onFullscreen, selectedDocId, onSelectDoc }) => {
-  const { documents, refresh, refreshFromDisk } = useDocuments(todoId);
+  const { documents, error, refresh, refreshFromDisk } = useDocuments(todoId);
+  const [createError, setCreateError] = useState<string | null>(null);
   const { drawings, refresh: refreshDrawings } = useDrawings(todoId);
   const { node: promptNode } = usePrompt();
   // Controlled vs uncontrolled: when the parent passes selectedDocId + a
@@ -255,10 +256,13 @@ export const DocumentsView: React.FC<{
   // 新建文档：main 分配不撞名的文件名（文档 → 文档_1 → …），返回的就是
   // 实际落地的那个文件，标签跟着它走。
   const addNote = useCallback(async (): Promise<void> => {
+    setCreateError(null);
     const res = await window.todoList.document.create({ todoId, title: '文档' });
     if (res.ok) {
       await refresh();
       setSelected(`d:${res.data.fileName}`);
+    } else {
+      setCreateError(res.message ?? '新增文档失败');
     }
     setAddOpen(false);
   }, [todoId, refresh, setSelected]);
@@ -422,6 +426,7 @@ export const DocumentsView: React.FC<{
         </div>
       </div>
 
+      {(error || createError) && <div role="alert">文档操作失败：{createError ?? error}</div>}
       <div className="docs-workspace__editor">
         {selected ? (
           selected.kind === 'drawing' ? (

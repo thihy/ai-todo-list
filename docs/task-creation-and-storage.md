@@ -2,6 +2,13 @@
 
 Status: implemented contract for the current desktop application.
 
+Document compatibility: schema v23 checks the actual `document_versions`
+columns and repairs legacy `document_id` layouts even when old metadata already
+reports v22. History is converted to `(todo_id, file_name)` and links are copied
+before removing the legacy document table. Missing `progress.md` projections
+are restored from saved document content; listing and refreshing both ensure
+the default progress document exists.
+
 This document is written for maintainers and AI coding agents. It explains the
 two task-creation paths, the AI intent boundary, and the stable relationship
 between a todo row and its local files.

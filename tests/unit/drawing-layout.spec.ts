@@ -10,6 +10,7 @@ import { describe, expect, it } from 'vitest';
 
 import { layoutDrawingSpec, DrawingSpecError } from '../../src/main/drawing/layout';
 import type { DrawingDrawSpec } from '../../src/shared/drawing-spec';
+import architecture from '../fixtures/drawing-architecture.json';
 
 const flow: DrawingDrawSpec = {
   nodes: [
@@ -27,6 +28,27 @@ const byId = (spec: DrawingDrawSpec) =>
   new Map(layoutDrawingSpec(spec).map((s) => [s.id, s]));
 
 describe('layoutDrawingSpec', () => {
+  it('用户架构图中的 cylinder 转成合法容器，九个节点和八条带标签连线完整保留', () => {
+    const out = layoutDrawingSpec(architecture as DrawingDrawSpec);
+    expect(out).toHaveLength(17);
+    const nodes = out.filter((element) => element.type !== 'arrow');
+    const arrows = out.filter((element) => element.type === 'arrow');
+    expect(nodes).toHaveLength(9);
+    expect(arrows).toHaveLength(8);
+    for (const label of ['主数据库', '缓存', '日志存储']) {
+      expect(nodes.find((element) => element.label?.text === label)?.type).toBe('rectangle');
+    }
+    const ids = new Set(nodes.map((node) => node.id));
+    for (const arrow of arrows) {
+      expect(ids.has(arrow.start!.id)).toBe(true);
+      expect(ids.has(arrow.end!.id)).toBe(true);
+    }
+  });
+
+  it('其他未知节点类型给出可读错误，而不进入官方转换器', () => {
+    expect(() => layoutDrawingSpec({ nodes: [{ key: 'database', kind: 'alien', row: 0, column: 0 } as never], edges: [] }))
+      .toThrow(/database.*alien/);
+  });
   it('每个节点产出一个骨架，id 稳定且互不相同', () => {
     const out = layoutDrawingSpec(flow);
     expect(out).toHaveLength(5); // 3 节点 + 2 箭头

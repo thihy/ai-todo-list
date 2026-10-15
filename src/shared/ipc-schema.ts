@@ -154,6 +154,7 @@ export interface ContentGitRestoreReq { id: ULID; sha: string }
 
 // ----- drawing.* -----
 
+import type { DrawingExportResult } from './drawing-spec';
 export interface DrawingListReq { todoId: ULID }
 export interface DrawingReadReq { id: ULID }
 export interface DrawingSaveReq { todoId: ULID; id?: ULID; title?: string; scene: unknown }
@@ -617,6 +618,8 @@ export interface IpcRegistry {
   'drawing.canvasReady': IpcChannel<DrawingCanvasReadyReq, IpcResult<void>>;
   'drawing.canvasGone': IpcChannel<DrawingCanvasGoneReq, IpcResult<void>>;
   'drawing.applied': IpcChannel<DrawingAppliedReq, IpcResult<void>>;
+  'drawing.exported': IpcChannel<DrawingExportResult, IpcResult<void>>;
+  'drawing.export': IpcChannel<DrawingReadReq, IpcResult<DrawingExportResult>>;
 
   'inbox.attach': IpcChannel<InboxAttachReq, IpcResult<InboxAttachment>>;
   'inbox.attachBlob': IpcChannel<InboxAttachBlobReq, IpcResult<InboxAttachment>>;

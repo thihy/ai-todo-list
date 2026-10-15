@@ -101,6 +101,9 @@ export function layoutDrawingSpec(spec: DrawingDrawSpec): DrawingSkeleton[] {
   nodes.forEach((node, i) => {
     const key = (node?.key ?? '').trim();
     if (!key) throw new DrawingSpecError(`第 ${i + 1} 个节点缺少 key。`);
+    if (!['rectangle', 'ellipse', 'diamond', 'text', 'cylinder'].includes(node.kind)) {
+      throw new DrawingSpecError(`节点 ${key} 的 kind 不支持：${String(node.kind)}。支持 rectangle、ellipse、diamond、text、cylinder（存储节点以矩形显示）。`);
+    }
     if (keyToId.has(key)) throw new DrawingSpecError(`节点 key 重复：${key}`);
     keyToId.set(key, elementIdFor(i));
   });
@@ -186,7 +189,9 @@ export function layoutDrawingSpec(spec: DrawingDrawSpec): DrawingSkeleton[] {
     }
     skeletons.push({
       ...base,
-      type: p.node.kind,
+      // Excalidraw has no cylinder element. Preserve the semantic node and
+      // its bindings using a supported container instead of passing it on.
+      type: p.node.kind === 'cylinder' ? 'rectangle' : p.node.kind,
       label: text ? { text } : undefined,
     } as DrawingSkeleton);
   }

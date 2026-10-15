@@ -7,9 +7,9 @@ const { ulid } = ulidPkg;
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 
-export const SCHEMA_VERSION = 21;
+export const SCHEMA_VERSION = 23;
 
-const MIGRATIONS: ReadonlyArray<{ version: number; sql: string }> = [
+const MIGRATIONS: ReadonlyArray<{ version: number; sql: string; run?: (db: Database.Database) => void }> = [
   {
     version: 1,
     sql: `
@@ -898,8 +898,27 @@ const MIGRATIONS: ReadonlyArray<{ version: number; sql: string }> = [
       DROP TABLE task_documents;
     `,
   },
+  {
+    version: 23,
+    sql: '',
+    run(db) {
+      const columns = db.prepare('PRAGMA table_info(document_versions)').all() as Array<{ name: string }>;
+      if (columns.some((column) => column.name === 'todo_id') &&
+          columns.some((column) => column.name === 'file_name')) return;
+      if (!columns.some((column) => column.name === 'document_id')) {
+        throw new Error('Unsupported document_versions schema: cannot safely migrate document history');
+      }
+      const legacy = MIGRATIONS.find((migration) => migration.version === 21)!;
+      db.exec(legacy.sql
+        .replace('CREATE TABLE todo_links (', 'CREATE TABLE IF NOT EXISTS todo_links (')
+        .replace('CREATE INDEX idx_todo_links_todo', 'CREATE INDEX IF NOT EXISTS idx_todo_links_todo')
+        .replace('INSERT INTO todo_links (', 'INSERT OR IGNORE INTO todo_links ('));
+    },
+  },
 ];
 
+// Some previously shipped databases reached v22 while retaining the v20
+// document tables. A higher version must not hide an incompatible structure.
 export interface DbHandle {
   db: Database.Database;
   close(): void;
@@ -939,6 +958,7 @@ export function openDb(filePath: string): DbHandle {
     if (m.version > currentVersion) {
       const tx = db.transaction(() => {
         db.exec(m.sql);
+        m.run?.(db);
         db.prepare('INSERT OR REPLACE INTO schema_meta(version) VALUES (?)').run(m.version);
       });
       tx();

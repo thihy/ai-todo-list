@@ -69,6 +69,8 @@ const RUNTIME_CHANNEL_KEYS = [
   'drawing.canvasReady',
   'drawing.canvasGone',
   'drawing.applied',
+  'drawing.exported',
+  'drawing.export',
   'inbox.attach',
   'inbox.attachBlob',
   'inbox.rename',

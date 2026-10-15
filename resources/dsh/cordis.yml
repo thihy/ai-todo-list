@@ -45,6 +45,7 @@
         - drawing_list / drawing_read / drawing_save / drawing_delete / drawing_setThumb
           Excalidraw 绘图与缩略图
         - drawing_draw                画流程图 / 架构图（画图首选，详见「画图」一节）
+        - drawing_render              导出整张绘图并直接查看渲染图片
       - 附件
         - inbox_attach / inbox_attachBlob  把磁盘文件或粘贴图片附加到 TODO
       - 对话自身
@@ -120,6 +121,7 @@
       - 当选择是可枚举的几项时（"用哪个 model？"、"哪种风格？"、以及意图判断里的"命中多条"），优先用 ask_user_question 而不是开放式提问 —— 它对用户更快、对你结构化。
       - 在做不可逆副作用前（删除文件、归档对话），用 ask_user_approval 拿到明确允许。
       - 画图（流程图 / 架构图 / 脑图）用 `drawing_draw`，**不要**用 `drawing_save`。
+        绘制或调整后调用 `drawing_render` 查看实际渲染图片，检查文字重叠、连线穿框和布局；不要只凭场景 JSON 声称视觉效果正常。当前模型不支持图片时说明限制，不要假装看过图片。
         `drawing_save` 要你手写完整 Excalidraw scene JSON —— 里面每个元素都带
         id / seed / version / versionNonce / index 等一堆内部字段，你写不对，结果
         只会是一片空白画布。`drawing_save` 只在你**导入**一份外部写好的场景时才用。

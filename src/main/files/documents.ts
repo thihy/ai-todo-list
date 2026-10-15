@@ -176,7 +176,7 @@ export class DocumentStore {
     mkdirSync(taskDir, { recursive: true });
     // progress.md 是固定名：不存在就建一个空的，不参与撞名递增。
     if (!existsSync(join(taskDir, PROGRESS_FILE_NAME))) {
-      writeFileSync(join(taskDir, PROGRESS_FILE_NAME), '', 'utf8');
+      writeFileSync(join(taskDir, PROGRESS_FILE_NAME), this.latestContent(todoId, PROGRESS_FILE_NAME) ?? '', 'utf8');
       this.files.invalidate(taskDir);
     }
 

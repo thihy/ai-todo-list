@@ -11,7 +11,7 @@
 // 下面这些**结构上兼容**的骨架，真正的转换发生在渲染进程。
 
 /** 模型能用的节点形状。`text` 是纯文字（无边框），其余是带边框的容器。 */
-export type DrawingNodeKind = 'rectangle' | 'ellipse' | 'diamond' | 'text';
+export type DrawingNodeKind = 'rectangle' | 'ellipse' | 'diamond' | 'text' | 'cylinder';
 
 export interface DrawingNodeSpec {
   /** 模型内部的名字，用于 edges 引用。同一批里必须唯一。 */
@@ -84,4 +84,13 @@ export interface DrawingAppliedPayload {
   drawingId: string;
   ok: boolean;
   error?: string;
+}
+
+export interface DrawingExportPayload { opId: string; drawingId: string }
+export interface DrawingExportResult extends DrawingExportPayload {
+  ok: boolean;
+  error?: string;
+  dataUrl?: string;
+  width?: number;
+  height?: number;
 }

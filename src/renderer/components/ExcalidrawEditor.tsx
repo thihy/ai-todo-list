@@ -12,7 +12,10 @@ import { createRoot, type Root } from 'react-dom/client';
 import { useDrawing } from '../hooks/useTodoListApi';
 import { useToastBus } from './Toast';
 import { useAppEvent } from '../hooks/useTodoListApi';
-import { applySkeletonBatch, type MinimalExcalidrawApi } from '../drawing/apply';
+import { applySkeletonBatch, type MinimalExcalidrawApi, type SceneSaver } from '../drawing/apply';
+import { CaptureUpdateAction } from '@excalidraw/excalidraw';
+import { drawingDocumentState } from '../drawing/scene-state';
+import { exportDrawingPng } from '../drawing/export';
 
 // Excalidraw's vendor CSS. The package ships its CSS as a separate
 // `index.css` entry (not auto-injected by the JS bundle), so it must be
@@ -65,273 +68,213 @@ function stripEsmShFromSrc(source: string): string {
 }
 
 export const ExcalidrawEditor: React.FC<{
-  /** Parent task — required so autosave knows which TODO this drawing belongs to. */
   todoId: string;
   drawingId: string;
   className?: string;
-  /** Save handler. Defaults to autosave on every change (600ms debounce).
-   *  Override for special flows (e.g. explicit save). */
-  onSave?: (drawingId: string, scene: { elements?: unknown; appState?: unknown }) => void;
+  onSave?: SceneSaver;
 }> = ({ todoId, drawingId, className, onSave }) => {
-  const { scene } = useDrawing(drawingId);
+  const { scene, error } = useDrawing(drawingId);
   const toast = useToastBus();
   const hostRef = useRef<HTMLDivElement>(null);
-  const rootRef = useRef<Root | null>(null);
-  // Excalidraw imperative API (set via the `excalidrawAPI` prop) — Ctrl+S
-  // reads the live scene through it instead of waiting for the debounced
-  // onChange, so an explicit save always persists the newest stroke.
-  const apiRef = useRef<{ getSceneElements: () => unknown[]; getAppState: () => unknown } | null>(null);
+  const apiRef = useRef<MinimalExcalidrawApi | null>(null);
+  const latestScene = useRef(scene);
+  latestScene.current = scene;
+  const mountedScene = useRef(scene);
+  const saveRef = useRef<SceneSaver>(() => {});
+  saveRef.current = onSave ?? ((id, value) => defaultSave(todoId, id, value));
+  const toastRef = useRef(toast);
+  toastRef.current = toast;
+  const autosaveRef = useRef<{ cancel(): void } | null>(null);
+  const sceneLoaded = scene !== null;
+  const applyingRef = useRef(false);
 
-  // AI 绘图（B 版）的跨进程接线。main 拿到 drawingId 之后，如果这张画布
-  // 没挂载，它会先导航过来；这里挂好之后**必须**上报 canvasReady，否则
-  // main 的 applyToCanvas 会一直等到超时 —— 工具就永远返回失败。
-  //
-  // 卸载时报 canvasGone，让 main 把它从在世集合摘掉；否则 main 会以为画布
-  // 还活着，把 apply 发给一个已经不存在的 API，元素就丢了。
+  // External writes update the existing editor: remounting here can replace
+  // focused DOM and leave a detached editor's global listeners behind.
   useEffect(() => {
-    if (!drawingId) return;
-    let disposed = false;
-    void window.todoList.drawing.canvasReady({ drawingId });
-    return () => {
-      disposed = true;
-      void disposed;
-      void window.todoList.drawing.canvasGone(drawingId);
-    };
-  }, [drawingId]);
+    const api = apiRef.current;
+    if (!scene || !api || api.getAppState().isLoading === true || mountedScene.current === scene) return;
+    if (applyingRef.current) {
+      mountedScene.current = scene;
+      return;
+    }
+    autosaveRef.current?.cancel();
+    mountedScene.current = scene;
+    if (scene.files) api.addFiles?.(Object.values(scene.files));
+    api.updateScene({
+      elements: scene.elements,
+      appState: drawingDocumentState(scene.appState ?? {}),
+      collaborators: new Map(),
+      captureUpdate: CaptureUpdateAction.NEVER,
+    });
+  }, [scene]);
 
-  // 接单：main 推来骨架元素 → 官方转换 → updateScene → 显式落盘 → 回执。
-  // 回执必须走 IPC 而不是本地 state，因为 main 在等它来决定工具返回什么。
   useAppEvent('app:drawing-apply', (payload) => {
     if (payload.drawingId !== drawingId) return;
-    const api = apiRef.current as MinimalExcalidrawApi | null;
-    const save = onSave ?? ((id, s) => defaultSave(todoId, id, s));
+    const api = apiRef.current;
+    autosaveRef.current?.cancel();
     void (async () => {
-      if (!api) {
-        await window.todoList.drawing.applied({
-          opId: payload.opId,
-          drawingId: payload.drawingId,
-          ok: false,
-          error: '画布尚未就绪。',
-        });
-        return;
-      }
-      const res = await applySkeletonBatch({
-        api,
-        drawingId: payload.drawingId,
-        skeletons: payload.skeletons,
-        save,
-        scrollToContent: payload.scrollToContent,
-      });
+      applyingRef.current = true;
+      const result = !api || api.getAppState().isLoading === true
+        ? { ok: false, error: '画布尚未就绪。' }
+        : await applySkeletonBatch({
+            api, drawingId, skeletons: payload.skeletons,
+            save: (id, value) => saveRef.current(id, value),
+            scrollToContent: payload.scrollToContent,
+          });
+      applyingRef.current = false;
       await window.todoList.drawing.applied({
-        opId: payload.opId,
-        drawingId: payload.drawingId,
-        ok: res.ok,
-        error: res.error,
+        opId: payload.opId, drawingId, ok: result.ok, error: result.error,
       });
-      if (res.ok) {
-        toast.push({ kind: 'success', message: 'AI 已绘制到画布', ttl: 1500 });
-      } else {
-        toast.push({ kind: 'error', message: `AI 绘制失败：${res.error ?? '未知错误'}`, ttl: 3000 });
+      toastRef.current.push(result.ok
+        ? { kind: 'success', message: 'AI 已绘制到画布', ttl: 1500 }
+        : { kind: 'error', message: `AI 绘制失败：${result.error ?? '未知错误'}`, ttl: 3000 });
+    })();
+  });
+
+  useAppEvent('app:drawing-export', (payload) => {
+    if (payload.drawingId !== drawingId) return;
+    const api = apiRef.current;
+    void (async () => {
+      try {
+        if (!api) throw new Error('画布尚未就绪。');
+        const image = await exportDrawingPng(api);
+        await window.todoList.drawing.exported({ ...payload, ok: true, ...image });
+      } catch (cause) {
+        await window.todoList.drawing.exported({ ...payload, ok: false,
+          error: cause instanceof Error ? cause.message : String(cause) });
       }
     })();
   });
 
   useEffect(() => {
-    if (!drawingId || !scene || !hostRef.current) return;
+    if (!drawingId || !sceneLoaded || !hostRef.current) return;
     let cancelled = false;
-    // Registered synchronously below / after the dynamic import resolves; the
-    // effect cleanup has to be able to detach it either way.
-    let removeKeyDown: (() => void) | null = null;
-    (async () => {
-      // Must be set before import('@excalidraw/excalidraw'): excalidraw reads
-      // ASSETS_FALLBACK_URL (default https://esm.sh/...) at module load and
-      // uses it as the base for every font. Overriding the global routes all
-      // canvas fonts (Assistant / Cascadia / Virgil / …) through the local
-      // /excalidraw/fonts/ path. Font URIs already carry the fonts/ prefix,
-      // so the base stops at /excalidraw/ — otherwise we'd get the double
-      // /excalidraw/fonts/fonts/… that 404s and then the browser falls back
-      // to esm.sh.
-      //
-      // Excalidraw's createUrls() unconditionally appends ASSETS_FALLBACK_URL
-      // (esm.sh) as the LAST src entry of every FontFace, so even with the
-      // local base set, each FontFace src is [local, esm.sh]. The browser
-      // still attempts the esm.sh URL and CSP logs a font-src violation per
-      // font per variant (Cascadia, every ComicShanns hash, …). To kill the
-      // violations at the source we wrap window.FontFace once (before the
-      // dynamic import) so that any esm.sh url() token is stripped from the
-      // src string before the native FontFace is constructed. The wrapper
-      // returns a genuine native FontFace instance (not a subclass — that
-      // previously broke icon metrics because document.fonts.add / instanceof
-      // behave differently on non-native instances), so Excalidraw's
-      // .load() / .status / document.fonts.add all work transparently.
-      installExcalidrawFontFaceFilter();
-      const basePath = `${window.location.origin}/excalidraw/`;
-      (window as unknown as { EXCALIDRAW_ASSET_PATH?: string }).EXCALIDRAW_ASSET_PATH = basePath;
-      const mod = await import('@excalidraw/excalidraw');
-      if (cancelled || !hostRef.current) return;
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const Excalidraw = (mod as any).Excalidraw;
-      // Tear down any prior root (drawingId changed mid-mount).
-      if (rootRef.current) rootRef.current.unmount();
-      hostRef.current.innerHTML = '';
-      const root = createRoot(hostRef.current);
-      rootRef.current = root;
-      const save = onSave ?? ((id, s) => defaultSave(todoId, id, s));
-      // Excalidraw's runtime keeps appState.collaborators as a Map. A Map
-      // collapses to {} through JSON.stringify on save, and on reload
-      // InteractiveCanvas calls appState.collaborators.forEach on mount —
-      // which throws "forEach is not a function" on the plain {}. We don't
-      // persist collaborators (collaboration is off), so restore a fresh
-      // empty Map on every mount.
-      //
-      // Strip host-container-derived dimensions from the loaded scene.
-      // Excalidraw reads `appState.width`/`appState.height` (and the
-      // matching offsets) as the **viewport size** on mount and applies
-      // them directly to the canvas — these are NOT user state, they're
-      // just cached container measurements. The renderer's host div sizes
-      // the canvas, so the saved values are at best redundant and at worst
-      // catastrophic: a transient measurement during a layout transition
-      // (tab switch, fullscreen toggle) can persist a huge height to disk,
-      // and the next mount re-applies it, blowing the canvas up to ~33M
-      // buffer pixels with DPR=1.75 — every icon then renders gigantic
-      // and is effectively off-screen. Reset to a fresh empty Map and let
-      // Excalidraw re-measure the actual host on every mount.
-      const appState = stripHostDimensions(scene.appState ?? {});
-      const initialData = {
-        elements: scene.elements ?? [],
-        appState: { ...appState, collaborators: new Map() },
-      };
-      root.render(
-        React.createElement(Excalidraw, {
-          initialData,
-          excalidrawAPI: (api: unknown) => {
-            apiRef.current = api as {
-              getSceneElements: () => unknown[];
-              getAppState: () => unknown;
-            };
-          },
-          // Excalidraw binds Ctrl+S to its File-System-Access "save to
-          // active file" action, which in Electron pops a 另存为 dialog —
-          // wrong for a document that already has a home in the task dir.
-          // Turning both disk actions off here keeps the shortcut (and the
-          // menu) inert; the capture-phase listener below owns Ctrl+S and
-          // writes through the same IPC the autosave uses.
-          UIOptions: {
-            canvasActions: { saveFileToDisk: false, saveToActiveFile: false },
-          },
-          onChange: debounced(async (els, st) => {
-            await save(drawingId, {
-              elements: els,
-              // Strip host-derived dimensions on save too: keeps the on-disk
-              // scene free of viewport-sized numbers, so even if some other
-              // code path reads the raw JSON it can't replay a corrupted
-              // measurement. Excalidraw will repopulate these correctly on
-              // the next onChange tick.
-              appState: stripHostDimensions(st as Record<string, unknown>),
-            });
-          }, 600),
-        }),
-      );
+    let root: Root | null = null;
+    let mountNode: HTMLDivElement | null = null;
+    let ready = false;
+    let readinessTimer: ReturnType<typeof setTimeout> | undefined;
+    let removeKeyDown: (() => void) | undefined;
+    const autosave = debounced((elements: unknown[], state: Record<string, unknown>) => {
+      if (cancelled || state.isLoading === true) return;
+      void Promise.resolve(saveRef.current(drawingId, {
+        elements, appState: drawingDocumentState(state), files: apiRef.current?.getFiles?.(),
+      })).catch((error: unknown) => {
+        toastRef.current.push({ kind: 'error', message: `保存绘图失败：${error instanceof Error ? error.message : String(error)}`, ttl: 3000 });
+      });
+    }, 600);
+    autosaveRef.current = autosave;
 
-      // Ctrl+S / Cmd+S → 保存到任务目录。Capture phase on window so we run
-      // before Excalidraw's own container-level handler and can stop it from
-      // ever reaching the file-save path; preventDefault also stops
-      // Chromium's own "save page as" fallback.
-      const onKeyDown = (e: KeyboardEvent): void => {
-        if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 's') return;
-        e.preventDefault();
-        e.stopPropagation();
-        void (async () => {
-          const api = apiRef.current;
-          try {
-            await save(drawingId, {
-              elements: (api?.getSceneElements() ?? []) as never,
-              appState: stripHostDimensions((api?.getAppState() ?? {}) as Record<string, unknown>),
-            });
-            toast.push({ kind: 'success', message: '绘图已保存', ttl: 1500 });
-          } catch (err) {
-            const reason = err instanceof Error && err.message ? err.message : '未知错误';
-            toast.push({ kind: 'error', message: `保存绘图失败：${reason}`, ttl: 3000 });
-          }
-        })();
+    const reportReady = (): void => {
+      if (cancelled || ready) return;
+      const api = apiRef.current;
+      if (!api || api.getAppState().isLoading === true) {
+        readinessTimer = setTimeout(reportReady, 16);
+        return;
+      }
+      const fresh = latestScene.current;
+      if (fresh && fresh !== mountedScene.current) {
+        mountedScene.current = fresh;
+        if (fresh.files) api.addFiles?.(Object.values(fresh.files));
+        api.updateScene({ elements: fresh.elements, appState: drawingDocumentState(fresh.appState ?? {}),
+          collaborators: new Map(), captureUpdate: CaptureUpdateAction.NEVER });
+      }
+      ready = true;
+      void window.todoList.drawing.canvasReady({ drawingId });
+    };
+
+    void (async () => {
+      (window as unknown as { EXCALIDRAW_ASSET_PATH: string }).EXCALIDRAW_ASSET_PATH = '/excalidraw/';
+      installExcalidrawFontFaceFilter();
+      const mod = await import('@excalidraw/excalidraw');
+      if (cancelled || !hostRef.current || !latestScene.current) return;
+      // Each root owns a separate child. Deferred teardown can only remove
+      // its old child, never clear a newer canvas mounted in the same host.
+      mountNode = document.createElement('div');
+      mountNode.style.height = '100%';
+      hostRef.current.replaceChildren(mountNode);
+      root = createRoot(mountNode);
+      const initial = latestScene.current;
+      mountedScene.current = initial;
+      root.render(React.createElement(mod.Excalidraw, {
+        initialData: { elements: initial.elements, files: initial.files,
+          appState: { ...drawingDocumentState(initial.appState ?? {}), collaborators: new Map() } } as never,
+        excalidrawAPI: (api) => {
+          if (cancelled) return;
+          apiRef.current = api as unknown as MinimalExcalidrawApi;
+          reportReady();
+        },
+        handleKeyboardGlobally: false,
+        autoFocus: false,
+        UIOptions: { canvasActions: { saveToActiveFile: false } },
+        onChange: (elements, state) => {
+          if (cancelled || !ready || state.isLoading) return;
+          autosave(elements as unknown[], state as unknown as Record<string, unknown>);
+        },
+      }));
+      const onKeyDown = (event: KeyboardEvent): void => {
+        if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== 's') return;
+        if (!(event.target instanceof Node) || !hostRef.current?.contains(event.target)) return;
+        event.preventDefault();
+        event.stopPropagation();
+        autosave.cancel();
+        const api = apiRef.current;
+        if (!api) return;
+        void Promise.resolve(saveRef.current(drawingId, {
+          elements: api.getSceneElements(), appState: drawingDocumentState(api.getAppState()), files: api.getFiles?.(),
+        })).then(() => toastRef.current.push({ kind: 'success', message: '绘图已保存', ttl: 1500 }))
+          .catch((error: unknown) => toastRef.current.push({ kind: 'error',
+            message: `保存绘图失败：${error instanceof Error ? error.message : String(error)}`, ttl: 3000 }));
       };
       window.addEventListener('keydown', onKeyDown, true);
-      removeKeyDown = (): void => window.removeEventListener('keydown', onKeyDown, true);
-    })().catch((err) => {
-      // eslint-disable-next-line no-console
-      console.error('excalidraw load failed', err);
+      removeKeyDown = () => window.removeEventListener('keydown', onKeyDown, true);
+    })().catch((error: unknown) => {
+      if (!cancelled) toastRef.current.push({ kind: 'error',
+        message: `加载绘图失败：${error instanceof Error ? error.message : String(error)}`, ttl: 3000 });
     });
     return () => {
       cancelled = true;
+      clearTimeout(readinessTimer);
+      autosave.cancel();
+      if (autosaveRef.current === autosave) autosaveRef.current = null;
       removeKeyDown?.();
       apiRef.current = null;
-      const root = rootRef.current;
-      rootRef.current = null;
-      const host = hostRef.current;
-      if (root) {
-        // Defer teardown to the next macrotask. This cleanup fires during the
-        // parent's commit phase (tab switch re-renders DocumentsView), and
-        // calling root.unmount() synchronously inside another React render
-        // trips the "unmount while rendering" guard. The host div is about to
-        // be detached by React anyway, so a one-tick delay is safe.
-        setTimeout(() => {
-          root.unmount();
-          if (host) host.innerHTML = '';
-        }, 0);
-      } else if (host) {
-        host.innerHTML = '';
-      }
+      void window.todoList.drawing.canvasGone(drawingId);
+      mountNode?.remove();
+      // React forbids unmounting a nested root during its parent's commit.
+      const oldRoot = root;
+      if (oldRoot) setTimeout(() => oldRoot.unmount(), 0);
     };
-  }, [drawingId, scene, todoId, onSave]);
+  }, [drawingId, sceneLoaded, todoId]);
 
-  return (
-    <div
-      ref={hostRef}
-      className={className}
-      aria-label="绘图画布"
-    />
-  );
+  return <div className={className} style={{ position: 'relative' }}>
+    <button type="button" aria-label="导出绘图 PNG" title="导出整张绘图为 PNG 图片"
+      style={{ position: 'absolute', right: 60, bottom: 16, zIndex: 2 }}
+      onClick={() => {
+        const api = apiRef.current;
+        if (!api) return;
+        void exportDrawingPng(api).then((image) => {
+          const link = document.createElement('a');
+          link.href = image.dataUrl;
+          link.download = `${drawingId}.png`;
+          link.click();
+        }).catch((cause: unknown) => toastRef.current.push({ kind: 'error',
+          message: `导出失败：${cause instanceof Error ? cause.message : String(cause)}`, ttl: 3000 }));
+      }}>导出 PNG</button>
+    {error && <div role="alert">绘图加载失败：{error}</div>}
+    <div ref={hostRef} style={{ height: '100%' }} aria-label="绘图画布" />
+  </div>;
 };
 
-/** Default autosave target — writes through the standard drawing.save IPC. */
-async function defaultSave(
-  todoId: string,
-  drawingId: string,
-  scene: { elements?: unknown; appState?: unknown },
-): Promise<void> {
-  await window.todoList.drawing.save(todoId, scene as never, drawingId);
+async function defaultSave(todoId: string, drawingId: string, scene: { elements?: unknown; appState?: unknown; files?: unknown }): Promise<void> {
+  const result = await window.todoList.drawing.save(todoId, scene as never, drawingId);
+  if (!result.ok) throw new Error(result.message ?? '绘图保存失败');
 }
 
-function debounced<T extends (...args: never[]) => unknown>(fn: T, ms: number): T {
-  let t: ReturnType<typeof setTimeout> | null = null;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return ((...args: any[]) => {
-    if (t) clearTimeout(t);
-    t = setTimeout(() => fn(...(args as never[])), ms);
-  }) as unknown as T;
-}
-
-/** Drop the viewport-sized keys Excalidraw caches into appState. These
- *  describe the current canvas dimensions, not user content — they MUST be
- *  re-measured from the host container on every mount, never replayed from
- *  disk. See the comment above the load-site call site for the full story
- *  on why a saved `height` of ~19M blows the canvas up to 33M buffer pixels.
- *  Keep this list narrow: any future host-derived dimension (e.g. a new
- *  Excalidraw release that caches devicePixelRatio) belongs here too. */
-function stripHostDimensions(
-  appState: Record<string, unknown>,
-): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(appState)) {
-    if (
-      k === 'width' ||
-      k === 'height' ||
-      k === 'offsetLeft' ||
-      k === 'offsetTop'
-    ) {
-      continue;
-    }
-    out[k] = v;
-  }
-  return out;
+function debounced<T extends (...args: never[]) => unknown>(fn: T, ms: number): T & { cancel(): void } {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const callback = (...args: Parameters<T>): void => {
+    clearTimeout(timer);
+    timer = setTimeout(() => { timer = undefined; fn(...args); }, ms);
+  };
+  return Object.assign(callback, { cancel: () => { clearTimeout(timer); timer = undefined; } }) as T & { cancel(): void };
 }

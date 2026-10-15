@@ -21,6 +21,8 @@ import type {
   DrawingAppliedPayload,
   DrawingCanvasReadyPayload,
   DrawingSkeleton,
+  DrawingExportPayload,
+  DrawingExportResult,
 } from '../../shared/drawing-spec';
 
 /** main → 渲染进程的回调（由 ipc 层注入）。 */
@@ -30,6 +32,7 @@ export type NavigateToDrawing = (todoId: string, drawingId: string) => void;
 
 export interface DrawingCanvasHostOptions {
   send: ApplySender;
+  sendExport?: (payload: DrawingExportPayload) => void;
   navigate: NavigateToDrawing;
   /** 画布从「未就绪」到「就绪」的最长等待，默认 6s。
    *  覆盖的是「打开 tab → React 挂载 → 动态 import excalidraw → 拿到 API」
@@ -56,13 +59,16 @@ export class DrawingCanvasHost {
     string,
     (payload: DrawingAppliedPayload) => void
   >();
-  private readonly opts: Required<Omit<DrawingCanvasHostOptions, 'log'>> & {
+  private readonly exports = new Map<string, { drawingId: string; settle: (result: DrawingExportResult) => void }>();
+  private readonly opts: Required<Omit<DrawingCanvasHostOptions, 'log' | 'sendExport'>> & {
+    sendExport?: DrawingCanvasHostOptions['sendExport'];
     log: (msg: string) => void;
   };
 
   constructor(options: DrawingCanvasHostOptions) {
     this.opts = {
       send: options.send,
+      sendExport: options.sendExport,
       navigate: options.navigate,
       readyTimeoutMs: options.readyTimeoutMs ?? 6_000,
       ackTimeoutMs: options.ackTimeoutMs ?? 6_000,
@@ -77,6 +83,37 @@ export class DrawingCanvasHost {
 
   isLive(drawingId: string): boolean {
     return this.live.has(drawingId);
+  }
+
+  exported(result: DrawingExportResult): void {
+    const pending = this.exports.get(result.opId);
+    if (!pending || pending.drawingId !== result.drawingId) return;
+    this.exports.delete(result.opId);
+    pending.settle(result);
+  }
+
+  async exportDrawing(todoId: string, drawingId: string): Promise<DrawingExportResult> {
+    const opId = randomUUID();
+    const failure = (error: string): DrawingExportResult => ({ opId, drawingId, ok: false, error });
+    if (!this.opts.sendExport) return failure('绘图导出未连接。');
+    if (!this.isLive(drawingId)) {
+      const ready = this.waitForReady(drawingId);
+      this.opts.navigate(todoId, drawingId);
+      if (!await ready) return failure('打开绘图超时，请修复画布加载错误后重试。');
+    }
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        this.exports.delete(opId);
+        resolve(failure('绘图导出超时，请重试。'));
+      }, this.opts.ackTimeoutMs);
+      this.exports.set(opId, { drawingId, settle: (result) => { clearTimeout(timer); resolve(result); } });
+      try { this.opts.sendExport!({ opId, drawingId }); }
+      catch (cause) {
+        clearTimeout(timer);
+        this.exports.delete(opId);
+        resolve(failure(cause instanceof Error ? cause.message : String(cause)));
+      }
+    });
   }
 
   /** 渲染进程报告画布就绪。 */

@@ -92,6 +92,30 @@ describe('DrawingStore per-task layout', () => {
     expect(dbPath(meta.id)).toBe('Splash.excalidraw');
   });
 
+  it('PNG 渲染缓存始终落在同一个任务关联目录，不覆盖场景', () => {
+    const todo = repo.create({ title: '绘图导出' });
+    const taskDir = join(todosDir, 'stable-task-directory');
+    const store = new DrawingStore(handle.db, join(dir, 'drawings'), () => taskDir);
+    const drawing = store.save(todo.id, { elements: [] });
+    const png = Buffer.from('89504e470d0a1a0a', 'hex');
+    const first = store.saveRender(drawing.id, png);
+    expect(first).toBe(join(taskDir, 'thumbs', `${drawing.id}.render.png`));
+    expect(store.saveRender(drawing.id, png)).toBe(first);
+    expect(readFileSync(first)).toEqual(png);
+    expect(store.read(drawing.id)).toEqual({ elements: [] });
+    expect(() => store.saveRender(drawing.id, Buffer.from('invalid'))).toThrow('PNG');
+  });
+
+  it('非法 AI 场景在改名和覆盖前失败，原图和元数据保持不变', () => {
+    const todo = repo.create({ title: '保护绘图' });
+    const original = { elements: [{ id: 'a', x: 10 }], appState: {} };
+    const drawing = drawings.save(todo.id, original, undefined, '原图');
+    expect(() => drawings.save(todo.id, { elements: { item: [] } }, drawing.id, '错误覆盖')).toThrow(/elements.*数组/);
+    expect(drawings.read(drawing.id)).toEqual(original);
+    expect(drawings.get(drawing.id)?.title).toBe('原图');
+    expect(dbPath(drawing.id)).toBe('原图.excalidraw');
+  });
+
   it('新建绘图默认落到 绘图.excalidraw，不再是 untitled.excalidraw', () => {
     const t = repo.create({ title: 'T' }, 'x');
     const taskDir = paths.uniqueTodoDir(todosDir, paths.slugify(t.title), t.id);

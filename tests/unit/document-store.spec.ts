@@ -20,6 +20,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  unlinkSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
@@ -83,6 +84,16 @@ describe('DocumentStore 文件即文档（schema v21）', () => {
     // 旧用例断言的是 list() 的 ord === 0；新模型里 entry 没有 ord 字段，
     // 「进展排第一」改由 listFiles 的排序保证 —— 所以断言它就是第 0 项。
     expect(list[0]!.fileName).toBe('progress.md');
+  });
+
+  it('进展文件丢失时从已保存的版本恢复，不写成空文件', () => {
+    const { id, taskDir } = newTask('恢复进展');
+    docs.ensureDefaultDocs(id, taskDir);
+    docs.saveContent(taskDir, id, 'progress.md', '已有进展内容');
+    unlinkSync(join(taskDir, 'progress.md'));
+    docs.ensureDefaultDocs(id, taskDir);
+    expect(readFileSync(join(taskDir, 'progress.md'), 'utf8')).toBe('已有进展内容');
+    expect(docs.history(id, 'progress.md')).toHaveLength(1);
   });
 
   it('旧正文(content_versions)桥接进展文档，版本历史完整保留', () => {

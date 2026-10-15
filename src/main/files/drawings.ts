@@ -38,6 +38,7 @@ import {
 } from './paths';
 import { logger } from '../logger';
 import type { TaskFileIndex } from './task-files';
+import { assertDrawingScene } from '../../shared/drawing-scene';
 
 interface DrawingRow {
   id: string;
@@ -149,6 +150,7 @@ export class DrawingStore {
    *   - 字符串 —— 目标标签，空串表示清空（文件名回退到「绘图」）。
    */
   save(todoId: ULID, scene: unknown, id?: ULID, title?: string): DrawingMeta {
+    assertDrawingScene(scene);
     const drawingId = id ?? newId();
     const now = Date.now();
     const taskDir = this.taskDirFor(todoId);
@@ -238,6 +240,18 @@ export class DrawingStore {
     this.db
       .prepare('UPDATE drawings SET thumb_path = ? WHERE id = ?')
       .run(thumbRelPath, id);
+  }
+
+  saveRender(id: ULID, png: Uint8Array): string {
+    const row = this.row(id);
+    if (!row) throw new Error(`drawing_not_found: ${id}`);
+    if (png.byteLength > 20 * 1024 * 1024 || Buffer.from(png.subarray(0, 8)).toString('hex') !== '89504e470d0a1a0a') {
+      throw new Error('绘图导出不是有效的 PNG，或图片超过 20 MB。');
+    }
+    const path = join(this.taskDirFor(row.todo_id), 'thumbs', `${id}.render.png`);
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, png);
+    return path;
   }
 
   /** Reconcile historical file names with the current rule and write the

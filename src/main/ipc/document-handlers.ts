@@ -63,6 +63,7 @@ export function registerDocumentHandlers(
   register('document.refresh', (_e, req) => {
     try {
       const taskDir = resolveTaskDir(req.todoId);
+      docs.ensureDefaultDocs(req.todoId, taskDir);
       return Promise.resolve(okResult({ files: docs.refreshFiles(taskDir) }));
     } catch (err) {
       return Promise.resolve(failResult('document_refresh_failed', (err as Error).message));

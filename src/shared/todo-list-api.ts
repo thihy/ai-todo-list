@@ -31,6 +31,8 @@ import type { DocumentVersionEntry, TaskFileEntry, TodoLink } from './todo-types
 import type { DrawingMeta, DrawingScene } from './todo-types';
 import type {
   DrawingAppliedPayload,
+  DrawingExportPayload,
+  DrawingExportResult,
   DrawingApplyPayload,
   DrawingCanvasReadyPayload,
 } from './drawing-spec';
@@ -54,6 +56,7 @@ export type AppEvent =
   // refresh those rows directly instead of a full re-fetch.
   | 'app:tags-changed'
   | 'app:drawing-apply'
+  | 'app:drawing-export'
   | 'ai:stream'
   | 'ai:permission-request'
   // L4-G: human-in-the-loop bridges for DSH user-questions + user-approval.
@@ -105,6 +108,7 @@ export interface AppEventMap {
    *  然后**显式落盘**并回执 drawing.applied —— 不要依赖 updateScene 触发
    *  onChange，那条路是否触发没有公开保证。 */
   'app:drawing-apply': DrawingApplyPayload;
+  'app:drawing-export': DrawingExportPayload;
   'ai:stream': AIStreamEvent;
   'ai:permission-request': PermissionRequest;
   'ai:user-question-request': UserQuestionRequest;
@@ -288,6 +292,8 @@ export interface TodoListApi {
     /** apply 执行完毕后回执。必须真的落盘之后再回 —— main 的工具返回给模型
      *  的 ok 依赖这个回执。 */
     applied(payload: DrawingAppliedPayload): Promise<IpcResponse<'drawing.applied'>>;
+    exported(payload: DrawingExportResult): Promise<IpcResponse<'drawing.exported'>>;
+    export(id: string): Promise<IpcResponse<'drawing.export'>>;
   };
   link: {
     /** A task's saved links. Links live in their own table — they have no
