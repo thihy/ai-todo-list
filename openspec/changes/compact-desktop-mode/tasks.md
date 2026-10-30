@@ -11,3 +11,7 @@
 
 ## 3. Integration
 - [x] 3.1 Run typecheck, relevant unit tests, build, Electron scenarios and OpenSpec validation.
+
+## 4. User window preferences
+- [x] 4.1 Enable resizing and persistent native-window preferences; verify opacity, manual-size retention, defaults and reload in unit and Electron tests.
+- [x] 4.2 Add a compact settings menu and document floating, transparency and compact-size reset; verify typecheck, build and specification validation.

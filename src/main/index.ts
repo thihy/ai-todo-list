@@ -206,16 +206,6 @@ function bootstrap(): void {
     // first paint, so we want the page to load the splash first).
     startupState.setCorePhase('window');
     const main = createMainWindow();
-    const compact = new CompactWindowController(main);
-    register('app.compact', (_event, req) => {
-      if (req.enabled) compact.show(); else compact.restore(req.todoId);
-      return okResult(undefined);
-    });
-    app.on('before-quit', () => compact.destroy());
-    register('app.compactSize', (_event, req) => {
-      if (Number.isFinite(req.count)) compact.fit(req.count);
-      return okResult(undefined);
-    });
     main.once('ready-to-show', () => {
       logger.info(`startup[core]: window shown @ ${Date.now() - bootStart}ms`);
       main.show();
@@ -230,6 +220,18 @@ function bootstrap(): void {
     // constructed.
     startupState.setCorePhase('settings');
     const settings = new SettingsStore();
+    const compact = new CompactWindowController(main, settings);
+    register('app.compact', (_event, req) => {
+      if (req.enabled) compact.show(); else compact.restore(req.todoId);
+      return okResult(undefined);
+    });
+    app.on('before-quit', () => compact.destroy());
+    register('app.compactSize', (_event, req) => {
+      if (Number.isFinite(req.count)) compact.fit(req.count);
+      return okResult(undefined);
+    });
+    register('app.compactConfigure', (_event, req) => okResult(compact.configure(req)));
+    register('app.compactMenu', () => { compact.popupMenu(); return okResult(undefined); });
     // boot 时把持久化的 logger 阈值推给单例——之前的所有 main 启动日志
     // 会按 'info' 跑（默认）；持久化值生效后，从这里开始的所有 logger 调用
     // 都按新阈值过滤。让 logger 先 import 一次，等 settings 拿到再 set。

@@ -11,12 +11,14 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomBytes } from 'node:crypto';
+import { normaliseCompactPreferences } from '../../shared/compact-preferences';
 import { DEFAULT_CAPTURE_HOTKEY, ROOT_DIR_NAME, CONFIG_FILENAME, DEFAULT_PROVIDER, DEFAULT_AI_USER_AGENT, DSH_WORKSPACE_SUBDIR } from '../../shared/constants';
 import type { AIModel, AIProvider, CustomProviderConfig, CustomProviderInput, LogLevel } from '../../shared/ai-types';
 import type { TagDef } from '../../shared/todo-types';
 import { validateFileAccessPatch, standardSkillRoot } from '../dsh/file-access';
 
 export interface PersistedSettings {
+  compactWindow: import('../../shared/compact-preferences').CompactPreferences;
   provider: AIProvider;
   apiKey: string | null;
   model: AIModel;
@@ -112,6 +114,7 @@ export interface PersistedSettings {
 }
 
 const DEFAULTS: PersistedSettings = {
+  compactWindow: normaliseCompactPreferences(null),
   provider: DEFAULT_PROVIDER,
   apiKey: null,
   model: 'deepseek-chat',
@@ -194,6 +197,7 @@ export class SettingsStore {
       // logLevel：损坏字面量 / 缺失字段都回退到 'info'，不让 logger 阈值被脏值卡住。
       merged.logLevel = normaliseLogLevel(raw.logLevel);
       merged.aiEnterAction = raw.aiEnterAction === 'steer' ? 'steer' : 'queue';
+      merged.compactWindow = normaliseCompactPreferences(raw.compactWindow);
       try {
         Object.assign(merged, validateFileAccessPatch(raw));
       } catch {
@@ -338,6 +342,7 @@ export class SettingsStore {
     if (patch.aiEnterAction !== undefined && patch.aiEnterAction !== 'queue' && patch.aiEnterAction !== 'steer') throw new Error('消息发送快捷键无效');
     patch = { ...patch, ...validateFileAccessPatch(patch) };
     const next: PersistedSettings = { ...this.cache, ...patch };
+    next.compactWindow = normaliseCompactPreferences(next.compactWindow);
     // Never let streaming default override true if patch omits it
     if (patch.streaming === undefined && DEFAULTS.streaming) next.streaming = DEFAULTS.streaming;
     // logLevel：渲染端可能发来非法字面量（IPC 边界外），归一化后再写。

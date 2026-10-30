@@ -9,6 +9,10 @@ import React from 'react';
 
 type IconProps = React.SVGProps<SVGSVGElement> & { size?: number };
 
+export const IconMore: React.FC<IconProps> = (p) => (
+  <Svg {...p}><circle cx="3" cy="8" r=".7" /><circle cx="8" cy="8" r=".7" /><circle cx="13" cy="8" r=".7" /></Svg>
+);
+
 export const IconImport: React.FC<IconProps> = (p) => (
   <Svg {...p}><path d="M8 1.8v7.5m-3-3 3 3 3-3M2.5 10v3a.8.8 0 0 0 .8.8h9.4a.8.8 0 0 0 .8-.8v-3" /></Svg>
 );

@@ -570,6 +570,8 @@ export interface CleanupApplyResult {
 export interface IpcRegistry {
   'app.compact': IpcChannel<{ enabled: boolean; todoId?: string }, IpcResult<void>>;
   'app.compactSize': IpcChannel<{ count: number }, IpcResult<void>>;
+  'app.compactConfigure': IpcChannel<{ opacity?: number; alwaysOnTop?: boolean }, IpcResult<import('./compact-preferences').CompactPreferences>>;
+  'app.compactMenu': IpcChannel<undefined, IpcResult<void>>;
   'todo.list': IpcChannel<TodoListReq, IpcResult<Todo[]>>;
   'todo.get': IpcChannel<TodoGetReq, IpcResult<Todo | null>>;
   'todo.create': IpcChannel<TodoCreateReq, IpcResult<{ id: ULID; todo: Todo }>>;

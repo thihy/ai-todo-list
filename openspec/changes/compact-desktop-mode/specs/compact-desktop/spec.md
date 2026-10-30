@@ -21,3 +21,10 @@ Compact mode SHALL use the existing task API to complete tasks and SHALL refresh
 #### Scenario: Empty or failed list
 - **WHEN** no actionable tasks exist or loading fails
 - **THEN** the compact view displays an empty or retry state and keeps the return action accessible
+
+### Requirement: User controlled geometry and transparency
+The compact window SHALL be user-resizable with a minimum size of 200 by 64 pixels and SHALL float above other windows by default. A window settings menu SHALL let users toggle floating and choose transparency between 0 and 60 percent. Geometry, opacity and floating preferences SHALL persist across reopening. Manual resizing SHALL override automatic height until users restore compact sizing.
+
+#### Scenario: Preserve a resized translucent window
+- **WHEN** a user resizes the window, selects 40 percent transparency and reopens it
+- **THEN** the chosen geometry and transparency remain, and task updates do not shrink the window

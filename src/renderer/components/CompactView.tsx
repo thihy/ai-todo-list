@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import type { Todo } from '../../shared/todo-types';
 import { localDateKey, selectCompactTasks } from '../../shared/compact-tasks';
 import './compact.css';
-import { IconRefresh, IconExternal } from './icons';
+import { IconRefresh, IconExternal, IconMore } from './icons';
 
 export const CompactView: React.FC = () => {
   const [todos, setTodos] = useState<Todo[]>([]);
@@ -51,6 +51,9 @@ export const CompactView: React.FC = () => {
       <span className="compact-view__brand-dot" />
       <strong>待办</strong><span className="compact-view__count">{todos.length}</span>
       <div className="compact-view__actions">
+        <button type="button" title="悬浮设置 · 透明度" aria-label="悬浮设置" onClick={() => void window.todoList.app.compactMenu()}>
+          <IconMore size={14} />
+        </button>
         <button type="button" title="刷新待办" aria-label="刷新待办" onClick={() => void refresh()}><IconRefresh size={14} /></button>
         <button type="button" title="展开主窗口" aria-label="展开主窗口" onClick={() => void restore()}>
           <IconExternal size={14} />
