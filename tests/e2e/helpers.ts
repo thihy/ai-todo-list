@@ -41,6 +41,8 @@ export async function launchApp(): Promise<AppHandle> {
   delete env.ELECTRON_RUN_AS_NODE;
   env.ELECTRON_ALLOW_MULTI_INSTANCE = '1';
   env.ELECTRON_E2E = '1';
+  // Preserve Playwright's ephemeral debug port when a dev instance is open.
+  env.ELECTRON_REMOTE_DEBUG = '0';
   // Isolate Chromium state and the process-singleton lock from the user's
   // running app. Seed dataDir too: the production default intentionally lives
   // beside userData, which would otherwise make every E2E run share the same

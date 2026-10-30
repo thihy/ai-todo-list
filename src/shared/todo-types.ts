@@ -206,15 +206,6 @@ export interface TaskFileEntry {
   mtimeMs: number;
 }
 
-export interface DocumentVersionEntry {
-  id: number;
-  todoId: ULID;
-  /** 文件名才是文档的稳定身份(标签会改，文件名只在重命名时变)。 */
-  fileName: string;
-  content: string;
-  savedAt: number;
-}
-
 /** A task's saved link. Lives in its own table — a link has no file, so it
  *  can't be derived from the task directory the way a document is. */
 export interface TodoLink {
@@ -231,6 +222,8 @@ export interface TodoLink {
 }
 
 export interface DrawingMeta {
+  /** Exact local filename. The opaque id encodes task + filename, with no DB row. */
+  fileName?: string;
   id: ULID;
   todoId: ULID;
   title: string | null;

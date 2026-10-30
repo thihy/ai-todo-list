@@ -1,13 +1,14 @@
-// SQLite schema + migrations. Sole authority for runtime state.
-// Files (Markdown, Excalidraw JSON) are projected FROM this DB; DB is the truth.
+// SQLite schema + migrations for task metadata and non-document domain data.
+// Markdown and Excalidraw documents are authoritative local files (since v24).
 
 import Database from 'better-sqlite3';
 import ulidPkg from 'ulid';
 const { ulid } = ulidPkg;
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { migrateFileDocuments } from './file-documents-migration';
 
-export const SCHEMA_VERSION = 23;
+export const SCHEMA_VERSION = 24;
 
 const MIGRATIONS: ReadonlyArray<{ version: number; sql: string; run?: (db: Database.Database) => void }> = [
   {
@@ -915,6 +916,7 @@ const MIGRATIONS: ReadonlyArray<{ version: number; sql: string; run?: (db: Datab
         .replace('INSERT INTO todo_links (', 'INSERT OR IGNORE INTO todo_links ('));
     },
   },
+  { version: 24, sql: '', run: migrateFileDocuments },
 ];
 
 // Some previously shipped databases reached v22 while retaining the v20

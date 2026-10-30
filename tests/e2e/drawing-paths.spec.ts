@@ -39,7 +39,7 @@ interface TodoListWindow {
     todo: { create: (i: { title: string }) => Promise<{ ok: boolean; data?: { id?: string } }> };
     drawing: {
       save: (todoId: string, scene: unknown) => Promise<{ ok: boolean; data?: { id?: string; title?: string | null } }>;
-      rename: (id: string, title: string) => Promise<{ ok: boolean; data?: { title?: string | null } }>;
+      rename: (id: string, title: string) => Promise<{ ok: boolean; data?: { id?: string; title?: string | null } }>;
       read: (id: string) => Promise<{ ok: boolean; data?: unknown }>;
     };
   };
@@ -72,9 +72,9 @@ test.describe('绘图文件命名', () => {
       const renamed = await handle.win.evaluate(async (id) => {
         const w = window as unknown as TodoListWindow;
         const r = await w.todoList.drawing.rename(id, '架构图');
-        return { ok: r.ok, title: r.data?.title ?? null };
+        return { ok: r.ok, title: r.data?.title ?? null, id: r.data?.id };
       }, drawingId);
-      expect(renamed).toEqual({ ok: true, title: '架构图' });
+      expect(renamed).toMatchObject({ ok: true, title: '架构图' });
       expect(sceneFileNames(handle.dataDir)).toEqual(['架构图.excalidraw']);
 
       // 文件内容仍是刚保存的场景（改名只动文件名，不动数据）
@@ -82,7 +82,7 @@ test.describe('绘图文件命名', () => {
         const w = window as unknown as TodoListWindow;
         const r = await w.todoList.drawing.read(id);
         return r.data ?? null;
-      }, drawingId);
+      }, renamed.id!);
       expect(scene).toEqual({ elements: [], appState: {} });
     } finally {
       await handle.app.close();
@@ -127,6 +127,8 @@ test.describe('绘图文件命名', () => {
 
       // 等 Excalidraw 画布挂载（动态 import，可能要几秒）
       await handle.win.waitForSelector('.excalidraw canvas', { timeout: 30_000 });
+      const guide = handle.win.getByRole('dialog', { name: '今日待办', exact: true });
+      if (await guide.isVisible()) await guide.getByRole('button', { name: '关闭', exact: true }).click();
       // 挂载后的首帧会触发一次自动保存，等它落盘完，Ctrl+S 才是唯一变量。
       await handle.win.waitForTimeout(2000);
 
@@ -135,6 +137,10 @@ test.describe('绘图文件命名', () => {
       await handle.win.waitForTimeout(1000);
       expect(statSync(file).mtimeMs).toBe(settled); // 没有后台写入在动
 
+      await handle.win.locator('.excalidraw').evaluate((element) => {
+        (element as HTMLElement).tabIndex = -1;
+        (element as HTMLElement).focus();
+      });
       await handle.win.keyboard.press('Control+s');
 
       // 两条独立证据：

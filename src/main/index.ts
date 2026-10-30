@@ -2,6 +2,7 @@
 
 import { app, BrowserWindow, shell, protocol, net, Menu, dialog } from 'electron';
 import { join } from 'node:path';
+import { CompactWindowController } from './compact-window';
 import { mkdirSync, readFileSync, statSync, readdirSync } from 'node:fs';
 import { cpSync } from 'node:fs';
 import { basename, extname } from 'node:path';
@@ -205,6 +206,16 @@ function bootstrap(): void {
     // first paint, so we want the page to load the splash first).
     startupState.setCorePhase('window');
     const main = createMainWindow();
+    const compact = new CompactWindowController(main);
+    register('app.compact', (_event, req) => {
+      if (req.enabled) compact.show(); else compact.restore(req.todoId);
+      return okResult(undefined);
+    });
+    app.on('before-quit', () => compact.destroy());
+    register('app.compactSize', (_event, req) => {
+      if (Number.isFinite(req.count)) compact.fit(req.count);
+      return okResult(undefined);
+    });
     main.once('ready-to-show', () => {
       logger.info(`startup[core]: window shown @ ${Date.now() - bootStart}ms`);
       main.show();
@@ -309,24 +320,12 @@ function bootstrap(): void {
     // 于是刚分配出来的名字可能被自己撞掉。
     const taskFiles = new TaskFileIndex();
     const drawings = new DrawingStore(handle.db, drawingsDir, resolveTaskDir, taskFiles);
-    const docs = new DocumentStore(handle.db, taskFiles);
+    const docs = new DocumentStore(handle.db, taskFiles, resolveTaskDir);
     const links = new LinkStore(handle.db);
     const inbox = new InboxStore(handle.db, attachmentsDir, todosDir, resolveTaskDir);
     mark('file-stores-constructed');
 
-    // 把历史绘图的文件名对齐到当前规则（untitled.excalidraw → 绘图.excalidraw，
-    // 标签改名后文件名没跟上的老数据也会一起修正），并把映射写回 drawings.path。
-    // 纯 best-effort：失败只记日志，不阻塞启动。
-    try {
-      drawings.repairFilePaths();
-      mark('drawing-paths-repaired');
-    } catch (err) {
-      logger.warn(`drawing-paths: repairFilePaths failed: ${(err as Error).message}`);
-    }
-
-    // 绘图文件名刚被搬过，任何「建索引之后扫过的目录」都可能记着旧文件名。
-    // 全清一次，下一次读取一律走磁盘 —— 文件才是真相。
-    taskFiles.invalidateAll();
+    // Schema v24 exported legacy DB-only documents. Runtime reads local files directly.
 
     // UX-01 — the IPC handler receives an object so it can dereference
     // `retryAi` on every call. We pre-bind the object with placeholder
@@ -728,6 +727,7 @@ function bootstrap(): void {
       },
     );
     tray.install();
+    tray.setCompactHandler(() => compact.show());
 
     // Chinese application menu (menu bar auto-hidden — press Alt to reveal).
     installAppMenu({

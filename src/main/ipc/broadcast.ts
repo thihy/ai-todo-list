@@ -12,7 +12,7 @@
 import { BrowserWindow } from 'electron';
 
 /** 通知所有窗口某个作用域的数据变了。已销毁的窗口直接跳过。 */
-export function broadcastDataChanged(scope: 'content'): void {
+export function broadcastDataChanged(scope: 'content' | 'drawings'): void {
   for (const w of BrowserWindow.getAllWindows()) {
     if (!w.isDestroyed()) w.webContents.send('app:data-changed', { scope });
   }

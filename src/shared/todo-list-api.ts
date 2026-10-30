@@ -27,7 +27,7 @@ import type {
 import type { Todo, TodoCreate, TodoPatch, TodoFilter, SearchHit, TodoStats } from './todo-types';
 import type { ContentVersionEntry } from './todo-types';
 import type { ProgressLogEntry } from './todo-types';
-import type { DocumentVersionEntry, TaskFileEntry, TodoLink } from './todo-types';
+import type { TaskFileEntry, TodoLink } from './todo-types';
 import type { DrawingMeta, DrawingScene } from './todo-types';
 import type {
   DrawingAppliedPayload,
@@ -236,6 +236,8 @@ export interface TodoListApi {
     updateNote(entryId: string, note: string | null): Promise<IpcResponse<'progress.updateNote'>>;
   };
   document: {
+    import(todoId: string, paths?: string[]): Promise<IpcResponse<'document.import'>>;
+    pathsForFiles(files: File[]): string[];
     /** A task's documents, derived from its directory on disk (progress /
      *  note_md / drawing). Ensures progress.md exists before listing. */
     list(todoId: string): Promise<IpcResponse<'document.list'>>;
@@ -246,7 +248,7 @@ export interface TodoListApi {
     /** Clear the scan cache and re-read the directory — picks up files the
      *  user added / removed outside the app. */
     refresh(todoId: string): Promise<IpcResponse<'document.refresh'>>;
-    /** Read the latest versioned content of a progress / note_md doc. */
+    /** Read the current local file with a content fingerprint for optimistic concurrency. */
     read(todoId: string, fileName: string): Promise<IpcResponse<'document.read'>>;
     write(
       todoId: string,
@@ -259,17 +261,11 @@ export interface TodoListApi {
     rename(todoId: string, fileName: string, title: string): Promise<IpcResponse<'document.rename'>>;
     /** Delete a document by unlinking its file from the task directory. */
     remove(todoId: string, fileName: string): Promise<IpcResponse<'document.remove'>>;
-    history(todoId: string, fileName: string): Promise<IpcResponse<'document.history'>>;
-    restoreVersion(
-      todoId: string,
-      fileName: string,
-      versionId: number,
-    ): Promise<IpcResponse<'document.restoreVersion'>>;
     /** Per-document git-backed save history. `available: false` means git
      *  isn't on PATH — the editor hides the History button. */
     gitHistory(todoId: string, fileName: string): Promise<IpcResponse<'document.gitHistory'>>;
     /** Restore a document's content to a given git commit SHA by writing it
-     *  back as a new DB version (so the editor + FTS index stay in sync). */
+     *  back to the local file (and update the derived search cache). */
     gitRestore(todoId: string, fileName: string, sha: string): Promise<IpcResponse<'document.gitRestore'>>;
   };
   drawing: {
@@ -296,6 +292,8 @@ export interface TodoListApi {
     export(id: string): Promise<IpcResponse<'drawing.export'>>;
   };
   link: {
+    pickFile(): Promise<IpcResponse<'link.pickFile'>>;
+    openLocal(id: string, action: 'open' | 'reveal'): Promise<IpcResponse<'link.openLocal'>>;
     /** A task's saved links. Links live in their own table — they have no
      *  file, so they can't be derived from the task directory the way a
      *  document is. */
@@ -324,6 +322,8 @@ export interface TodoListApi {
     chooseDataDir(): Promise<IpcResponse<'settings.chooseDataDir'>>;
   };
   app: {
+    compact(enabled: boolean, todoId?: string): Promise<IpcResponse<'app.compact'>>;
+    compactSize(count: number): Promise<IpcResponse<'app.compactSize'>>;
     /** Pop the native application menu at the cursor (title-bar 菜单 button). */
     popupMenu(): Promise<IpcResponse<'app.popupMenu'>>;
     /** Pop a single category's submenu (flat topbar buttons). */
@@ -591,7 +591,7 @@ export interface AppFocus {
 export type { Todo, TodoCreate, TodoPatch, TodoFilter, SearchHit, TodoStats };
 export type { ContentVersionEntry };
 export type { ProgressLogEntry };
-export type { DocumentVersionEntry, TaskFileEntry, TodoLink };
+export type { TaskFileEntry, TodoLink };
 export type { DrawingMeta, DrawingScene };
 export type { AIModel, AIProvider, AICustomProtocol, CustomProviderInput, CustomProviderView, AIStreamEvent, PermissionRequest, UserQuestionRequest, UserQuestionAnswer, UserQuestionItem, UserQuestionOption, UserQuestionAnswerItem, UserApprovalRequest, UserApprovalAnswer };
 export type { IpcChannelName, IpcRequest, IpcResponse };

@@ -171,8 +171,9 @@ async function mountApp(snap: StartupSnapshot): Promise<void> {
   try {
     // Dynamic import keeps the splash chunk small. The App bundle pulls
     // react-dom, the global stylesheet, and the bulk of the app shell.
-    const mod = await import('./App');
-    const { App } = mod;
+    const App = location.hash === '#/compact'
+      ? (await import('./components/CompactView')).CompactView
+      : (await import('./App')).App;
     const rootEl = document.getElementById('root');
     if (!rootEl) {
       showFatal('挂载节点不存在,请重新加载。');

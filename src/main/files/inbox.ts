@@ -17,11 +17,12 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  readdirSync,
   renameSync,
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { basename, dirname } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import type { ULID } from '../../shared/todo-types';
 import { newId } from '../db/schema';
 import { logger } from '../logger';
@@ -231,19 +232,10 @@ export class InboxStore {
       .run(newPath, id);
 
     // --- (4) sweep progress / note_md files, rewrite inline image alts ---
-    const docs = this.db
-      .prepare<[ULID], { file_name: string; content: string | null }>(
-        `SELECT file_name, (
-           SELECT content FROM document_versions v
-           WHERE v.todo_id = document_versions.todo_id
-             AND v.file_name = document_versions.file_name
-           ORDER BY v.id DESC LIMIT 1
-         ) AS content
-         FROM document_versions
-         WHERE todo_id = ? AND file_name LIKE '%.md'
-         GROUP BY todo_id, file_name`,
-      )
-      .all(row.todoId);
+    const taskDir = this.taskDirFor(row.todoId);
+    const docs = readdirSync(taskDir, { withFileTypes: true })
+      .filter((file) => file.isFile() && /\.md$/i.test(file.name))
+      .map((file) => ({ file_name: file.name, content: readFileSync(join(taskDir, file.name), 'utf8') }));
     // 用一个保守的占位替代原 alt：先把命中区间整体替换成 `\0ULID<i>...<br>`，
     // 全部替换完成后再把占位换回新 title —— 这样新 title 里出现 `[` `]` `(` `)`
     // 等 markdown 元字符时不会二次破坏语法。

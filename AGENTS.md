@@ -20,7 +20,9 @@ or on-disk storage. Detailed contracts live in
 
 ## Non-negotiable invariants
 
-1. SQLite is the source of truth. Files are durable, user-visible projections.
+1. SQLite owns task metadata and stable task-directory associations. Local files
+   own document existence, names and current content. Do not recreate document
+   or drawing state tables (`document_versions` and `drawings` were removed in v24).
 2. A task has exactly one stable directory association in `todos.storage_dir`.
 3. New directory names start with the first six characters of the todo ID:
    `{todoId[0:6]}-{slugifiedTitle}`.
@@ -64,12 +66,14 @@ Important implementation points:
 - Attachment projection: `src/main/files/inbox.ts`
 - Schema and migrations: `src/main/db/schema.ts`
 
-A drawing's label and its file name are one thing: `drawings.path` holds the
-authoritative task-relative file name, a new drawing defaults to the label
-`绘图` (`绘图.excalidraw`, never `untitled.excalidraw`), and a label rename
-updates `path` only after the filesystem rename succeeds. Reads go through
-`path` — never re-derive the name from the current title. Historical rows are
-reconciled once at startup by `DrawingStore.repairFilePaths()`.
+A drawing's label is its filename without `.excalidraw`. New drawings default
+to `绘图.excalidraw`, with collision suffixes. Drawing IDs are opaque file
+references derived from task ID and exact filename; query the list again after
+a rename. No DB drawing row is required. Reads always use the local file.
+Refresh reloads both the directory listing and the open editor's content.
+Only `.md` and `.excalidraw` are documents. Import copies these file types into
+the task directory without overwriting existing files; local file links in
+`todo_links` store a `file:` URL and never copy the referenced source.
 
 The storage sections in `docs/architecture.md` describe an older flat-file
 layout and must not be used as the implementation contract.

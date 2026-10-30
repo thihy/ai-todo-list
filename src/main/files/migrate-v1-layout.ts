@@ -23,6 +23,7 @@ import type Database from 'better-sqlite3';
 import * as paths from './paths';
 import { logger } from '../logger';
 import * as gitHistory from '../git-history';
+import { TaskDirectoryStore } from './task-directories';
 
 const MARKER_FILENAME = '.layout-migration-v1';
 
@@ -49,6 +50,7 @@ export interface MigrationOpts {
 }
 
 export async function migrateV1Layout(opts: MigrationOpts): Promise<MigrationResult> {
+  const directories = new TaskDirectoryStore(opts.db, opts.todosDir);
   const markerPath = join(opts.dataDir, MARKER_FILENAME);
   if (existsSync(markerPath)) {
     logger.info('migrateV1Layout: already migrated, skipping');
@@ -96,7 +98,7 @@ export async function migrateV1Layout(opts: MigrationOpts): Promise<MigrationRes
         result.skipped++;
         continue; // already migrated
       }
-      const taskDir = paths.todoDir(opts.todosDir, title, ulid);
+      const taskDir = directories.resolve(ulid);
       const todoJsonPath = paths.todoJsonPath(taskDir);
       if (existsSync(todoJsonPath)) {
         result.skipped++;
@@ -106,7 +108,7 @@ export async function migrateV1Layout(opts: MigrationOpts): Promise<MigrationRes
       const oldBody = readFileSync(fullOld, 'utf8');
       const newBodyPath = paths.progressFile(taskDir);
       mkdirSync(taskDir, { recursive: true });
-      writeFileSync(newBodyPath, oldBody, 'utf8');
+      if (!existsSync(newBodyPath)) writeFileSync(newBodyPath, oldBody, { encoding: 'utf8', flag: 'wx' });
       rmSync(fullOld);
       // todo.json snapshot — keys mirror the shared `Todo` shape so a future
       // import path can re-hydrate the row verbatim. `tags` left as [] —
@@ -153,9 +155,7 @@ export async function migrateV1Layout(opts: MigrationOpts): Promise<MigrationRes
       const perTodo = readdirSync(opts.drawingsDir, { withFileTypes: true }).filter((d) => d.isDirectory());
       for (const dirent of perTodo) {
         const todoId = dirent.name;
-        const todoDir = paths.todoDir(opts.todosDir, opts.db
-          .prepare<[string], { title: string | null }>('SELECT title FROM todos WHERE id = ?')
-          .get(todoId)?.title ?? paths.UNTITLED_SLUG, todoId);
+        const todoDir = directories.resolve(todoId);
         const drawingFiles = readdirSync(join(opts.drawingsDir, todoId));
         for (const f of drawingFiles) {
           const oldPath = join(opts.drawingsDir, todoId, f);
@@ -166,11 +166,8 @@ export async function migrateV1Layout(opts: MigrationOpts): Promise<MigrationRes
             const drawingId = f.replace(/\.thumb\.png$/, '');
             newPath = paths.thumbFile(todoDir, drawingId);
           } else if (f.endsWith('.excalidraw')) {
-            const drawingId = f.replace(/\.excalidraw$/, '');
-            const meta = opts.db
-              .prepare<[string], { title: string | null }>('SELECT title FROM drawings WHERE id = ?')
-              .get(drawingId);
-            newPath = paths.drawingFile(todoDir, meta?.title ?? '');
+            // DB drawing state was exported before removal in schema v24.
+            newPath = join(todoDir, f);
           } else {
             continue;
           }
@@ -207,9 +204,7 @@ export async function migrateV1Layout(opts: MigrationOpts): Promise<MigrationRes
           // Orphaned file: leave it; the next sweep won't find it either.
           continue;
         }
-        const todoDir = paths.todoDir(opts.todosDir, opts.db
-          .prepare<[string], { title: string | null }>('SELECT title FROM todos WHERE id = ?')
-          .get(row.todo_id)?.title ?? paths.UNTITLED_SLUG, row.todo_id);
+        const todoDir = directories.resolve(row.todo_id);
         const newPath = paths.attachmentFile(todoDir, f);
         try {
           renameSync(oldPath, newPath);

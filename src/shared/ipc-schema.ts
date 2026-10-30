@@ -4,7 +4,6 @@ import type { CaptureRect, ScreenshotState } from './screenshot';
 
 import type {
   ContentVersionEntry,
-  DocumentVersionEntry,
   DrawingMeta,
   GitHistoryEntry,
   InboxAttachment,
@@ -76,8 +75,8 @@ export interface ProgressUpdateNoteReq { entryId: string; note: string | null }
 // Task documents are FILES (schema v21). The task directory is the only
 // source of truth for "what documents exist"; `fileName` is a document's
 // identity everywhere below (labels get renamed, file names only move when
-// the file moves). progress / note_md carry versioned text content in
-// document_versions, keyed by (todo_id, file_name).
+// the file moves). Current content is read directly from the local file.
+// No database document state or version history is maintained.
 
 export interface DocumentListReq { todoId: ULID }
 export interface DocumentListRes { files: TaskFileEntry[] }
@@ -100,8 +99,7 @@ export interface DocumentRenameReq { todoId: ULID; fileName: string; title: stri
 export interface DocumentRenameRes { fileName: string; label: string }
 /** Delete a document by removing its file from the task directory. */
 export interface DocumentRemoveReq { todoId: ULID; fileName: string }
-export interface DocumentHistoryReq { todoId: ULID; fileName: string }
-export interface DocumentRestoreVersionReq { todoId: ULID; fileName: string; versionId: number }
+export interface DocumentImportReq { todoId: ULID; paths?: string[] }
 /** Per-document git-backed save history (mirrors content.gitHistory but
  *  keyed by file so each progress / note_md doc has its own log).
  *  `available: false` means git isn't on PATH. */
@@ -570,6 +568,8 @@ export interface CleanupApplyResult {
 // ----- Channel registry -----
 
 export interface IpcRegistry {
+  'app.compact': IpcChannel<{ enabled: boolean; todoId?: string }, IpcResult<void>>;
+  'app.compactSize': IpcChannel<{ count: number }, IpcResult<void>>;
   'todo.list': IpcChannel<TodoListReq, IpcResult<Todo[]>>;
   'todo.get': IpcChannel<TodoGetReq, IpcResult<Todo | null>>;
   'todo.create': IpcChannel<TodoCreateReq, IpcResult<{ id: ULID; todo: Todo }>>;
@@ -592,12 +592,13 @@ export interface IpcRegistry {
   'document.write': IpcChannel<DocumentWriteReq, IpcResult<DocumentWriteRes>>;
   'document.rename': IpcChannel<DocumentRenameReq, IpcResult<DocumentRenameRes>>;
   'document.remove': IpcChannel<DocumentRemoveReq, IpcResult<void>>;
-  'document.history': IpcChannel<DocumentHistoryReq, IpcResult<DocumentVersionEntry[]>>;
-  'document.restoreVersion': IpcChannel<DocumentRestoreVersionReq, IpcResult<void>>;
+  'document.import': IpcChannel<DocumentImportReq, IpcResult<DocumentListRes>>;
   'document.gitHistory': IpcChannel<DocumentGitHistoryReq, IpcResult<DocumentGitHistoryRes>>;
   'document.gitRestore': IpcChannel<DocumentGitRestoreReq, IpcResult<void>>;
 
   'link.list': IpcChannel<LinkListReq, IpcResult<TodoLink[]>>;
+  'link.pickFile': IpcChannel<Record<string, never>, IpcResult<{ url: string; title: string } | null>>;
+  'link.openLocal': IpcChannel<{ id: string; action: 'open' | 'reveal' }, IpcResult<void>>;
   'link.add': IpcChannel<LinkAddReq, IpcResult<TodoLink>>;
   'link.remove': IpcChannel<LinkRemoveReq, IpcResult<void>>;
   'link.fetchMeta': IpcChannel<LinkFetchMetaReq, IpcResult<LinkFetchMetaRes>>;

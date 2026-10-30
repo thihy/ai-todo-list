@@ -9,6 +9,14 @@ import React from 'react';
 
 type IconProps = React.SVGProps<SVGSVGElement> & { size?: number };
 
+export const IconImport: React.FC<IconProps> = (p) => (
+  <Svg {...p}><path d="M8 1.8v7.5m-3-3 3 3 3-3M2.5 10v3a.8.8 0 0 0 .8.8h9.4a.8.8 0 0 0 .8-.8v-3" /></Svg>
+);
+
+export const IconCompact: React.FC<IconProps> = (p) => (
+  <Svg {...p}><rect x="2" y="2" width="12" height="12" rx="2" /><path d="M2 6h12M5 9h6M5 12h4" /></Svg>
+);
+
 const Svg: React.FC<IconProps & { children: React.ReactNode }> = ({
   size = 16,
   children,

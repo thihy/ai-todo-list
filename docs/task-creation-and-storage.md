@@ -2,12 +2,12 @@
 
 Status: implemented contract for the current desktop application.
 
-Document compatibility: schema v23 checks the actual `document_versions`
-columns and repairs legacy `document_id` layouts even when old metadata already
-reports v22. History is converted to `(todo_id, file_name)` and links are copied
-before removing the legacy document table. Missing `progress.md` projections
-are restored from saved document content; listing and refreshing both ensure
-the default progress document exists.
+Document compatibility: schema v24 exports DB-only latest content to missing
+local files, preserves all existing files, archives the removed rows in
+`{dataDir}/migration-backups/file-documents-v24.json`, and drops
+`document_versions` and `drawings`. The archival export is never runtime state.
+Documents are only Markdown and Excalidraw files. Refresh rereads the directory
+and the selected editor from disk, including external edits, additions and deletions.
 
 This document is written for maintainers and AI coding agents. It explains the
 two task-creation paths, the AI intent boundary, and the stable relationship
@@ -165,7 +165,7 @@ channels and must not appear in the prompt.
 
 ## 4. Stable task-directory association
 
-SQLite is authoritative for identity and association. `todos.storage_dir`
+SQLite is authoritative for task identity and directory association. Local files own document state. `todos.storage_dir`
 stores the relative directory name under `{dataDir}/todos`.
 
 For a new task, the preferred directory is:
@@ -239,9 +239,10 @@ The database remains authoritative.
 
 ### `progress.md`
 
-The Markdown progress document uses a fixed filename. `document.write` writes
-the version to SQLite and mirrors the latest Markdown through `DocumentStore`
-into the associated directory.
+The Markdown progress document uses a fixed filename. Reads and writes operate
+directly on `progress.md`. Content fingerprints provide optimistic concurrency
+without a version table; stale saves fail after an external edit. `todos.body`
+is only a derived search cache. Git remains available for document history.
 
 Do not confuse this document with:
 
@@ -258,22 +259,18 @@ note best-effort renames its file inside the same task directory.
 
 ### Drawings
 
-Drawing scenes are `{slugifiedDrawingTitle}.excalidraw`. Thumbnails use the drawing ID and remain in
-`thumbs/` when a drawing title changes.
+Drawing scenes are local `.excalidraw` files. Labels are exact filenames without
+the extension. New files default to `绘图.excalidraw`, then `绘图_1.excalidraw`.
+Drawing IDs are opaque file references derived from task ID and exact filename.
+There is no drawing table or persistent index. File references change on rename;
+clients must query the list again. Autosave preserves imported filenames.
+Thumbnails are derived files in `thumbs/`, named by a hash of the file reference.
 
-The `drawings.path` column is the authoritative label → file mapping. Concretely:
-
-- a new drawing without an explicit title gets the default label `绘图`, so its
-  file is `绘图.excalidraw` (never `untitled.excalidraw`);
-- a second untitled drawing in the same task becomes `绘图 2` → `绘图_2.excalidraw`;
-- a title rename renames the file first and only then writes the new `path`; a
-  failed filesystem rename keeps the old file name so the row stays readable;
-- reads resolve through `path` and never re-derive the file name from the
-  current title, so the two can only differ after a failed rename;
-- `DrawingStore.repairFilePaths()` (run once at startup) reconciles historical
-  rows: empty titles fall back to `绘图`, stale mappings adopt the file that is
-  really on disk, and drawings that used to share one `untitled.excalidraw` are
-  split into independent files.
+The document toolbar opens an import dialog with local file selection and drop
+upload. Only `.md` and `.excalidraw` are accepted; files are copied to the stable
+task directory with collision suffixes and no overwrite. The editor does not
+capture import drops. Links can instead store a `file:` URL to any local file,
+without copying it, and offer default-application opening and reveal-in-folder.
 
 ### Attachments
 

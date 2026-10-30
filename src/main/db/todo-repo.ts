@@ -1,5 +1,7 @@
 // TodoRepo: thin layer over the todos table + tags + drawing aggregation + FTS search.
 
+import { readdirSync } from 'node:fs';
+import { dirname, join, basename } from 'node:path';
 import type Database from 'better-sqlite3';
 import { newId } from './schema';
 import type {
@@ -668,10 +670,13 @@ export class TodoRepo {
   }
 
   private drawingsFor(id: ULID): ULID[] {
-    return this.db
-      .prepare<[ULID], { id: string }>('SELECT id FROM drawings WHERE todo_id = ?')
-      .all(id)
-      .map((r) => r.id);
+    const row = this.db.prepare('SELECT storage_dir FROM todos WHERE id = ?').get(id) as { storage_dir: string | null } | undefined;
+    if (!row?.storage_dir) return [];
+    try {
+      return readdirSync(join(dirname(this.db.name), 'todos', basename(row.storage_dir)), { withFileTypes: true })
+        .filter((file) => file.isFile() && !file.name.startsWith('.') && /\.excalidraw$/i.test(file.name))
+        .map((file) => 'file:' + encodeURIComponent(id) + ':' + encodeURIComponent(file.name));
+    } catch { return []; }
   }
 
   private attachmentsFor(id: ULID): ULID[] {

@@ -10,7 +10,7 @@
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { openDb } from '../../src/main/db/schema';
@@ -117,12 +117,10 @@ describe('InboxStore per-task layout', () => {
   /** Helper: 造一个任务目录 + 往 document_versions 里塞一条 content version。
    *  schema v21 之后文档就是文件，版本按 (todoId, fileName) 存。 */
   function seedProgressDoc(todoId: string, fileName: string, content: string): void {
-    const now = Date.now();
-    handle.db
-      .prepare(
-        `INSERT INTO document_versions (todo_id, file_name, content, saved_at) VALUES (?, ?, ?, ?)`,
-      )
-      .run(todoId, fileName, content, now);
+    const task = repo.get(todoId)!;
+    const taskDir = paths.uniqueTodoDir(todosDir, paths.slugify(task.title), todoId);
+    mkdirSync(taskDir, { recursive: true });
+    writeFileSync(join(taskDir, fileName), content);
   }
 
   it('rename：磁盘文件 {ulid}-{old}.{ext} 改名为 {ulid}-{new}.{ext}，inbox_attachments.file_path 跟上', () => {

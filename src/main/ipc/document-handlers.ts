@@ -6,7 +6,9 @@
 // 工作区慢慢对不上。commitAll 没东西可提交时不建 commit，git 不可用时静默
 // 返回 null：git 失败绝不能让用户的保存失败。
 
-import { join, relative, sep } from 'node:path';
+import { basename, join, relative, sep } from 'node:path';
+import { statSync } from 'node:fs';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { okResult, failResult, register } from './router';
 import { broadcastDataChanged } from './broadcast';
 import type { DocumentStore, LinkStore } from '../files/documents';
@@ -14,6 +16,7 @@ import * as gitHistory from '../git-history';
 import { labelForFileName } from '../files/task-files';
 import type { ULID } from '../../shared/todo-types';
 import { logger } from '../logger';
+import { dialog, BrowserWindow, shell } from 'electron';
 
 /** Resolver injected from src/main/index.ts so handlers don't reach back into
  *  the wiring layer. Mirrors the same closure given to MarkdownStore. */
@@ -64,9 +67,33 @@ export function registerDocumentHandlers(
     try {
       const taskDir = resolveTaskDir(req.todoId);
       docs.ensureDefaultDocs(req.todoId, taskDir);
-      return Promise.resolve(okResult({ files: docs.refreshFiles(taskDir) }));
+      const files = docs.refreshFiles(taskDir);
+      broadcastDataChanged('content');
+      broadcastDataChanged('drawings');
+      return Promise.resolve(okResult({ files }));
     } catch (err) {
       return Promise.resolve(failResult('document_refresh_failed', (err as Error).message));
+    }
+  });
+
+  register('document.import', async (event, req) => {
+    try {
+      let paths = req.paths;
+      if (!paths) {
+        const owner = BrowserWindow.fromWebContents(event.sender);
+        const options = { title: '导入文档', properties: ['openFile', 'multiSelections'] as Array<'openFile' | 'multiSelections'>,
+          filters: [{ name: 'Markdown / Excalidraw', extensions: ['md', 'excalidraw'] }] };
+        const selected = owner ? await dialog.showOpenDialog(owner, options) : await dialog.showOpenDialog(options);
+        if (selected.canceled) return okResult({ files: [] });
+        paths = selected.filePaths;
+      }
+      const files = docs.importFiles(resolveTaskDir(req.todoId), paths);
+      commitAllToGit('导入文档');
+      broadcastDataChanged('content');
+      broadcastDataChanged('drawings');
+      return okResult({ files });
+    } catch (error) {
+      return failResult('document_import_failed', (error as Error).message);
     }
   });
 
@@ -84,7 +111,7 @@ export function registerDocumentHandlers(
 
   register('document.read', (_e, req) => {
     try {
-      return Promise.resolve(okResult(docs.read(req.todoId, req.fileName)));
+      return Promise.resolve(okResult(docs.read(req.todoId, req.fileName, resolveTaskDir(req.todoId))));
     } catch (err) {
       return Promise.resolve(failResult('document_read_failed', (err as Error).message));
     }
@@ -137,33 +164,6 @@ export function registerDocumentHandlers(
     }
   });
 
-  register('document.history', (_e, req) => {
-    try {
-      return Promise.resolve(okResult(docs.history(req.todoId, req.fileName)));
-    } catch (err) {
-      return Promise.resolve(failResult('document_history_failed', (err as Error).message));
-    }
-  });
-
-  register('document.restoreVersion', (_e, req) => {
-    try {
-      const taskDir = resolveTaskDir(req.todoId);
-      // 恢复也重新落一次盘，让 git 历史记录下这次恢复。
-      const current = docs.read(req.todoId, req.fileName);
-      docs.restoreVersion(req.todoId, req.fileName, req.versionId);
-      docs.writeToFile(taskDir, req.fileName, docs.read(req.todoId, req.fileName).content);
-      commitAllToGit(`恢复版本 ${labelForFileName(req.fileName)} v${current.version}`);
-      broadcastDataChanged('content');
-      return Promise.resolve(okResult(undefined as never));
-    } catch (err) {
-      const message = (err as Error).message;
-      const isMissing = message.startsWith('version_not_found');
-      return Promise.resolve(
-        failResult(isMissing ? 'version_not_found' : 'document_restore_failed', message),
-      );
-    }
-  });
-
   register('document.gitHistory', async (_e, req) => {
     try {
       const available = await gitHistory.gitAvailable();
@@ -202,6 +202,32 @@ export function registerDocumentHandlers(
     } catch (err) {
       return Promise.resolve(failResult('link_list_failed', (err as Error).message));
     }
+  });
+
+  register('link.pickFile', async (event) => {
+    try {
+      const owner = BrowserWindow.fromWebContents(event.sender);
+      const options = { title: '选择本地文件链接', properties: ['openFile'] as Array<'openFile'> };
+      const selected = owner ? await dialog.showOpenDialog(owner, options) : await dialog.showOpenDialog(options);
+      if (selected.canceled || !selected.filePaths[0]) return okResult(null);
+      const path = selected.filePaths[0];
+      return okResult({ url: pathToFileURL(path).href, title: basename(path) });
+    } catch (error) { return failResult('file_select_failed', (error as Error).message); }
+  });
+
+  register('link.openLocal', async (_event, req) => {
+    try {
+      const link = links.get(req.id);
+      if (!link || !link.url.startsWith('file:')) throw new Error('不是本地文件链接');
+      const path = fileURLToPath(link.url);
+      if (!statSync(path).isFile()) throw new Error('本地文件不存在或已移动');
+      if (req.action === 'reveal') shell.showItemInFolder(path);
+      else if (req.action === 'open') {
+        const error = await shell.openPath(path);
+        if (error) throw new Error(error);
+      } else throw new Error('不支持的打开方式');
+      return okResult(undefined as never);
+    } catch (error) { return failResult('local_link_open_failed', (error as Error).message); }
   });
 
   register('link.add', (_e, req) => {

@@ -361,11 +361,15 @@ export function useDocument(
       setVersion(null);
       return;
     }
+    let alive = true;
     window.todoList.document.read(todoId, fileName).then((res) => {
+      if (!alive) return;
+      setError(res.ok ? null : res.message ?? '文档读取失败');
       const d = unwrap(res, { content: '', version: 0 });
       setContent(d.content);
       setVersion(d.version);
     });
+    return () => { alive = false; };
   }, [todoId, fileName, dataVersion]);
 
   const save = useCallback(

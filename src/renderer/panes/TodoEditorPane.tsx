@@ -27,6 +27,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom';
 import { useTodo, useLinks, useAttachments } from '../hooks/useTodoListApi';
 import { useFocusSync } from '../hooks/useFocusSync';
+import { AddLinkDialog } from '../components/AddLinkDialog';
 import { DocumentsView } from '../components/DocumentsView';
 import { InlineTitle } from '../components/InlineTitle';
 import { PriorityPicker } from '../components/PriorityPicker';
@@ -66,7 +67,8 @@ const LinksView: React.FC<{ todoId: string }> = ({ todoId }) => {
         url: vals.url,
         description: vals.description || null,
       });
-      if (res.ok) await refresh();
+      if (!res.ok) throw new Error(res.message ?? '添加链接失败');
+      await refresh();
       setAdding(false);
     },
     [todoId, refresh],
@@ -93,126 +95,6 @@ const LinksView: React.FC<{ todoId: string }> = ({ todoId }) => {
   );
 };
 
-/** 添加链接 dialog — a single URL + title + description form. When the URL
- *  field loses focus (or Enter is pressed in it), the main process fetches the
- *  page's <title> + meta description and prefills the two lower fields WITHOUT
- *  clobbering anything the user already typed. Save creates a link doc with
- *  all three; Cancel / overlay-click / Esc aborts. Replaces the old two-step
- *  usePrompt flow, which couldn't capture a description and made the user
- *  answer two separate dialogs. */
-const AddLinkDialog: React.FC<{
-  onCancel: () => void;
-  onSave: (vals: { url: string; title: string; description: string }) => Promise<void>;
-}> = ({ onCancel, onSave }) => {
-  const [url, setUrl] = useState('https://');
-  const [title, setTitle] = useState('');
-  const [description, setDescription] = useState('');
-  const [fetching, setFetching] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const urlRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    urlRef.current?.focus();
-    urlRef.current?.select();
-  }, []);
-
-  // Fetch page metadata when the user finishes editing the URL. Only fills
-  // title/description when still empty so we never overwrite user edits. Any
-  // failure is silent — fields stay blank + editable (best-effort, never
-  // blocks the save flow).
-  const tryFetchMeta = useCallback(async (): Promise<void> => {
-    const trimmed = url.trim();
-    if (!/^https?:\/\//i.test(trimmed)) return;
-    setFetching(true);
-    try {
-      const res = await window.todoList.link.fetchMeta(trimmed);
-      if (!res.ok) return;
-      const { title: t, description: d, resolvedUrl } = res.data;
-      if (!title && t) setTitle(t);
-      if (!description && d) setDescription(d);
-      // Follow redirects in the saved URL too (shortlink → canonical).
-      if (resolvedUrl && resolvedUrl !== trimmed) setUrl(resolvedUrl);
-    } catch {
-      /* swallow — best-effort */
-    } finally {
-      setFetching(false);
-    }
-  }, [url, title, description]);
-
-  const canSave = url.trim().length > 0 && !saving;
-  const save = async (): Promise<void> => {
-    if (!canSave) return;
-    setSaving(true);
-    try {
-      await onSave({ url: url.trim(), title: title.trim(), description: description.trim() });
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <div className="prompt-overlay" role="dialog" aria-modal="true" onMouseDown={() => onCancel()}>
-      <div className="prompt-dialog link-dialog" onMouseDown={(e) => e.stopPropagation()}>
-        <label className="prompt-dialog__label" htmlFor="link-url">链接地址</label>
-        <input
-          id="link-url"
-          ref={urlRef}
-          type="url"
-          className="prompt-dialog__input"
-          value={url}
-          onChange={(e) => setUrl(e.target.value)}
-          onBlur={() => { void tryFetchMeta(); }}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') { e.preventDefault(); void tryFetchMeta(); }
-            else if (e.key === 'Escape') onCancel();
-          }}
-          placeholder="https://"
-        />
-        <label className="prompt-dialog__label" htmlFor="link-title">
-          标题{fetching ? '（抓取中…）' : ''}
-        </label>
-        <input
-          id="link-title"
-          type="text"
-          className="prompt-dialog__input"
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Escape') onCancel(); }}
-          placeholder={fetching ? '正在获取页面标题…' : '留空则用网址'}
-        />
-        <label className="prompt-dialog__label" htmlFor="link-desc">简介</label>
-        <textarea
-          id="link-desc"
-          className="prompt-dialog__input link-dialog__desc"
-          value={description}
-          onChange={(e) => setDescription(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Escape') onCancel(); }}
-          rows={2}
-          placeholder="页面简介（可留空）"
-        />
-        <div className="prompt-dialog__actions">
-          <button
-            type="button"
-            className="prompt-dialog__btn prompt-dialog__btn--ghost"
-            onClick={onCancel}
-            disabled={saving}
-          >
-            取消
-          </button>
-          <button
-            type="button"
-            className="prompt-dialog__btn prompt-dialog__btn--primary"
-            onClick={() => void save()}
-            disabled={!canSave}
-          >
-            {saving ? '保存中…' : '保存'}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-};
-
 const LinkRow: React.FC<{ link: TodoLink; onRemoved: () => Promise<void> }> = ({ link, onRemoved }) => (
   <li
     className="links-view__item"
@@ -220,9 +102,22 @@ const LinkRow: React.FC<{ link: TodoLink; onRemoved: () => Promise<void> }> = ({
   >
     <div className="links-view__main">
       <IconLink size={14} />
-      <a className="links-view__url" href={link.url ?? '#'} target="_blank" rel="noreferrer" title={link.url ?? ''}>
+      <span className={`links-view__kind${link.url.startsWith('file:') ? ' links-view__kind--local' : ''}`}>{link.url.startsWith('file:') ? '本地' : '网页'}</span>
+      <a className="links-view__url" href={link.url ?? '#'} target="_blank" rel="noreferrer" title={link.url ?? ''}
+        onClick={(event) => { if (link.url.startsWith('file:')) {
+          event.preventDefault();
+          void window.todoList.link.openLocal(link.id, 'open').then((result) => { if (!result.ok) window.alert(result.message ?? '打开失败'); });
+        } }}>
         {link.title || link.url}
       </a>
+      {link.url.startsWith('file:') && <>
+        <button type="button" className="links-view__local-action" aria-label="默认应用打开" title="默认应用打开" onClick={() => { void window.todoList.link.openLocal(link.id, 'open').then((result) => {
+          if (!result.ok) window.alert(result.message ?? '打开失败');
+        }); }}><IconExternal size={14} /></button>
+        <button type="button" className="links-view__local-action" aria-label="在文件夹中显示" title="在文件夹中显示" onClick={() => { void window.todoList.link.openLocal(link.id, 'reveal').then((result) => {
+          if (!result.ok) window.alert(result.message ?? '打开目录失败');
+        }); }}><IconAttach size={14} /></button>
+      </>}
       <button
         type="button"
         className="links-view__remove"

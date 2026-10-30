@@ -28,8 +28,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openDb } from '../../src/main/db/schema';
 import { TodoRepo } from '../../src/main/db/todo-repo';
-import { MarkdownStore } from '../../src/main/files/markdown';
-import { DocumentStore, LinkStore } from '../../src/main/files/documents';
+
+import { DocumentStore, LinkStore, fileVersion } from '../../src/main/files/documents';
 import { TaskFileIndex } from '../../src/main/files/task-files';
 import * as paths from '../../src/main/files/paths';
 
@@ -37,7 +37,7 @@ describe('DocumentStore 文件即文档（schema v21）', () => {
   let dir: string;
   let handle: ReturnType<typeof openDb>;
   let repo: TodoRepo;
-  let md: MarkdownStore;
+
   let docs: DocumentStore;
   let todosDir: string;
 
@@ -48,14 +48,7 @@ describe('DocumentStore 文件即文档（schema v21）', () => {
     todosDir = join(dir, 'todos');
     // MarkdownStore 只在「桥接旧正文」那条用例里出现：它模拟 v21 之前遗留的
     // content_versions 写法。resolver 不建目录，writeBody 自己会 mkdir。
-    md = new MarkdownStore(handle.db, todosDir, (id) => {
-      const t = repo.get(id);
-      return paths.uniqueTodoDir(
-        todosDir,
-        paths.slugify((t?.title as string | undefined) ?? paths.UNTITLED_SLUG),
-        id,
-      );
-    });
+
     docs = new DocumentStore(handle.db);
   });
   afterEach(() => {
@@ -72,6 +65,61 @@ describe('DocumentStore 文件即文档（schema v21）', () => {
   const names = (taskDir: string): string[] =>
     docs.listFiles(taskDir).map((f) => f.fileName);
 
+  it('reads copied Markdown without history and preserves externally added 笔记.md', () => {
+    const { id, taskDir } = newTask('外部文档');
+    mkdirSync(taskDir, { recursive: true });
+    writeFileSync(join(taskDir, '笔记.md'), '# 外部内容', 'utf8');
+    docs.ensureDefaultDocs(id, taskDir);
+    expect(docs.refreshFiles(taskDir).map((f) => f.fileName)).toContain('笔记.md');
+    expect(docs.read(id, '笔记.md', taskDir)).toEqual({ content: '# 外部内容', version: fileVersion('# 外部内容') });
+    const saved = docs.saveContent(taskDir, id, '笔记.md', '编辑后', fileVersion('# 外部内容'));
+    expect(docs.read(id, '笔记.md', taskDir)).toEqual({ content: '编辑后', version: saved.version });
+  });
+
+  it('reads latest disk content instead of saved history and refresh reflects removals', () => {
+    const { id, taskDir } = newTask('磁盘真相');
+    docs.saveContent(taskDir, id, '文档.md', '旧内容');
+
+    writeFileSync(join(taskDir, '文档.md'), '外部修改', 'utf8');
+    docs.refreshFiles(taskDir);
+    expect(docs.read(id, '文档.md', taskDir).content).toBe('外部修改');
+
+    writeFileSync(join(taskDir, '文档.md'), '', 'utf8');
+    expect(docs.read(id, '文档.md', taskDir).content).toBe('');
+    unlinkSync(join(taskDir, '文档.md'));
+    expect(names(taskDir)).toContain('文档.md');
+    expect(docs.refreshFiles(taskDir).map((f) => f.fileName)).not.toContain('文档.md');
+    expect(() => docs.read(id, '文档.md', taskDir)).toThrow();
+  });
+
+  it('rejects stale saves after external edits, without DB document tables', () => {
+    const { id, taskDir } = newTask('冲突');
+    docs.saveContent(taskDir, id, 'A.md', 'before');
+    const before = docs.read(id, 'A.md', taskDir);
+    writeFileSync(join(taskDir, 'A.md'), 'external');
+    expect(() => docs.saveContent(taskDir, id, 'A.md', 'overwrite', before.version)).toThrow(/version_conflict/);
+    expect(readFileSync(join(taskDir, 'A.md'), 'utf8')).toBe('external');
+    expect(handle.db.prepare("SELECT name FROM sqlite_master WHERE name IN ('document_versions', 'drawings')").all()).toEqual([]);
+  });
+
+  it('imports only supported files and keeps colliding source and destination contents', () => {
+    const { taskDir } = newTask('导入');
+    const source = join(dir, '文档.md');
+    const scene = join(dir, '图.excalidraw');
+    writeFileSync(source, '# 原文');
+    writeFileSync(scene, '{"elements":[]}');
+    const first = docs.importFiles(taskDir, [source, scene]);
+    const second = docs.importFiles(taskDir, [source]);
+    expect(first.map((f) => f.kind)).toEqual(['note_md', 'drawing']);
+    expect(second[0]!.fileName).toBe('文档_1.md');
+    expect(readFileSync(source, 'utf8')).toBe('# 原文');
+    expect(readFileSync(join(taskDir, '文档.md'), 'utf8')).toBe('# 原文');
+    const unsupported = join(dir, 'bad.txt');
+    writeFileSync(unsupported, 'no');
+    expect(() => docs.importFiles(taskDir, [source, unsupported])).toThrow(/仅支持/);
+    expect(docs.refreshFiles(taskDir)).toHaveLength(3);
+  });
+
   it('ensureDefaultDocs 建出 progress.md，标签固定「进展」', () => {
     const { id, taskDir } = newTask('T');
     docs.ensureDefaultDocs(id, taskDir);
@@ -86,49 +134,11 @@ describe('DocumentStore 文件即文档（schema v21）', () => {
     expect(list[0]!.fileName).toBe('progress.md');
   });
 
-  it('进展文件丢失时从已保存的版本恢复，不写成空文件', () => {
-    const { id, taskDir } = newTask('恢复进展');
-    docs.ensureDefaultDocs(id, taskDir);
-    docs.saveContent(taskDir, id, 'progress.md', '已有进展内容');
-    unlinkSync(join(taskDir, 'progress.md'));
-    docs.ensureDefaultDocs(id, taskDir);
-    expect(readFileSync(join(taskDir, 'progress.md'), 'utf8')).toBe('已有进展内容');
-    expect(docs.history(id, 'progress.md')).toHaveLength(1);
-  });
 
-  it('旧正文(content_versions)桥接进展文档，版本历史完整保留', () => {
-    // 一个 v21 之后才建的 todo，正文仍可能走老路写进 content_versions。
-    // ensureDefaultDocs 必须把它桥接进展文档，正文与历史都不能丢。
-    const { id, taskDir } = newTask('Has Notes');
-    md.writeBody(id, '# v1\nfirst');
-    md.writeBody(id, '# v2\nsecond');
 
-    docs.ensureDefaultDocs(id, taskDir);
-    // 旧用例是 docs.list(t.id).find(kind==='progress') 再 docs.read(doc.id)；
-    // 现在文档身份就是文件名，直接按 'progress.md' 读。
-    const read = docs.read(id, 'progress.md');
-    expect(read.content).toBe('# v2\nsecond');
-    expect(docs.history(id, 'progress.md')).toHaveLength(2);
-    // 桥接之后磁盘上的 progress.md 也要跟上（git / 文件管理器看的是文件）。
-    expect(readFileSync(paths.progressFile(taskDir), 'utf8')).toBe('# v2\nsecond');
-  });
 
-  it('吸收迁移遗留的 笔记.md，用户自己建的文档不受影响', () => {
-    // v11 迁移给旧任务建过一个标签「笔记」的 note_md。ensureDefaultDocs 要把
-    // 它的内容折进进展文档，再删掉那个文件 —— 磁盘上只剩一个进展文档。
-    const { id, taskDir } = newTask('T');
-    mkdirSync(taskDir, { recursive: true });
-    writeFileSync(join(taskDir, '笔记.md'), '笔记内容', 'utf8');
-    docs.write(id, '笔记.md', '笔记内容');
 
-    docs.ensureDefaultDocs(id, taskDir);
-    expect(names(taskDir)).toEqual(['progress.md']);
-    expect(docs.listFiles(taskDir)[0]!.kind).toBe('progress');
-    expect(docs.read(id, 'progress.md').content).toBe('笔记内容');
-    // 旧用例断言的是 task_documents 那行没了；新模型没有行，只有文件 ——
-    // 等价保证是「那个文件被删掉」。
-    expect(existsSync(join(taskDir, '笔记.md'))).toBe(false);
-  });
+
 
   it('用户通过「+」建的 文档 survive 再次 ensureDefaultDocs，且内容不被抹掉', () => {
     const { id, taskDir } = newTask('T');
@@ -144,35 +154,11 @@ describe('DocumentStore 文件即文档（schema v21）', () => {
     expect(readFileSync(join(taskDir, '文档.md'), 'utf8')).toBe('hello');
   });
 
-  it('write 追加版本并裁剪到 MAX_BODY_VERSIONS', () => {
-    const { id, taskDir } = newTask('T');
-    docs.ensureDefaultDocs(id, taskDir);
-    for (let i = 0; i < 25; i++) docs.write(id, 'progress.md', `v${i}`);
-    // MAX_BODY_VERSIONS = 20
-    expect(docs.history(id, 'progress.md').length).toBeLessThanOrEqual(20);
-    // 最新内容是最后一次写入
-    expect(docs.read(id, 'progress.md').content).toBe('v24');
-  });
 
-  it('restoreVersion 回滚到历史版本；版本号不存在时抛 version_not_found', () => {
-    const { id, taskDir } = newTask('T');
-    docs.ensureDefaultDocs(id, taskDir);
-    const v1 = docs.write(id, 'progress.md', 'v1').version;
-    docs.write(id, 'progress.md', 'v2');
-    docs.restoreVersion(id, 'progress.md', v1);
-    expect(docs.read(id, 'progress.md').content).toBe('v1');
-    expect(() => docs.restoreVersion(id, 'progress.md', 999_999)).toThrow(
-      /version_not_found/,
-    );
-  });
 
-  it('版本冲突检测：expectVersion 过期时抛 version_conflict', () => {
-    const { id, taskDir } = newTask('T');
-    docs.ensureDefaultDocs(id, taskDir);
-    const v0 = docs.read(id, 'progress.md').version; // 0（从未写过）
-    docs.write(id, 'progress.md', 'a', v0);
-    expect(() => docs.write(id, 'progress.md', 'b', v0)).toThrow(/version_conflict/);
-  });
+
+
+
 
   // --- 不变量 2：绝不覆盖 -------------------------------------------------
 
@@ -194,8 +180,8 @@ describe('DocumentStore 文件即文档（schema v21）', () => {
     // 关键保证：后建的不会把先建的正文写穿。
     expect(readFileSync(join(taskDir, '文档.md'), 'utf8')).toBe('# A');
     expect(readFileSync(join(taskDir, '文档_1.md'), 'utf8')).toBe('# B');
-    expect(docs.read(id, '文档.md').content).toBe('# A');
-    expect(docs.read(id, '文档_1.md').content).toBe('# B');
+    expect(docs.read(id, '文档.md', taskDir).content).toBe('# A');
+    expect(docs.read(id, '文档_1.md', taskDir).content).toBe('# B');
     // 写路径自己会清缓存，所以新文件立刻出现在清单里。
     expect(names(taskDir).sort()).toEqual(['文档.md', '文档_1.md']);
   });

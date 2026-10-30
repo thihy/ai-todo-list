@@ -1,11 +1,6 @@
 // TaskFileIndex —— 任务目录里的文件清单,tab 列表的唯一真相。
 //
-// 为什么文件说了算:标签和文件名是同一个东西(除了 progress.md),所以
-// 「有哪些文档」这件事问文件系统就够了。让 DB 再存一份映射,两份数据迟早
-// 不一致,而且不一致的时候没人知道该信谁 —— 这正是之前 task_documents
-// 表想解决的问题,但它只是把「名字存哪」换了个地方,没消除双份真相。
-// schema v21 把那张表删掉了;DB 只剩 document_versions(版本历史)和
-// drawings.path / todo_links(各有归属)。
+// 文档清单、文件名和当前内容均以文件系统为准。数据库不维护文档或绘图索引。
 //
 // IO:list() 会真读磁盘,所以加了缓存。缓存按 taskDir 分桶,写入路径上
 // 主动 invalidate,外部改动靠刷新按钮清缓存后重读。
@@ -37,10 +32,10 @@ function classify(fileName: string): { kind: DocumentKind; label: string } | nul
     // 也永远不会因为撞名而变成 progress_1.md。
     return { kind: 'progress', label: '进展' };
   }
-  if (fileName.endsWith('.md')) {
+  if (fileName.toLowerCase().endsWith('.md')) {
     return { kind: 'note_md', label: fileName.slice(0, -'.md'.length) };
   }
-  if (fileName.endsWith('.excalidraw')) {
+  if (fileName.toLowerCase().endsWith('.excalidraw')) {
     return { kind: 'drawing', label: fileName.slice(0, -'.excalidraw'.length) };
   }
   return null;

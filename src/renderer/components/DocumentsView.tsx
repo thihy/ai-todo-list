@@ -24,6 +24,7 @@ import { usePrompt } from '../hooks/usePrompt';
 import { useFocusSync } from '../hooks/useFocusSync';
 import { MarkdownEditor } from './MarkdownEditor';
 import { ExcalidrawEditor } from './ExcalidrawEditor';
+import { ImportDocumentsDialog } from './ImportDocumentsDialog';
 import {
   IconActivity,
   IconClose,
@@ -32,9 +33,11 @@ import {
   IconFullscreen,
   IconPlus,
   IconRefresh,
+  IconImport,
 } from './icons';
 import type { AppFocus } from '../../shared/todo-list-api';
-import type { DocumentKind, DrawingMeta } from '../../shared/todo-types';
+import type { DocumentKind } from '../../shared/todo-types';
+import { drawingFileId } from '../../shared/drawing-file-ref';
 
 const KIND_ICON: Record<DocumentKind, React.FC<{ size?: number }>> = {
   progress: IconActivity,
@@ -48,10 +51,7 @@ const KIND_LABEL: Record<DocumentKind, string> = {
   drawing: '绘图',
 };
 
-/** A unified tab entry — one file in the task directory. 绘图文件同时在
- *  drawings 表里有一行（缩略图挂在 drawing id 上），那行是**派生索引**：
- *  它补的是 id / 缩略图，身份仍然是磁盘上那个文件。文件在、行不在（用户
- *  在应用外丢进来的 .excalidraw）时 id 为 null，见下方占位视图。 */
+/** One local document; drawing references are derived from task + filename. */
 type Tab = {
   kind: DocumentKind;
   fileName: string;
@@ -100,23 +100,6 @@ const DocEditor: React.FC<{ todoId: string; tab: Tab }> = ({ todoId, tab }) => {
   }
 };
 
-/** 一个 .excalidraw 文件还没有 drawings 行（用户直接丢进目录的）。文件在、
- *  内容完好，所以这里如实告诉用户它是什么、为什么暂时不能编辑 —— 至少它
- *  没有被悄悄藏起来。 */
-const UnclaimedDrawingView: React.FC<{ todoId: string; tab: Tab }> = ({ todoId, tab }) => {
-  const { documents, refresh } = useDocuments(todoId);
-  void documents;
-  return (
-    <div className="docs-workspace__empty">
-      <p>{tab.fileName} 是这个任务目录里的绘图文件，但还没有登记到绘图列表。</p>
-      <p>在应用里新建一张绘图并保存后，它会接管这个文件。</p>
-      <button type="button" onClick={() => void refresh()}>
-        重新扫描目录
-      </button>
-    </div>
-  );
-};
-
 /** Drawing tab body: in-place Excalidraw editor. The legacy "open editor"
  *  affordance is gone — selecting a drawing tab mounts the editor here,
  *  mirroring how progress / note_md work in the same workspace. */
@@ -141,7 +124,9 @@ export const DocumentsView: React.FC<{
 }> = ({ todoId, taskTitle, onFullscreen, selectedDocId, onSelectDoc }) => {
   const { documents, error, refresh, refreshFromDisk } = useDocuments(todoId);
   const [createError, setCreateError] = useState<string | null>(null);
-  const { drawings, refresh: refreshDrawings } = useDrawings(todoId);
+  const [diskRevision, setDiskRevision] = useState(0);
+  const [importOpen, setImportOpen] = useState(false);
+  const { refresh: refreshDrawings } = useDrawings(todoId);
   const { node: promptNode } = usePrompt();
   // Controlled vs uncontrolled: when the parent passes selectedDocId + a
   // setter, the parent's state is the source of truth (so fullscreen-mode
@@ -173,23 +158,18 @@ export const DocumentsView: React.FC<{
   // 拼装 tab 列表 —— **完全从目录扫描结果派生**，documents 就是那张权威
   // 清单（progress 第一，其余按标签名排序）。
   //
-  // 绘图文件在这里补上 drawings 行的 id / 缩略图：标签就是文件名去掉扩展名，
-  // 所以按 label 就能和 drawings.title 对上。对不上的（用户直接丢进目录的
-  // .excalidraw）drawingId 为 null —— 照样占一个 tab，不藏起来。
+  // 绘图引用直接由任务 ID 和真实文件名派生，无需登记数据库。
   const tabs: Tab[] = useMemo(() => {
-    const byLabel = new Map<string, DrawingMeta>();
-    for (const d of drawings) if (d.title) byLabel.set(d.title, d);
     return documents.map((f) => {
-      const hit = f.kind === 'drawing' ? byLabel.get(f.label) : undefined;
       return {
         kind: f.kind,
         fileName: f.fileName,
         label: f.label,
-        drawingId: hit?.id ?? null,
-        thumb: hit?.thumbPath ?? null,
+        drawingId: f.kind === 'drawing' ? drawingFileId(todoId, f.fileName) : null,
+        thumb: null,
       };
     });
-  }, [documents, drawings]);
+  }, [documents, todoId]);
 
   const tabId = (t: Tab): string => (t.drawingId ? `g:${t.drawingId}` : `d:${t.fileName}`);
 
@@ -381,14 +361,20 @@ export const DocumentsView: React.FC<{
           })}
         </div>
         <div className="docs-workspace__add">
+          <button type="button" className="docs-workspace__add-btn" onClick={() => setImportOpen(true)}
+            title="导入本地 Markdown / Excalidraw 文件" aria-label="导入文档"><IconImport size={16} /></button>
           {/* 重新扫描目录。文档就是文件，用户在应用外丢进来的 .md / 删掉
               的文件不会触发任何 IPC 广播 —— 这个按钮清掉 main 的扫描缓存
               后重读，变化就显出来了。放在 tab 栏右侧、全屏按钮之前。 */}
           <button
             type="button"
             className="docs-workspace__add-btn"
-            onClick={() => void refreshFromDisk()}
-            title="重新扫描目录（显示在应用外新建 / 删除的文件）"
+            onClick={() => { void (async () => {
+              await refreshFromDisk();
+              await refreshDrawings();
+              setDiskRevision((value) => value + 1);
+            })(); }}
+            title="重新读取本地目录和文档内容"
             aria-label="重新扫描目录"
           >
             <IconRefresh size={16} />
@@ -430,19 +416,17 @@ export const DocumentsView: React.FC<{
       <div className="docs-workspace__editor">
         {selected ? (
           selected.kind === 'drawing' ? (
-            selected.drawingId ? (
-              <DrawingView key={selected.drawingId} todoId={todoId} drawingId={selected.drawingId} />
-            ) : (
-              <UnclaimedDrawingView key={selected.fileName} todoId={todoId} tab={selected} />
-            )
+            <DrawingView key={`${selected.drawingId}:${diskRevision}`} todoId={todoId} drawingId={drawingFileId(todoId, selected.fileName)} />
           ) : (
-            <DocEditor key={selected.fileName} todoId={todoId} tab={selected} />
+            <DocEditor key={`${selected.fileName}:${diskRevision}`} todoId={todoId} tab={selected} />
           )
         ) : (
           <div className="docs-workspace__empty">选择上方标签开始编辑</div>
         )}
       </div>
       {promptNode}
+      {importOpen && <ImportDocumentsDialog todoId={todoId} onClose={() => setImportOpen(false)}
+        onImported={async () => { await refreshFromDisk(); await refreshDrawings(); setDiskRevision((n) => n + 1); }} />}
     </div>
   );
 };

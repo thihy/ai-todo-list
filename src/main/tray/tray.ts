@@ -8,6 +8,12 @@ export class TrayController {
   private onCapture: () => void = () => {};
   private onPauseClipboard: () => void = () => {};
   private clipboardPaused = false;
+  private onCompact: () => void = () => {};
+
+  setCompactHandler(handler: () => void): void {
+    this.onCompact = handler;
+    this.refreshMenu();
+  }
 
   constructor(private iconPath: string) {}
 
@@ -30,6 +36,7 @@ export class TrayController {
       { label: '快速捕获  Ctrl+Shift+T', click: () => this.onCapture() },
       { type: 'separator' },
       { label: '显示主窗口', click: () => this.focusInbox() },
+      { label: '精简悬浮模式', click: () => this.onCompact() },
       { type: 'separator' },
       {
         label: this.clipboardPaused ? '已暂停 · 剪贴板监听' : '暂停剪贴板监听',

@@ -107,11 +107,6 @@ describe('migrateV1Layout', () => {
   it('moves drawings/{todoId}/{drawingId}.excalidraw into per-task dir', async () => {
     const todo = f.repo.create({ title: '画图' }, 'x');
     // Seed a drawing row so the sweep can resolve its title.
-    f.handle.db
-      .prepare(
-        'INSERT INTO drawings (id, todo_id, title, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
-      )
-      .run('draw1', todo.id, '我的画', '我的画.excalidraw', Date.now(), Date.now());
     const legacy = join(f.drawingsDir, todo.id, 'draw1.excalidraw');
     mkdirSync(join(f.drawingsDir, todo.id), { recursive: true });
     writeFileSync(legacy, '{"elements":[]}', 'utf8');
@@ -126,17 +121,12 @@ describe('migrateV1Layout', () => {
 
     expect(existsSync(legacy)).toBe(false);
     const newDir = paths.todoDir(f.todosDir, '画图', todo.id);
-    const moved = paths.drawingFile(newDir, '我的画');
+    const moved = join(newDir, 'draw1.excalidraw');
     expect(existsSync(moved)).toBe(true);
   });
 
   it('moves thumbs into {taskDir}/thumbs/', async () => {
     const todo = f.repo.create({ title: 'ThumbTask' }, 'x');
-    f.handle.db
-      .prepare(
-        'INSERT INTO drawings (id, todo_id, title, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
-      )
-      .run('draw1', todo.id, null, 'null.excalidraw', Date.now(), Date.now());
     const legacyThumb = join(f.drawingsDir, todo.id, 'draw1.thumb.png');
     mkdirSync(join(f.drawingsDir, todo.id), { recursive: true });
     writeFileSync(legacyThumb, 'png-bytes', 'utf8');

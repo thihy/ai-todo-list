@@ -134,7 +134,7 @@ export function drawingFile(taskDir: string, drawingTitle: string): string {
 
 /** 绘图文件名（不含目录）：标签 slug + .excalidraw，空标签回退到
  *  DEFAULT_DRAWING_TITLE。这是「标签 → 文件名」的唯一换算入口，
- *  DrawingStore 把它写进 DB 的 drawings.path 列作为映射关系。 */
+ *  仅用于新建或显式改名；读取和自动保存必须使用真实文件名。 */
 export function drawingFileName(drawingTitle: string | null | undefined): string {
   const label = (drawingTitle ?? '').trim();
   return `${slugify(label || DEFAULT_DRAWING_TITLE)}.excalidraw`;

@@ -2,7 +2,7 @@
 // Renderer accesses everything via window.todoList.* (see shared/todo-list-api.ts).
 // Sandboxed: no direct Node, no ipcRenderer without allowlisting.
 
-import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
+import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'electron';
 import { isKnownChannel } from '../shared/channels';
 import type {
   IpcChannelName,
@@ -116,6 +116,8 @@ const api: TodoListApi = {
     updateNote: (entryId, note) => invoke('progress.updateNote', { entryId, note }),
   },
   document: {
+    import: (todoId, paths) => invoke('document.import', { todoId, paths }),
+    pathsForFiles: (files) => files.map((file) => webUtils.getPathForFile(file)),
     list: (todoId) => invoke('document.list', { todoId }),
     create: (req) => invoke('document.create', req),
     refresh: (todoId) => invoke('document.refresh', { todoId }),
@@ -124,9 +126,6 @@ const api: TodoListApi = {
       invoke('document.write', { todoId, fileName, content, expectVersion }),
     rename: (todoId, fileName, title) => invoke('document.rename', { todoId, fileName, title }),
     remove: (todoId, fileName) => invoke('document.remove', { todoId, fileName }),
-    history: (todoId, fileName) => invoke('document.history', { todoId, fileName }),
-    restoreVersion: (todoId, fileName, versionId) =>
-      invoke('document.restoreVersion', { todoId, fileName, versionId: Number(versionId) }),
     gitHistory: (todoId, fileName) => invoke('document.gitHistory', { todoId, fileName }),
     gitRestore: (todoId, fileName, sha) => invoke('document.gitRestore', { todoId, fileName, sha }),
   },
@@ -151,6 +150,8 @@ const api: TodoListApi = {
       }),
   },
   link: {
+    pickFile: () => invoke('link.pickFile', {}),
+    openLocal: (id, action) => invoke('link.openLocal', { id, action }),
     list: (todoId) => invoke('link.list', { todoId }),
     add: (req) => invoke('link.add', req),
     remove: (id) => invoke('link.remove', { id }),
@@ -170,6 +171,8 @@ const api: TodoListApi = {
     chooseDataDir: () => invoke('settings.chooseDataDir', undefined as never),
   },
   app: {
+    compact: (enabled, todoId) => invoke('app.compact', { enabled, todoId }),
+    compactSize: (count) => invoke('app.compactSize', { count }),
     popupMenu: () => invoke('app.popupMenu', undefined as never),
     popupMenuCategory: (category: string) => invoke('app.popupMenuCategory', { category }),
     pickFile: () => invoke('app.pickFile', undefined as never),

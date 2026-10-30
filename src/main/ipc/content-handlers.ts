@@ -185,10 +185,9 @@ export function registerContentHandlers(
 
   register('drawing.rename', (_e, req) => {
     try {
-      drawings.rename(req.id, req.title);
+      const meta = drawings.rename(req.id, req.title);
       // Return the refreshed meta so the renderer can update the tab label
       // without a second round-trip (mirrors document.rename).
-      const meta = drawings.get(req.id);
       if (!meta) return Promise.resolve(failResult('rename_failed', 'drawing not found after rename'));
       commitAllToGit(`重命名绘图 ${meta.title ?? req.id}`);
       // 改名搬动了文件，文件名就是标签 —— 列表要跟着重拉。
