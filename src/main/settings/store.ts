@@ -138,7 +138,7 @@ const DEFAULTS: PersistedSettings = {
   aiGrantedTools: {},
   dshWorkspaceDir: null,
   aiEnterAction: 'queue',
-  externalFileAccess: 'deny',
+  externalFileAccess: 'ask',
   externalReadDirs: [],
   skillDirs: [],
   logLevel: 'info',

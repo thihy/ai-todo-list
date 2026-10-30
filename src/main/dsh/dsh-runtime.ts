@@ -34,7 +34,10 @@ import { TODO_STATUSES, PRIORITIES } from '../../shared/todo-types';
 import type { UserQuestionAnswer, UserQuestionRequest } from '../../shared/ai-types';
 import { presentToolCall, presentToolResult, recoverToolResultValue } from '@shared/tool-presentation';
 import { isWithinWorkspace, extractStringPath } from './path-guard';
-import { standardSkillRoot, type FileAccessSettings } from './file-access';
+import { globalSkillRoots, type FileAccessSettings } from './file-access';
+import type { SkillRegistry } from '@deepseek-ai/dsh-skill';
+import type { CommandRuntime } from '@deepseek-ai/dsh-commands';
+import { assistantToolDefinitions } from '../automation/tools';
 import type { ToolExecution, PreToolDecision } from '@deepseek-ai/dsh-tools';
 import { TurnFailureGuard } from './turn-failure';
 import { configureElectronSubprocess, configureElectronSandboxRunner } from './subprocess-compat';
@@ -53,7 +56,7 @@ import type { ModelSelectionRef } from '@deepseek-ai/dsh-agent';
 type DshContext = {
   get(key: string): unknown;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- cordis middleware handlers have per-event arity; a single signature cannot express them
-  on(event: string, handler: (...args: any[]) => void): () => void;
+  on(event: string, handler: (...args: any[]) => void, options?: { prepend?: boolean }): () => void;
   fiber?: { dispose?(): Promise<void> };
   /** L4-G: cordis waterfall 调用。ask_user_question / ask_user_approval 工具
    *  通过它复用 bootDsh() 里装好的同一条监听链，跨面板行为一致。监听器的
@@ -175,6 +178,8 @@ export async function* bridgeLlmStream(
 }
 
 export interface DshRuntime {
+  skillCatalog(): Promise<import('../../shared/assistant-capabilities').SkillItem[]>;
+  commandCatalog(): Promise<import('../../shared/assistant-capabilities').AssistantCommand[]>;
   steer(conversationId: string, invocationId: string, prompt: string): Promise<boolean>;
   runTurn(opts: {
     retryGroupId?: string;
@@ -548,7 +553,7 @@ export function __seedPendingApprovalForTest(conversationId: string, reqId: stri
 //
 // 工具白名单（应在 approval/request 之前过的 read 类工具名 + mutate 类工具名）
 // 由 `PRE_APPROVE_TOOLS` / `READ_CLASS_TOOLS` 两个常量维护；新增工具时同步。
-const PRE_APPROVE_TOOLS: ReadonlySet<string> = new Set(['write', 'edit', 'bash', 'pwsh']);
+const PRE_APPROVE_TOOLS: ReadonlySet<string> = new Set(['write', 'edit', 'bash', 'pwsh', 'skill_install', 'automation_remove']);
 const READ_CLASS_TOOLS: ReadonlySet<string> = new Set(['read', 'read_image', 'grep', 'glob']);
 
 // 工作空间路径修改硬拒黑名单 —— 用户明确要求:AI 助手**不允许**通过任何
@@ -615,6 +620,13 @@ function argsMatchWorkspaceMutation(toolName: string, args: unknown): boolean {
  *  返回 PreToolDecision:denty / ask / next() 透传。
  *  `currentPreset` 跟 currentPermissionPreset 签名一致:接收完整 ToolExecution,
  *  内部自己从 exec.agent.session 读 live session。 */
+export function manualReviewOnClassifierFailure(decision: PreToolDecision): PreToolDecision {
+  if (decision.kind === 'deny' && decision.reason?.startsWith('[auto-mode classifier unavailable; action denied]')) {
+    return { kind: 'ask', reason: 'Auto 暂时无法判断本次操作，请核对工具参数后选择是否授权（仅本次调用）。' };
+  }
+  return decision;
+}
+
 export async function handlePreExecute(
   exec: ToolExecution,
   next: () => Promise<PreToolDecision>,
@@ -640,9 +652,9 @@ export async function handlePreExecute(
     if (workspace && typeof requested === 'string') {
       if (!isWithinWorkspace(workspace, requested)) {
         if (deps.currentPreset(exec) === 'danger-full-access') return next();
-        const roots = [standardSkillRoot(), ...(access.skillDirs ?? []), ...(access.externalReadDirs ?? [])];
+        const roots = [...globalSkillRoots(), ...(access.skillDirs ?? []), ...(access.externalReadDirs ?? [])];
         if (roots.some((root) => isWithinWorkspace(root, resolve(workspace, requested)))) return next();
-        if (access.externalFileAccess === 'ask') {
+        if (access.externalFileAccess !== 'deny') {
           return { kind: 'ask', reason: `请求读取工作区外的文件（仅本次调用）：${requested}` };
         }
         const reason = `PATH_OUTSIDE_WORKSPACE: ${requested} 不在工作区 ${workspace} 内`;
@@ -1312,6 +1324,13 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
   if (!tools) throw new Error('DSH booted but ctx.tools is absent');
   const { defineTool } = await import('@deepseek-ai/dsh-tools');
   const disposeTools = registerDomainTools(tools, defineTool, deps, ctx);
+  const commands = ctx.get('commands') as CommandRuntime | undefined;
+  commands?.register({ name: 'help', description: '查看可用的系统命令', handler: ({ agent }) => ({ kind: 'success', text: commands.list(agent).map((item) => `/${item.name} — ${item.description}`).join('\n') }) });
+  commands?.register({ name: 'skills', description: '查看技能清单', handler: async () => {
+    const skills = await (ctx.get('skills') as SkillRegistry).list({ cwd: process.env.DSH_WORKSPACE_ROOT });
+    return { kind: 'success', text: skills.map((item) => `${item.name} — ${item.description}`).join('\n') || '尚未发现技能' };
+  } });
+  commands?.register({ name: 'automations', description: '管理自动化任务', handler: async () => ({ kind: 'success', text: JSON.stringify((await import('../automation/service')).getAutomationScheduler().snapshot(), null, 2) }) });
 
   // 3. 会话注册表：每个会话一个 agent handle，缓存到会话生命周期结束。
   //    ensureAgent() 幂等——同 id 再调直接返回已有 entry。
@@ -1384,9 +1403,8 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
   // 路径，必须在 `tools/pre-execute` 上返回 `{ kind: 'ask' }`，让调度器自
   // 动转入 `approval/request` waterfall（→ 本监听器 → 渲染端按钮）。
   //
-  // read 类工具沙箱不覆盖读（只覆盖写），所以路径越界必须由 host 自己
-  // 校验；我们用 `path-guard.isWithinWorkspace` 拒绝对 workspace 外的读
-  // 取，结果是 `{ kind: 'deny', reason: 'PATH_OUTSIDE_WORKSPACE' }`。
+  // read 类工具沙箱不覆盖读（只覆盖写），所以路径越界由 host 检查：
+  // 默认请求本次授权；明确设置 deny 才返回 PATH_OUTSIDE_WORKSPACE。
   // 其他非 fs / shell 工具（todo_* / content_* / drawing_* 等）一律直通
   // —— 它们本来就有自己的 `tierFor()` 闸控 + approval/request 流程。
   //
@@ -1476,6 +1494,16 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
       currentPreset: (e) => currentPermissionPreset(e),
     });
   });
+
+  // Wrap the complete policy chain, including Auto's early return. An outage
+  // requests exact manual approval; actual policy denials remain denials.
+  ctx.on('tools/pre-execute', async (exec: ToolExecution, next: () => Promise<PreToolDecision>) => {
+    // External read authorization must precede Auto's short-circuit allow.
+    const decision = READ_CLASS_TOOLS.has(exec.name)
+      ? await handlePreExecute(exec, next, { settings: deps.settings, currentPreset: currentPermissionPreset })
+      : await next();
+    return manualReviewOnClassifierFailure(decision);
+  }, { prepend: true });
 
   ctx.on('user-questions/request', (request: {
     agent?: { id?: unknown };
@@ -1595,6 +1623,7 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
     /** Resolves only after the previous invocation detached its listeners. */
     activeTurn?: Promise<void>;
     activeInvocationId?: string;
+    commandAbort?: AbortController;
     canSteer?: boolean;
   }
 
@@ -1713,6 +1742,19 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
 
   // 4. 暴露 runtime API
   const runtime: DshRuntime = {
+    async skillCatalog() {
+      const registry = ctx.get('skills') as SkillRegistry | undefined;
+      if (!registry) throw new Error('Skill 服务尚未就绪');
+      const skills = await registry.list({ cwd: process.env.DSH_WORKSPACE_ROOT });
+      return skills.map((skill) => ({ name: skill.name, description: skill.description, source: skill.source,
+        path: skill.resourceBase?.kind === 'directory' ? skill.resourceBase.path : undefined, userInvocable: skill.invocation.userInvocable }));
+    },
+    async commandCatalog() {
+      const commands = ctx.get('commands') as CommandRuntime | undefined;
+      if (!commands) return [];
+      // An unscoped view contains global host commands, without creating a draft conversation.
+      return commands.list(undefined as unknown as Parameters<CommandRuntime['list']>[0]).map((command) => ({ name: command.name, description: command.description, hint: command.input?.hint }));
+    },
     // STARTUP-DSH-001: capture the persistence facade at boot time so
     // warmupDshRuntime can pass it to migrateOrphanSessions without
     // spawning a second Cordis context. Null = plugin missing; migration
@@ -1835,6 +1877,19 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
       };
       try {
         signal?.throwIfAborted();
+        if (intent !== 'create-task' && prompt.trimStart().startsWith('/')) {
+          const commands = ctx.get('commands') as CommandRuntime | undefined;
+          const controller = new AbortController();
+          entry.commandAbort = controller;
+          const abortCommand = () => controller.abort(signal?.reason);
+          signal?.addEventListener('abort', abortCommand, { once: true });
+          let execution;
+          try { execution = await commands?.execute(entry.agent as Parameters<CommandRuntime['execute']>[0], prompt.trim(), [], controller.signal); }
+          finally { signal?.removeEventListener('abort', abortCommand); entry.commandAbort = undefined; }
+          if (!execution) throw new Error('未知系统命令。输入 / 查看可用命令。');
+          if (execution.result.kind === 'error') throw new Error(execution.result.text);
+          return { content: execution.result.text ?? '命令已执行', tokensIn: 0, tokensOut: 0 };
+        }
         const userMsg = createUserMessage({
           content: [{ type: 'text', text: wirePrompt }],
           source: { kind: 'user', ...(retryGroupId ? { retryGroupId } : {}) },
@@ -1877,6 +1932,7 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
     },
 
     async cancel(conversationId) {
+      conversations.get(conversationId)?.commandAbort?.abort();
       // LLM 日志点：渲染端发 stop → runtime.cancel。打印进入时间、是否有
       // agent handle（idle 情况是 no-op）、是否触发 drainPending。这是排查
       // "stop 没反应 / composer 卡死" 的关键点。
@@ -2206,7 +2262,15 @@ export function foldHistory(events: ReadonlyArray<{ type: string; data?: unknown
   };
 
   for (const ev of events) {
-    if (ev.type === 'user/message') {
+    if (ev.type === 'command/run') {
+      flushAssistant();
+      const data = ev.data as { name?: string; args?: string };
+      turns.push({ type: 'user', text: `/${data.name ?? ''}${data.args ?? ''}` });
+    } else if (ev.type === 'command/done') {
+      flushAssistant();
+      const data = ev.data as { text?: string };
+      if (data.text) turns.push({ type: 'assistant', text: data.text });
+    } else if (ev.type === 'user/message') {
       flushAssistant();
       // DSH injects the "Current runtime context …" preamble as a
       // user/message owned by the runtime-context plugin
@@ -2411,6 +2475,7 @@ function registerDomainTools(
     render: renderJson,
     presentationMeta: (_args: unknown, value: unknown): unknown => value,
   };
+  for (const definition of assistantToolDefinitions()) reg(defineTool({ ...definition, output: jsonOutput }));
 
   // L5-A: 工具级 presentCall/presentResult helper。每个 defineTool 加
   // `...wire('tool.name')` 即可声明——DSH web frontend 的 drop-in 组件

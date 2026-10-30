@@ -13,6 +13,7 @@ import { describe, expect, it } from 'vitest';
 
 const cordis = readFileSync(resolve('resources/dsh/cordis.yml'), 'utf8');
 const runtime = readFileSync(resolve('src/main/dsh/dsh-runtime.ts'), 'utf8');
+const automationTools = readFileSync(resolve('src/main/automation/tools.ts'), 'utf8');
 
 function extractPersona(): string {
   const lines = cordis.split(/\r?\n/);
@@ -91,6 +92,16 @@ describe('DSH persona — 意图判断契约', () => {
     expect(named.size).toBeGreaterThan(0);
     for (const name of named) {
       expect(registeredTools.has(name), `提示词点名了未注册的工具 ${name}`).toBe(true);
+    }
+  });
+  it('routes recurring AI work through the shared automation catalog instead of shell loops or ordinary TODOs', () => {
+    expect(persona).toContain('与界面清单共用同一服务');
+    expect(persona).toContain('禁止用 Shell 循环');
+    expect(persona).toContain('prompt 必须完整描述每次要做什么');
+    expect(runtime).toContain('assistantToolDefinitions()');
+    for (const name of ['automation_list', 'automation_save', 'automation_remove']) {
+      expect(persona).toContain(name);
+      expect(automationTools).toContain(`name: '${name}'`);
     }
   });
 });

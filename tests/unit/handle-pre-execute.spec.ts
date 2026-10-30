@@ -163,7 +163,7 @@ describe('handlePreExecute — read 类工具', () => {
     expect(r).toBe('next-result' as unknown as PreToolDecision);
   });
 
-  it('workspace 外 read → deny(PATH_OUTSIDE_WORKSPACE)', async () => {
+  it('workspace 外 read → ask for exact one-time authorization', async () => {
     const d = makeDeps();
     const r = await handlePreExecute(
       // Must be a real absolute path on the host platform. A hardcoded
@@ -174,8 +174,8 @@ describe('handlePreExecute — read 类工具', () => {
       { name: 'read', arguments: { file_path: join(outside, 'notes.md') } } as never,
       nextNeverCalled, d,
     );
-    expect(r.kind).toBe('deny');
-    if (r.kind === 'deny') expect(r.reason).toContain('PATH_OUTSIDE_WORKSPACE');
+    expect(r.kind).toBe('ask');
+    if (r.kind === 'ask') expect(r.reason).toContain('仅本次调用');
   });
 
   it('workspace 内 grep → next()', async () => {

@@ -79,7 +79,7 @@ export type AppEvent =
 /** Coarse-grained scope of a data mutation, so the renderer can re-fetch only
  *  the stores that actually changed (e.g. the AI's todo.create tool mutating
  *  the DB in the main process). */
-export type DataScope = 'todos' | 'content' | 'drawings' | 'conversations' | 'tags';
+export type DataScope = 'todos' | 'content' | 'drawings' | 'conversations' | 'tags' | 'automations';
 
 export interface AppEventMap {
   'app:todo-created': { id: string };
@@ -193,6 +193,17 @@ export interface SettingsPatchArgs {
 // --- TodoListApi ---
 
 export interface TodoListApi {
+  skill: {
+    list(): Promise<IpcResponse<'skill.list'>>;
+    install(source?: string): Promise<IpcResponse<'skill.install'>>;
+    commands(conversationId?: string): Promise<IpcResponse<'ai.commands'>>;
+  };
+  automation: {
+    list(): Promise<IpcResponse<'automation.list'>>;
+    save(input: import('./automation-types').AutomationInput, id?: string): Promise<IpcResponse<'automation.save'>>;
+    remove(id: string): Promise<IpcResponse<'automation.remove'>>;
+    run(id: string): Promise<IpcResponse<'automation.run'>>;
+  };
   todo: {
     list(filter: TodoFilter): Promise<IpcResponse<'todo.list'>>;
     get(id: string): Promise<IpcResponse<'todo.get'>>;

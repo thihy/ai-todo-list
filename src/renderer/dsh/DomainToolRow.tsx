@@ -335,7 +335,9 @@ export const DomainToolRow: React.FC<{
       bodyRaw={cards.bodyRaw}
       output={terminal ? null : receipt ?? cards.output}
       fullOutput={result == null ? null : typeof result === 'string' ? result : JSON.stringify(result, null, 2)}
-      errorSummary={cards.errorSummary}
+      errorSummary={cards.errorSummary?.includes('PATH_OUTSIDE_WORKSPACE')
+        ? '未读取：文件位于工作区外，当前未授权访问。'
+        : cards.errorSummary}
       showInputWithCard={showInputWithCard}
       missingInputHint={argsKnown ? undefined : '未记录输入'}
       wireName={toolName}

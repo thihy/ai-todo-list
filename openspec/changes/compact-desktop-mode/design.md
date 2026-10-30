@@ -1,4 +1,5 @@
 # Design
+The main window's native minimize event automatically presents compact mode without focus transfer. Native restore/show dismisses it. A pending-show flag prevents a late ready-to-show from reopening compact mode after restoration. Preserve the main taskbar entry and all existing geometry/transparency preferences. The title-bar compact entry is removed.
 
 ## Context
 The app owns a single main window and a shared IPC task API with broadcasts to all windows. There is no existing compact route. See proposal.md for motivation.

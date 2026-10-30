@@ -1,0 +1,47 @@
+.capability-dialog { width: min(700px, calc(100vw - 48px)); max-height: min(780px, calc(100vh - 64px)); padding: 0; border: 1px solid var(--border-default); border-radius: 18px; background: var(--bg-surface, #fff); color: var(--fg-primary); box-shadow: 0 24px 90px #172c322b; }
+.capability-dialog::backdrop { background: #1c293c38; backdrop-filter: blur(3px); }
+.capability-dialog__header { display: flex; align-items: center; justify-content: space-between; padding: 20px 24px; border-bottom: 1px solid var(--border-default); }
+.capability-dialog__title { display: flex; align-items: center; gap: 10px; }
+.capability-dialog__title h2 { font-size: 16px; margin: 0; }
+.capability-dialog__body { overflow-y: auto; max-height: calc(min(780px, 100vh - 64px) - 72px); padding: 24px; }
+.capability-dialog h3 { font-size: 23px; letter-spacing: -.5px; margin: 8px 0; }
+.capability-dialog p { line-height: 1.6; font-size: 13px; }
+.capability-eyebrow { font-size: 11px; color: #16846e; font-weight: 600; letter-spacing: .5px; }
+.capability-empty { padding: 28px 22px; border: 1px dashed var(--border-default); border-radius: 12px; background: #f7faf9; }
+.capability-empty strong { font-size: 14px; }
+.capability-empty p, .capability-empty span { color: var(--fg-secondary); font-size: 12px; line-height: 1.7; }
+.capability-footnote { margin-top: 22px; font-size: 11px !important; color: var(--fg-secondary); }
+.automation-card, .skill-card { padding: 18px; border: 1px solid var(--border-default); border-radius: 12px; margin: 10px 0; background: var(--bg-surface, #fff); }
+.automation-card > strong { font-size: 14px; }
+.automation-card > p { margin: 8px 0; }
+.automation-history { border-top: 1px solid var(--border-default); margin-top: 22px; padding-top: 16px; font-size: 12px; }
+.automation-history > summary { font-weight: 500; margin-bottom: 12px; }
+.automations-pane form { padding: 18px; border: 1px solid var(--border-default); border-radius: 12px; background: #f8faf9; margin: 20px 0; }
+.automations-pane form .input { min-height: 34px; padding: 8px 10px; font-size: 13px; border-radius: 8px; }
+.automations-pane form fieldset { grid-template-columns: 1fr 1fr; }
+.automations-pane form label:has(textarea), .automations-pane form label:first-of-type, .automations-pane__actions { grid-column: 1 / -1; }
+.skills-pane__toolbar { display: flex; gap: 8px; margin: 22px 0 16px; }
+.skills-pane__toolbar input { flex: 1; min-width: 0; }
+.skill-card__title { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.skill-card__title strong { overflow-wrap: anywhere; }
+.skill-card__title > span { margin-left: auto; flex-shrink: 0; font-size: 10px; color: var(--fg-secondary); }
+.skill-card details { font-size: 11px; color: var(--fg-secondary); margin-bottom: 12px; }
+.skill-card code { overflow-wrap: anywhere; }
+.capability-notice { padding: 10px 12px; border-radius: 8px; background: #f4f8f7; }
+.aipane__composer { position: relative; }
+.assistant-command-menu { position: absolute; bottom: calc(100% + 6px); left: 12px; right: 12px; max-height: 260px; overflow-y: auto; z-index: 8; background: var(--bg-surface, #fff); border: 1px solid var(--border-default); border-radius: 12px; padding: 6px; box-shadow: 0 10px 36px #152b3820; }
+.assistant-command-menu__head { display: flex; justify-content: space-between; gap: 12px; padding: 8px 10px; color: var(--fg-secondary); font-size: 11px; }
+.assistant-command-menu__head span { font-size: 10px; }
+.assistant-command-menu button { display: flex; width: 100%; align-items: center; gap: 14px; padding: 10px; border-radius: 7px; text-align: left; }
+.assistant-command-menu button[aria-selected="true"], .assistant-command-menu button:hover { background: #eaf5f0; }
+.assistant-command-menu button strong { min-width: 105px; font-size: 12px; }
+.assistant-command-menu button span, .assistant-command-menu p { color: var(--fg-secondary); font-size: 12px; }
+.capability-skeleton { min-height: 120px; padding: 28px; border-radius: 12px; background: #f5f7f6; color: var(--fg-secondary); }
+.aipane__composer-tools .aipane__preset-btn { display: inline-flex; align-items: center; gap: 5px; padding: 4px 5px; min-height: 26px; border: 0; background: transparent; border-radius: 5px; font-size: 11px; color: #62706b; }
+.aipane__composer-tools .aipane__preset-btn:hover:not(:disabled) { background: #f0f3f1; }
+.aipane__composer-tools .aipane__preset-btn--danger { color: #c96b3c; background: transparent; }
+.aipane__composer-tools .aipane__preset-btn--danger:hover:not(:disabled) { background: #fff3e9; }
+.aipane__composer-tools .aipane__preset-menu { top: auto; bottom: calc(100% + 10px); left: 0; right: auto; max-height: min(360px, 55vh); overflow-y: auto; width: min(300px, calc(100vw - 40px)); }
+.aipane__composer-card.is-disabled:has(.aipane__presets) { opacity: 1; }
+.aipane__composer-tools .aipane__preset-menu { background: #fff; }
+@media (max-width: 520px) { .capability-dialog { width: calc(100vw - 20px); } .capability-dialog__body { padding: 18px; } .automations-pane form fieldset { grid-template-columns: 1fr; } .skills-pane__toolbar { flex-wrap: wrap; } }

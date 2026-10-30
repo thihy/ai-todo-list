@@ -21,6 +21,56 @@ async function setup(enterAction: 'queue' | 'steer', busy = true, block?: { reas
 }
 
 describe('AI queue and steer shortcuts', () => {
+  it('groups attachment actions and native skills in the add menu while preserving the draft', async () => {
+    Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+    (window as any).todoList = { skill: { list: vi.fn().mockResolvedValue({ ok: true, data: [
+      { name: 'local-review', description: '检查本地代码', userInvocable: true },
+      { name: 'internal-only', description: '内部技能', userInvocable: false },
+    ] }) } };
+    const pickFile = vi.fn(), screenshot = vi.fn(), submit = vi.fn();
+    const node = document.createElement('div'); document.body.append(node);
+    const root = createRoot(node); hosts.push({ root, node });
+    function Composer() {
+      const [value, setValue] = React.useState('保留这份草稿');
+      return <AIComposer value={value} onChange={setValue} attachments={[]} onRemoveAttachment={() => {}} onPickAttachment={pickFile} onScreenshot={screenshot} onPasteFiles={() => {}} onSubmit={submit} onStop={() => {}} busy={false} hasConversation />;
+    }
+    await act(async () => root.render(<Composer />));
+    const open = async () => { await act(async () => (node.querySelector('[aria-label="添加"]') as HTMLButtonElement).click()); };
+    const choose = async (name: string) => { await act(async () => ([...node.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find(button => button.textContent?.includes(name)))!.click()); };
+    await open();
+    expect(node.querySelector('[role="menu"]')?.textContent).not.toContain('internal-only');
+    await choose('添加文件'); expect(pickFile).toHaveBeenCalledOnce();
+    expect(node.querySelector('[role="menu"]')).toBeNull();
+    await open(); await choose('截图'); expect(screenshot).toHaveBeenCalledOnce();
+    await open(); await choose('local-review');
+    expect(node.querySelector('textarea')!.value).toBe('请使用 local-review 技能：\n保留这份草稿');
+    expect(submit).not.toHaveBeenCalled();
+    await open();
+    await act(async () => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })));
+    expect(node.querySelector('[role="menu"]')).toBeNull();
+    expect(document.activeElement).toBe(node.querySelector('[aria-label="添加"]'));
+  });
+  it('discovers native slash commands and selects with the keyboard before submission', async () => {
+    Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+    (window as any).todoList = { skill: { commands: vi.fn().mockResolvedValue({ ok: true, data: [
+      { name: 'compact', description: 'Condense history' }, { name: 'skills', description: '技能清单' },
+    ] }) } };
+    const submit = vi.fn();
+    const node = document.createElement('div'); document.body.append(node); const root = createRoot(node); hosts.push({ root, node });
+    function Composer() {
+      const [value, setValue] = React.useState('/');
+      return <AIComposer value={value} onChange={setValue} attachments={[]} onRemoveAttachment={() => {}} onPickAttachment={() => {}} onPasteFiles={() => {}} onSubmit={submit} onStop={() => {}} busy={false} hasConversation />;
+    }
+    await act(async () => root.render(<Composer />));
+    expect(node.querySelectorAll('[role="option"]')).toHaveLength(2);
+    const input = node.querySelector('textarea')!;
+    await act(async () => input.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true })));
+    await act(async () => input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })));
+    expect(input.value).toBe('/skills'); expect(submit).not.toHaveBeenCalled();
+    expect(node.querySelector('[role="listbox"]')).toBeNull();
+    await act(async () => input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })));
+    expect(submit).toHaveBeenCalledOnce();
+  });
   it('defaults Enter to queue and Ctrl+Enter to steer', async () => {
     const h = await setup('queue'); await h.key(); await h.key({ ctrlKey: true });
     expect(h.queue).toHaveBeenCalledTimes(1); expect(h.steer).toHaveBeenCalledTimes(1);

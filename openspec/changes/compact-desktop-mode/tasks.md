@@ -6,7 +6,7 @@
 
 ## 2. Interface
 - [x] 2.1 Implement compact rows, completion, broadcasts and empty/error states; verify live updates in Electron tests.
-- [x] 2.2 Add title bar and tray entry; document the user flow and verify both modes are reachable.
+- [x] 2.2 Show compact mode automatically on native minimize, hide it on native restore, remove the title-bar entry and retain the tray shortcut; verify native restoration and singleton reentry in Electron tests.
 - [x] 2.3 Restyle import dialog and use an import icon; distinguish local/web link forms; verify interactions and screenshot layout.
 
 ## 3. Integration

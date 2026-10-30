@@ -11,6 +11,7 @@
 //   - ai.conversation.* handle the user-facing CRUD + history load.
 
 import { register, okResult, failResult } from './router';
+import type { AIAskReq, AIAskRes, IpcResult } from '../../shared/ipc-schema';
 import { extractCreatedTodoId } from '../../shared/ai-created-todo';
 import type { DshHandle } from '../dsh/types';
 import { resolveEndpoint, healthCheck } from '../dsh/endpoints';
@@ -49,6 +50,9 @@ interface HandlerDeps {
 }
 
 let deps: HandlerDeps | null = null;
+
+/** Shared request entry for interactive chat and scheduled instructions. */
+export let askAi: (req: AIAskReq) => Promise<IpcResult<AIAskRes>> = async () => failResult('ai_not_ready', 'AI 尚未就绪');
 
 /** L4-H: build the DshRuntimeDeps from the current bound `deps`. Used by
  *  every `ai.*` and `ai.conversation.*` handler that needs the runtime,
@@ -132,7 +136,7 @@ export function registerAiHandlers(dsh: DshHandle): void {
     }
   });
 
-  register('ai.ask', async (_e, req) => {
+  askAi = async (req) => {
     if (req.retryGroupId !== undefined && (typeof req.retryGroupId !== 'string' || !req.retryGroupId || req.retryGroupId.length > 128)) {
       return failResult('bad_request', 'Invalid retry group');
     }
@@ -314,7 +318,8 @@ export function registerAiHandlers(dsh: DshHandle): void {
       send({ type: 'error', invocationId, message });
       return failResult('invoke_failed', message);
     }
-  });
+  };
+  register('ai.ask', (_e, req) => askAi(req));
 
   // ----- ai.conversation.* -----
 

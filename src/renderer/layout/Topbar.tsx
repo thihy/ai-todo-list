@@ -13,7 +13,6 @@
 // (notification / search / collapse) plus the user avatar at its footer.
 
 import React from 'react';
-import { IconCompact } from '../components/icons';
 import { FilterButton } from '../components/FilterPopover';
 import { SortButton } from '../components/SortPopover';
 import type { ListFilter, SortKey } from '../router';
@@ -40,10 +39,6 @@ export const Topbar: React.FC<{
       </div>
 
       <div className="topbar__tools">
-        <button type="button" className="icon-btn topbar__tool" aria-label="精简悬浮模式"
-          title="精简悬浮模式 · 显示接下来 5 条待办" onClick={() => void window.todoList.app.compact(true)}>
-          <IconCompact />
-        </button>
         <FilterButton filter={listFilter} onSelect={onSelectFilter} />
         <SortButton sort={listSort} onSelect={onSelectSort} />
         <button

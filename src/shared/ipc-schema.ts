@@ -568,6 +568,13 @@ export interface CleanupApplyResult {
 // ----- Channel registry -----
 
 export interface IpcRegistry {
+  'skill.list': IpcChannel<void, IpcResult<import('./assistant-capabilities').SkillItem[]>>;
+  'skill.install': IpcChannel<{ source?: string }, IpcResult<{ name: string; path: string } | null>>;
+  'ai.commands': IpcChannel<{ conversationId?: string }, IpcResult<import('./assistant-capabilities').AssistantCommand[]>>;
+  'automation.list': IpcChannel<void, IpcResult<import('./automation-types').AutomationSnapshot>>;
+  'automation.save': IpcChannel<{ id?: string; input: import('./automation-types').AutomationInput }, IpcResult<import('./automation-types').Automation>>;
+  'automation.remove': IpcChannel<{ id: string }, IpcResult<void>>;
+  'automation.run': IpcChannel<{ id: string }, IpcResult<void>>;
   'app.compact': IpcChannel<{ enabled: boolean; todoId?: string }, IpcResult<void>>;
   'app.compactSize': IpcChannel<{ count: number }, IpcResult<void>>;
   'app.compactConfigure': IpcChannel<{ opacity?: number; alwaysOnTop?: boolean }, IpcResult<import('./compact-preferences').CompactPreferences>>;

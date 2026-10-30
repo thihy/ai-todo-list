@@ -88,6 +88,17 @@ function onAppEvent<E extends AppEvent>(
 }
 
 const api: TodoListApi = {
+  skill: {
+    list: () => invoke('skill.list', undefined),
+    install: (source) => invoke('skill.install', { source }),
+    commands: (conversationId) => invoke('ai.commands', { conversationId }),
+  },
+  automation: {
+    list: () => invoke('automation.list', undefined),
+    save: (input, id) => invoke('automation.save', { input, id }),
+    remove: (id) => invoke('automation.remove', { id }),
+    run: (id) => invoke('automation.run', { id }),
+  },
   todo: {
     list: (filter) => invoke('todo.list', { filter }),
     get: (id) => invoke('todo.get', { id }),

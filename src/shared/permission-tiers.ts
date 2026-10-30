@@ -7,6 +7,7 @@
 // src/main/dsh/dsh-runtime.ts registerDomainTools() — keep them in sync.
 
 export const SAFE_TOOLS: ReadonlySet<string> = new Set([
+  'automation_list',
   'todo_list',
   'todo_get',
   'todo_search',
@@ -25,6 +26,7 @@ export const SAFE_TOOLS: ReadonlySet<string> = new Set([
 ]);
 
 export const NOTIFY_UNDO_TOOLS: ReadonlySet<string> = new Set([
+  'automation_save',
   'todo_create',
   'todo_update',
   'content_writeBody',
@@ -36,6 +38,8 @@ export const NOTIFY_UNDO_TOOLS: ReadonlySet<string> = new Set([
 ]);
 
 export const DESTRUCTIVE_TOOLS: ReadonlySet<string> = new Set([
+  'automation_remove',
+  'skill_install',
   'todo_delete',
   'drawing_delete',
   'content_restoreVersion',

@@ -725,7 +725,7 @@ function toInputs(
 }
 
 const FileAccessPane: React.FC<PaneProps> = ({ data, patch }) => {
-  const [mode, setMode] = useState(data.externalFileAccess ?? 'deny');
+  const [mode, setMode] = useState(data.externalFileAccess ?? 'ask');
   const [reads, setReads] = useState((data.externalReadDirs ?? []).join('\n'));
   const [skills, setSkills] = useState((data.skillDirs ?? []).join('\n'));
   const [busy, setBusy] = useState(false);

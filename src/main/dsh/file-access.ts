@@ -8,6 +8,7 @@ export interface FileAccessSettings {
 }
 
 export const standardSkillRoot = (): string => join(homedir(), '.agents', 'skills');
+export const globalSkillRoots = (): string[] => [standardSkillRoot(), join(process.env.CODEX_HOME || join(homedir(), '.codex'), 'skills'), join(homedir(), '.claude', 'skills'), join(process.env.DSH_HOME || join(homedir(), '.dsh'), 'skills')];
 
 /** Validate before persisting: relative paths must never silently grant cwd. */
 export function directoryList(value: unknown): string[] {

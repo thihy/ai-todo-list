@@ -18,11 +18,11 @@ test('compact mode stays small and on top, completes real tasks and returns to d
       }
       return ids;
     });
-    await expect(handle.win.getByRole('button', { name: '精简悬浮模式' })).toBeVisible();
+    await expect(handle.win.getByRole('button', { name: '精简悬浮模式' })).toHaveCount(0);
     const guide = handle.win.getByRole('dialog', { name: '今日待办', exact: true });
     if (await guide.isVisible()) await guide.getByRole('button', { name: '关闭', exact: true }).click();
     const created = handle.app.waitForEvent('window');
-    await handle.win.getByRole('button', { name: '精简悬浮模式' }).click();
+    await handle.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find((w) => !w.webContents.getURL().endsWith('#/compact'))!.minimize());
     const compact = await created;
     await expect(compact.getByRole('main', { name: '精简待办' })).toBeVisible();
     await expect(compact.locator('.compact-view__row')).toHaveCount(5);
@@ -36,6 +36,12 @@ test('compact mode stays small and on top, completes real tasks and returns to d
     expect(state.bounds.width).toBeGreaterThanOrEqual(240); expect(state.bounds.width).toBeLessThanOrEqual(256);
     expect(state.bounds.height).toBeLessThanOrEqual(190);
     expect(state.onTop).toBe(true); expect(state.resizable).toBe(true);
+    // Native taskbar restore hides the compact surface; minimizing again reuses it.
+    await handle.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find((w) => !w.webContents.getURL().endsWith('#/compact'))!.restore());
+    await expect.poll(() => handle.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().endsWith('#/compact'))!.isVisible())).toBe(false);
+    await handle.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find((w) => !w.webContents.getURL().endsWith('#/compact'))!.minimize());
+    await expect(compact.getByRole('main', { name: '精简待办' })).toBeVisible();
+    expect(await handle.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().filter((w) => w.webContents.getURL().endsWith('#/compact')).length)).toBe(1);
     await compact.getByRole('button', { name: '完成 今日最先', exact: true }).click();
     await expect(compact.locator('.compact-view__title')).not.toContainText(['今日最先']);
     await expect(compact.locator('.compact-view__row')).toHaveCount(5);
@@ -44,7 +50,7 @@ test('compact mode stays small and on top, completes real tasks and returns to d
     await compact.getByRole('button', { name: /^今日稍后/ }).click();
     await expect.poll(() => handle.win.evaluate(() => location.hash)).toBe(`#/todo/${ids[1]}`);
     // Re-entry uses the same floating window and keeps its state.
-    await handle.win.getByRole('button', { name: '精简悬浮模式' }).click();
+    await handle.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find((w) => !w.webContents.getURL().endsWith('#/compact'))!.minimize());
     await expect(compact.getByRole('main', { name: '精简待办' })).toBeVisible();
     expect(await handle.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().filter((w) => w.webContents.getURL().endsWith('#/compact')).length)).toBe(1);
     // Main-window changes also reach the floating list.

@@ -1,6 +1,6 @@
 {
   "name": "todo-list",
-  "version": "1.0.0-rc13",
+  "version": "1.0.0-rc14",
   "private": true,
   "description": "AI-native Electron TODO list with Markdown content and Excalidraw drawings, built on DeepSeek Harness (DSH)",
   "appId": "com.todolist.app",
@@ -59,6 +59,7 @@
     "@deepseek-ai/dsh-client-ui-tool": "0.1.5-rc.2",
     "@deepseek-ai/dsh-code-runtime": "0.1.5-rc.2",
     "@deepseek-ai/dsh-code-runtime-worker-thread": "0.1.5-rc.2",
+    "@deepseek-ai/dsh-command-compact": "0.1.5-rc.2",
     "@deepseek-ai/dsh-commands": "0.1.5-rc.2",
     "@deepseek-ai/dsh-compaction": "0.1.5-rc.2",
     "@deepseek-ai/dsh-compaction-basic": "0.1.5-rc.2",
@@ -121,6 +122,7 @@
     "anser": "^2.3.5",
     "better-sqlite3": "^13.0.3",
     "clsx": "2.1.1",
+    "cron-parser": "5.4.0",
     "dompurify": "^3.4.15",
     "electron-updater": "^6.8.9",
     "gray-matter": "^4.0.3",

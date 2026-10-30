@@ -1,0 +1,79 @@
+/* Compact composer chrome: actions share one baseline without permanent icon pills. */
+.aipane .aipane__composer-card {
+  border: 1px solid #e5e7eb;
+  border-radius: 22px;
+  background: #fff;
+  padding: 10px 12px 8px;
+  box-shadow: 0 2px 8px #17212c04;
+}
+.aipane .aipane__composer-card:focus-within {
+  border-color: #d0d5da;
+  box-shadow: 0 2px 12px #17212c08;
+}
+.aipane .aipane__composer-card .aipane__input {
+  padding: 4px 2px 8px;
+  min-height: 42px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.aipane .aipane__composer-card .aipane__input::placeholder { color: #9b9fa6; }
+.aipane .aipane__composer-actions { padding-top: 4px; min-height: 32px; gap: 8px; }
+.aipane .aipane__composer-tools { gap: 6px; min-width: 0; }
+.aipane .aipane__composer-card .aipane__attach-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 28px;
+  min-width: 26px;
+  min-height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: #454c52;
+  box-shadow: none;
+}
+.aipane .aipane__composer-card .aipane__attach-btn svg { width: 18px; height: 18px; }
+.aipane .aipane__composer-card .aipane__attach-btn:hover:not(:disabled) { background: #f1f2f3; color: #16191c; }
+.aipane .aipane__composer-card .aipane__attach-btn:active:not(:disabled) { background: #e7e9eb; }
+.aipane .aipane__composer-card .aipane__attach-btn:disabled { opacity: .4; }
+.aipane .aipane__composer-tools .aipane__preset-btn {
+  height: 28px;
+  min-height: 28px;
+  padding: 3px 2px;
+  gap: 5px;
+  border: 0;
+  background: transparent;
+  font-size: 12px;
+  color: #626970;
+}
+.aipane .aipane__composer-tools .aipane__preset-btn--danger { color: #df612c; }
+.aipane .aipane__composer-tools .aipane__preset-btn--danger:hover:not(:disabled) { background: #fff3ec; }
+.aipane .aipane__composer-card .aipane__send,
+.aipane .aipane__composer-card .aipane__stop {
+  width: 29px;
+  height: 29px;
+  min-width: 29px;
+  min-height: 29px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: #17191b;
+  color: #fff;
+  box-shadow: none;
+}
+.aipane .aipane__composer-card .aipane__send:hover:not(:disabled),
+.aipane .aipane__composer-card .aipane__stop:hover { background: #363b40; }
+.aipane .aipane__composer-card .aipane__send:disabled { opacity: 1; background: #c8cbd0; color: #fff; }
+.aipane .aipane__composer-tools button:focus-visible { outline: 2px solid #667580; outline-offset: 3px; }
+.composer-add-menu { position: absolute; bottom: calc(100% - 3px); left: 12px; right: 12px; z-index: 35; max-height: min(340px, 50vh); overflow-y: auto; overscroll-behavior: contain; padding: 7px; border: 1px solid #e4e6e9; border-radius: 15px; background: #fff; box-shadow: 0 8px 28px #17212c12; }
+.composer-add-menu__group { padding: 5px 8px 3px; color: #93989e; font-size: 11px; }
+.composer-add-menu > button { display: flex; width: 100%; gap: 9px; align-items: center; min-height: 32px; padding: 7px 9px; border-radius: 7px; text-align: left; color: #52585e; }
+.composer-add-menu > button:hover, .composer-add-menu > button:focus-visible { background: #f3f4f5; outline: none; }
+.composer-add-menu > button:disabled { opacity: .4; cursor: default; }
+.composer-add-menu > button svg, .composer-add-menu__glyph { width: 16px; height: 16px; flex: 0 0 16px; }
+.composer-add-menu__glyph { display: inline-flex; align-items: center; justify-content: center; font-size: 18px; }
+.composer-add-menu > button strong { flex: 0 1 auto; font-weight: 400; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 40%; }
+.composer-add-menu > button > span:last-child { min-width: 0; flex: 1; color: #93989e; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.composer-add-menu > p { padding: 4px 8px; font-size: 11px; color: #889098; }

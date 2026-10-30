@@ -77,7 +77,11 @@ export const AssistantTurnContent: React.FC<{
       )}
       {status === 'error' && (
         <div className="bubble bubble--error" role="alert">
-          <IconWarningOutline16 size={14} /> {error}
+          <IconWarningOutline16 size={14} /> {error?.includes('PATH_OUTSIDE_WORKSPACE') ? <div>
+            <strong>未获准读取工作区外文件</strong>
+            <p>当前文件访问设置未授权该位置。本次没有读取文件内容。如需访问，可在「设置 → AI 文件与技能」添加只读目录，或选择逐次确认。</p>
+            <details><summary>技术详情</summary><pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{error}</pre></details>
+          </div> : error}
         </div>
       )}
     </>

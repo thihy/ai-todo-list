@@ -10,8 +10,18 @@ export class CompactWindowController {
   private preferences: CompactPreferences;
   private saveTimer: ReturnType<typeof setTimeout> | undefined;
   private count = 5;
+  private requested = false;
+  private onMinimize = (): void => { this.show(); };
+  private onMainVisible = (): void => {
+    if (this.main.isMinimized()) return;
+    this.requested = false;
+    this.window?.hide();
+  };
   constructor(private main: BrowserWindow, private settings: SettingsStore) {
     this.preferences = normaliseCompactPreferences(settings.get().compactWindow);
+    main.on('minimize', this.onMinimize);
+    main.on('restore', this.onMainVisible);
+    main.on('show', this.onMainVisible);
   }
   private persist(): void {
     if (this.window && !this.window.isDestroyed()) this.preferences.bounds = this.window.getBounds();
@@ -48,6 +58,10 @@ export class CompactWindowController {
     ]).popup({ window: this.window });
   }
   show(): void {
+    if (this.destroying || this.main.isDestroyed()) return;
+    // Keep the main window in the taskbar. Native restore also dismisses compact mode.
+    if (!this.main.isMinimized()) { this.main.minimize(); return; }
+    this.requested = true;
     if (!this.window || this.window.isDestroyed()) {
       const area = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea;
       const window = new BrowserWindow({
@@ -71,7 +85,7 @@ export class CompactWindowController {
       window.on('move', this.scheduleSave);
       window.setMenu(null);
       window.once('ready-to-show', () => {
-        if (!window.isDestroyed() && this.window === window) { window.show(); this.main.hide(); }
+        if (!this.destroying && this.requested && !window.isDestroyed() && this.window === window && this.main.isMinimized()) window.showInactive();
       });
       window.on('close', (event) => {
         if (!this.destroying) { event.preventDefault(); this.restore(); }
@@ -85,10 +99,11 @@ export class CompactWindowController {
       const area = screen.getDisplayMatching(bounds).workArea;
       window.setPosition(Math.max(area.x, Math.min(bounds.x, area.x + area.width - bounds.width)),
         Math.max(area.y, Math.min(bounds.y, area.y + area.height - bounds.height)));
-      window.show(); window.focus(); this.main.hide();
+      if (!window.webContents.isLoading()) window.showInactive();
     }
   }
   restore(todoId?: string): void {
+    this.requested = false;
     this.window?.hide();
     if (this.main.isMinimized()) this.main.restore();
     this.main.show(); this.main.focus();
@@ -101,9 +116,13 @@ export class CompactWindowController {
     }
   }
   destroy(): void {
+    this.destroying = true;
+    this.requested = false;
+    this.main.removeListener('minimize', this.onMinimize);
+    this.main.removeListener('restore', this.onMainVisible);
+    this.main.removeListener('show', this.onMainVisible);
     clearTimeout(this.saveTimer);
     this.persist();
-    this.destroying = true;
     this.window?.destroy();
     this.window = null;
   }

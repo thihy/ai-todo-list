@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
-import { handlePreExecute } from '../../src/main/dsh/dsh-runtime';
+import { handlePreExecute, manualReviewOnClassifierFailure } from '../../src/main/dsh/dsh-runtime';
 import { directoryList, validateFileAccessPatch } from '../../src/main/dsh/file-access';
 import { isWithinWorkspace } from '../../src/main/dsh/path-guard';
 
@@ -24,8 +24,18 @@ async function gate(preset: string, path: string, options = {}, name = 'read') {
 }
 
 describe('external file access', () => {
-  it('keeps restricted and Auto reads denied by default', async () => {
-    for (const preset of ['auto', 'read-only']) expect((await gate(preset, secret)).result.kind).toBe('deny');
+  it('falls back to exact manual approval on Auto classifier outages, preserving real denials', () => {
+    expect(manualReviewOnClassifierFailure({ kind: 'deny', reason: '[auto-mode classifier unavailable; action denied] Invalid JSON' }).kind).toBe('ask');
+    const denied = { kind: 'deny' as const, reason: 'credential exfiltration forbidden' };
+    expect(manualReviewOnClassifierFailure(denied)).toBe(denied);
+    const allowed = { kind: 'allow' as const };
+    expect(manualReviewOnClassifierFailure(allowed)).toBe(allowed);
+  });
+  it('asks by default and honors an explicitly disabled external access policy', async () => {
+    for (const preset of ['auto', 'read-only']) {
+      expect((await gate(preset, secret)).result.kind).toBe('ask');
+      expect((await gate(preset, secret, { externalFileAccess: 'deny' })).result.kind).toBe('deny');
+    }
   });
   it('honors full access for reads and commands', async () => {
     for (const tool of ['read', 'read_image', 'grep', 'glob', 'write', 'edit', 'pwsh', 'bash']) {
@@ -45,11 +55,11 @@ describe('external file access', () => {
     }
   });
   it('does not reinterpret workspace-relative paths against whitelist roots', async () => {
-    expect((await gate('auto', '../secret/file.md', { externalReadDirs: [allowed] })).result.kind).toBe('deny');
+    expect((await gate('auto', '../secret/file.md', { externalReadDirs: [allowed] })).result.kind).toBe('ask');
   });
   it('allows skill resources without authorizing unrelated directories', async () => {
     expect((await gate('read-only', join(allowed, 'references', 'guide.md'), { skillDirs: [allowed] })).next).toHaveBeenCalledOnce();
-    expect((await gate('read-only', secret, { skillDirs: [allowed] })).result.kind).toBe('deny');
+    expect((await gate('read-only', secret, { skillDirs: [allowed] })).result.kind).toBe('ask');
   });
   it('asks for Auto shell commands when external confirmation is enabled', async () => {
     expect((await gate('auto', secret, { externalFileAccess: 'ask' }, 'pwsh')).result.kind).toBe('ask');

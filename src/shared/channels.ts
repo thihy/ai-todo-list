@@ -26,6 +26,13 @@ import type { IpcChannelName, IpcRegistry, IpcRequest, IpcResponse } from './ipc
  *  `IpcRegistryKeysExhaustive` type assertion at the bottom of this
  *  file errors at compile time if you forget. */
 const RUNTIME_CHANNEL_KEYS = [
+  'skill.list',
+  'skill.install',
+  'ai.commands',
+  'automation.list',
+  'automation.save',
+  'automation.remove',
+  'automation.run',
   'todo.list',
   'todo.get',
   'todo.create',

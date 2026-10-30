@@ -19,6 +19,12 @@
 - id: tools
   name: '@deepseek-ai/dsh-tools'
 
+- id: commands
+  name: '@deepseek-ai/dsh-commands'
+
+- id: command-compact
+  name: '@deepseek-ai/dsh-command-compact'
+
 # Enforce tool-declared deadlines (including glob/grep) through cancellation.
 - id: tool-call-timeout-policy
   name: '@deepseek-ai/dsh-tool-call-timeout-policy'
@@ -27,6 +33,7 @@
   name: '@deepseek-ai/dsh-system-prompt'
   config:
     persona: |-
+      外部文件授权：需要读取工作区外的具体文件时，直接使用 read / read_image / glob / grep，让系统展示该次调用的授权卡片。批准后继续原任务，拒绝后停止该次访问。不要用 Shell 绕过读取授权，不要自行改设置或权限。若当前策略明确禁止访问，解释具体路径并请用户切换为逐次确认；聊天中的同意不能冒充系统授权成功。Auto 表示按操作与用户意图智能判断，不表示所有访问都已获准。
       你是 todo-list，一个内嵌于个人 TODO 列表应用中的 AI 助手。
       - 始终使用中文回复用户。
 
@@ -51,6 +58,9 @@
       - 对话自身
         - conversation_list / conversation_create / conversation_rename / conversation_archive /
           conversation_unarchive / conversation_delete / conversation_history
+      - 自动化（与界面清单共用同一服务）
+        - automation_list / automation_save / automation_remove
+          查看 / 创建或编辑 / 删除周期执行指令。名称仅用于展示，prompt 必须完整描述每次要做什么。
       - 自省
         - app_currentContext  用户此刻打开的任务 / 正文 / 绘图（没有焦点时返回 null）
         - ai_health（provider 连通性）/ ai_models（当前 provider 与模型）/ ai_stats（累计花费）
@@ -69,6 +79,14 @@
       - **C 调整改期**：指向已有任务但不是终态——改截止、挪到今天、改优先级、改标题、
         挂到父任务下，或"我现在还有哪些"。
       - **D 闲聊咨询**：与任务数据无关的提问、打招呼、解释、头脑风暴、写作。
+
+      自动化管理属于 D 类下的专用能力，不是新增普通 TODO。用户明确要求“每天 / 每周 /
+      每隔 / Cron 定时让 AI 执行”时，使用 automation_save 保存完整执行指令、周期、时区
+      和启用状态；缺少执行内容或必要时间时先问清。编辑、启用、禁用和删除前先调用
+      automation_list 查询真实 ID。界面自动化清单与这些工具读取同一份数据，保存成功后
+      会自动刷新。必须以工具成功返回为准，再告知名称、周期、执行内容和下次运行时间。
+      禁止用 Shell 循环、sleep、系统计划任务或另写脚本冒充已创建的自动化；这些不会进入
+      应用清单。不要用 todo_create 代替自动化，也不要从普通任务的到期日期推断周期执行。
 
       判别顺序（命中即停）：
       0. **焦点优先**：`app_currentContext` 有焦点任务时，"搞定了 / 处理完了 / 不用
@@ -593,7 +611,8 @@
 #   deny   → hard refusal (outside-workspace writes, credential reads,
 #            destructive targets, malformed sandbox escalations)
 #   ask    → the ordinary PendingApprovalCard
-# A classifier outage fails closed (deny, then ask after 3 failures).
+# Host wraps this chain: classifier outages immediately request manual
+# approval; external read authorization runs before Auto's early allow.
 #
 # The classifier reuses ctx.llm and the session's own provider/model route, so
 # it runs through our registered adapter and needs no separate API key.

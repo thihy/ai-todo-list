@@ -5,11 +5,16 @@ Keep actionable tasks visible in a small desktop window while users work in othe
 ## ADDED Requirements
 
 ### Requirement: Compact floating task surface
-The app SHALL offer a draggable always-on-top compact window from the title bar and tray, displaying at most five active tasks. It SHALL place local-today tasks first, then sort by ascending due date with undated tasks last and recent updates as a tie-breaker. Done, cancelled, archived and deleted tasks SHALL be excluded.
+The app SHALL automatically show a draggable always-on-top compact window when the main window is minimized, displaying at most five active tasks, without a title-bar compact button or stealing focus. The main window SHALL remain available in the taskbar; restoring it SHALL hide the compact window. The tray shortcut remains available. It SHALL place local-today tasks first, then sort by ascending due date with undated tasks last and recent updates as a tie-breaker. Done, cancelled, archived and deleted tasks SHALL be excluded.
 
 #### Scenario: Mixed task list
 - **WHEN** compact mode opens with more than five eligible tasks
 - **THEN** only the first five in the defined order appear in a window with 240px content width, no wider than 256 pixels including native borders, and at most 190 pixels tall; fewer tasks reduce its height
+
+#### Scenario: Minimize and restore
+- **WHEN** the main window is minimized and later restored from the taskbar
+- **THEN** compact mode automatically appears and then hides, reusing one window on repeated minimization
+- **AND** restoring the main window before compact content is ready SHALL NOT allow a delayed compact window to appear
 
 ### Requirement: Shared actions and window lifecycle
 Compact mode SHALL use the existing task API to complete tasks and SHALL refresh on task changes. Users SHALL be able to restore the main window or open a task's details. Closing compact mode SHALL restore the main window. Repeated entry SHALL reuse a single window.

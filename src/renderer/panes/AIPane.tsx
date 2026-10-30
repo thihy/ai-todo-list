@@ -54,6 +54,7 @@ import {
   Button,
 } from '@deepseek-ai/dsh-client-ui-primitives';
 import { IconHistory, IconCollapseBar } from '../components/icons';
+import { AssistantCapabilities } from '../components/AssistantCapabilities';
 import type {
   UserQuestionRequest,
   UserQuestionAnswerItem,
@@ -170,18 +171,6 @@ interface HistoryTurnLike {
   argsKnown?: boolean;
 }
 
-/** 把首位的 `/` 当成"系统命令前缀"剥掉。本应用没有 slash command,但用户
- *  习惯从 Claude Code / 其它客户端带过来——打字输入 `/help` 时,期望的
- *  行为是"help 这条消息发给 AI",而不是把 `/help` 当字面字符串传过去,
- *  否则模型会困惑(以为是未实现的命令)。
- *
- *  规则:
- *    - 仅剥离**首个**字符 `/`,避免误伤 URL(`https://...`)和带转义的路径
- *    - 紧随 `/` 的 0~1 个 ASCII 空格一并吃掉,符合 `/help` / `/ help` 两种常见输入
- *    - 中段 / 末段的 `/` 不动(那是合法文本)
- *    - 空字符串 / 不以 `/` 开头 → 原样返回
- *  纯函数,无副作用。runSubmit 在主路径之外再调一次兜底(capture /
- *  externalSubmit 等不走 textarea onChange 的路径)。 */
 /** 附件块 header —— 告诉 AI 怎么把这个文件读进来。
  *
  *  必须写死读法，因为模型默认会调 `read`，而 DSH 的 `read` 碰到二进制直接
@@ -276,12 +265,6 @@ function extensionForMime(mime: string): string {
   }
 }
 
-export function stripLeadingSlashCommand(text: string): string {
-  if (!text) return text;
-  if (text[0] !== '/') return text;
-  // 仅剥首位的 `/` + 紧随的 0~1 个 ASCII 空格
-  return text.slice(1).replace(/^ /, '');
-}
 
 /** Active HITL request — at most one of each kind visible at a time. */
 interface ActiveQuestion {
@@ -352,14 +335,9 @@ export const AIPane: React.FC<{
   const [historyLoaded, setHistoryLoaded] = useState<Set<string>>(new Set());
   const [bootError, setBootError] = useState<string | null>(null);
   const [input, setInput] = useState('');
-  // 用户在输入框里以 `/` 开头会被当作"系统命令",但本应用目前**没有**任何
-  // slash command —— 输入 `/help` / `/clear` 之类实际是想跟 AI 聊。我们
-  // 在 setInput 那一层把首位的 `/` 吃掉(连同 1 个可选的紧邻空格),保证
-  // 视觉上"打什么发什么",不留尾巴。stripLeadingSlashCommand() 同步再走
-  // 一次 runSubmit 是兜底,处理 capture / externalSubmit 等不走 onChange
-  // 的路径。
+  // Preserve slash-prefixed input for native DSH command dispatch.
   const onInputChange = useCallback((value: string) => {
-    setInput(stripLeadingSlashCommand(value));
+    setInput(value);
   }, []);
   // 权限预设选择器。`effective` 是 UI 显示的当前值（用户意图优先，回退到
   // DSH 运行时真相）；`options` 来自 DSH 的 preset 表；两者都为 null/[] 时
@@ -1392,10 +1370,6 @@ export const AIPane: React.FC<{
       // multimodal model can see them — DSH's LLM adapter passes image
       // URLs through to the underlying vision-capable provider.
       prompt = override.prompt.trim();
-      // Composer 的 /command 输入已经在 onChange 阶段被归一化,这里再做
-      // 一次防御性 strip —— 走 capture / externalSubmit 等非 textarea
-      // 路径仍要保证不留尾。
-      prompt = stripLeadingSlashCommand(prompt);
       if (!prompt && override.images.length === 0) return;
       // Composer → AIPane 图片：Composer 已经在粘贴时把字节流落盘到
       // dsh_workspace/inbox/（带 convId 前缀），这里只持有元数据 +
@@ -1408,7 +1382,7 @@ export const AIPane: React.FC<{
         size: img.size,
       }));
     } else {
-      prompt = stripLeadingSlashCommand(input.trim());
+      prompt = input.trim();
       // 把归一化结果写回输入框,用户能看到 `/` 被吃掉,不是凭空消失
       if (input.trim() !== prompt) setInput(prompt);
       // 粘完立刻回车时 `attachments` 还是旧快照（importBlob 没返回），
@@ -1619,6 +1593,10 @@ export const AIPane: React.FC<{
   };
 
   const submitMessage = async (mode: 'queue' | 'steer' = 'queue', override?: ExternalAiSubmitDetail): Promise<void> => {
+    if (!override && /^\/(skills|automations)\s*$/.test(input)) {
+      window.dispatchEvent(new CustomEvent('assistant:capability', { detail: input.trim().slice(1) }));
+      setInput(''); return;
+    }
     if (admissionLockRef.current || composerBlock || showAiRetryBanner) return;
     admissionLockRef.current = true;
     const draft = input;
@@ -1628,7 +1606,7 @@ export const AIPane: React.FC<{
       const settled = override ? [] : await settlePendingPastes();
       const attached = override ? override.images : [...attachments, ...settled.filter((item) => !attachments.some((other) => other.path === item.path))];
       capturedAttachments = [...attached];
-      const prompt = stripLeadingSlashCommand((override?.prompt ?? draft).trim());
+      const prompt = (override?.prompt ?? draft).trim();
       if (!prompt && attached.length === 0) return;
       const message: QueuedMessage = { id: crypto.randomUUID(), conversationId: target ?? dispatchLockRef.current?.conversationId ?? null, prompt, attached: [...attached], intent: override?.intent };
       const active = activeStreamRef.current;
@@ -1640,7 +1618,7 @@ export const AIPane: React.FC<{
         await runSubmit({ prompt, images: attached, intent: override?.intent }, undefined, target ?? undefined);
         return;
       }
-      if (mode === 'steer' && active?.conversationId === target && !override?.intent) {
+      if (mode === 'steer' && !prompt.startsWith('/') && active?.conversationId === target && !override?.intent) {
         const wire = attached.length ? `${prompt}\n\n---\n\n${attached.map((item) => `${attachmentHeader(item)}\n${item.path}`).join('\n\n---\n\n')}` : prompt;
         const result = await window.todoList.ai.steer({ conversationId: active.conversationId, invocationId: active.invocationId, prompt: wire });
         if (!result.ok) { setQueueNotice(result.message ?? '引导失败，草稿已保留'); return; }
@@ -1741,6 +1719,63 @@ export const AIPane: React.FC<{
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [externalSubmit, streamingTurnId, activeQuestion, activeApproval, currentId, dshNotReady, aiStartup.status, pendingExternalSubmit]);
 
+  const permissionControl = <>{/* 权限预设选择器。只在 DSH 报出选项表时渲染 —— presetState
+                为 null 说明插件没挂载或 DSH 没起来，此时显示一个点了没
+                反应的控件比不显示更糟。draft（无 currentId）也渲染：用户
+                往往想先定好预设再发第一条消息，选中的值暂存在 draftPreset，
+                建行时补写。 */}
+            {presetState !== null && (
+              <div className="aipane__presets" ref={presetRef}>
+                <button
+                  type="button"
+                  className={
+                    'aipane__preset-btn'
+                    + (presetState.effective === 'danger-full-access' ? ' aipane__preset-btn--danger' : '')
+                  }
+                  onClick={() => setShowPresets((s) => !s)}
+                  disabled={presetBusy}
+                  title="AI 权限预设（沙箱模式 + 审批策略）"
+                  aria-label="AI 权限预设"
+                  aria-haspopup="listbox"
+                  aria-expanded={showPresets}
+                >
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><path d="M12 3 4 6v6c0 5 8 9 8 9s8-4 8-9V6l-8-3Z" /></svg>
+                  <span className="aipane__preset-label">
+                    {presetState.options.find((o) => o.value === presetState.effective)?.name
+                      ?? presetState.effective}
+                  </span>
+                  <IconChevronDownOutline14 size={12} />
+                </button>
+                {showPresets && (
+                  <div className="aipane__menu aipane__menu--right aipane__preset-menu" role="listbox">
+                    <div className="aipane__menu-head">
+                      <span className="aipane__menu-head-title">权限预设</span>
+                    </div>
+                    {presetState.options.map((opt) => (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        role="option"
+                        aria-selected={opt.value === presetState.effective}
+                        className={
+                          'aipane__menu-item aipane__preset-item'
+                          + (opt.value === presetState.effective ? ' is-active' : '')
+                          + (opt.value === 'danger-full-access' ? ' aipane__preset-item--danger' : '')
+                        }
+                        disabled={presetBusy}
+                        onClick={() => void selectPreset(opt.value)}
+                      >
+                        <span className="aipane__preset-item-name">{opt.name}</span>
+                        {opt.description && (
+                          <span className="aipane__preset-item-desc">{opt.description}</span>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}</>;
+
   return (
     <div className="aipane">
       {/* ===== flex Region 1 (top, flex: 0 0 auto): TITLE =====
@@ -1794,61 +1829,7 @@ export const AIPane: React.FC<{
           )}
           <div className="aipane__title-spacer" />
           <div className="aipane__actions">
-            {/* 权限预设选择器。只在 DSH 报出选项表时渲染 —— presetState
-                为 null 说明插件没挂载或 DSH 没起来，此时显示一个点了没
-                反应的控件比不显示更糟。draft（无 currentId）也渲染：用户
-                往往想先定好预设再发第一条消息，选中的值暂存在 draftPreset，
-                建行时补写。 */}
-            {presetState !== null && (
-              <div className="aipane__presets" ref={presetRef}>
-                <button
-                  type="button"
-                  className={
-                    'aipane__preset-btn'
-                    + (presetState.effective === 'danger-full-access' ? ' aipane__preset-btn--danger' : '')
-                  }
-                  onClick={() => setShowPresets((s) => !s)}
-                  disabled={presetBusy}
-                  title="AI 权限预设（沙箱模式 + 审批策略）"
-                  aria-label="AI 权限预设"
-                  aria-haspopup="listbox"
-                  aria-expanded={showPresets}
-                >
-                  <span className="aipane__preset-label">
-                    {presetState.options.find((o) => o.value === presetState.effective)?.name
-                      ?? presetState.effective}
-                  </span>
-                  <IconChevronDownOutline14 size={12} />
-                </button>
-                {showPresets && (
-                  <div className="aipane__menu aipane__menu--right aipane__preset-menu" role="listbox">
-                    <div className="aipane__menu-head">
-                      <span className="aipane__menu-head-title">权限预设</span>
-                    </div>
-                    {presetState.options.map((opt) => (
-                      <button
-                        key={opt.value}
-                        type="button"
-                        role="option"
-                        aria-selected={opt.value === presetState.effective}
-                        className={
-                          'aipane__menu-item aipane__preset-item'
-                          + (opt.value === presetState.effective ? ' is-active' : '')
-                          + (opt.value === 'danger-full-access' ? ' aipane__preset-item--danger' : '')
-                        }
-                        disabled={presetBusy}
-                        onClick={() => void selectPreset(opt.value)}
-                      >
-                        <span className="aipane__preset-item-name">{opt.name}</span>
-                        {opt.description && (
-                          <span className="aipane__preset-item-desc">{opt.description}</span>
-                        )}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
+            <AssistantCapabilities onCompose={(prompt) => { setInput(prompt); setTimeout(() => textareaRef.current?.focus(), 0); }} />
             <button
               type="button"
               className="icon-btn aipane__new-btn"
@@ -2205,6 +2186,7 @@ export const AIPane: React.FC<{
                   screenshotBusy={screenshotBusy}
                   onSubmit={() => void submitMessage()}
                   onSteer={() => void submitMessage('steer')}
+                  permissionControl={permissionControl}
                   enterAction={aiSettings?.aiEnterAction ?? 'queue'}
                   onStop={() => void stop()}
                   busy={busy}
@@ -2314,6 +2296,7 @@ export const AIPane: React.FC<{
           screenshotBusy={screenshotBusy}
           onSubmit={() => void submitMessage()}
           onSteer={() => void submitMessage('steer')}
+          permissionControl={permissionControl}
           enterAction={aiSettings?.aiEnterAction ?? 'queue'}
           onStop={() => void stop()}
           busy={busy}

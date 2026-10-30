@@ -3,6 +3,9 @@
 import { app, BrowserWindow, shell, protocol, net, Menu, dialog } from 'electron';
 import { join } from 'node:path';
 import { CompactWindowController } from './compact-window';
+import { registerAutomations } from './automation/service';
+import { globalSkillRoots } from './dsh/file-access';
+import { registerSkillHandlers } from './skills/service';
 import { mkdirSync, readFileSync, statSync, readdirSync } from 'node:fs';
 import { cpSync } from 'node:fs';
 import { basename, extname } from 'node:path';
@@ -283,6 +286,9 @@ function bootstrap(): void {
     const { TaskDirectoryStore } = await import('./files/task-directories');
     const taskDirectories = new TaskDirectoryStore(handle.db, todosDir);
     const conversations = new ConversationRepo(handle.db);
+    const stopAutomations = registerAutomations(rootDir, conversations);
+    registerSkillHandlers();
+    app.on('before-quit', stopAutomations);
 
     // Post-migration catalog backfill. Two idempotent steps:
     //   1. Task-applied names (every distinct tag in the `tags` association
@@ -453,7 +459,7 @@ function bootstrap(): void {
     // 在 import DSH container 之前 set；mkdirSync 已在 data-dir 阶段完成。
     process.env['DSH_WORKSPACE_ROOT'] = dshWorkspaceDir;
     process.env['DSH_AGENTS_HOME'] = join(homedir(), '.agents');
-    process.env['DSH_CUSTOM_SKILL_DIRS'] = JSON.stringify(settings.get().skillDirs);
+    process.env['DSH_CUSTOM_SKILL_DIRS'] = JSON.stringify([...globalSkillRoots().slice(1), ...settings.get().skillDirs]);
     // 附件库同理：cordis.yml 把 dshHome 读成 `process.env.DSH_ATTACHMENT_HOME`。
     // 不设的话 dsh-attachment-local 会 fall back 到 `~/.dsh`，把桌面应用的
     // 持久化数据写进用户家目录。

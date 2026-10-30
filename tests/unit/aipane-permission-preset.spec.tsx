@@ -45,9 +45,9 @@ vi.mock('../../src/renderer/components/icons', () => ({ IconHistory: () => null,
 vi.mock('../../src/renderer/components/Composer', () => ({ AI_SUBMIT_EVENT: 'test:submit' }));
 vi.mock('../../src/renderer/dsh/AIComposer', async () => {
   const react = await import('react');
-  return { AIComposer: react.forwardRef((props: NonNullable<typeof harness.composer>, _ref) => {
+  return { AIComposer: react.forwardRef((props: NonNullable<typeof harness.composer> & { permissionControl?: React.ReactNode }, _ref) => {
     harness.composer = props;
-    return null;
+    return <div className="aipane__composer">{props.permissionControl}</div>;
   }) };
 });
 vi.mock('../../src/renderer/dsh/PendingQuestionCard', () => ({ PendingQuestionCard: () => null }));
@@ -152,10 +152,12 @@ afterEach(async () => {
 });
 
 describe('AIPane 权限预设选择器', () => {
-  it('DSH 报出选项表时渲染在标题栏，显示当前预设名', async () => {
+  it('DSH 报出选项表时渲染在输入框工具栏，显示当前预设名', async () => {
     await mount();
     const btn = presetButton();
     expect(btn).not.toBeNull();
+    expect(btn!.closest('.aipane__composer')).not.toBeNull();
+    expect(container.querySelector('.aipane__title [aria-label="AI 权限预设"]')).toBeNull();
     // 显示的是 name 而不是 raw value
     expect(btn!.textContent).toContain('Auto');
     expect(btn!.getAttribute('aria-expanded')).toBe('false');
