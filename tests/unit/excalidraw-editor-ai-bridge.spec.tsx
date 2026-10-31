@@ -28,6 +28,7 @@ const excalMock = vi.hoisted(() => ({
   loading: false,
   mounts: 0,
   updateScene: vi.fn(),
+  liveElements: [] as unknown[],
 }));
 
 vi.mock('@excalidraw/excalidraw', async () => {
@@ -47,8 +48,8 @@ vi.mock('@excalidraw/excalidraw', async () => {
         excalMock.mounts++;
         props.excalidrawAPI?.({
           updateScene: excalMock.updateScene,
-          getSceneElements: () => [],
-          getAppState: () => ({ isLoading: excalMock.loading }),
+          getSceneElements: () => excalMock.liveElements,
+          getAppState: () => ({ isLoading: excalMock.loading, selectedElementIds: { unsaved: true }, zoom: { value: 1 } }),
           scrollToContent: () => undefined,
         });
       }, []);
@@ -79,6 +80,7 @@ beforeEach(() => {
   excalMock.loading = false;
   excalMock.mounts = 0;
   excalMock.updateScene.mockClear();
+  excalMock.liveElements = [];
   harness.listeners.clear();
   harness.canvasReady = [];
   harness.canvasGone = [];
@@ -87,6 +89,7 @@ beforeEach(() => {
   harness.saves = [];
   (globalThis as unknown as { window: Record<string, unknown> }).window.todoList = {
     drawing: {
+      contextResult: vi.fn().mockResolvedValue({ ok: true }),
       read: vi.fn(() => Promise.resolve({ ok: true, data: harness.scene })),
       save: vi.fn((_id: string, _s: unknown, drawingId?: string) => {
         harness.saves.push({ drawingId: drawingId ?? '', count: harness.saves.length });
@@ -151,6 +154,22 @@ describe('ExcalidrawEditor —— 画布握手', () => {
   it('挂载后上报 canvasReady', async () => {
     await mountEditor('d1');
     expect(harness.canvasReady).toContain('d1');
+  });
+
+  it('answers live context requests from the mounted engine rather than stored scene data', async () => {
+    excalMock.liveElements = [{ id: 'unsaved', text: '实时文字', version: 3 }];
+    await mountEditor('d1');
+    await act(async () => {
+      harness.listeners.get('app:drawing-context')!({ drawingId: 'd1', opId: 'context-1' });
+      await new Promise(resolve => setTimeout(resolve, 10));
+    });
+    expect(window.todoList.drawing.contextResult).toHaveBeenCalledWith(expect.objectContaining({
+      drawingId: 'd1', opId: 'context-1', ok: true,
+      context: expect.objectContaining({ elements: excalMock.liveElements, selectedElementIds: ['unsaved'], revision: expect.any(String) }),
+    }));
+    expect(harness.saves).toHaveLength(0);
+    await act(async () => { harness.listeners.get('app:drawing-context')!({ drawingId: 'another', opId: 'context-2' }); });
+    expect(window.todoList.drawing.contextResult).toHaveBeenCalledTimes(1);
   });
 
   it('已有场景格式损坏时显示错误，不挂载卡住的画布', async () => {

@@ -64,6 +64,7 @@ const APP_EVENTS: AppEvent[] = [
   // 官方 convertToExcalidrawElements 转换后 updateScene 应用。
   'app:drawing-apply',
   'app:drawing-export',
+  'app:drawing-context',
   'ai:stream',
   'ai:permission-request',
   // L4-G: human-in-the-loop events. The main-process waterfall listener
@@ -144,6 +145,7 @@ const api: TodoListApi = {
   drawing: {
     export: (id) => invoke('drawing.export', { id }),
     exported: (payload) => invoke('drawing.exported', payload),
+    contextResult: (payload) => invoke('drawing.contextResult', payload),
     list: (todoId) => invoke('drawing.list', { todoId }),
     read: (id) => invoke('drawing.read', { id }),
     save: (todoId, scene, id, title) =>

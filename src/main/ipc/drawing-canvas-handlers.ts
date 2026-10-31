@@ -7,7 +7,7 @@
 //   - 真正的 Excalidraw 转换在渲染进程 —— @excalidraw/excalidraw 的运行时
 //     入口是浏览器 bundle，main 侧 import 会直接失败（roughjs 解析不了）。
 
-import { BrowserWindow } from 'electron';
+import { BrowserWindow, webContents } from 'electron';
 import { register, okResult, failResult } from './router';
 import { logger } from '../logger';
 import { DrawingCanvasHost } from '../drawing/canvas-host';
@@ -30,6 +30,11 @@ export function getDrawingCanvasHost(): DrawingCanvasHost {
         broadcast('app:drawing-apply', payload);
       },
       sendExport: (payload) => broadcast('app:drawing-export', payload),
+      sendContext: (payload, ownerId) => {
+        const target = webContents.fromId(ownerId);
+        if (!target || target.isDestroyed()) throw new Error('实时画布渲染进程不可用');
+        target.send('app:drawing-context', payload);
+      },
       // 复用既有的独立绘图路由（App.tsx 的 'todo-drawing' 分支直接挂载
       // ExcalidrawEditor）。走独立路由而不是 DocumentsView 的 tab，是因为
       // 后者的选中 tab 状态在 App 里托管着，从 main 推一个「选中某个绘图
@@ -45,23 +50,24 @@ export function getDrawingCanvasHost(): DrawingCanvasHost {
 
 export function registerDrawingCanvasHandlers(): void {
   const h = getDrawingCanvasHost();
+  register('drawing.contextResult', (event, req) => { h.contextResult(req, event.sender.id); return okResult(undefined); });
   register('drawing.exported', (_e, req) => {
     h.exported(req);
     return Promise.resolve(okResult(undefined as never));
   });
 
-  register('drawing.canvasReady', (_e, req) => {
+  register('drawing.canvasReady', (event, req) => {
     try {
-      h.canvasReady({ drawingId: req.drawingId });
+      h.canvasReady({ drawingId: req.drawingId }, event.sender.id);
       return Promise.resolve(okResult(undefined as never));
     } catch (err) {
       return Promise.resolve(failResult('canvas_ready_failed', (err as Error).message));
     }
   });
 
-  register('drawing.canvasGone', (_e, req) => {
+  register('drawing.canvasGone', (event, req) => {
     try {
-      h.canvasGone(req.drawingId);
+      h.canvasGone(req.drawingId, event.sender.id);
       return Promise.resolve(okResult(undefined as never));
     } catch (err) {
       return Promise.resolve(failResult('canvas_gone_failed', (err as Error).message));

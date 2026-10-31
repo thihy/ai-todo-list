@@ -58,6 +58,7 @@ export type AppEvent =
   | 'app:tags-changed'
   | 'app:drawing-apply'
   | 'app:drawing-export'
+  | 'app:drawing-context'
   | 'ai:stream'
   | 'ai:permission-request'
   // L4-G: human-in-the-loop bridges for DSH user-questions + user-approval.
@@ -83,6 +84,7 @@ export type AppEvent =
 export type DataScope = 'todos' | 'content' | 'drawings' | 'conversations' | 'tags' | 'automations';
 
 export interface AppEventMap {
+  'app:drawing-context': import('./drawing-engine').DrawingContextRequest;
   'app:compact-interaction': { active: boolean; opacity: number; titleHovered: boolean };
   'app:todo-created': { id: string };
   'app:navigate': { route: string };
@@ -302,6 +304,7 @@ export interface TodoListApi {
      *  的 ok 依赖这个回执。 */
     applied(payload: DrawingAppliedPayload): Promise<IpcResponse<'drawing.applied'>>;
     exported(payload: DrawingExportResult): Promise<IpcResponse<'drawing.exported'>>;
+    contextResult(payload: import('./drawing-engine').DrawingContextResult): Promise<IpcResponse<'drawing.contextResult'>>;
     export(id: string): Promise<IpcResponse<'drawing.export'>>;
   };
   link: {

@@ -13,6 +13,7 @@ import { useDrawing } from '../hooks/useTodoListApi';
 import { useToastBus } from './Toast';
 import { useAppEvent } from '../hooks/useTodoListApi';
 import { applySkeletonBatch, type MinimalExcalidrawApi, type SceneSaver } from '../drawing/apply';
+import { readLiveDrawingContext } from '../drawing/live-context';
 import { CaptureUpdateAction } from '@excalidraw/excalidraw';
 import { drawingDocumentState } from '../drawing/scene-state';
 import { exportDrawingPng } from '../drawing/export';
@@ -142,6 +143,20 @@ export const ExcalidrawEditor: React.FC<{
       } catch (cause) {
         await window.todoList.drawing.exported({ ...payload, ok: false,
           error: cause instanceof Error ? cause.message : String(cause) });
+      }
+    })();
+  });
+
+  useAppEvent('app:drawing-context', payload => {
+    if (payload.drawingId !== drawingId) return;
+    const api = apiRef.current;
+    void (async () => {
+      try {
+        if (!api) throw new Error('画布尚未就绪');
+        const context = await readLiveDrawingContext(api, drawingId);
+        await window.todoList.drawing.contextResult({ ...payload, ok: true, context });
+      } catch (cause) {
+        await window.todoList.drawing.contextResult({ ...payload, ok: false, error: cause instanceof Error ? cause.message : String(cause) });
       }
     })();
   });

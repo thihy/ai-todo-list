@@ -631,6 +631,7 @@ export interface IpcRegistry {
   'drawing.canvasGone': IpcChannel<DrawingCanvasGoneReq, IpcResult<void>>;
   'drawing.applied': IpcChannel<DrawingAppliedReq, IpcResult<void>>;
   'drawing.exported': IpcChannel<DrawingExportResult, IpcResult<void>>;
+  'drawing.contextResult': IpcChannel<import('./drawing-engine').DrawingContextResult, IpcResult<void>>;
   'drawing.export': IpcChannel<DrawingReadReq, IpcResult<DrawingExportResult>>;
 
   'inbox.attach': IpcChannel<InboxAttachReq, IpcResult<InboxAttachment>>;

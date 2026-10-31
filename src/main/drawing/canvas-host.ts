@@ -16,6 +16,7 @@
 //   渲染进程卸载画布 → canvasGone(drawingId) → 从 live set 移除
 
 import { randomUUID } from 'node:crypto';
+import type { DrawingContextRequest, DrawingContextResult } from '../../shared/drawing-engine';
 import type {
   DrawingApplyPayload,
   DrawingAppliedPayload,
@@ -33,6 +34,7 @@ export type NavigateToDrawing = (todoId: string, drawingId: string) => void;
 export interface DrawingCanvasHostOptions {
   send: ApplySender;
   sendExport?: (payload: DrawingExportPayload) => void;
+  sendContext?: (payload: DrawingContextRequest, ownerId: number) => void;
   navigate: NavigateToDrawing;
   /** 画布从「未就绪」到「就绪」的最长等待，默认 6s。
    *  覆盖的是「打开 tab → React 挂载 → 动态 import excalidraw → 拿到 API」
@@ -54,13 +56,16 @@ export interface ApplyOutcome {
 
 export class DrawingCanvasHost {
   private readonly live = new Set<string>();
+  private readonly owners = new Map<string, Set<number>>();
+  private readonly contextRequests = new Map<string, { drawingId: string; ownerId: number; settle: (result: DrawingContextResult) => void }>();
   private readonly waiters = new Map<string, Array<() => void>>();
   private readonly inflight = new Map<
     string,
     (payload: DrawingAppliedPayload) => void
   >();
   private readonly exports = new Map<string, { drawingId: string; settle: (result: DrawingExportResult) => void }>();
-  private readonly opts: Required<Omit<DrawingCanvasHostOptions, 'log' | 'sendExport'>> & {
+  private readonly opts: Required<Omit<DrawingCanvasHostOptions, 'log' | 'sendExport' | 'sendContext'>> & {
+    sendContext?: DrawingCanvasHostOptions['sendContext'];
     sendExport?: DrawingCanvasHostOptions['sendExport'];
     log: (msg: string) => void;
   };
@@ -69,6 +74,7 @@ export class DrawingCanvasHost {
     this.opts = {
       send: options.send,
       sendExport: options.sendExport,
+      sendContext: options.sendContext,
       navigate: options.navigate,
       readyTimeoutMs: options.readyTimeoutMs ?? 6_000,
       ackTimeoutMs: options.ackTimeoutMs ?? 6_000,
@@ -83,6 +89,30 @@ export class DrawingCanvasHost {
 
   isLive(drawingId: string): boolean {
     return this.live.has(drawingId);
+  }
+
+  contextResult(result: DrawingContextResult, ownerId: number): void {
+    const pending = this.contextRequests.get(result.opId);
+    if (!pending || pending.drawingId !== result.drawingId || pending.ownerId !== ownerId) return;
+    this.contextRequests.delete(result.opId); pending.settle(result);
+  }
+
+  async readContext(todoId: string, drawingId: string): Promise<DrawingContextResult> {
+    const opId = randomUUID();
+    const failure = (error: string): DrawingContextResult => ({ drawingId, opId, ok: false, error });
+    if (!this.opts.sendContext) return failure('实时画布查询未连接');
+    if (!this.isLive(drawingId)) {
+      const ready = this.waitForReady(drawingId); this.opts.navigate(todoId, drawingId);
+      if (!await ready) return failure('打开实时画布超时');
+    }
+    const ownerId = [...(this.owners.get(drawingId) ?? [])].at(-1);
+    if (ownerId === undefined) return failure('画布没有可用的渲染进程');
+    return new Promise(resolve => {
+      const timer = setTimeout(() => { this.contextRequests.delete(opId); resolve(failure('实时画布查询超时')); }, this.opts.ackTimeoutMs);
+      this.contextRequests.set(opId, { drawingId, ownerId, settle: result => { clearTimeout(timer); resolve(result); } });
+      try { this.opts.sendContext!({ drawingId, opId }, ownerId); }
+      catch (cause) { clearTimeout(timer); this.contextRequests.delete(opId); resolve(failure(cause instanceof Error ? cause.message : String(cause))); }
+    });
   }
 
   exported(result: DrawingExportResult): void {
@@ -117,8 +147,12 @@ export class DrawingCanvasHost {
   }
 
   /** 渲染进程报告画布就绪。 */
-  canvasReady(payload: DrawingCanvasReadyPayload): void {
+  canvasReady(payload: DrawingCanvasReadyPayload, ownerId?: number): void {
     const { drawingId } = payload;
+    if (ownerId !== undefined) {
+      const owners = this.owners.get(drawingId) ?? new Set<number>();
+      owners.delete(ownerId); owners.add(ownerId); this.owners.set(drawingId, owners);
+    }
     this.live.add(drawingId);
     this.opts.log(`drawing canvas ready: ${drawingId} (live=${this.live.size})`);
     // 唤醒所有等这张画布的请求 —— 可能有多个工具调用在排队。
@@ -130,7 +164,13 @@ export class DrawingCanvasHost {
   }
 
   /** 渲染进程报告画布卸载。 */
-  canvasGone(drawingId: string): void {
+  canvasGone(drawingId: string, ownerId?: number): void {
+    if (ownerId !== undefined) {
+      const owners = this.owners.get(drawingId);
+      owners?.delete(ownerId);
+      if (owners?.size) return;
+    }
+    this.owners.delete(drawingId);
     if (this.live.delete(drawingId)) {
       this.opts.log(`drawing canvas gone: ${drawingId} (live=${this.live.size})`);
     }

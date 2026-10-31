@@ -4,6 +4,15 @@ All notable changes to todo-list are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0-rc18] - 2026-10-31
+
+### Added
+
+- Add an internal live drawing context bridge that reads unsaved elements, selected element IDs, viewport and a scene revision from the mounted Excalidraw editor.
+- Route context requests to a single registered renderer and verify the responding renderer and drawing; report unavailable canvases and timeouts explicitly.
+
+This release provides the context-query foundation. The DSH-to-MCP drawing transport, incremental edits and revert interaction remain in development.
+
 ## [1.0.0-rc17] - 2026-10-31
 
 ### Fixed
