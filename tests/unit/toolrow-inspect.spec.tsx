@@ -46,6 +46,15 @@ beforeEach(() => {
 afterEach(() => { act(() => root.unmount()); element.remove(); });
 
 describe('ToolPayloadDialog survives React StrictMode dev double-invoke', () => {
+  it('opens missing-call diagnostics from the right-side icon without expanding the row', () => {
+    root = createRoot(element);
+    act(() => root.render(<ToolRow t={conversationT} variant="read" icon={null} title="工具调用信息缺失" summary="" state="missing-call" missingInputHint="未记录输入" diagnosticsText={'toolName: glob\ncallId: orphan-42\nargsKnown: false'} />));
+    const button = element.querySelector<HTMLButtonElement>('[aria-label="查看工具定位信息"]')!;
+    expect(button).not.toBeNull();
+    act(() => button.click());
+    expect(element.querySelector('dialog[open]')?.textContent).toContain('glob');
+    expect(element.querySelector('dialog[open]')?.textContent).toContain('orphan-42');
+  });
   it('inspect button still opens a visible dialog under StrictMode', () => {
     const text = 'not JSON\n'.repeat(200);
     root = createRoot(element);

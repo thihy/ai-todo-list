@@ -2476,6 +2476,9 @@ function registerDomainTools(
     presentationMeta: (_args: unknown, value: unknown): unknown => value,
   };
   for (const definition of assistantToolDefinitions()) reg(defineTool({ ...definition, output: jsonOutput }));
+  reg(defineTool({ name: 'todo_metadata', description: 'Replace a real task custom string KV metadata map. Query todo_get first and preserve unrelated keys. metadataJson is a JSON object of string values; {} clears all custom fields. Only record user-supplied or verified custom data, never invent task IDs.',
+    parameters: { id: { type: 'string', required: true }, metadataJson: { type: 'string', required: true } }, output: jsonOutput,
+    execute: async (args: { id: string; metadataJson: string }) => repo.update(args.id, { metadata: JSON.parse(args.metadataJson) }) }));
   reg(defineTool({ name: 'skill_list', description: 'List the actual installed native DSH skills. Use when asked which skills are available. This is discovery; do not invoke skill with the invented name skills.', parameters: {}, output: jsonOutput,
     execute: async () => {
       const registry = ctx.get('skills') as SkillRegistry | undefined;

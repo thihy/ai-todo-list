@@ -200,6 +200,7 @@ function toCardModels(
 }
 
 export const DomainToolRow: React.FC<{
+  callId?: string
   toolName: string
   args: unknown
   argsKnown: boolean
@@ -228,7 +229,7 @@ export const DomainToolRow: React.FC<{
    * `state` is provided it takes precedence.
    */
   running?: boolean | undefined
-}> = ({ toolName, args, argsKnown, result, presentationMeta, ok, state, running }) => {
+}> = ({ callId, toolName, args, argsKnown, result, resultKnown, presentationMeta, ok, state, running }) => {
   const callView = useMemo(() => presentToolCall(toolName, args), [toolName, args])
   const resultView = useMemo(
     (): ToolResultView => result == null
@@ -341,6 +342,7 @@ export const DomainToolRow: React.FC<{
       showInputWithCard={showInputWithCard}
       missingInputHint={argsKnown ? undefined : '未记录输入'}
       wireName={toolName}
+      diagnosticsText={!argsKnown ? JSON.stringify({ toolName: toolName || '未记录', callId: callId || '未记录', state: state ?? '未记录', argsKnown, resultKnown: resultKnown ?? result != null, ok, missing: ['工具调用事件 / 输入参数未记录'] }, null, 2) : undefined}
     />
   )
 }

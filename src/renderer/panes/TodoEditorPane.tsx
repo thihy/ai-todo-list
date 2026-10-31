@@ -35,6 +35,7 @@ import { TagInput } from '../components/TagInput';
 import { DatePicker } from '../components/DatePicker';
 import { StatusSelect } from '../components/StatusSelect';
 import { ProgressInline, ProgressTimeline } from '../components/ProgressView';
+import { TaskMetadataEditor } from '../components/TaskMetadataEditor';
 import TodayGlyph from '../components/TodayGlyph';
 import { todayDateKey } from '../components/PlanGuideModal';
 import { IconAttach, IconExternal, IconLink, IconPencil, IconPlus, IconTrash } from '../components/icons';
@@ -526,6 +527,7 @@ export const TodoEditorPane: React.FC<{
             Keeping the scroll root here (not on the whole pane) means the
             基本信息 popovers are never clipped by an overflow ancestor. ===== */}
       <div className="editor-pane__scroll">
+        <TaskMetadataEditor key={todo.id} todo={todo} />
         <section className="editor-pane__section">
           <h2 className="editor-pane__section-title">链接</h2>
           <LinksView todoId={todo.id} />

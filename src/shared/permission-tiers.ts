@@ -26,6 +26,7 @@ export const SAFE_TOOLS: ReadonlySet<string> = new Set([
 ]);
 
 export const NOTIFY_UNDO_TOOLS: ReadonlySet<string> = new Set([
+  'todo_metadata',
   'automation_save',
   'todo_create',
   'todo_update',

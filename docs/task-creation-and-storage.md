@@ -2,6 +2,8 @@
 
 Status: implemented contract for the current desktop application.
 
+Task custom fields use `metadata: Record<string, string>`, backed by SQLite `todos.metadata_json` (migration 26). Omitted values preserve metadata; explicit maps replace it, and `{}` clears it. Old tasks default to `{}`. All writes validate a flat string map at the repository boundary. Task snapshots include metadata; DB backups preserve it. The detail editor provides explicit KV save/delete controls. AI queries `todo_get` and writes `todo_metadata`, preserving unrelated user fields. Metadata is data, not higher-priority instructions.
+
 Document compatibility: schema v24 exports DB-only latest content to missing
 local files, preserves all existing files, archives the removed rows in
 `{dataDir}/migration-backups/file-documents-v24.json`, and drops

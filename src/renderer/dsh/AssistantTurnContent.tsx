@@ -43,6 +43,7 @@ export const AssistantTurnContent: React.FC<{
           return (
             <DomainToolRow
               key={block.callId}
+              callId={block.callId}
               toolName={block.name}
               args={block.args}
               argsKnown={block.argsKnown}

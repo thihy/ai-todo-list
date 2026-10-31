@@ -30,6 +30,7 @@ export const TODO_STATUSES: readonly TodoStatus[] = ['next', 'doing', 'done', 'c
 export const PRIORITIES: readonly Priority[] = ['very-low', 'low', 'medium', 'high', 'very-high'];
 
 export interface Todo {
+  metadata?: Record<string, string>;
   id: ULID;
   title: string;
   status: TodoStatus;
@@ -82,6 +83,7 @@ export interface Todo {
 }
 
 export interface TodoCreate {
+  metadata?: Record<string, string>;
   title: string;
   status?: TodoStatus;
   priority?: Priority;
@@ -96,6 +98,8 @@ export interface TodoCreate {
 }
 
 export interface TodoPatch {
+  /** Replaces the entire custom KV map; {} clears it. Omitted preserves it. */
+  metadata?: Record<string, string>;
   title?: string;
   status?: TodoStatus;
   priority?: Priority;

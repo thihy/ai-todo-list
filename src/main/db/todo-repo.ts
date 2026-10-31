@@ -4,6 +4,7 @@ import { readdirSync } from 'node:fs';
 import { dirname, join, basename } from 'node:path';
 import type Database from 'better-sqlite3';
 import { newId } from './schema';
+import { validateTaskMetadata } from '../../shared/task-metadata';
 import type {
   Priority,
   ProgressLogEntry,
@@ -51,6 +52,7 @@ interface TodoRow {
 
 function rowToTodo(row: TodoRow, tags: string[], drawingIds: string[], attachmentIds: string[]): Todo {
   return {
+    metadata: validateTaskMetadata(JSON.parse((row as TodoRow & { metadata_json?: string }).metadata_json ?? '{}')),
     id: row.id,
     title: row.title,
     status: row.status,
@@ -171,6 +173,7 @@ export class TodoRepo {
     const dueAt = input.dueAt ?? null;
     const parentId = input.parentId ?? null;
     const plannedFor = input.plannedFor ?? null;
+    const metadata = validateTaskMetadata(input.metadata ?? {});
 
     // Validate parent exists when set. We don't enforce a "depth" limit —
     // the renderer (and the user) can nest arbitrarily deep; the data model
@@ -183,10 +186,10 @@ export class TodoRepo {
     const tx = this.db.transaction(() => {
       this.db
         .prepare(
-          `INSERT INTO todos (id, title, status, priority, due_at, body_path, created_at, updated_at, parent_id, planned_for)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO todos (id, title, status, priority, due_at, body_path, created_at, updated_at, parent_id, planned_for, metadata_json)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
-        .run(id, input.title, status, priority, dueAt, bodyPath, now, now, parentId, plannedFor);
+        .run(id, input.title, status, priority, dueAt, bodyPath, now, now, parentId, plannedFor, JSON.stringify(metadata));
       if (input.tags?.length) {
         const stmt = this.db.prepare('INSERT OR IGNORE INTO tags(todo_id, tag) VALUES (?, ?)');
         for (const t of input.tags) stmt.run(id, t);
@@ -209,6 +212,7 @@ export class TodoRepo {
   update(id: ULID, patch: TodoPatch): Todo {
     const fields: string[] = [];
     const params: (string | number | null)[] = [];
+    if (patch.metadata !== undefined) { fields.push('metadata_json = ?'); params.push(JSON.stringify(validateTaskMetadata(patch.metadata))); }
     const map: Record<string, string> = {
       title: 'title',
       status: 'status',

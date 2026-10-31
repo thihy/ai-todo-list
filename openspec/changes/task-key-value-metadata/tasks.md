@@ -1,0 +1,4 @@
+- [x] Add validated metadata type, idempotent migration and repository persistence.
+- [x] Project metadata in task IPC/snapshots and expose AI metadata update tool.
+- [x] Add explicit KV editor with validation and deletion.
+- [x] Verify repository round trips, invalid input, old schema migration and real editor IPC.

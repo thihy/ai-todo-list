@@ -110,6 +110,7 @@ export interface ToolRowProps {
    *  caption at the top of the expanded body so the friendly collapsed title
    *  can stay clean without losing the identity for debugging. */
   wireName?: string | undefined
+  diagnosticsText?: string | undefined
 }
 
 /** Best-effort JSON parse for the IO card's "JSON" view. Returns null for
@@ -239,6 +240,7 @@ export function ToolRow({
   onOpenFile,
   inspect,
   wireName,
+  diagnosticsText,
 }: ToolRowProps) {
   const [expanded, setExpanded] = useState(false)
   // Text is the default: tool output may be logs, file contents, or JSON.
@@ -329,7 +331,7 @@ export function ToolRow({
         expandOnRowClick
         keepContentWhenOpen
         onToggle={toggleExpand}
-        collapsedContent={summaryText !== '' && (
+        collapsedContent={<>{summaryText !== '' && (
           /* An empty summary drops the separator with it (a row that is only
              its title shows no trailing dot). */
           <>
@@ -354,7 +356,7 @@ export function ToolRow({
               <span className={clsx(css.summarySuffix, suffix === diffStat && css.diffStat)}>{suffix}</span>
             )}
           </>
-        )}
+        )}{diagnosticsText && <button type="button" aria-label="查看工具定位信息" title="查看工具定位信息" style={{ marginLeft: 'auto', flexShrink: 0, padding: 3, display: 'inline-flex', color: 'inherit' }} onKeyDown={event => event.stopPropagation()} onClick={event => { event.stopPropagation(); setPayload({ title: '工具调用定位信息', text: diagnosticsText }); }}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 11v6M12 7v1" /></svg></button>}</>}
       >
         <div className={css.bodyWrap}>
           {wireName && (
