@@ -142,7 +142,6 @@ interface PaneProps {
 
 const GeneralPane: React.FC<PaneProps> = ({ data, patch }) => (
   <div className="settings-pane">
-    <CompactWindowSetting />
     <Field label="AI 消息快捷键" hint="AI 回复期间，排队消息在当前回复结束后依次发送；Steer 在下一步引导当前任务。空闲时两种按键都直接发送，Shift+Enter 换行。">
       <select className="input" aria-label="AI 消息快捷键" value={data.aiEnterAction ?? 'queue'} onChange={(event) => void patch({ aiEnterAction: event.target.value as 'queue' | 'steer' })}>
         <option value="queue">Enter 排队 · Ctrl+Enter 引导</option>
@@ -180,22 +179,6 @@ const GeneralPane: React.FC<PaneProps> = ({ data, patch }) => (
     </Field>
   </div>
 );
-
-const CompactWindowSetting: React.FC = () => {
-  const [enabled, setEnabled] = useState(true);
-  const [busy, setBusy] = useState(true);
-  const [error, setError] = useState('');
-  useEffect(() => { let live = true; void window.todoList.app.compactConfigure({}).then(result => {
-    if (live && result.ok) setEnabled(result.data.enabled);
-  }).catch(cause => { if (live) setError(String(cause)); }).finally(() => { if (live) setBusy(false); }); return () => { live = false; }; }, []);
-  return <Field label="桌面悬浮窗" hint="开启立即显示；恢复主窗口后继续常驻。手动关闭后，可在这里重新开启。">
-    <label><input type="checkbox" aria-label="启用桌面悬浮窗" checked={enabled} disabled={busy} onChange={async event => {
-      const next = event.target.checked; setBusy(true); setError('');
-      try { const result = await window.todoList.app.compactConfigure({ enabled: next }); if (result.ok) setEnabled(result.data.enabled); else setError(result.message); }
-      catch (cause) { setError(String(cause)); } finally { setBusy(false); }
-    }} /> 启用桌面悬浮窗</label>{error && <span role="alert">{error}</span>}
-  </Field>;
-};
 
 const ModelPane: React.FC<PaneProps> = ({ data, patch }) => {
   const toast = useToastBus();

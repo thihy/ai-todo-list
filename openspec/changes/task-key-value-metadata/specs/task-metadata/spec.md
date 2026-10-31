@@ -1,6 +1,6 @@
 ## ADDED Requirements
 ### Requirement: Compact additional-information chapter
-The task details SHALL label custom metadata as 附加信息 and show a single-line key=value summary by default. Editing controls SHALL remain hidden until requested. Overflow SHALL expose 更多 to expand and 收起 to restore the single line, preserving the underlying KV values.
+The task details SHALL label custom metadata as 附加 in a peer chapter after 附件 and before 文档, and show a single-line key=value summary by default. Editing controls SHALL remain hidden until requested. Overflow SHALL expose 更多 to expand and 收起 to restore the single line, preserving the underlying KV values. The save action SHALL be labeled 保存 and restore the single-line summary after success.
 #### Scenario: Overflow
 - **WHEN** the custom-field summary exceeds the available width
 - **THEN** the summary remains one line and provides an expandable 更多 action

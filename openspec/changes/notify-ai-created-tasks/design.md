@@ -1,0 +1,2 @@
+# Design
+Observe live events in askAi, shared by interactive turns and automation runs. Pair native call IDs with tool names and recover task IDs from metadata or rendered results. Verify persisted rows and deduplicate IDs per invocation before emitting creation broadcasts and notifying. Conversation automation ownership selects the notification title. A click restores the injected main window and navigates to the actual task. Unsupported or failed OS notifications are logged without failing AI work. Notification display does not focus the app.

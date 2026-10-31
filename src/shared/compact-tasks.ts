@@ -7,6 +7,5 @@ export function selectCompactTasks(todos: readonly Todo[], today = localDateKey(
   return todos.filter((todo) => ['next', 'doing', 'blocked'].includes(todo.status) &&
     todo.archivedAt === null && todo.deletedAt === null)
     .sort((a, b) => Number(b.plannedFor === today) - Number(a.plannedFor === today) ||
-      (a.dueAt ?? Infinity) - (b.dueAt ?? Infinity) || b.updatedAt - a.updatedAt || a.id.localeCompare(b.id))
-    .slice(0, 5);
+      (a.dueAt ?? Infinity) - (b.dueAt ?? Infinity) || b.updatedAt - a.updatedAt || a.id.localeCompare(b.id));
 }

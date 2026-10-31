@@ -20,8 +20,8 @@ export const TaskMetadataEditor: React.FC<{ todo: Todo }> = ({ todo }) => {
     measure(); const observer = new ResizeObserver(measure); observer.observe(node);
     return () => observer.disconnect();
   }, [summary, expanded]);
-  return <section className="task-extra-info" aria-label="附加信息">
-    <div className="task-extra-info__line"><h3>附加信息</h3><span ref={valuesRef} className={expanded ? 'task-extra-info__values is-expanded' : 'task-extra-info__values'} title={summary}>{summary || '暂无附加信息'}</span>
+  return <section className="editor-pane__section task-extra-info" aria-label="附加">
+    <div className="task-extra-info__line"><h2 className="editor-pane__section-title">附加</h2><span ref={valuesRef} className={expanded ? 'task-extra-info__values is-expanded' : 'task-extra-info__values'} title={summary}>{summary || '暂无附加信息'}</span>
       {!!entries.length && (overflow || expanded) && <button type="button" className="task-extra-info__more" aria-expanded={expanded} onClick={() => setExpanded(value => !value)}>{expanded ? '收起' : '更多'}</button>}
       <button type="button" className="task-extra-info__edit" onClick={() => { setRows(Object.entries(todo.metadata ?? {})); setError(''); setEditing(value => !value); }}>{editing ? '收起编辑' : entries.length ? '编辑' : '添加'}</button>
     </div>
@@ -32,7 +32,7 @@ export const TaskMetadataEditor: React.FC<{ todo: Todo }> = ({ todo }) => {
         if (new Set(keys).size !== keys.length) throw new Error('元数据键不能重复');
         const metadata = validateTaskMetadata(Object.fromEntries(rows.map(([key, value]) => [key.trim(), value])));
         setBusy(true); const result = await window.todoList.todo.update(todo.id, { metadata });
-        if (!result.ok) throw new Error(result.message); setError('已保存'); setEditing(false);
+        if (!result.ok) throw new Error(result.message); setError('已保存'); setEditing(false); setExpanded(false);
       } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
       finally { setBusy(false); }
     }}>
@@ -42,7 +42,7 @@ export const TaskMetadataEditor: React.FC<{ todo: Todo }> = ({ todo }) => {
         <button type="button" className="btn-secondary" aria-label={`删除元数据 ${index + 1}`} disabled={busy} onClick={() => setRows(previous => previous.filter((_, i) => i !== index))}>删除</button>
       </div>)}
       <button type="button" className="btn-secondary" disabled={busy || rows.length >= 100} onClick={() => setRows(previous => [...previous, ['', '']])}>添加字段</button>{' '}
-      <button type="submit" className="btn-primary" disabled={busy}>{busy ? '保存中…' : '保存元数据'}</button>
+      <button type="submit" className="btn-primary" disabled={busy}>{busy ? '保存中…' : '保存'}</button>
       {error && <p role="status">{error}</p>}
       <button type="button" className="btn-secondary" disabled={busy} onClick={() => { setRows(entries); setError(''); setEditing(false); }}>取消</button>
     </form>}

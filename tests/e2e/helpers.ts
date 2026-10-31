@@ -7,6 +7,7 @@
 
 import type { ElectronApplication, Page } from 'playwright';
 import { _electron as electron } from 'playwright';
+import { expect } from '@playwright/test';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -32,7 +33,7 @@ export const TEXT_PROMPT = '用一句话回答：1+1等于几？不要调用任�
  *  before we abort. Keep it non-trivial so cancel has a window to land. */
 export const LONG_PROMPT = '写一段 200 字左右的中文短文，介绍光的作用。不要调用工具。';
 
-export async function launchApp(): Promise<AppHandle> {
+export async function launchApp(seed: { compactWindow?: Partial<import('../../src/shared/compact-preferences').CompactPreferences> } = {}): Promise<AppHandle> {
   // Test runners in this repository use Electron itself as the Node runtime.
   // Do not leak that switch into the child process: Playwright needs to start
   // the binary in normal Electron mode, otherwise Chromium flags are rejected
@@ -50,7 +51,7 @@ export async function launchApp(): Promise<AppHandle> {
   const userDataDir = mkdtempSync(join(tmpdir(), 'ai-todo-e2e-'));
   writeFileSync(
     join(userDataDir, 'config.json'),
-    JSON.stringify({ dataDir: join(userDataDir, 'data') }),
+    JSON.stringify({ ...seed, dataDir: join(userDataDir, 'data') }),
     'utf8',
   );
   const app = await electron.launch({
@@ -65,7 +66,13 @@ export async function launchApp(): Promise<AppHandle> {
   app.process().stderr?.on('data', (chunk) => processOutput.push(String(chunk)));
   let windowUrl = '(window not created)';
   try {
-    const win = await app.firstWindow();
+    await app.firstWindow();
+    // The persisted floating surface now opens during startup. Select the
+    // main renderer explicitly rather than whichever page paints first.
+    const mainPage = () => app.windows().find(page => page.url().includes('index.html') && !page.url().endsWith('#/compact'));
+    await expect.poll(() => !!mainPage(), { timeout: 15000 }).toBe(true);
+    const win = mainPage();
+    if (!win) throw new Error('Main renderer not found');
     windowUrl = win.url();
     win.on('close', () => processOutput.push(`window closed while loading: ${windowUrl}`));
     await win.waitForLoadState('domcontentloaded');

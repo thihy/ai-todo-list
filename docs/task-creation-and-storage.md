@@ -37,6 +37,8 @@ is only a compatibility decision, not a product feature.
 
 ## 2. Two creation paths
 
+Successful live AI `todo_create` calls also produce a desktop notification with the persisted task title. Background automation uses the same execution entry and labels its notification “自动化新增任务”; ordinary AI creation uses “AI 新增任务”. Clicking restores the main window and opens the task. Failed calls, updates, history replay and duplicate result events do not notify. OS notification failures do not fail task creation or AI execution. Form creation does not produce these AI notifications.
+
 ### 2.1 Form creation
 
 The form is deterministic. It collects known values and calls

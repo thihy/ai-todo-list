@@ -78,6 +78,13 @@ export function parseToolArgs(raw: unknown): unknown {
 }
 
 export type ToolName =
+  | 'todo_metadata'
+  | 'skill'
+  | 'skill_list'
+  | 'skill_install'
+  | 'automation_list'
+  | 'automation_save'
+  | 'automation_remove'
   | 'todo_list'
   | 'todo_get'
   | 'todo_create'
@@ -130,6 +137,13 @@ export type ToolName =
   | 'glob';
 
 const kindByTool: Record<ToolName, ToolCallKind> = {
+  'todo_metadata': 'edit',
+  'skill': 'read',
+  'skill_list': 'search',
+  'skill_install': 'edit',
+  'automation_list': 'search',
+  'automation_save': 'edit',
+  'automation_remove': 'delete',
   'todo_list': 'search',
   'todo_get': 'read',
   'todo_create': 'edit',
@@ -284,6 +298,20 @@ export function summarizeToolCall(
   }
   const resultTitle = (): string | undefined => stringField(result, 'title');
   switch (toolName) {
+    case 'todo_metadata':
+      return truncate(stringField(result, 'title') ?? stringField(a, 'id') ?? '更新任务的附加字段', 60);
+    case 'skill':
+      return truncate(stringField(a, 'name') ?? stringField(a, 'skill') ?? '加载技能说明与使用步骤', 60);
+    case 'skill_list':
+      return Array.isArray(result) ? `找到 ${result.length} 项可用技能` : '查看本地与全局可用技能';
+    case 'skill_install':
+      return truncate(stringField(a, 'source') ?? '安装本地技能目录', 60);
+    case 'automation_list':
+      return '查看自动化任务与最近运行记录';
+    case 'automation_save':
+      return truncate(`${stringField(a, 'id') ? '更新' : '创建'}：${stringField(a, 'name') ?? '自动化任务'}`, 60);
+    case 'automation_remove':
+      return truncate(stringField(a, 'id') ?? '删除指定自动化任务', 60);
     case 'todo_create':
     case 'todo_update': {
       const t = stringField(a, 'title') ?? resultTitle();
@@ -444,6 +472,13 @@ function kindFor(toolName: string): ToolCallKind {
 function titleFor(toolName: string): string {
   // Friendly Chinese label for the card title; falls back to the raw toolName.
   const map: Record<string, string> = {
+    'todo_metadata': '更新任务附加信息',
+    'skill': '使用技能',
+    'skill_list': '查看技能清单',
+    'skill_install': '安装技能',
+    'automation_list': '查看自动化清单',
+    'automation_save': '保存自动化任务',
+    'automation_remove': '删除自动化任务',
     'todo_list': '查询 TODO',
     'todo_get': '查看 TODO',
     'todo_create': '新建 TODO',

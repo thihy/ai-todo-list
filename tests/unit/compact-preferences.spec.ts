@@ -11,6 +11,6 @@ describe('compact preferences', () => {
     expect(normaliseCompactPreferences({ opacity: NaN }).opacity).toBe(.6);
     expect(normaliseCompactPreferences({ bounds: { x: 1, y: Infinity, width: 250, height: 200 } }).bounds).toBeNull();
     expect(normaliseCompactPreferences({ bounds: { x: -100, y: 2, width: 10, height: 5 } }).bounds)
-      .toEqual({ x: -100, y: 2, width: 200, height: 64 });
+      .toEqual({ x: -100, y: 2, width: 200, height: 92 });
   });
 });

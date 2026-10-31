@@ -2028,7 +2028,7 @@ export const AIPane: React.FC<{
                     </div>
                   ))}</details>)}
                   </div>
-                  <div className="history-managed-note">ⓘ 分组名称与生命周期跟随自动化任务，无法手动编辑或删除。</div>
+                  {automationGroups.length > 0 && <div className="history-managed-note">ⓘ 分组名称与生命周期跟随自动化任务，无法手动编辑或删除。</div>}
                   {switcherQuery && <div className="history-search-note">搜索已加载的 {conversations.length} 条对话；显示更多可扩展搜索范围。</div>}
                   {/* 批量操作条 —— 仅在有勾选时出现；位置在列表（滚动容器）
                       下方、「显示更多」分页按钮上方，不会随列表一起滚动。
@@ -2064,7 +2064,8 @@ export const AIPane: React.FC<{
                   )}
                   {/* 「显示更多」分页按钮 —— 在滚动容器下方；剩余 0 时禁用并改文案。
                       搜索过滤后没有命中时隐藏按钮（避免「还有 N 条」与「没有匹配…」同时出现）。 */}
-                  {conversations.length > 0 && filteredConversations.length > 0 && (
+                  <div className="aipane__history-footer">
+                  {conversations.length > 0 && filteredConversations.length > 0 ? (
                     <button
                       type="button"
                       className="aipane__menu-list-more"
@@ -2075,15 +2076,15 @@ export const AIPane: React.FC<{
                         ? `还有 ${listRemaining} 条 · 显示更多`
                         : `已显示全部 ${listTotal} 条`}
                     </button>
-                  )}
-                  <div className="aipane__menu-divider" />
+                  ) : <span />}
                   <button
                     type="button"
-                    className="aipane__menu-item aipane__menu-item--toggle"
+                    className="aipane__history-archive-toggle"
                     onClick={() => { setShowHistory(false); setRowMenuId(null); setShowArchived((s) => !s); }}
                   >
                     {showArchived ? '隐藏已归档' : '显示已归档'}
                   </button>
+                  </div>
                 </div>
               )}
             </div>

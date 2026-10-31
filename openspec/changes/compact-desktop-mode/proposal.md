@@ -6,9 +6,9 @@ Users need to keep their next actions visible while working in other desktop app
 
 ## What Changes
 
-- Add an always-on-top compact desktop window with at most five actionable tasks.
+- Add an independent always-on-top compact desktop window with height-driven complete task rows and no scrollbar or fixed row cap.
 - Order today's planned tasks first, then earliest due date; omit completed, cancelled, archived and deleted tasks.
-- Offer compact mode from the main title bar and tray, and return to the main window or a task's detail.
+- Offer show/hide actions from the personal avatar, tray and Windows taskbar menus; persist visibility independently of main-window minimization. Return to the main window or a task's detail from the floating window.
 - Allow quick completion using the existing task API and synchronize both windows.
 
 ## Capabilities

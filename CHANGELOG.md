@@ -4,6 +4,25 @@ All notable changes to todo-list are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0-rc16] - 2026-10-31
+
+### Added
+
+- Desktop notifications for tasks created by AI and automations, with click-through to the actual task.
+- Independent floating-window visibility from the avatar, system tray and Windows taskbar menus, restored across startup.
+
+### Changed
+
+- Floating tasks use the available window height without a fixed row limit or scrollbar; align header icons and add task bullets.
+- Move the compact task KV chapter between attachments and documents and label it “附加”.
+- Use one compact conversation-history footer for pagination and archived conversations.
+- Add Chinese labels, operation summaries and semantic icons for metadata, Skill and automation tools.
+
+### Fixed
+
+- Recognize native DSH creation results and suppress duplicate task notifications.
+- Preserve floating-window geometry, transparency and always-on-top preferences when hiding and showing it.
+
 ## [1.0.0-rc11] - 2026-10-10
 
 Bug-fix release. `1.0.0-rc10` was tagged before these two fixes landed, so its installer does not contain them — upgrade rather than reinstalling the same version.

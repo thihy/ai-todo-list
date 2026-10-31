@@ -12,7 +12,7 @@
 
 import { register, okResult, failResult } from './router';
 import type { AIAskReq, AIAskRes, IpcResult } from '../../shared/ipc-schema';
-import { extractCreatedTodoId } from '../../shared/ai-created-todo';
+import { observeAiCreatedTasks, notifyAiCreatedTask } from '../notification/ai-created-tasks';
 import type { DshHandle } from '../dsh/types';
 import { resolveEndpoint, healthCheck } from '../dsh/endpoints';
 import { getDshRuntime, peekDshRuntime, answerUserQuestion, answerUserApproval, revokeSessionTool, listSessionGranted, type DshRuntimeDeps } from '../dsh/dsh-runtime';
@@ -31,6 +31,7 @@ import * as composerInbox from '../ai/composer-inbox';
 import type Database from 'better-sqlite3';
 
 interface HandlerDeps {
+  getMainWindow?: () => BrowserWindow | null;
   dsh: DshHandle;
   settings: SettingsStore;
   repo: TodoRepo;
@@ -197,6 +198,16 @@ export function registerAiHandlers(dsh: DshHandle): void {
     // into nested callbacks. Using a const alias keeps the narrowing local and
     // lets the `case 'done'` branch call `d.settings.addCost(...)` safely.
     const d = deps!;
+    const observeCreatedTasks = observeAiCreatedTasks({
+      getTask: id => d.repo.get(id),
+      onCreated: task => {
+        broadcastDataChanged('todos');
+        for (const window of BrowserWindow.getAllWindows()) {
+          if (!window.isDestroyed()) window.webContents.send('app:todo-created', { id: task.id });
+        }
+        notifyAiCreatedTask(task, d.getMainWindow ?? (() => null), !!conv.automationId);
+      },
+    });
 
     // DSH agent-loop path is the SOLE AI path (tool-calling). There is no
     // text-only client.ts fallback: if the runtime did not boot, surface the
@@ -238,6 +249,7 @@ export function registerAiHandlers(dsh: DshHandle): void {
           // 合并成 toolCall 事件。mutating-scope 检测从 result 阶段挪到
           // call 阶段（toolName 已知），少一次合并查表。
           send({ type: 'sessionEvent', invocationId, event: e });
+          observeCreatedTasks(e);
           if (e?.type === 'tool/call') {
             const d = e.data as { name?: string } | undefined;
             const name = d?.name;
@@ -254,28 +266,6 @@ export function registerAiHandlers(dsh: DshHandle): void {
                 // explicitly above; this fallback only kicks in for tools
                 // the map has never heard of.
                 broadcastDataChanged('todos');
-              }
-            }
-          }
-          // AI 建任务后把新 id 推给渲染端，让它能跳转 + 选中新建的任务。
-          // 只认 todo_create —— 别的工具（update/delete）也会产出 result，
-          // 拿它们的 id 去跳详情会跳到一个不相干或已不存在的任务上。
-          //
-          // 工具名是**下划线**形式（与 DSH tool registry 一致，见
-          // mutatingScope 的历史注释）：早期用点号 todo.create 时所有
-          // mutating 工具都因 case miss 而退化成不广播，这里不能再踩。
-          //
-          // 事件名沿用已定义但此前从未 emit 的 'app:todo-created'：类型里
-          // 早就写着 { id: string }，只是没有发送方。补上发送方比新造一个
-          // 事件更省事，也不会让 preload 的 APP_EVENTS 白挂一个空监听。
-          if (e?.type === 'tool/result') {
-            const d = e.data as { name?: string; result?: unknown } | undefined;
-            if (d?.name === 'todo_create') {
-              const createdId = extractCreatedTodoId(d.result);
-              if (createdId) {
-                for (const w of BrowserWindow.getAllWindows()) {
-                  if (!w.isDestroyed()) w.webContents.send('app:todo-created', { id: createdId });
-                }
               }
             }
           }

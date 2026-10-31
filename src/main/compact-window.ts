@@ -9,7 +9,6 @@ export class CompactWindowController {
   private destroying = false;
   private preferences: CompactPreferences;
   private saveTimer: ReturnType<typeof setTimeout> | undefined;
-  private count = 5;
   private requested = false;
   private interactive = false;
   private pointerTimer: ReturnType<typeof setInterval> | undefined;
@@ -28,10 +27,12 @@ export class CompactWindowController {
     const ignore = !this.interactive && !overTitle;
     if (ignore !== this.ignoringMouse) { window.setIgnoreMouseEvents(ignore, { forward: true }); this.ignoringMouse = ignore; }
   };
-  private onMinimize = (): void => { if (this.preferences.enabled) this.show(); };
+  private visibilityChanged: () => void = () => {};
+  setVisibilityHandler(handler: () => void): void { this.visibilityChanged = handler; }
+  isEnabled(): boolean { return this.preferences.enabled; }
+  toggle(): void { this.configure({ enabled: !this.preferences.enabled }); }
   constructor(private main: BrowserWindow, private settings: SettingsStore) {
     this.preferences = normaliseCompactPreferences(settings.get().compactWindow);
-    main.on('minimize', this.onMinimize);
   }
   private persist(): void {
     if (this.window && !this.window.isDestroyed()) this.preferences.bounds = this.window.getBounds();
@@ -49,6 +50,7 @@ export class CompactWindowController {
     this.persist();
     if (patch.enabled === true) this.show();
     if (patch.enabled === false) { this.requested = false; this.window?.hide(); }
+    if (patch.enabled !== undefined) this.visibilityChanged();
     return this.preferences;
   }
   popupMenu(): void {
@@ -64,7 +66,7 @@ export class CompactWindowController {
       { type: 'separator' },
       { label: '恢复紧凑尺寸', click: () => {
         this.preferences.manualSize = false;
-        this.fit(this.count);
+        this.fit(0);
         this.persist();
       } },
       { label: '展开主窗口', click: () => this.restore() },
@@ -73,15 +75,17 @@ export class CompactWindowController {
   }
   show(): void {
     if (this.destroying || this.main.isDestroyed()) return;
+    this.preferences = normaliseCompactPreferences(this.settings.get().compactWindow);
     // The floating window remains independent of main-window visibility.
     if (!this.preferences.enabled) { this.preferences.enabled = true; this.persist(); }
     this.requested = true;
+    this.visibilityChanged();
     if (!this.window || this.window.isDestroyed()) {
       const area = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea;
       const window = new BrowserWindow({
         width: 240, height: 172, x: area.x + area.width - 260, y: area.y + 32,
         ...this.preferences.bounds,
-        minWidth: 200, minHeight: 64,
+        minWidth: 200, minHeight: 92,
         frame: false, resizable: true, maximizable: false, fullscreenable: false,
         alwaysOnTop: this.preferences.alwaysOnTop, opacity: 1, skipTaskbar: true, show: false, transparent: true,
         backgroundColor: '#00000000', title: 'AI待办 · 精简模式',
@@ -127,16 +131,14 @@ export class CompactWindowController {
     this.main.show(); this.main.focus();
     if (todoId) this.main.webContents.send('app:navigate', { route: `todo/${todoId}` });
   }
-  fit(count: number): void {
-    this.count = count;
+  fit(_count: number): void {
     if (this.window && !this.window.isDestroyed() && !this.preferences.manualSize) {
-      this.window.setContentSize(this.window.getContentSize()[0], Math.max(64, 36 + Math.max(1, Math.min(5, Math.floor(count))) * 26));
+      this.window.setContentSize(this.window.getContentSize()[0], 172);
     }
   }
   destroy(): void {
     this.destroying = true;
     this.requested = false;
-    this.main.removeListener('minimize', this.onMinimize);
     clearTimeout(this.saveTimer);
     clearInterval(this.pointerTimer);
     this.persist();

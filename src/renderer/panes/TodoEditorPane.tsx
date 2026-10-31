@@ -527,7 +527,6 @@ export const TodoEditorPane: React.FC<{
             Keeping the scroll root here (not on the whole pane) means the
             基本信息 popovers are never clipped by an overflow ancestor. ===== */}
       <div className="editor-pane__scroll">
-        <TaskMetadataEditor key={todo.id} todo={todo} />
         <section className="editor-pane__section">
           <h2 className="editor-pane__section-title">链接</h2>
           <LinksView todoId={todo.id} />
@@ -537,6 +536,8 @@ export const TodoEditorPane: React.FC<{
           <h2 className="editor-pane__section-title">附件</h2>
           <AttachmentsView todoId={todo.id} />
         </section>
+
+        <TaskMetadataEditor key={todo.id} todo={todo} />
 
         <section className="editor-pane__section">
           <div className="editor-pane__section-head">

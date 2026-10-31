@@ -9,6 +9,7 @@ import React, { useEffect, useRef, useState } from 'react';
 export const UserMenu: React.FC<{ onOpenSettings: () => void }> = ({ onOpenSettings }) => {
   const [open, setOpen] = useState(false);
   const [username, setUsername] = useState<string | null>(null);
+  const [compactEnabled, setCompactEnabled] = useState<boolean | null>(null);
   const ref = useRef<HTMLDivElement>(null);
 
   // Fetch the OS login name once. We don't hardcode a name — the chip is the
@@ -21,6 +22,11 @@ export const UserMenu: React.FC<{ onOpenSettings: () => void }> = ({ onOpenSetti
 
   useEffect(() => {
     if (!open) return;
+    let live = true;
+    setCompactEnabled(null);
+    void window.todoList.app.compactConfigure({}).then(result => {
+      if (live && result.ok) setCompactEnabled(result.data.enabled);
+    }).catch(() => {});
     const onDown = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
     };
@@ -30,6 +36,7 @@ export const UserMenu: React.FC<{ onOpenSettings: () => void }> = ({ onOpenSetti
     document.addEventListener('mousedown', onDown);
     document.addEventListener('keydown', onEsc);
     return () => {
+      live = false;
       document.removeEventListener('mousedown', onDown);
       document.removeEventListener('keydown', onEsc);
     };
@@ -72,6 +79,11 @@ export const UserMenu: React.FC<{ onOpenSettings: () => void }> = ({ onOpenSetti
           {item('设置', onOpenSettings)}
           {item('关于', () => void window.todoList.app.action('about'))}
           {item('检查更新', () => void window.todoList.app.action('checkUpdate'))}
+          <button type="button" role="menuitem" className="user-menu__item" disabled={compactEnabled === null} onClick={async () => {
+            setOpen(false);
+            const current = await window.todoList.app.compactConfigure({});
+            if (current.ok) await window.todoList.app.compactConfigure({ enabled: !current.data.enabled });
+          }}>{compactEnabled ? '隐藏悬浮窗' : '显示悬浮窗'}</button>
           <div className="user-menu__sep" aria-hidden="true" />
           {item('退出', () => void window.todoList.app.action('quit'))}
         </div>

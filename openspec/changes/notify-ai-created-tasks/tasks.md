@@ -1,0 +1,3 @@
+- [x] Observe successful native and legacy AI create results, verify persisted IDs and deduplicate notifications.
+- [x] Show desktop task notifications with automation source and click navigation; isolate OS errors.
+- [x] Verify tests, build and real Electron integration, including real DSH todo_create dispatch in interactive and automation turns using a local test model endpoint, captured native notification content and click navigation.

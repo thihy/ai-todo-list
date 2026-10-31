@@ -2,10 +2,20 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import type { Todo } from '../../shared/todo-types';
 import { localDateKey, selectCompactTasks } from '../../shared/compact-tasks';
 import './compact.css';
-import { IconRefresh, IconExternal, IconMore } from './icons';
+import { IconRefresh, IconExternal, IconMore, IconClose } from './icons';
 
 export const CompactView: React.FC = () => {
   const [todos, setTodos] = useState<Todo[]>([]);
+  const listRef = useRef<HTMLUListElement>(null);
+  const [capacity, setCapacity] = useState(0);
+  useEffect(() => {
+    const list = listRef.current;
+    if (!list) return;
+    const measure = () => setCapacity(Math.max(0, Math.floor(list.clientHeight / 26)));
+    const observer = new ResizeObserver(measure);
+    observer.observe(list); measure();
+    return () => observer.disconnect();
+  }, []);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -39,7 +49,6 @@ export const CompactView: React.FC = () => {
     window.addEventListener('focus', refresh);
     return () => { ++request.current; off(); window.clearInterval(timer); window.removeEventListener('focus', refresh); };
   }, [refresh]);
-  useEffect(() => { if (!loading) void window.todoList.app.compactSize(todos.length); }, [loading, todos.length]);
 
   const update = async (todo: Todo, patch: Partial<Pick<Todo, 'status' | 'priority'>>): Promise<void> => {
     if (busy.current) return;
@@ -60,9 +69,9 @@ export const CompactView: React.FC = () => {
   return <main className="compact-view" aria-label="精简待办" data-active={interaction.active} style={{ '--compact-body-opacity': interaction.active ? 1 : idleOpacity, '--compact-title-opacity': interaction.active || interaction.titleHovered ? 1 : 1 - (1 - idleOpacity) / 2 } as React.CSSProperties}>
     <header className="compact-view__header" title="置顶显示 · 今日优先 · 按截止时间排序 · 拖动可移动">
       <span className="compact-view__brand-dot" />
-      <strong>待办</strong><span className="compact-view__count">{todos.length}</span>
+      <strong>待办</strong><span className="compact-view__count" title={`当前显示 ${Math.min(capacity, todos.length)} 条，共 ${todos.length} 条；拖高窗口可显示更多`}>{Math.min(capacity, todos.length)}{todos.length > capacity ? `/${todos.length}` : ''}</span>
       <div className="compact-view__actions">
-        <button type="button" aria-label="关闭悬浮窗" title="关闭悬浮窗" onClick={() => void window.todoList.app.compactConfigure({ enabled: false })}>×</button>
+        <button type="button" aria-label="关闭悬浮窗" title="关闭悬浮窗" onClick={() => void window.todoList.app.compactConfigure({ enabled: false })}><IconClose size={14} /></button>
         <button type="button" title="悬浮设置 · 透明度" aria-label="悬浮设置" onClick={() => void window.todoList.app.compactMenu()}>
           <IconMore size={14} />
         </button>
@@ -74,10 +83,10 @@ export const CompactView: React.FC = () => {
     </header>
     <div className="compact-view__content">
     {error && <div className="compact-view__error" role="alert"><span>{error}</span><button onClick={() => void refresh()}>重试</button></div>}
-    <ul className="compact-view__list">
-      {todos.map((todo) => <li key={todo.id} className={`compact-view__row priority-${todo.priority}`}>
+    <ul ref={listRef} className="compact-view__list">
+      {todos.slice(0, capacity).map((todo) => <li key={todo.id} className={`compact-view__row priority-${todo.priority}`}>
         <button type="button" className="compact-view__task" aria-label={`${todo.title}，优先级 ${todo.priority}`} title={`${todo.title} · 右键操作`} onContextMenu={event => { event.preventDefault(); setMenu(todo); }} onKeyDown={event => { if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) { event.preventDefault(); setMenu(todo); } }} onClick={() => void restore(todo.id)}>
-          <span className="compact-view__title">{todo.title}</span>
+          <span className="compact-view__task-dot" aria-hidden="true" /><span className="compact-view__title">{todo.title}</span>
           <span className="compact-view__meta">
             {todo.plannedFor === today && <span className="compact-view__today" title="今日待办">今</span>}
             {todo.dueAt !== null ? <time className={todo.dueAt < Date.now() ? 'is-overdue' : ''} dateTime={new Date(todo.dueAt).toISOString()}>

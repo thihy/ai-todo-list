@@ -1,6 +1,39 @@
 import { test, expect } from '@playwright/test';
 import { launchApp, openAiPane } from './helpers';
 
+test('history keeps pagination and archive controls in one compact footer', async () => {
+  const handle = await launchApp();
+  try {
+    await openAiPane(handle.win);
+    await expect(handle.win.getByRole('button', { name: '新建对话', exact: true })).toBeEnabled({ timeout: 30000 });
+    await handle.win.evaluate(async () => {
+      for (let i = 0; i < 21; i++) {
+        const result = await window.todoList.conversation.create({ title: `分页验证 ${i}` });
+        if (!result.ok) throw Error(result.message);
+        if (i === 0) await window.todoList.conversation.archive(result.data.conversation.id);
+      }
+    });
+    await handle.win.reload();
+    await openAiPane(handle.win);
+    await handle.win.getByRole('button', { name: '对话历史', exact: true }).click();
+    const footer = handle.win.locator('.aipane__history-footer');
+    const more = footer.getByRole('button', { name: /显示更多/ });
+    await expect(more).toBeVisible();
+    const archive = footer.getByRole('button', { name: '显示已归档', exact: true });
+    await expect(archive).toBeVisible();
+    const boxes = await Promise.all([more.boundingBox(), archive.boundingBox()]);
+    expect(Math.abs(boxes[0]!.y - boxes[1]!.y)).toBeLessThan(5);
+    await expect(handle.win.locator('.history-managed-note')).toHaveCount(0);
+    await more.click();
+    await expect(footer).toContainText('已显示全部 20 条');
+    await archive.click();
+    await handle.win.getByRole('button', { name: '对话历史', exact: true }).click();
+    await expect(footer.getByRole('button', { name: '隐藏已归档', exact: true })).toBeVisible();
+    await handle.win.locator('.aipane__conversation-group summary').first().click();
+    await handle.win.screenshot({ path: test.info().outputPath('history-footer-compact.png') });
+  } finally { await handle.app.close(); }
+});
+
 test('automation groups follow catalog lifecycle without independent editing or deletion', async () => {
   const handle = await launchApp();
   try {

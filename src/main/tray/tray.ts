@@ -9,9 +9,11 @@ export class TrayController {
   private onPauseClipboard: () => void = () => {};
   private clipboardPaused = false;
   private onCompact: () => void = () => {};
+  private compactVisible: () => boolean = () => false;
 
-  setCompactHandler(handler: () => void): void {
+  setCompactHandler(handler: () => void, visible: () => boolean = () => false): void {
     this.onCompact = handler;
+    this.compactVisible = visible;
     this.refreshMenu();
   }
 
@@ -36,7 +38,7 @@ export class TrayController {
       { label: '快速捕获  Ctrl+Shift+T', click: () => this.onCapture() },
       { type: 'separator' },
       { label: '显示主窗口', click: () => this.focusInbox() },
-      { label: '精简悬浮模式', click: () => this.onCompact() },
+      { label: this.compactVisible() ? '隐藏悬浮窗' : '显示悬浮窗', click: () => this.onCompact() },
       { type: 'separator' },
       {
         label: this.clipboardPaused ? '已暂停 · 剪贴板监听' : '暂停剪贴板监听',

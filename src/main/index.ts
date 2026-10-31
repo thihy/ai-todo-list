@@ -100,6 +100,8 @@ if (!app.isPackaged && process.env['ELECTRON_REMOTE_DEBUG'] !== '0') {
 // `ELECTRON_ALLOW_MULTI_INSTANCE=1` to bypass the lock in that scenario
 // (one-off: kill the orphan or restart Windows, then unset it).
 const allowMulti = process.env['ELECTRON_ALLOW_MULTI_INSTANCE'] === '1';
+let toggleFloatingWindow: (() => void) | undefined;
+let pendingFloatingToggle = process.argv.includes('--toggle-floating');
 if (allowMulti) {
   logger.warn('ELECTRON_ALLOW_MULTI_INSTANCE=1 — 单实例锁已禁用,可启动多个窗口');
 }
@@ -107,7 +109,11 @@ const gotLock = allowMulti ? true : app.requestSingleInstanceLock();
 if (!gotLock) {
   app.quit();
 } else {
-  app.on('second-instance', () => {
+  app.on('second-instance', (_event, argv) => {
+    if (argv.includes('--toggle-floating')) {
+      if (toggleFloatingWindow) toggleFloatingWindow(); else pendingFloatingToggle = !pendingFloatingToggle;
+      return;
+    }
     // A second launch tried to start while this one is alive (likely hidden to
     // tray, or just an idle window). Surface the existing window — restore()+
     // focus() alone leave a hidden window hidden, which looks like "the app
@@ -224,6 +230,7 @@ function bootstrap(): void {
     startupState.setCorePhase('settings');
     const settings = new SettingsStore();
     const compact = new CompactWindowController(main, settings);
+    toggleFloatingWindow = () => compact.toggle();
     register('app.compact', (_event, req) => {
       if (req.enabled) compact.show(); else compact.restore(req.todoId);
       return okResult(undefined);
@@ -443,6 +450,8 @@ function bootstrap(): void {
     // core.status === 'ready'. AI status is intentionally independent and
     // does not block the splash from coming down.
     startupState.markCoreReady();
+    if (pendingFloatingToggle) { pendingFloatingToggle = false; compact.toggle(); }
+    if (compact.isEnabled()) compact.show();
 
     // Set DSH_SESSIONS_ROOT BEFORE importing the DSH container, because the
     // cordis YAML loader evaluates `!js` expressions (like
@@ -512,7 +521,7 @@ function bootstrap(): void {
           const dsh = await initDshContainer({ repo, md, drawings, settings, db: handle.db });
           const { registerAiHandlers, bindAiDeps } = await import('./ipc/ai-handlers');
           registerAiHandlers(dsh);
-          bindAiDeps({ dsh, settings, repo, conversations, md, drawings, db: handle.db, attachmentsDir, rootDir });
+          bindAiDeps({ dsh, settings, repo, conversations, md, drawings, db: handle.db, attachmentsDir, rootDir, getMainWindow: () => main });
           logger.info(`startup[ai]: DSH handlers registered (${reason}) @ ${Date.now() - aiStart}ms`);
 
           // The splash gate. warmupDshRuntime awaits the live DSH
@@ -735,7 +744,23 @@ function bootstrap(): void {
       },
     );
     tray.install();
-    tray.setCompactHandler(() => compact.show());
+    tray.setCompactHandler(() => compact.toggle(), () => compact.isEnabled());
+    const refreshFloatingMenus = (): void => {
+      tray.refreshMenu();
+      if (process.platform === 'win32') {
+        try {
+          app.setUserTasks([{
+            program: process.execPath,
+            arguments: `${app.isPackaged ? '' : `"${app.getAppPath()}" `}--toggle-floating`,
+            title: compact.isEnabled() ? '隐藏悬浮窗' : '显示悬浮窗',
+            description: '显示或隐藏待办悬浮窗，保留上次的位置和显示设置',
+            iconPath: process.execPath, iconIndex: 0,
+          }]);
+        } catch (error) { logger.warn(`floating taskbar menu: ${String(error)}`); }
+      }
+    };
+    compact.setVisibilityHandler(refreshFloatingMenus);
+    refreshFloatingMenus();
 
     // Chinese application menu (menu bar auto-hidden — press Alt to reveal).
     installAppMenu({

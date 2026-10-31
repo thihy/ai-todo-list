@@ -4,11 +4,13 @@ html:has(.compact-view), body:has(.compact-view), #root:has(.compact-view) { min
 .compact-view__header strong { font-size: 11px; font-weight: 650; }
 .compact-view__brand-dot { width: 7px; height: 7px; background: var(--accent-primary); border-radius: 50%; }
 .compact-view__count { color: var(--fg-muted); font-size: 10px; }
-.compact-view__actions { margin-left: auto; display: flex; gap: 2px; -webkit-app-region: no-drag; }
-.compact-view__actions button { display: grid; place-items: center; width: 23px; height: 23px; color: var(--fg-muted); border-radius: 6px; font-size: 18px; cursor: pointer; }
+.compact-view__actions { margin-left: auto; display: flex; align-items:center; gap: 2px; -webkit-app-region: no-drag; }
+.compact-view__actions button { display: grid; place-items: center; flex:none; padding:0; border:0; line-height:1; width: 23px; height: 23px; color: var(--fg-muted); border-radius: 6px; cursor: pointer; }
+.compact-view__actions svg { display:block; width:14px; height:14px; }
 .compact-view__actions button:hover { background: var(--bg-soft); color: var(--fg-primary); }
-.compact-view__list { list-style: none; padding: 0; margin: 0; overflow: auto; flex: 1; }
-.compact-view__row { display: flex; align-items: center; gap: 6px; height: 26px; border-bottom: 1px solid var(--border-subtle); }
+.compact-view__list { list-style: none; padding: 0; margin: 0; overflow: hidden; flex: 1; min-height:0; }
+.compact-view__row { box-sizing:border-box; display: flex; align-items: center; gap: 6px; height: 26px; border-bottom: 1px solid var(--border-subtle); }
+.compact-view__task-dot { width:4px; height:4px; flex:none; border-radius:50%; background:var(--fg-muted); }
 .compact-view__row:last-child { border-bottom: 0; }
 .compact-view__check { flex-shrink: 0; width: 13px; height: 13px; border: 1.5px solid var(--border-strong); border-radius: 50%; color: var(--accent-primary); cursor: pointer; }
 .compact-view__check:hover { border-color: var(--accent-primary); background: var(--accent-primary-soft); }
@@ -19,8 +21,8 @@ html:has(.compact-view), body:has(.compact-view), #root:has(.compact-view) { min
 .compact-view__meta { flex-shrink: 0; display: flex; gap: 6px; align-items: center; font-size: 10px; color: var(--fg-muted); line-height: 15px; }
 .compact-view__today { color: var(--accent-primary); }
 .compact-view .is-overdue { color: var(--accent-danger); }
-.compact-view__empty { flex: 1; display: grid; place-items: center; color: var(--fg-muted); font-size: 12px; }
-.compact-view__list:empty { flex: 0; }
+.compact-view__empty { position:absolute; inset:34px 7px 5px; display: grid; place-items: center; color: var(--fg-muted); font-size: 12px; pointer-events:none; }
+.compact-view__list:empty { flex:1; }
 .compact-view__error { display: flex; gap: 8px; align-items: center; padding: 6px; font-size: 11px; color: var(--accent-danger); }
 .compact-view__error span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .compact-view__error button { margin-left: auto; white-space: nowrap; cursor: pointer; text-decoration: underline; }

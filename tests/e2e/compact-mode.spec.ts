@@ -3,6 +3,90 @@ import { launchApp } from './helpers';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
+test('saved hidden floating state survives startup and minimization, then restores saved display preferences', async () => {
+  const handle = await launchApp({ compactWindow: { enabled: false, opacity: .4, alwaysOnTop: false, manualSize: true, bounds: { x: 100, y: 100, width: 310, height: 280 } } });
+  try {
+    await expect(handle.win.locator('.task-list__add-btn')).toBeVisible();
+    expect(handle.app.windows().filter(page => page.url().endsWith('#/compact'))).toHaveLength(0);
+    await handle.app.evaluate(({ BrowserWindow }) => { const main = BrowserWindow.getAllWindows()[0]!; main.minimize(); main.restore(); });
+    const saved = await handle.win.evaluate(() => window.todoList.app.compactConfigure({}));
+    expect(saved.ok && saved.data).toMatchObject({ enabled: false, opacity: .4, alwaysOnTop: false, bounds: { width: 310, height: 280 } });
+    expect(handle.app.windows().filter(page => page.url().endsWith('#/compact'))).toHaveLength(0);
+    await handle.win.getByRole('button', { name: '用户菜单', exact: true }).click();
+    await handle.win.getByRole('menuitem', { name: '显示悬浮窗', exact: true }).click();
+    await expect.poll(() => handle.app.windows().find(page => page.url().endsWith('#/compact'))?.url()).toContain('#/compact');
+    const state = await handle.app.evaluate(({ BrowserWindow }) => {
+      const win = BrowserWindow.getAllWindows().find(win => win.webContents.getURL().endsWith('#/compact'))!;
+      return { bounds: win.getBounds(), onTop: win.isAlwaysOnTop(), min: win.getMinimumSize() };
+    });
+    expect(state.onTop).toBe(false); expect(state.min[1]).toBeGreaterThanOrEqual(92);
+    expect(state.bounds.width).toBeGreaterThanOrEqual(310); expect(state.bounds.height).toBeGreaterThanOrEqual(280);
+    await handle.win.getByRole('button', { name: '用户菜单', exact: true }).click();
+    await handle.win.getByRole('menuitem', { name: '设置', exact: true }).click();
+    await expect(handle.win.getByRole('checkbox', { name: '启用桌面悬浮窗', exact: true })).toHaveCount(0);
+  } finally { await handle.app.close(); }
+});
+
+test('avatar and taskbar toggle persistent floating visibility independently, with height-driven rows and aligned icons', async () => {
+  const handle = await launchApp();
+  try {
+    await expect(handle.win.locator('.task-list__add-btn')).toBeVisible();
+    await expect.poll(() => handle.app.windows().find(page => page.url().endsWith('#/compact'))?.url()).toContain('#/compact');
+    const page = handle.app.windows().find(page => page.url().endsWith('#/compact'))!;
+    await expect(page.getByRole('main', { name: '精简待办' })).toBeVisible();
+    await handle.app.evaluate(({ app, Menu }) => {
+      const originalTasks = app.setUserTasks.bind(app);
+      app.setUserTasks = tasks => { (globalThis as any).__floatingTasks = tasks; return originalTasks(tasks); };
+      const originalMenu = Menu.buildFromTemplate.bind(Menu);
+      Menu.buildFromTemplate = template => {
+        if (template[0]?.label === 'AI待办') (globalThis as any).__floatingTray = template;
+        return originalMenu(template);
+      };
+    });
+    await handle.win.getByRole('button', { name: '用户菜单', exact: true }).click();
+    await handle.win.getByRole('menuitem', { name: '隐藏悬浮窗', exact: true }).click();
+    const visible = () => handle.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find(win => win.webContents.getURL().endsWith('#/compact'))!.isVisible());
+    await expect.poll(visible).toBe(false);
+    expect(await handle.app.evaluate(() => (globalThis as any).__floatingTasks[0].title)).toBe('显示悬浮窗');
+    expect(await handle.app.evaluate(() => (globalThis as any).__floatingTray.some((item: any) => item.label === '显示悬浮窗'))).toBe(true);
+    await handle.app.evaluate(({ BrowserWindow }) => { const main = BrowserWindow.getAllWindows().find(win => !win.webContents.getURL().endsWith('#/compact'))!; main.minimize(); main.restore(); });
+    expect(await visible()).toBe(false);
+    await handle.win.getByRole('button', { name: '用户菜单', exact: true }).click();
+    await handle.win.getByRole('menuitem', { name: '显示悬浮窗', exact: true }).click();
+    await expect.poll(visible).toBe(true);
+    await handle.app.evaluate(() => (globalThis as any).__floatingTray.find((item: any) => item.label === '隐藏悬浮窗').click());
+    await expect.poll(visible).toBe(false);
+    await handle.app.evaluate(() => (globalThis as any).__floatingTray.find((item: any) => item.label === '显示悬浮窗').click());
+    await expect.poll(visible).toBe(true);
+    await handle.app.evaluate(({ app }) => { app.emit('second-instance', {}, ['app.exe', '--toggle-floating'], '', {}); });
+    await expect.poll(visible).toBe(false);
+    await handle.app.evaluate(({ app }) => { app.emit('second-instance', {}, ['app.exe', '--toggle-floating'], '', {}); });
+    await expect.poll(visible).toBe(true);
+    await handle.win.evaluate(async () => { for (let i = 0; i < 18; i++) await window.todoList.todo.create({ title: `高度验证 ${i}` }); });
+    const resize = (height: number) => handle.app.evaluate(({ BrowserWindow }, height) => {
+      const win = BrowserWindow.getAllWindows().find(win => win.webContents.getURL().endsWith('#/compact'))!;
+      win.emit('will-resize', { preventDefault() {} }, { ...win.getBounds(), height }, { edge: 'bottom' });
+      win.setContentSize(300, height);
+    }, height);
+    await resize(360);
+    await expect.poll(() => page.locator('.compact-view__row').count()).toBeGreaterThan(6);
+    const largeCount = await page.locator('.compact-view__row').count();
+    expect(await page.locator('.compact-view__task-dot').count()).toBe(largeCount);
+    const overflow = await page.locator('.compact-view__list').evaluate(element => ({ overflow: getComputedStyle(element).overflowY, height: element.clientHeight, content: element.scrollHeight }));
+    expect(overflow.overflow).toBe('hidden'); expect(overflow.content).toBeLessThanOrEqual(overflow.height);
+    const centers = await page.locator('.compact-view__actions svg').evaluateAll(elements => elements.map(element => { const rect = element.getBoundingClientRect(); return rect.y + rect.height / 2; }));
+    expect(Math.max(...centers) - Math.min(...centers)).toBeLessThan(1);
+    await page.screenshot({ path: test.info().outputPath('floating-height-driven.png') });
+    await resize(130);
+    await expect.poll(() => page.locator('.compact-view__row').count()).toBeLessThan(largeCount);
+    await page.evaluate(() => window.todoList.app.compactConfigure({ opacity: .4, enabled: false }));
+    await handle.win.evaluate(() => window.todoList.app.compactConfigure({ enabled: true }));
+    expect(await page.evaluate(async () => { const result = await window.todoList.app.compactConfigure({}); return result.ok && result.data.opacity; })).toBe(.4);
+    const configPath = await handle.app.evaluate(({ app }) => app.getPath('userData'));
+    await expect.poll(() => JSON.parse(readFileSync(join(configPath, 'config.json'), 'utf8')).compactWindow.enabled).toBe(true);
+  } finally { await handle.app.close(); }
+});
+
 test('inactive floating content passes through while its title can activate the opaque window', async () => {
   const handle = await launchApp();
   try {
@@ -81,9 +165,9 @@ test('compact mode stays small and on top, completes real tasks and returns to d
     await expect(handle.win.getByRole('button', { name: '精简悬浮模式' })).toHaveCount(0);
     const guide = handle.win.getByRole('dialog', { name: '今日待办', exact: true });
     if (await guide.isVisible()) await guide.getByRole('button', { name: '关闭', exact: true }).click();
-    const created = handle.app.waitForEvent('window');
-    await handle.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find((w) => !w.webContents.getURL().endsWith('#/compact'))!.minimize());
-    const compact = await created;
+    await handle.win.evaluate(() => window.todoList.app.compactConfigure({ enabled: true }));
+    await expect.poll(() => handle.app.windows().find(page => page.url().endsWith('#/compact'))?.url()).toContain('#/compact');
+    const compact = handle.app.windows().find(page => page.url().endsWith('#/compact'))!;
     await expect(compact.getByRole('main', { name: '精简待办' })).toBeVisible();
     await expect(compact.locator('.compact-view__row')).toHaveCount(5);
     await compact.screenshot({ path: test.info().outputPath('compact-mode.png') });
@@ -120,7 +204,7 @@ test('compact mode stays small and on top, completes real tasks and returns to d
     await handle.win.evaluate(async (ids) => { for (const id of ids) await window.todoList.todo.update(id, { status: 'done' }); }, ids);
     await expect(compact.getByText('暂时没有待办，轻松一下。')).toBeVisible();
     await expect.poll(() => handle.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()
-      .find((w) => w.webContents.getURL().endsWith('#/compact'))!.getBounds().height)).toBeLessThan(100);
+      .find((w) => w.webContents.getURL().endsWith('#/compact'))!.getBounds().height)).toBeGreaterThanOrEqual(172);
     await compact.getByRole('button', { name: '展开主窗口' }).click();
     await expect.poll(() => handle.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()
       .find((w) => w.webContents.getURL().includes('#/todo/'))?.isVisible())).toBe(true);
@@ -183,6 +267,6 @@ test('compact preferences apply native opacity, preserve manual size and survive
     await handle.app.evaluate(() => { (globalThis as any).__compactMenuChoice = '恢复紧凑尺寸'; });
     await page.getByRole('button', { name: '悬浮设置', exact: true }).click();
     await expect.poll(() => handle.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()
-      .find((w) => w.webContents.getURL().endsWith('#/compact'))!.getBounds().height)).toBeLessThan(100);
+      .find((w) => w.webContents.getURL().endsWith('#/compact'))!.getContentBounds().height)).toBe(172);
   } finally { await handle.app.close(); }
 });

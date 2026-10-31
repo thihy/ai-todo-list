@@ -23,6 +23,27 @@ import {
   bashToView,
 } from '../../src/shared/tool-presentation-helpers';
 
+describe('assistant capability tool descriptions', () => {
+  it.each([
+    ['todo_metadata', '更新任务附加信息', 'edit', { id: 'real-id' }],
+    ['skill', '使用技能', 'read', { name: 'example' }],
+    ['skill_list', '查看技能清单', 'search', {}],
+    ['skill_install', '安装技能', 'edit', { source: 'C:/skills/example' }],
+    ['automation_list', '查看自动化清单', 'search', {}],
+    ['automation_save', '保存自动化任务', 'edit', { name: '每日整理' }],
+    ['automation_remove', '删除自动化任务', 'delete', { id: 'real-id' }],
+  ])('%s has a localized title, semantic icon kind and useful summary', (name, title, kind, args) => {
+    expect(presentToolCall(name as string, args)).toMatchObject({ title, kind });
+    expect(summarizeToolCall(name as string, args, undefined, true)).not.toBe('');
+    expect(presentToolResult(name as string, args, '失败原因', false)).toMatchObject({ title: `${title} — 失败` });
+  });
+  it('summarizes actual skill results and automation edit intent', () => {
+    expect(summarizeToolCall('skill_list', {}, [{ name: 'one' }, { name: 'two' }], true)).toBe('找到 2 项可用技能');
+    expect(summarizeToolCall('automation_save', { id: 'real-id', name: '每日整理' }, {}, true)).toBe('更新：每日整理');
+    expect(summarizeToolCall('todo_metadata', { id: 'real-id' }, { title: '备份文件' }, true)).toBe('备份文件');
+  });
+});
+
 describe('actual DSH rendered result content', () => {
   it.each(['read', 'read_image', 'grep', 'glob'])('%s preserves its text envelope', name => {
     const text = '<path>C:\\work\\a.txt</path>\n<content>\n1: hello\n</content>';
