@@ -5,7 +5,7 @@ test('task custom KV metadata persists, validates duplicates and supports remova
   const handle = await launchApp();
   try {
     handle.win.on('pageerror', error => console.error('Metadata renderer error:', error));
-    await expect(handle.win.getByRole('button', { name: '新建任务', exact: true })).toBeVisible();
+    await expect(handle.win.locator('.task-list__add-btn')).toBeVisible();
     const id = await handle.win.evaluate(async () => {
       const result = await window.todoList.todo.create({ title: '元数据验证' }); if (!result.ok) throw Error(result.message); return result.data.id;
     });
