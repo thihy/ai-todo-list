@@ -43,6 +43,18 @@ const nextNeverCalled = (): Promise<PreToolDecision> => {
   throw new Error('next() should not have been called');
 };
 
+describe('handlePreExecute — 实时绘图 MCP 权限', () => {
+  it.each(['mcp__drawing__apply_operations', 'mcp__drawing__restore_checkpoint'])('只读模式拒绝 %s', async name => {
+    expect(await handlePreExecute({ name, arguments: {} } as never, nextNeverCalled, makeDeps('read-only'))).toMatchObject({ kind: 'deny', reason: expect.stringContaining('只读') });
+  });
+  it('工作区模式审批绘图修改，完全访问直通，读取实时选区不要求写权限', async () => {
+    expect(await handlePreExecute({ name: 'mcp__drawing__apply_operations', arguments: {} } as never, nextNeverCalled, makeDeps('workspace-write'))).toMatchObject({ kind: 'ask' });
+    const next = vi.fn().mockResolvedValue({ kind: 'allow' });
+    expect(await handlePreExecute({ name: 'mcp__drawing__apply_operations', arguments: {} } as never, next, makeDeps('danger-full-access'))).toEqual({ kind: 'allow' });
+    expect(await handlePreExecute({ name: 'mcp__drawing__get_context', arguments: {} } as never, next, makeDeps('read-only'))).toEqual({ kind: 'allow' });
+  });
+});
+
 describe('handlePreExecute — 工作空间路径修改黑名单', () => {
   it('bash 设 DSH_WORKSPACE_ROOT 环境变量 → deny', async () => {
     const d = makeDeps();

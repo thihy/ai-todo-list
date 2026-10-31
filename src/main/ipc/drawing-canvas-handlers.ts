@@ -26,6 +26,7 @@ function broadcast(channel: string, payload: unknown): void {
 export function getDrawingCanvasHost(): DrawingCanvasHost {
   if (!host) {
     host = new DrawingCanvasHost({
+      activeOwner: () => BrowserWindow.getFocusedWindow()?.webContents.id,
       send: (payload: DrawingApplyPayload) => {
         broadcast('app:drawing-apply', payload);
       },
@@ -34,6 +35,11 @@ export function getDrawingCanvasHost(): DrawingCanvasHost {
         const target = webContents.fromId(ownerId);
         if (!target || target.isDestroyed()) throw new Error('实时画布渲染进程不可用');
         target.send('app:drawing-context', payload);
+      },
+      sendEngine: (payload, ownerId) => {
+        const target = webContents.fromId(ownerId);
+        if (!target || target.isDestroyed()) throw new Error('实时画布渲染进程不可用');
+        target.send('app:drawing-engine', payload);
       },
       // 复用既有的独立绘图路由（App.tsx 的 'todo-drawing' 分支直接挂载
       // ExcalidrawEditor）。走独立路由而不是 DocumentsView 的 tab，是因为
@@ -51,6 +57,7 @@ export function getDrawingCanvasHost(): DrawingCanvasHost {
 export function registerDrawingCanvasHandlers(): void {
   const h = getDrawingCanvasHost();
   register('drawing.contextResult', (event, req) => { h.contextResult(req, event.sender.id); return okResult(undefined); });
+  register('drawing.engineResult', (event, req) => { h.engineResult(req, event.sender.id); return okResult(undefined); });
   register('drawing.exported', (_e, req) => {
     h.exported(req);
     return Promise.resolve(okResult(undefined as never));

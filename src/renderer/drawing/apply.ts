@@ -54,6 +54,7 @@ export async function applySkeletonBatch(opts: {
   skeletons: DrawingSkeleton[];
   save: SceneSaver;
   scrollToContent?: boolean;
+  beforeApply?: () => void;
 }): Promise<{ ok: boolean; error?: string }> {
   const { api, drawingId, skeletons, save, scrollToContent } = opts;
   try {
@@ -96,6 +97,7 @@ export async function applySkeletonBatch(opts: {
 
     const merged = [...existing, ...(created as unknown[])];
 
+    opts.beforeApply?.();
     api.updateScene(
       { elements: merged, collaborators: new Map(), captureUpdate: CaptureUpdateAction.NEVER },
     );

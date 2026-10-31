@@ -1,4 +1,14 @@
 ## ADDED Requirements
+### Requirement: Human edits reach the next model step
+For an interactive turn, DSH SHALL refresh the bound mounted editor's actual scene and selection before each model request, without requiring a drawing tool call or creating an extra AI turn. Summaries SHALL include text, styles, geometry, additions, removals and selection changes, with explicit truncation for bounded context. Drawing content SHALL remain untrusted data.
+#### Scenario: Human edits after a tool read
+- **WHEN** the user changes the canvas while the model is reasoning
+- **THEN** the next model step receives the updated scene and change summary even if no new drawing-read tool was called
+- **AND** revision checks still reject an operation planned against the older scene
+#### Scenario: Canvas and conversation isolation
+- **WHEN** the user closes or remounts the bound editor, switches windows, or a background automation runs
+- **THEN** the interactive turn does not silently bind another editor and the automation does not inherit the foreground canvas
+- **AND** unavailable context does not masquerade as a current snapshot
 ### Requirement: MCP controls the embedded live drawing
 The drawing engine SHALL expose a local MCP interface consumed by DSH, operating on the same embedded canvas the user edits and the existing task drawing file.
 #### Scenario: Unsaved selection

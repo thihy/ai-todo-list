@@ -16,7 +16,7 @@
 //   渲染进程卸载画布 → canvasGone(drawingId) → 从 live set 移除
 
 import { randomUUID } from 'node:crypto';
-import type { DrawingContextRequest, DrawingContextResult } from '../../shared/drawing-engine';
+import type { DrawingContextRequest, DrawingContextResult, DrawingEngineCommand, DrawingEngineResult } from '../../shared/drawing-engine';
 import type {
   DrawingApplyPayload,
   DrawingAppliedPayload,
@@ -35,6 +35,8 @@ export interface DrawingCanvasHostOptions {
   send: ApplySender;
   sendExport?: (payload: DrawingExportPayload) => void;
   sendContext?: (payload: DrawingContextRequest, ownerId: number) => void;
+  sendEngine?: (payload: DrawingEngineCommand, ownerId: number) => void;
+  activeOwner?: () => number | undefined;
   navigate: NavigateToDrawing;
   /** 画布从「未就绪」到「就绪」的最长等待，默认 6s。
    *  覆盖的是「打开 tab → React 挂载 → 动态 import excalidraw → 拿到 API」
@@ -54,18 +56,26 @@ export interface ApplyOutcome {
   applied: boolean;
 }
 
+/** Pin a mounted editor instance, so a later tab/window cannot replace its context. */
+export interface DrawingCanvasTarget { drawingId: string; ownerId: number; generation: number }
+
 export class DrawingCanvasHost {
   private readonly live = new Set<string>();
   private readonly owners = new Map<string, Set<number>>();
+  private readonly generations = new Map<string, number>();
+  private nextGeneration = 0;
   private readonly contextRequests = new Map<string, { drawingId: string; ownerId: number; settle: (result: DrawingContextResult) => void }>();
+  private readonly engineRequests = new Map<string, { fingerprint: string; ownerId?: number; promise: Promise<DrawingEngineResult>; result?: DrawingEngineResult; settle: (result: DrawingEngineResult) => void }>();
   private readonly waiters = new Map<string, Array<() => void>>();
   private readonly inflight = new Map<
     string,
     (payload: DrawingAppliedPayload) => void
   >();
   private readonly exports = new Map<string, { drawingId: string; settle: (result: DrawingExportResult) => void }>();
-  private readonly opts: Required<Omit<DrawingCanvasHostOptions, 'log' | 'sendExport' | 'sendContext'>> & {
+  private readonly opts: Required<Omit<DrawingCanvasHostOptions, 'log' | 'sendExport' | 'sendContext' | 'sendEngine' | 'activeOwner'>> & {
     sendContext?: DrawingCanvasHostOptions['sendContext'];
+    sendEngine?: DrawingCanvasHostOptions['sendEngine'];
+    activeOwner?: DrawingCanvasHostOptions['activeOwner'];
     sendExport?: DrawingCanvasHostOptions['sendExport'];
     log: (msg: string) => void;
   };
@@ -75,6 +85,8 @@ export class DrawingCanvasHost {
       send: options.send,
       sendExport: options.sendExport,
       sendContext: options.sendContext,
+      sendEngine: options.sendEngine,
+      activeOwner: options.activeOwner,
       navigate: options.navigate,
       readyTimeoutMs: options.readyTimeoutMs ?? 6_000,
       ackTimeoutMs: options.ackTimeoutMs ?? 6_000,
@@ -91,25 +103,105 @@ export class DrawingCanvasHost {
     return this.live.has(drawingId);
   }
 
+  activeDrawingId(): string | undefined {
+    const owner = this.opts.activeOwner?.();
+    const candidates = [...this.live].filter(id => owner === undefined || this.owners.get(id)?.has(owner));
+    if (candidates.length === 1) return candidates[0];
+    return this.live.size === 1 ? [...this.live][0] : undefined;
+  }
+
+  activeTarget(): DrawingCanvasTarget | undefined {
+    const drawingId = this.activeDrawingId();
+    const ownerId = drawingId === undefined ? undefined : this.ownerFor(drawingId);
+    if (drawingId === undefined || ownerId === undefined) return;
+    const generation = this.generations.get(`${drawingId}\0${ownerId}`);
+    return generation === undefined ? undefined : { drawingId, ownerId, generation };
+  }
+
+  isTargetLive(target: DrawingCanvasTarget): boolean {
+    return this.owners.get(target.drawingId)?.has(target.ownerId) === true
+      && this.generations.get(`${target.drawingId}\0${target.ownerId}`) === target.generation;
+  }
+
+  private ownerFor(drawingId: string): number | undefined {
+    const owners = this.owners.get(drawingId);
+    const active = this.opts.activeOwner?.();
+    return active !== undefined && owners?.has(active) ? active : [...(owners ?? [])].at(-1);
+  }
+
   contextResult(result: DrawingContextResult, ownerId: number): void {
     const pending = this.contextRequests.get(result.opId);
     if (!pending || pending.drawingId !== result.drawingId || pending.ownerId !== ownerId) return;
     this.contextRequests.delete(result.opId); pending.settle(result);
   }
 
-  async readContext(todoId: string, drawingId: string): Promise<DrawingContextResult> {
+  engineResult(result: DrawingEngineResult, ownerId: number): void {
+    const pending = this.engineRequests.get(`${result.drawingId}\0${result.opId}`);
+    if (!pending || pending.ownerId !== ownerId || pending.result || result.state !== 'completed') return;
+    pending.result = result;
+    pending.settle(result);
+  }
+
+  /** Retain acknowledgements after timeouts and renderer unmounts. Never blindly replay edits. */
+  runEngineCommand(todoId: string, command: DrawingEngineCommand): Promise<DrawingEngineResult> {
+    const failure = (error: string, state: DrawingEngineResult['state'] = 'completed'): DrawingEngineResult => ({ drawingId: command.drawingId, opId: command.opId, ok: false, state, code: state === 'unknown' ? 'unknown_outcome' : 'unavailable', error });
+    const key = `${command.drawingId}\0${command.kind === 'outcome' ? command.targetOpId : command.opId}`;
+    const previous = this.engineRequests.get(key);
+    if (command.kind === 'outcome') {
+      if (previous?.result) return Promise.resolve(previous.result);
+      if (previous?.ownerId !== undefined) {
+        // Probe the original engine's cached result; this is a read, never a replay.
+        try { this.opts.sendEngine?.(command, previous.ownerId); }
+        catch (cause) { this.opts.log(`drawing outcome probe failed: ${String(cause)}`); }
+      }
+      return Promise.resolve({ ...failure(previous ? '操作尚未收到回执，请继续查询原 opId，勿重放修改' : '未找到操作记录，请读取画布核实，勿盲目重放修改', previous ? 'pending' : 'unknown'), opId: command.targetOpId });
+    }
+    const fingerprint = JSON.stringify(command);
+    if (previous) return previous.fingerprint === fingerprint ? Promise.resolve(previous.result ?? previous.promise) : Promise.resolve({ ...failure('此 opId 已用于不同操作'), code: 'invalid' });
+    if (this.engineRequests.size >= 1024) return Promise.resolve({ ...failure('绘图操作记录已满，请保存后重启应用'), code: 'capacity' });
+    let resolve!: (value: DrawingEngineResult) => void;
+    const promise = new Promise<DrawingEngineResult>(settle => { resolve = settle; });
+    const entry = { fingerprint, promise, ownerId: undefined as number | undefined, result: undefined as DrawingEngineResult | undefined, settle: resolve };
+    this.engineRequests.set(key, entry);
+    void (async () => {
+      try {
+        if (!this.opts.sendEngine) throw Error('实时画布修改未连接');
+        if (!this.isLive(command.drawingId)) {
+          const ready = this.waitForReady(command.drawingId); this.opts.navigate(todoId, command.drawingId);
+          if (!await ready) throw Error('打开实时画布超时');
+        }
+        const ownerId = this.ownerFor(command.drawingId);
+        if (ownerId === undefined) throw Error('画布没有可用的渲染进程');
+        entry.ownerId = ownerId;
+        const timer = setTimeout(() => resolve(failure('未收到修改回执；结果未知，请查询原 opId，勿重复应用', 'unknown')), this.opts.ackTimeoutMs);
+        entry.settle = result => { clearTimeout(timer); resolve(result); };
+        try { this.opts.sendEngine(command, ownerId); }
+        catch (cause) { clearTimeout(timer); throw cause; }
+      } catch (cause) {
+        const result = failure(cause instanceof Error ? cause.message : String(cause));
+        entry.result = result; entry.settle(result);
+      }
+    })();
+    return promise;
+  }
+
+  async readContext(todoId: string, drawingId: string, target?: DrawingCanvasTarget): Promise<DrawingContextResult> {
     const opId = randomUUID();
     const failure = (error: string): DrawingContextResult => ({ drawingId, opId, ok: false, error });
     if (!this.opts.sendContext) return failure('实时画布查询未连接');
+    if (target && (target.drawingId !== drawingId || !this.isTargetLive(target))) return failure('本轮关联的画布已关闭');
     if (!this.isLive(drawingId)) {
       const ready = this.waitForReady(drawingId); this.opts.navigate(todoId, drawingId);
       if (!await ready) return failure('打开实时画布超时');
     }
-    const ownerId = [...(this.owners.get(drawingId) ?? [])].at(-1);
+    const ownerId = target?.ownerId ?? this.ownerFor(drawingId);
     if (ownerId === undefined) return failure('画布没有可用的渲染进程');
     return new Promise(resolve => {
       const timer = setTimeout(() => { this.contextRequests.delete(opId); resolve(failure('实时画布查询超时')); }, this.opts.ackTimeoutMs);
-      this.contextRequests.set(opId, { drawingId, ownerId, settle: result => { clearTimeout(timer); resolve(result); } });
+      this.contextRequests.set(opId, { drawingId, ownerId, settle: result => {
+        clearTimeout(timer);
+        resolve(target && !this.isTargetLive(target) ? failure('本轮关联的画布已关闭或重新打开') : result);
+      } });
       try { this.opts.sendContext!({ drawingId, opId }, ownerId); }
       catch (cause) { clearTimeout(timer); this.contextRequests.delete(opId); resolve(failure(cause instanceof Error ? cause.message : String(cause))); }
     });
@@ -150,6 +242,7 @@ export class DrawingCanvasHost {
   canvasReady(payload: DrawingCanvasReadyPayload, ownerId?: number): void {
     const { drawingId } = payload;
     if (ownerId !== undefined) {
+      this.generations.set(`${drawingId}\0${ownerId}`, ++this.nextGeneration);
       const owners = this.owners.get(drawingId) ?? new Set<number>();
       owners.delete(ownerId); owners.add(ownerId); this.owners.set(drawingId, owners);
     }
@@ -166,10 +259,12 @@ export class DrawingCanvasHost {
   /** 渲染进程报告画布卸载。 */
   canvasGone(drawingId: string, ownerId?: number): void {
     if (ownerId !== undefined) {
+      this.generations.delete(`${drawingId}\0${ownerId}`);
       const owners = this.owners.get(drawingId);
       owners?.delete(ownerId);
       if (owners?.size) return;
     }
+    for (const key of this.generations.keys()) if (key.startsWith(`${drawingId}\0`)) this.generations.delete(key);
     this.owners.delete(drawingId);
     if (this.live.delete(drawingId)) {
       this.opts.log(`drawing canvas gone: ${drawingId} (live=${this.live.size})`);

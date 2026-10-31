@@ -65,6 +65,7 @@ const APP_EVENTS: AppEvent[] = [
   'app:drawing-apply',
   'app:drawing-export',
   'app:drawing-context',
+  'app:drawing-engine',
   'ai:stream',
   'ai:permission-request',
   // L4-G: human-in-the-loop events. The main-process waterfall listener
@@ -146,6 +147,7 @@ const api: TodoListApi = {
     export: (id) => invoke('drawing.export', { id }),
     exported: (payload) => invoke('drawing.exported', payload),
     contextResult: (payload) => invoke('drawing.contextResult', payload),
+    engineResult: (payload) => invoke('drawing.engineResult', payload),
     list: (todoId) => invoke('drawing.list', { todoId }),
     read: (id) => invoke('drawing.read', { id }),
     save: (todoId, scene, id, title) =>

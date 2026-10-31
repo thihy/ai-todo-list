@@ -26,6 +26,8 @@ import type { MarkdownStore } from '../files/markdown';
 import type { DrawingStore } from '../files/drawings';
 import { layoutDrawingSpec } from '../drawing/layout';
 import type { DrawingCanvasHost } from '../drawing/canvas-host';
+import { installDrawingAgentContext } from '../drawing/agent-context';
+import type { DrawingMcpService } from '../drawing/mcp-server';
 import { getFocus } from '../app-context';
 import type { ConversationRepo } from '../db/conversation-repo';
 import type { SettingsStore } from '../settings/store';
@@ -557,7 +559,8 @@ export function __seedPendingApprovalForTest(conversationId: string, reqId: stri
 //
 // 工具白名单（应在 approval/request 之前过的 read 类工具名 + mutate 类工具名）
 // 由 `PRE_APPROVE_TOOLS` / `READ_CLASS_TOOLS` 两个常量维护；新增工具时同步。
-const PRE_APPROVE_TOOLS: ReadonlySet<string> = new Set(['write', 'edit', 'bash', 'pwsh', 'skill_install', 'automation_remove']);
+const DRAWING_MCP_MUTATIONS = new Set(['mcp__drawing__apply_operations', 'mcp__drawing__restore_checkpoint']);
+const PRE_APPROVE_TOOLS: ReadonlySet<string> = new Set(['write', 'edit', 'bash', 'pwsh', 'skill_install', 'automation_remove', ...DRAWING_MCP_MUTATIONS]);
 const READ_CLASS_TOOLS: ReadonlySet<string> = new Set(['read', 'read_image', 'grep', 'glob']);
 
 // 工作空间路径修改硬拒黑名单 —— 用户明确要求:AI 助手**不允许**通过任何
@@ -640,6 +643,9 @@ export async function handlePreExecute(
   },
 ): Promise<PreToolDecision> {
   const { name: toolName, arguments: args } = exec;
+  if (DRAWING_MCP_MUTATIONS.has(toolName) && deps.currentPreset(exec) === 'read-only') {
+    return { kind: 'deny', reason: '当前为只读权限，不能修改或撤销绘图。请由用户切换权限后再操作。' };
+  }
   // 0. workspace 黑名单 —— 永远 deny,不论 preset/sandbox 是否开启。
   //    必须放在 sandbox / approval gate 之前,因为我们不希望这条策略
   //    被任何后续层(danger-full-access、auto 插件、用户一次审批)绕过。
@@ -1269,6 +1275,7 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
   phases.cordisBootMs = Date.now() - tCordis;
 
   const tAssembly = Date.now();
+  let drawingMcp: DrawingMcpService | undefined;
 
   // STARTUP-AI-ASYNC-002 — the boot body that follows builds the
   // runtime object literal. We wrap the rest of the function in a
@@ -1328,6 +1335,19 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
   if (!tools) throw new Error('DSH booted but ctx.tools is absent');
   const { defineTool } = await import('@deepseek-ai/dsh-tools');
   const disposeTools = registerDomainTools(tools, defineTool, deps, ctx);
+  if (deps.drawingCanvasHost) {
+    const { startDrawingMcpServer } = await import('../drawing/mcp-server');
+    drawingMcp = await startDrawingMcpServer({ host: deps.drawingCanvasHost, drawings: deps.drawings });
+    const service = drawingMcp;
+    (ctx as unknown as Context).effect(() => () => service.close(), 'todo-list.drawing-mcp');
+    const client = await import('@deepseek-ai/dsh-mcp-client');
+    await (ctx as unknown as Context).plugin(client, {
+      serverName: 'drawing', transport: 'streamable-http', url: service.url,
+      headers: { Authorization: `Bearer ${service.token}` }, toolCallTimeoutMs: 20_000,
+      failOnStartupError: true,
+    });
+    logger.info('DSH drawing MCP connected: native client and embedded canvas tools ready');
+  }
   const commands = ctx.get('commands') as CommandRuntime | undefined;
   commands?.register({ name: 'help', description: '查看可用的系统命令', handler: ({ agent }) => ({ kind: 'success', text: commands.list(agent).map((item) => `/${item.name} — ${item.description}`).join('\n') }) });
   commands?.register({ name: 'skills', description: '查看技能清单', handler: async () => {
@@ -1629,6 +1649,7 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
     activeInvocationId?: string;
     commandAbort?: AbortController;
     canSteer?: boolean;
+    drawingContext?: ReturnType<typeof installDrawingAgentContext>;
   }
 
   const conversations = new Map<string, ConversationEntry>();
@@ -1659,13 +1680,17 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
     if (!handle.agent.ctx) throw new Error('DSH agent has no scoped context for model selection');
     const modelSelection: ModelSelectionRef = { current: { provider, model }, assembled: undefined };
     const offModelSelection = installModelSelection(handle.agent.ctx, modelSelection);
+    const drawingContext = deps.drawingCanvasHost
+      ? installDrawingAgentContext(handle.agent.ctx, deps.drawingCanvasHost, id => deps.drawings.get(id)?.todoId)
+      : undefined;
 
     const entry: ConversationEntry = {
       id: conversationId,
       model,
       modelSelection,
       agent: handle.agent,
-      disposeHandle: async () => { offModelSelection(); await handle.dispose(); },
+      disposeHandle: async () => { drawingContext?.dispose(); offModelSelection(); await handle.dispose(); },
+      drawingContext,
       offSession: () => {},
       dormant: true,
     };
@@ -1773,6 +1798,9 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
     // treats that as a no-op (already documented contract).
     persistence: buildOrphanMigrationFacade(persistenceApi),
     async runTurn({ prompt, conversationId, invocationId, intent, retryGroupId, onEvent, signal }) {
+      // Pin the user's canvas at admission; background automations must not inherit a foreground editor.
+      const drawingTarget = deps.conversations.get(conversationId)?.automationId
+        ? undefined : deps.drawingCanvasHost?.activeTarget();
       void invocationId; // 留作对外 API 兼容；事件流里的 invocationId 由 ai.ask 自行追踪
       const { createUserMessage } = await import('@deepseek-ai/dsh-llm');
       const endpoint = deps.getEndpoint();
@@ -1782,6 +1810,7 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
       // A Stop click can be followed immediately by Send. Do not attach a
       // second consumer or enqueue input into an agent still cancelling.
       while (entry.activeTurn) await entry.activeTurn;
+      entry.drawingContext?.bind(drawingTarget);
       entry.modelSelection.current = {
         provider: providerRouteFor(deps.settings.get().provider) ?? 'deepseek',
         model,
@@ -1941,6 +1970,7 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
       } finally {
         entry.activeTurn = undefined;
         entry.activeInvocationId = undefined;
+        entry.drawingContext?.bind(undefined);
         entry.canSteer = false;
         releaseTurn();
       }
@@ -2150,6 +2180,8 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
   logBootDone(phases, stopLoopProbe(probe), 'ok');
   return runtime;
   } catch (err) {
+    await ctx.fiber?.dispose?.().catch(() => {});
+    await drawingMcp?.close().catch(() => {});
     // STARTUP-AI-ASYNC-002 — log the partial phase breakdown +
     // event-loop latency sample for the failure case so we can
     // tell whether the boot crashed early (small totalMs) or late
@@ -2836,7 +2868,7 @@ function registerDomainTools(
   reg(defineTool({
     name: 'drawing_read',
     ...wire('drawing_read'),
-    description: 'Read an Excalidraw drawing scene by id. Returns the full scene JSON (elements, appState). Throws if the id is unknown or the scene file is missing on disk.',
+    description: 'Read the last saved Excalidraw drawing file by id. Returns scene JSON (elements, appState). For live unsaved elements, current selection and an edit revision use mcp__drawing__get_context / mcp__drawing__read_elements instead. Throws if the id or file is missing.',
     parameters: { description: { type: 'string', description: '一句中文意图说明；展示在 UI 卡片标题旁（DSH 原生约定，可选；不填则由 summarizeToolCall 从结果/参数结构化字段派生）' }, id: { type: 'string', required: true, description: 'Drawing id' } },
     output: jsonOutput,
     async execute(args: { id: string }) { return drawings.read(args.id as never); },
@@ -2845,7 +2877,7 @@ function registerDomainTools(
   reg(defineTool({
     name: 'drawing_save',
     ...wire('drawing_save'),
-    description: 'ESCAPE HATCH — overwrite an Excalidraw drawing with a full scene JSON. For ANY generated diagram (flowchart, architecture, mind map) use drawing_draw instead: it takes shapes + labels + positions and the app fills in the Excalidraw internals. Only use this to import an externally authored scene. Pass `id` to update an existing drawing; omit to create a new one (label defaults to 绘图 → 绘图.excalidraw). Changing `title` renames the drawing AND its file on disk. The `scene` is the full Excalidraw scene JSON.',
+    description: 'IMPORT ONLY — import an externally authored Excalidraw scene JSON. For a new generated diagram use drawing_draw. For edits to an existing live drawing use mcp__drawing__get_context and mcp__drawing__apply_operations, never replace its full scene. Pass `id` only for an explicitly requested file import over an existing drawing; omit to create a new drawing (label defaults to 绘图). Changing `title` renames the drawing AND its file on disk.',
     parameters: {
       description: { type: 'string', description: '一句中文意图说明；展示在 UI 卡片标题旁（DSH 原生约定，可选；不填则由 summarizeToolCall 从结果/参数结构化字段派生）' },
       todoId: { type: 'string', required: true, description: 'TODO id this drawing belongs to' },
@@ -2899,6 +2931,7 @@ function registerDomainTools(
       ...wire('drawing_draw'),
       description: [
         'Draw a diagram (flowchart / architecture / mind map) into an Excalidraw drawing on a task.',
+        'For editing an existing live selection or existing nodes, use mcp__drawing__get_context and mcp__drawing__apply_operations instead.',
         'PREFER THIS OVER drawing_save for any generated diagram — describe WHAT to draw, not the Excalidraw JSON.',
         'You supply nodes (shape + label + grid position) and edges (from/to + optional edge label); the app computes',
         'coordinates, arrow geometry, and every Excalidraw element field. Give each node a short unique `key` (lowercase',

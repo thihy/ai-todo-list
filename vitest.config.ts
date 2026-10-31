@@ -5,7 +5,7 @@ export default defineConfig({
   test: {
     environment: 'node',
     include: ['tests/unit/**/*.spec.ts', 'tests/unit/**/*.spec.tsx'],
-    server: { deps: { inline: ['@deepseek-ai/dsh-client-ui-primitives'] } },
+    server: { deps: { inline: ['@deepseek-ai/dsh-client-ui-primitives', '@excalidraw/excalidraw', 'roughjs'] } },
     coverage: {
       provider: 'v8',
       reporter: ['text', 'html', 'lcov'],

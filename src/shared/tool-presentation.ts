@@ -109,6 +109,12 @@ export type ToolName =
   | 'drawing_setThumb'
   | 'drawing_draw'
   | 'drawing_render'
+  | 'mcp__drawing__get_context'
+  | 'mcp__drawing__read_elements'
+  | 'mcp__drawing__apply_operations'
+  | 'mcp__drawing__get_operation'
+  | 'mcp__drawing__restore_checkpoint'
+  | 'mcp__drawing__render_snapshot'
   | 'inbox_attach'
   | 'inbox_attachBlob'
   | 'conversation_list'
@@ -169,6 +175,12 @@ const kindByTool: Record<ToolName, ToolCallKind> = {
   'drawing_setThumb': 'edit',
   'drawing_draw': 'edit',
   'drawing_render': 'read',
+  'mcp__drawing__get_context': 'read',
+  'mcp__drawing__read_elements': 'read',
+  'mcp__drawing__apply_operations': 'edit',
+  'mcp__drawing__get_operation': 'read',
+  'mcp__drawing__restore_checkpoint': 'edit',
+  'mcp__drawing__render_snapshot': 'read',
   'inbox_attach': 'edit',
   'inbox_attachBlob': 'edit',
   'conversation_list': 'read',
@@ -300,6 +312,15 @@ export function summarizeToolCall(
   }
   const resultTitle = (): string | undefined => stringField(result, 'title');
   switch (toolName) {
+    case 'mcp__drawing__get_context': return `${asArray((result as Record<string, unknown> | null)?.selectedElementIds).length} 个选中元素`;
+    case 'mcp__drawing__read_elements': return `${asArray((result as Record<string, unknown> | null)?.elements).length} 个元素`;
+    case 'mcp__drawing__apply_operations': {
+      if ((result as Record<string, unknown> | null)?.durable === true) return `已保存 · ${asArray((result as Record<string, unknown>).affectedIds).length} 个元素`;
+      return `${asArray(a?.operations).length} 项修改`;
+    }
+    case 'mcp__drawing__get_operation': return stringField(result, 'state') === 'completed' ? '执行结果已确认' : '等待执行回执';
+    case 'mcp__drawing__restore_checkpoint': return (result as Record<string, unknown> | null)?.durable === true ? '已恢复并保存' : '恢复最近一次 AI 修改';
+    case 'mcp__drawing__render_snapshot': return '当前画布完整截图';
     case 'todo_write': {
       const todos = (a?.todos ?? (result as { todos?: unknown } | null)?.todos);
       if (!Array.isArray(todos)) return '维护本轮 AI 执行计划';
@@ -512,6 +533,12 @@ function titleFor(toolName: string): string {
     'drawing_setThumb': '更新缩略图',
   'drawing_draw': 'AI 画图',
   'drawing_render': '查看绘图效果',
+    'mcp__drawing__get_context': '读取实时画布',
+    'mcp__drawing__read_elements': '读取绘图元素',
+    'mcp__drawing__apply_operations': '修改当前绘图',
+    'mcp__drawing__get_operation': '查询绘图执行结果',
+    'mcp__drawing__restore_checkpoint': '撤销 AI 绘图修改',
+    'mcp__drawing__render_snapshot': '查看当前绘图效果',
     'inbox_attach': '添加附件',
     'inbox_attachBlob': '添加附件',
     'conversation_list': '列出会话',
@@ -557,11 +584,18 @@ function genericResult(_toolName: string, result: unknown): ToolResultView {
 }
 
 function errorResult(toolName: string, result: unknown): ToolResultView {
-  const text = typeof result === 'string'
+  let text = typeof result === 'string'
     ? result
     : result == null
       ? `${titleFor(toolName)} 失败`
       : safeJson(result);
+  if (toolName.startsWith('mcp__drawing__')) {
+    try {
+      const detail = typeof result === 'string' ? JSON.parse(result.replace(/^Error:\s*/, '')) : result;
+      const error = stringField(detail, 'error');
+      if (error) text = error;
+    } catch { /* Keep the raw error when it is not a structured MCP outcome. */ }
+  }
   return {
     card: 'generic',
     title: `${titleFor(toolName)} — 失败`,

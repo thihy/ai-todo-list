@@ -4,6 +4,22 @@ All notable changes to todo-list are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0-rc19] - 2026-10-31
+
+### Added
+
+- Connect the embedded Excalidraw engine to DSH through the native MCP client and an authenticated local SDK Streamable HTTP server.
+- Read live selection and unsaved elements; incrementally edit shapes and labels, connect existing nodes, inspect PNG snapshots and query operation outcomes.
+- Synchronize manual text, style, geometry and selection changes into scoped DSH context before each model step, with editor-instance isolation and no extra AI turns.
+- Add a visible AI-edit revert action with bounded checkpoints, scene-version conflict detection and durable save acknowledgement.
+
+### Fixed
+
+- Reject stale or invalid drawing batches before any mutation, and retain duplicate/late acknowledgements without replaying edits.
+- Preserve pending manual autosave when an AI edit is rejected; keep unrelated elements, viewport and selection intact.
+- Keep drawing action buttons above the interactive canvas and reachable in narrow layouts.
+- Apply read-only, Auto and full-access policy to native drawing MCP tools, with localized summaries and readable recoverable errors.
+
 ## [1.0.0-rc18] - 2026-10-31
 
 ### Added

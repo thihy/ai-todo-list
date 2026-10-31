@@ -15,6 +15,14 @@ import {
   summarizeToolCall,
   recoverToolResultValue,
 } from '../../src/shared/tool-presentation';
+
+it('labels native drawing MCP actions and summarizes saved edits without exposing protocol names', () => {
+  expect(presentToolCall('mcp__drawing__apply_operations', {}).title).toBe('修改当前绘图');
+  expect(presentToolCall('mcp__drawing__get_context', {}).title).toBe('读取实时画布');
+  expect(summarizeToolCall('mcp__drawing__apply_operations', {}, { durable: true, affectedIds: ['a', 'b'] }, true)).toBe('已保存 · 2 个元素');
+  const view = presentToolResult('mcp__drawing__apply_operations', {}, 'Error: {"code":"conflict","error":"画布已经变化，请重新读取当前版本后再修改"}', false);
+  expect(view).toMatchObject({ content: [{ type: 'text', text: '画布已经变化，请重新读取当前版本后再修改' }] });
+});
 import {
   readResultToView,
   writeEditToView,

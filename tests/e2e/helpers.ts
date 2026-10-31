@@ -33,7 +33,7 @@ export const TEXT_PROMPT = '用一句话回答：1+1等于几？不要调用任�
  *  before we abort. Keep it non-trivial so cancel has a window to land. */
 export const LONG_PROMPT = '写一段 200 字左右的中文短文，介绍光的作用。不要调用工具。';
 
-export async function launchApp(seed: { compactWindow?: Partial<import('../../src/shared/compact-preferences').CompactPreferences> } = {}): Promise<AppHandle> {
+export async function launchApp(seed: { compactWindow?: Partial<import('../../src/shared/compact-preferences').CompactPreferences>; aiConfigPath?: string } = {}): Promise<AppHandle> {
   // Test runners in this repository use Electron itself as the Node runtime.
   // Do not leak that switch into the child process: Playwright needs to start
   // the binary in normal Electron mode, otherwise Chromium flags are rejected
@@ -49,16 +49,21 @@ export async function launchApp(seed: { compactWindow?: Partial<import('../../sr
   // beside userData, which would otherwise make every E2E run share the same
   // temp/.todo-list database despite having a unique Chromium profile.
   const userDataDir = mkdtempSync(join(tmpdir(), 'ai-todo-e2e-'));
+  // Explicit opt-in real-provider tests copy connection settings only, never the
+  // user's task data, automation catalog, or global permission grants.
+  const source = seed.aiConfigPath ? JSON.parse(readFileSync(seed.aiConfigPath, 'utf8')) : {};
+  const connection = Object.fromEntries(['provider', 'apiKey', 'model', 'streaming', 'customProviders', 'customProviderId', 'userAgent'].filter(key => key in source).map(key => [key, source[key]]));
   writeFileSync(
     join(userDataDir, 'config.json'),
-    JSON.stringify({ ...seed, dataDir: join(userDataDir, 'data') }),
+    JSON.stringify({ ...connection, compactWindow: seed.compactWindow, dataDir: join(userDataDir, 'data') }),
     'utf8',
   );
   const app = await electron.launch({
+    ...(process.env.TODO_E2E_EXECUTABLE_PATH ? { executablePath: process.env.TODO_E2E_EXECUTABLE_PATH } : {}),
     // CI/sandbox Windows images may not provide the GPU runtime DLLs used by
     // Chromium. Software rendering keeps UI assertions deterministic without
     // changing production hardware acceleration.
-    args: [`--user-data-dir=${userDataDir}`, '--disable-gpu', '--no-sandbox', '.'],
+    args: [`--user-data-dir=${userDataDir}`, '--disable-gpu', '--no-sandbox', ...(process.env.TODO_E2E_EXECUTABLE_PATH ? [] : ['.'])],
     env,
   });
   const processOutput: string[] = [];

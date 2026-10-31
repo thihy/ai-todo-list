@@ -4,6 +4,7 @@
 Current AI drawing is mostly batch generation: it appends new shapes or overwrites a stored scene. It cannot reliably help users edit their live selection while preserving concurrent manual changes. The user requested an engine-owned MCP interface consumed by DSH.
 
 ## What Changes
+- Absorb the official implementation's edit/context feedback loop without depending on its UI or repository. Human edits reach DSH's next model step through scoped live context; the shared task canvas remains the single scene.
 - Expose the current embedded drawing engine through a local MCP service, rather than operating a separate remote whiteboard.
 - Read the live scene, selection, viewport and revision, including unsaved edits.
 - Apply bounded element operations to existing shapes, labels and connectors with conflict detection, idempotency and explicit acknowledgement.

@@ -7,13 +7,14 @@
 // own React tree, not ours) so its internal state survives unmount-free
 // re-renders.
 
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { useDrawing } from '../hooks/useTodoListApi';
 import { useToastBus } from './Toast';
 import { useAppEvent } from '../hooks/useTodoListApi';
 import { applySkeletonBatch, type MinimalExcalidrawApi, type SceneSaver } from '../drawing/apply';
 import { readLiveDrawingContext } from '../drawing/live-context';
+import { LiveDrawingEngine } from '../drawing/live-engine';
 import { CaptureUpdateAction } from '@excalidraw/excalidraw';
 import { drawingDocumentState } from '../drawing/scene-state';
 import { exportDrawingPng } from '../drawing/export';
@@ -68,6 +69,12 @@ function stripEsmShFromSrc(source: string): string {
   return kept.length > 0 ? kept.join(', ') : source;
 }
 
+const canvasActionStyle: React.CSSProperties = {
+  background: 'var(--bg-surface)', color: 'var(--fg-primary)', border: '1px solid var(--border-default)',
+  borderRadius: 8, padding: '5px 9px', fontSize: 12, lineHeight: '18px',
+  display: 'inline-flex', alignItems: 'center', gap: 5, boxShadow: '0 2px 8px #0001',
+};
+
 export const ExcalidrawEditor: React.FC<{
   todoId: string;
   drawingId: string;
@@ -88,6 +95,21 @@ export const ExcalidrawEditor: React.FC<{
   const autosaveRef = useRef<{ cancel(): void } | null>(null);
   const sceneLoaded = scene !== null;
   const applyingRef = useRef(false);
+  const applyingCountRef = useRef(0);
+  const engineRef = useRef<LiveDrawingEngine | null>(null);
+  const [lastAiCheckpoint, setLastAiCheckpoint] = useState<string | null>(null);
+  const [restoring, setRestoring] = useState(false);
+  const [narrowActions, setNarrowActions] = useState(false);
+  useEffect(() => { setLastAiCheckpoint(null); setRestoring(false); }, [drawingId]);
+  useEffect(() => {
+    const node = hostRef.current;
+    if (!node) return;
+    const measure = () => setNarrowActions(node.clientWidth < 800);
+    measure();
+    if (typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(measure); observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
 
   // External writes update the existing editor: remounting here can replace
   // focused DOM and leave a detached editor's global listeners behind.
@@ -112,17 +134,17 @@ export const ExcalidrawEditor: React.FC<{
   useAppEvent('app:drawing-apply', (payload) => {
     if (payload.drawingId !== drawingId) return;
     const api = apiRef.current;
-    autosaveRef.current?.cancel();
     void (async () => {
-      applyingRef.current = true;
+      applyingCountRef.current++; applyingRef.current = true;
       const result = !api || api.getAppState().isLoading === true
         ? { ok: false, error: '画布尚未就绪。' }
         : await applySkeletonBatch({
             api, drawingId, skeletons: payload.skeletons,
             save: (id, value) => saveRef.current(id, value),
             scrollToContent: payload.scrollToContent,
+            beforeApply: () => autosaveRef.current?.cancel(),
           });
-      applyingRef.current = false;
+      applyingCountRef.current--; applyingRef.current = applyingCountRef.current > 0;
       await window.todoList.drawing.applied({
         opId: payload.opId, drawingId, ok: result.ok, error: result.error,
       });
@@ -158,6 +180,23 @@ export const ExcalidrawEditor: React.FC<{
       } catch (cause) {
         await window.todoList.drawing.contextResult({ ...payload, ok: false, error: cause instanceof Error ? cause.message : String(cause) });
       }
+    })();
+  });
+
+  useAppEvent('app:drawing-engine', payload => {
+    if (payload.drawingId !== drawingId) return;
+    const engine = engineRef.current;
+    const mutating = payload.kind !== 'outcome';
+    if (mutating) { applyingCountRef.current++; applyingRef.current = true; }
+    void (async () => {
+      try {
+        const result = engine ? await engine.execute(payload) : { drawingId, opId: payload.opId, ok: false, state: 'completed' as const, code: 'unavailable' as const, error: '画布尚未就绪', liveChanged: false };
+        if (engineRef.current === engine && result.liveChanged) {
+          if (payload.kind === 'apply' && result.checkpointId) setLastAiCheckpoint(result.checkpointId);
+          if (payload.kind === 'restore' && result.ok) setLastAiCheckpoint(null);
+        }
+        await window.todoList.drawing.engineResult(result);
+      } finally { if (mutating) { applyingCountRef.current--; applyingRef.current = applyingCountRef.current > 0; } }
     })();
   });
 
@@ -216,6 +255,7 @@ export const ExcalidrawEditor: React.FC<{
         excalidrawAPI: (api) => {
           if (cancelled) return;
           apiRef.current = api as unknown as MinimalExcalidrawApi;
+          engineRef.current = new LiveDrawingEngine(apiRef.current, drawingId, (id, value) => saveRef.current(id, value), () => autosaveRef.current?.cancel());
           reportReady();
         },
         handleKeyboardGlobally: false,
@@ -253,6 +293,7 @@ export const ExcalidrawEditor: React.FC<{
       if (autosaveRef.current === autosave) autosaveRef.current = null;
       removeKeyDown?.();
       apiRef.current = null;
+      engineRef.current = null;
       void window.todoList.drawing.canvasGone(drawingId);
       mountNode?.remove();
       // React forbids unmounting a nested root during its parent's commit.
@@ -262,8 +303,24 @@ export const ExcalidrawEditor: React.FC<{
   }, [drawingId, sceneLoaded, todoId]);
 
   return <div className={className} style={{ position: 'relative' }}>
+    <div role="toolbar" aria-label="绘图操作" style={{ position: 'absolute', right: narrowActions ? 16 : 60, bottom: narrowActions ? 64 : 16, zIndex: 2, display: 'flex', flexWrap: 'wrap', justifyContent: 'flex-end', gap: 6, maxWidth: 'calc(100% - 32px)' }}>
+    {lastAiCheckpoint && <button type="button" aria-label="撤销 AI 修改" title="恢复最近一次 AI 修改前的绘图；已有后续编辑时不会覆盖"
+      disabled={restoring}
+      style={canvasActionStyle}
+      onClick={() => {
+        const api = apiRef.current, engine = engineRef.current;
+        if (!api || !engine || restoring) return;
+        setRestoring(true); applyingCountRef.current++; applyingRef.current = true;
+        void (async () => {
+          const context = await readLiveDrawingContext(api, drawingId);
+          const result = await engine.execute({ kind: 'restore', drawingId, opId: crypto.randomUUID(), baseRevision: context.revision, checkpointId: lastAiCheckpoint });
+          if (result.ok) { setLastAiCheckpoint(null); toastRef.current.push({ kind: 'success', message: '已撤销 AI 修改', ttl: 1500 }); }
+          else toastRef.current.push({ kind: 'error', message: result.error ?? '撤销失败', ttl: 3000 });
+        })().catch((cause: unknown) => toastRef.current.push({ kind: 'error', message: `撤销失败：${cause instanceof Error ? cause.message : String(cause)}`, ttl: 3000 }))
+          .finally(() => { applyingCountRef.current--; applyingRef.current = applyingCountRef.current > 0; setRestoring(false); });
+      }}><svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M9 14 4 9l5-5M4 9h9a7 7 0 0 1 0 14" /></svg>{restoring ? '正在撤销…' : '撤销 AI 修改'}</button>}
     <button type="button" aria-label="导出绘图 PNG" title="导出整张绘图为 PNG 图片"
-      style={{ position: 'absolute', right: 60, bottom: 16, zIndex: 2 }}
+      style={canvasActionStyle}
       onClick={() => {
         const api = apiRef.current;
         if (!api) return;
@@ -274,9 +331,10 @@ export const ExcalidrawEditor: React.FC<{
           link.click();
         }).catch((cause: unknown) => toastRef.current.push({ kind: 'error',
           message: `导出失败：${cause instanceof Error ? cause.message : String(cause)}`, ttl: 3000 }));
-      }}>导出 PNG</button>
+      }}><svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3v12m-4-4 4 4 4-4M4 16v5h16v-5" /></svg>导出 PNG</button>
+    </div>
     {error && <div role="alert">绘图加载失败：{error}</div>}
-    <div ref={hostRef} style={{ height: '100%' }} aria-label="绘图画布" />
+    <div ref={hostRef} style={{ height: '100%', position: 'relative', zIndex: 0 }} aria-label="绘图画布" />
   </div>;
 };
 

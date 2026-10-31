@@ -49,3 +49,17 @@ it('reports a missing live renderer response instead of fabricating context', as
   host.canvasReady({ drawingId: 'drawing' }, 1);
   expect(await host.readContext('todo', 'drawing')).toMatchObject({ ok: false, error: '实时画布查询超时' });
 });
+
+it('prefers the focused owner and refuses to guess the current drawing when several canvases are mounted', async () => {
+  let active: number | undefined = 10;
+  let target = -1;
+  const host = new DrawingCanvasHost({ send: () => {}, navigate: () => {}, activeOwner: () => active,
+    sendContext: (request, owner) => { target = owner; host.contextResult({ ...request, ok: false, error: 'probe' }, owner); },
+  });
+  host.canvasReady({ drawingId: 'a' }, 10); host.canvasReady({ drawingId: 'a' }, 20);
+  await host.readContext('todo', 'a'); expect(target).toBe(10); expect(host.activeDrawingId()).toBe('a');
+  host.canvasReady({ drawingId: 'b' }, 20); active = 20;
+  expect(host.activeDrawingId()).toBeUndefined();
+  active = 10; expect(host.activeDrawingId()).toBe('a');
+  active = undefined; expect(host.activeDrawingId()).toBeUndefined();
+});
