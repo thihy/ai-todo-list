@@ -1,0 +1,10 @@
+# Design
+Main registers each live ask invocation through settlement, scoped by conversation and invocation ID. A revisioned snapshot API includes the native agent's actual running state and optional owned DSH job states. The renderer queries on conversation changes, focus and a one-second interval, discarding stale responses. Cancellation keeps the UI busy until main acknowledges real settlement; late Stop IDs cannot cancel replacement invocations. Native owned jobs are killed and awaited separately; a still-stopping job is not acknowledged as stopped. A background shell tool result is a dispatch receipt rather than execution completion. Native agent idle is not a persistence barrier: await the native persistence flush before publishing completion and before loading history, so immediate reads cannot misclassify buffered tool results as missing.
+
+Tool cards use resultKnown plus lifecycle state to distinguish empty output from unknown outcomes. Missing results expose tool name and call ID diagnostics; no command is replayed automatically. Native todo_write gets a localized internal-plan title and progress summary. The prompt consistently permits recovery from ordinary tool errors.
+
+History responses must not replace the active streaming turn. Starting a stream invalidates any pending history load; active conversations defer history replacement until settlement. Otherwise an old response can erase the live turn's ID and every subsequent projection silently maps over a list without its target, making new output invisible until a later history refresh.
+
+Floating query already includes descendants without a parentId restriction. Preserve this behavior, add a subtask marker and cover children of completed parents, including grandchildren.
+
+Task context menus use Electron's native Menu rather than an overlay confined by the small renderer viewport. Main queries the real task row for current status and priority, then returns only the chosen action through typed IPC. Renderer applies it through existing task APIs. Native menu dismissal returns null and does not mutate anything.

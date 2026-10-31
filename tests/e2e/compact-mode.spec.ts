@@ -1,7 +1,48 @@
 import { test, expect } from '@playwright/test';
-import { launchApp } from './helpers';
+import { launchApp, type AppHandle } from './helpers';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+
+async function chooseTaskMenu(handle: AppHandle, label: string): Promise<void> {
+  await handle.app.evaluate(({ Menu }, choice) => {
+    (globalThis as any).__compactTaskChoice = choice;
+    if ((globalThis as any).__compactTaskSpy) return;
+    (globalThis as any).__compactTaskSpy = true;
+    const original = Menu.buildFromTemplate.bind(Menu);
+    Menu.buildFromTemplate = template => {
+      const menu = original(template);
+      if (template.some(item => item.label === '录入进展')) menu.popup = (options: any) => {
+        const items = template.flatMap(item => [item, ...(Array.isArray(item.submenu) ? item.submenu : [])]);
+        (globalThis as any).__compactTaskLabels = items.map(item => item.label).filter(Boolean);
+        if ((globalThis as any).__compactTaskChoice === '__dismiss') { options?.callback?.(); return; }
+        const item = items.find(item => item.label === (globalThis as any).__compactTaskChoice);
+        if (!item?.click) throw Error('Missing native task action');
+        (item.click as () => void)(); options?.callback?.();
+      };
+      return menu;
+    };
+  }, label);
+}
+
+test('floating tasks include children and grandchildren even when their parent is completed', async () => {
+  const handle = await launchApp({ compactWindow: { enabled: false } });
+  try {
+    await expect(handle.win.locator('.task-list__add-btn')).toBeVisible();
+    await handle.win.evaluate(async () => {
+      const parent = await window.todoList.todo.create({ title: '已完成父任务', status: 'done' }); if (!parent.ok) throw Error(parent.message);
+      const child = await window.todoList.todo.create({ title: '仍需完成的子任务', parentId: parent.data.id }); if (!child.ok) throw Error(child.message);
+      await window.todoList.todo.create({ title: '仍需完成的孙任务', parentId: child.data.id, status: 'doing' });
+      await window.todoList.app.compactConfigure({ enabled: true });
+    });
+    await expect.poll(() => handle.app.windows().find(page => page.url().endsWith('#/compact'))?.url()).toContain('#/compact');
+    const page = handle.app.windows().find(page => page.url().endsWith('#/compact'))!;
+    await expect(page.locator('.compact-view__title')).toHaveCount(2);
+    await expect(page.getByText('仍需完成的子任务', { exact: true })).toBeVisible();
+    await expect(page.getByText('仍需完成的孙任务', { exact: true })).toBeVisible();
+    await expect(page.getByText('已完成父任务', { exact: true })).toHaveCount(0);
+    await expect(page.locator('.compact-view__subtask')).toHaveCount(2);
+  } finally { await handle.app.close(); }
+});
 
 test('saved hidden floating state survives startup and minimization, then restores saved display preferences', async () => {
   const handle = await launchApp({ compactWindow: { enabled: false, opacity: .4, alwaysOnTop: false, manualSize: true, bounds: { x: 100, y: 100, width: 310, height: 280 } } });
@@ -129,11 +170,16 @@ test('floating task menu updates priority, status and progress, and can be disab
     await expect(task).toBeVisible();
     await page.bringToFront();
     await expect(page.locator('.priority-high .compact-view__title')).toHaveText('悬浮任务操作测试');
+    await handle.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find(win => win.webContents.getURL().endsWith('#/compact'))!.setContentSize(240, 92));
+    await chooseTaskMenu(handle, '__dismiss');
+    await task.focus(); await task.press('Shift+F10');
+    await expect(page.locator('.priority-high .compact-view__title')).toHaveText('悬浮任务操作测试');
+    await chooseTaskMenu(handle, '极高');
     await task.click({ button: 'right' });
-    await page.getByLabel('修改优先级').selectOption('very-high');
+    expect(await handle.app.evaluate(() => (globalThis as any).__compactTaskLabels)).toEqual(expect.arrayContaining(['标记完成', '开始处理', '标记阻塞', '恢复待办', '取消任务', '修改优先级', '极高', '高', '中', '低', '极低', '录入进展']));
     await expect(page.locator('.priority-very-high .compact-view__title')).toHaveText('悬浮任务操作测试');
-    await task.click({ button: 'right' }); await page.getByRole('button', { name: '标记阻塞' }).click();
-    await task.click({ button: 'right' }); await page.getByRole('button', { name: '录入进展', exact: true }).click();
+    await chooseTaskMenu(handle, '标记阻塞'); await task.click({ button: 'right' });
+    await chooseTaskMenu(handle, '录入进展'); await task.click({ button: 'right' });
     await page.getByLabel('进度百分比').fill('45'); await page.getByLabel('进展说明').fill('已完成第一阶段');
     await page.getByRole('button', { name: '保存进展' }).click();
     await expect(page.getByRole('form', { name: '录入进展' })).toHaveCount(0);
@@ -188,8 +234,8 @@ test('compact mode stays small and on top, completes real tasks and returns to d
     expect(await handle.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().filter((w) => w.webContents.getURL().endsWith('#/compact')).length)).toBe(1);
     await expect(compact.locator('.compact-view__check')).toHaveCount(0);
     await compact.bringToFront();
+    await chooseTaskMenu(handle, '标记完成');
     await compact.getByRole('button', { name: /^今日最先/ }).click({ button: 'right' });
-    await compact.getByRole('button', { name: '标记完成', exact: true }).click();
     await expect(compact.locator('.compact-view__title')).not.toContainText(['今日最先']);
     await expect(compact.locator('.compact-view__row')).toHaveCount(5);
     const result = await handle.win.evaluate((id) => window.todoList.todo.get(id), ids[0]!);

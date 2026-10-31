@@ -40,6 +40,7 @@ import type { CommandRuntime } from '@deepseek-ai/dsh-commands';
 import { assistantToolDefinitions } from '../automation/tools';
 import type { ToolExecution, PreToolDecision } from '@deepseek-ai/dsh-tools';
 import { TurnFailureGuard } from './turn-failure';
+import { ownedBackgroundJobs, stopBackgroundJobs, type BackgroundJobService } from './background-jobs';
 import { configureElectronSubprocess, configureElectronSandboxRunner } from './subprocess-compat';
 import { toolInterruptionState } from '../../shared/tool-interruption';
 import type Database from 'better-sqlite3';
@@ -178,6 +179,8 @@ export async function* bridgeLlmStream(
 }
 
 export interface DshRuntime {
+  isConversationRunning?(conversationId: string): boolean;
+  backgroundJobs?(conversationId: string): Array<{ id: string; kind: string; status: string }>;
   skillCatalog(): Promise<import('../../shared/assistant-capabilities').SkillItem[]>;
   commandCatalog(): Promise<import('../../shared/assistant-capabilities').AssistantCommand[]>;
   steer(conversationId: string, invocationId: string, prompt: string): Promise<boolean>;
@@ -289,6 +292,7 @@ interface SessionReadHandle {
 /** The 0.1.5-rc.2 `JsonlSessionPersistence` surface we use. `open` replaces
  *  the removed `load`/`inspect`; `list` is unchanged. */
 interface SessionPersistence015 {
+  flush?(): Promise<void>;
   open(id: string, access: 'read' | 'write', options?: { signal?: AbortSignal }): Promise<SessionReadHandle>;
   // `list` returns one entry per stored session, but its element shape is
   // backend-dependent: the JSONL backend's own override returns bare
@@ -1742,6 +1746,14 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
 
   // 4. 暴露 runtime API
   const runtime: DshRuntime = {
+    isConversationRunning(conversationId) {
+      const entry = conversations.get(conversationId);
+      return entry?.agent.status === 'running' || !!(entry?.commandAbort && !entry.commandAbort.signal.aborted);
+    },
+    backgroundJobs(conversationId) {
+      const entry = conversations.get(conversationId);
+      return ownedBackgroundJobs(ctx.get('jobs') as BackgroundJobService | undefined, entry?.agent, conversationId).map(({ id, kind, status }) => ({ id, kind, status }));
+    },
     async skillCatalog() {
       const registry = ctx.get('skills') as SkillRegistry | undefined;
       if (!registry) throw new Error('Skill 服务尚未就绪');
@@ -1907,6 +1919,9 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
         // 信号也安全。
         signal?.addEventListener('abort', onAbort, { once: true });
         await entry.agent.whenIdle();
+        // DSH idle is not a durability barrier. Publishing completion before
+        // routed tool results flush lets immediate history reads lose outputs.
+        await persistenceApi?.flush?.();
         const turnMs = Date.now() - turnStart;
         if (failure.error) {
           logger.warn(`[LLM turn] fail conv=${conversationId} model=${model} ms=${turnMs} err=${failure.error.message}`);
@@ -1971,11 +1986,14 @@ async function bootDsh(deps: DshRuntimeDeps): Promise<DshRuntime | null> {
       // stuck on the renderer side and blocks new sends.
       drainPendingForConversation(conversationId);
       await pendingTurn;
+      await entry?.agent.whenIdle();
+      await stopBackgroundJobs(ctx.get('jobs') as BackgroundJobService | undefined, entry?.agent, conversationId);
       logger.info(`[LLM turn] cancel-done conv=${conversationId} ms=${Date.now() - tCancel}`);
     },
 
     async loadHistory({ conversationId }) {
       if (!persistenceApi) return [];
+      await persistenceApi.flush?.();
       // 0.1.5-rc.2: persistence exposes `open(id,'read')` + `handle.read()`,
       // not `load(id)` (that API was removed in 0.1.5-rc.2 — see
       // readSessionEvents). readSessionEvents returns [] for a fresh / missing

@@ -78,6 +78,7 @@ export function parseToolArgs(raw: unknown): unknown {
 }
 
 export type ToolName =
+  | 'todo_write'
   | 'todo_metadata'
   | 'skill'
   | 'skill_list'
@@ -137,6 +138,7 @@ export type ToolName =
   | 'glob';
 
 const kindByTool: Record<ToolName, ToolCallKind> = {
+  'todo_write': 'edit',
   'todo_metadata': 'edit',
   'skill': 'read',
   'skill_list': 'search',
@@ -298,6 +300,13 @@ export function summarizeToolCall(
   }
   const resultTitle = (): string | undefined => stringField(result, 'title');
   switch (toolName) {
+    case 'todo_write': {
+      const todos = (a?.todos ?? (result as { todos?: unknown } | null)?.todos);
+      if (!Array.isArray(todos)) return '维护本轮 AI 执行计划';
+      const completed = todos.filter(item => item?.status === 'completed').length;
+      const active = todos.find(item => item?.status === 'in_progress');
+      return truncate(`共 ${todos.length} 步，已完成 ${completed} 步${active?.content ? `；进行中：${active.content}` : ''}`, 60);
+    }
     case 'todo_metadata':
       return truncate(stringField(result, 'title') ?? stringField(a, 'id') ?? '更新任务的附加字段', 60);
     case 'skill':
@@ -472,6 +481,7 @@ function kindFor(toolName: string): ToolCallKind {
 function titleFor(toolName: string): string {
   // Friendly Chinese label for the card title; falls back to the raw toolName.
   const map: Record<string, string> = {
+    'todo_write': '更新执行计划',
     'todo_metadata': '更新任务附加信息',
     'skill': '使用技能',
     'skill_list': '查看技能清单',

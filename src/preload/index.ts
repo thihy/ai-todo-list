@@ -187,6 +187,7 @@ const api: TodoListApi = {
     compactSize: (count) => invoke('app.compactSize', { count }),
     compactConfigure: (patch) => invoke('app.compactConfigure', patch),
     compactMenu: () => invoke('app.compactMenu', undefined),
+    compactTaskMenu: (todoId) => invoke('app.compactTaskMenu', { todoId }),
     popupMenu: () => invoke('app.popupMenu', undefined as never),
     popupMenuCategory: (category: string) => invoke('app.popupMenuCategory', { category }),
     pickFile: () => invoke('app.pickFile', undefined as never),
@@ -267,6 +268,7 @@ const api: TodoListApi = {
     cancel: (conversationId, invocationId) =>
       invoke('ai.cancel', { conversationId, invocationId }),
     ask: (req) => invoke('ai.ask', req),
+    execution: (conversationId) => invoke('ai.execution', { conversationId }),
     steer: (req) => invoke('ai.steer', req),
     parseCapturePreview: (text) => invoke('ai.parseCapturePreview', { text }),
     suggestTags: (req) => invoke('ai.suggestTags', req),

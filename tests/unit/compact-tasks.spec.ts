@@ -29,4 +29,8 @@ describe('compact task selection', () => {
     expect(selectCompactTasks(input, '2026-10-31')[0]!.id).toBe('tomorrow');
     expect(selectCompactTasks([])).toEqual([]);
   });
+  it('includes active children and grandchildren independently of a completed parent', () => {
+    const input = [todo('parent', { status: 'done' }), todo('child', { parentId: 'parent' }), todo('grandchild', { parentId: 'child', status: 'doing' })];
+    expect(selectCompactTasks(input).map(task => task.id)).toEqual(['child', 'grandchild']);
+  });
 });

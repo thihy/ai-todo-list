@@ -230,12 +230,20 @@ export const DomainToolRow: React.FC<{
    */
   running?: boolean | undefined
 }> = ({ callId, toolName, args, argsKnown, result, resultKnown, presentationMeta, ok, state, running }) => {
+  const outputRecorded = resultKnown ?? result != null;
+  const outputHint = state === 'running' || running
+    ? '等待工具返回…'
+    : state === 'stopped'
+      ? '工具执行已中止，未收到输出'
+      : state === 'missing-result' || !outputRecorded
+        ? '未收到工具执行结果，执行状态未知'
+        : ok ? '工具已返回，无文本输出' : '工具返回失败，未提供错误详情';
   const callView = useMemo(() => presentToolCall(toolName, args), [toolName, args])
   const resultView = useMemo(
     (): ToolResultView => result == null
-      ? { card: 'generic', content: [{ type: 'text', text: state === 'running' || running ? '等待工具返回…' : '未记录输出' }] }
+      ? { card: 'generic', content: [{ type: 'text', text: outputHint }] }
       : presentToolResult(toolName, args, result, ok),
-    [toolName, args, result, ok, state, running],
+    [toolName, args, result, ok, outputHint],
   )
   // ToolRow state mapping. The explicit `state` from the projection is the
   // authoritative source — only fall back to the legacy heuristics when
@@ -284,6 +292,11 @@ export const DomainToolRow: React.FC<{
     copy: { kind: 'shell', command: shellArgs?.command ?? shellArgs?.script ?? '', description: shellArgs?.description },
   } : null;
   if (terminal && rowState === 'ok' && (terminal.card.signal || (terminal.card.exitCode !== undefined && terminal.card.exitCode !== 0))) rowState = 'error';
+  const backgroundDispatch = ok && (toolName === 'pwsh' || toolName === 'bash') && (
+    (typeof result === 'string' && result.startsWith('started background job ')) ||
+    (typeof result === 'object' && result !== null && (result as { kind?: string }).kind === 'background')
+  );
+  if (backgroundDispatch) rowState = 'background';
   // Mutation receipts are distinct from the diff, which is derived from input.
   const receipt = (toolName === 'write' || toolName === 'edit') && result != null && ok
     ? typeof result === 'string' ? result : JSON.stringify(result, null, 2)
@@ -326,7 +339,7 @@ export const DomainToolRow: React.FC<{
       toolName={toolName}
       icon={VARIANT_ICONS[variant]}
       title={title}
-      summary={summary}
+      summary={backgroundDispatch ? `已提交后台任务；${summary || '执行状态以后台实际状态为准'}` : summary}
       state={rowState}
       diff={cards.diff}
       read={cards.read}
@@ -342,7 +355,7 @@ export const DomainToolRow: React.FC<{
       showInputWithCard={showInputWithCard}
       missingInputHint={argsKnown ? undefined : '未记录输入'}
       wireName={toolName}
-      diagnosticsText={!argsKnown ? JSON.stringify({ toolName: toolName || '未记录', callId: callId || '未记录', state: state ?? '未记录', argsKnown, resultKnown: resultKnown ?? result != null, ok, missing: ['工具调用事件 / 输入参数未记录'] }, null, 2) : undefined}
+      diagnosticsText={!argsKnown || state === 'missing-result' || (!outputRecorded && state !== 'running' && !running) ? JSON.stringify({ toolName: toolName || '未记录', callId: callId || '未记录', state: state ?? 'missing-result', argsKnown, resultKnown: outputRecorded, ok, missing: [...(!argsKnown ? ['工具调用事件 / 输入参数未记录'] : []), ...(!outputRecorded || state === 'missing-result' ? ['未收到工具结果；不能据此判断命令成功或失败，也不应自动重跑可能产生副作用的命令'] : [])] }, null, 2) : undefined}
     />
   )
 }

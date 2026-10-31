@@ -1,0 +1,6 @@
+- [x] Distinguish empty/missing/stopped outputs and expose missing-result diagnostics; localize todo_write.
+- [x] Add authoritative main snapshots and renderer reconciliation, including cancellation acknowledgement and owned background jobs.
+- [x] Cover and label floating children and grandchildren independent of parent completion.
+- [x] Replace the floating task overlay with a native menu and verify all actions at 92px height.
+- [x] Prevent delayed history responses from replacing a live stream; reproduce the overwrite race in a failing regression test and verify subsequent chunks remain visible.
+- [x] Verify focused and full tests, real Electron reload/PowerShell continuation and production build.

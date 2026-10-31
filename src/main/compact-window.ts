@@ -1,6 +1,8 @@
 import { BrowserWindow, Menu, screen } from 'electron';
 import { join } from 'node:path';
 import type { SettingsStore } from './settings/store';
+import type { Todo } from '../shared/todo-types';
+import type { CompactTaskAction } from '../shared/compact-task-menu';
 import { normaliseCompactPreferences, type CompactPreferences } from '../shared/compact-preferences';
 
 /** Presentation-only controller; task actions use the existing IPC API. */
@@ -72,6 +74,30 @@ export class CompactWindowController {
       { label: '展开主窗口', click: () => this.restore() },
       { label: '关闭悬浮窗', click: () => this.configure({ enabled: false }) },
     ]).popup({ window: this.window });
+  }
+  popupTaskMenu(todo: Pick<Todo, 'title' | 'status' | 'priority'>): Promise<CompactTaskAction> {
+    const window = this.window;
+    if (!window || window.isDestroyed()) return Promise.resolve(null);
+    return new Promise(resolve => {
+      const select = (action: CompactTaskAction): void => {
+        if (!window.isDestroyed()) window.focus();
+        resolve(action);
+      };
+      const menu = Menu.buildFromTemplate([
+        { label: todo.title.slice(0, 80), enabled: false },
+        { type: 'separator' },
+        ...([['done', '标记完成'], ['doing', '开始处理'], ['blocked', '标记阻塞'], ['next', '恢复待办'], ['cancelled', '取消任务']] as const).map(([status, label]) => ({
+          label, type: 'checkbox' as const, checked: todo.status === status, click: () => select({ kind: 'status', value: status }),
+        })),
+        { type: 'separator' },
+        { label: '修改优先级', submenu: (['very-high', 'high', 'medium', 'low', 'very-low'] as const).map((priority, index) => ({
+          label: ['极高', '高', '中', '低', '极低'][index], type: 'radio' as const, checked: todo.priority === priority,
+          click: () => select({ kind: 'priority', value: priority }),
+        })) },
+        { label: '录入进展', click: () => select({ kind: 'progress' }) },
+      ]);
+      menu.popup({ window, callback: () => resolve(null) });
+    });
   }
   show(): void {
     if (this.destroying || this.main.isDestroyed()) return;

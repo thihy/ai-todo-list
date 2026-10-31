@@ -339,6 +339,7 @@ export interface TodoListApi {
     compactSize(count: number): Promise<IpcResponse<'app.compactSize'>>;
     compactConfigure(patch: { enabled?: boolean; opacity?: number; alwaysOnTop?: boolean }): Promise<IpcResponse<'app.compactConfigure'>>;
     compactMenu(): Promise<IpcResponse<'app.compactMenu'>>;
+    compactTaskMenu(todoId: string): Promise<IpcResponse<'app.compactTaskMenu'>>;
     /** Pop the native application menu at the cursor (title-bar 菜单 button). */
     popupMenu(): Promise<IpcResponse<'app.popupMenu'>>;
     /** Pop a single category's submenu (flat topbar buttons). */
@@ -469,6 +470,7 @@ export interface TodoListApi {
      *  the same conversationId it used for ai.ask; invocationId is optional
      *  for diagnostics. */
     cancel(conversationId: string, invocationId?: string): Promise<IpcResponse<'ai.cancel'>>;
+    execution(conversationId: string): Promise<IpcResponse<'ai.execution'>>;
     /**
      * Submit one user turn on a conversation. conversationId is REQUIRED:
      * the main process maps it 1:1 to a DSH Session (persisted to JSONL by

@@ -331,6 +331,36 @@ export const AIPane: React.FC<{
   // version makes us re-list so the new title appears in the header +
   // sidebar immediately.
   const convVersion = useDataVersion(['conversations']);
+  const [backendExecution, setBackendExecution] = useState<{ conversationId: string; snapshot: import('../../shared/ai-execution').AIExecutionSnapshot } | null>(null);
+  const [stoppingConversation, setStoppingConversation] = useState<string | null>(null);
+  useEffect(() => {
+    if (!currentId || !window.todoList.ai.execution) return;
+    let alive = true;
+    let revision = -1;
+    let sequence = 0;
+    let appliedSequence = 0;
+    let wasActive = false;
+    const refreshExecution = async () => {
+      const requestSequence = ++sequence;
+      try {
+        const result = await window.todoList.ai.execution(currentId);
+        if (!alive || !result.ok || result.data.revision < revision || requestSequence < appliedSequence) return;
+        appliedSequence = requestSequence;
+        revision = result.data.revision;
+        const active = result.data.invocations.length > 0 || result.data.agentRunning || result.data.jobs?.some(job => ['running', 'stopping'].includes(job.status));
+        if (wasActive && !active) setHistoryLoaded(previous => { const next = new Set(previous); next.delete(currentId); return next; });
+        wasActive = !!active;
+        setBackendExecution({ conversationId: currentId, snapshot: result.data });
+      } catch { /* Keep the last known running state on transient IPC errors. */ }
+    };
+    void refreshExecution();
+    const timer = window.setInterval(() => void refreshExecution(), 1000);
+    window.addEventListener('focus', refreshExecution);
+    return () => { alive = false; window.clearInterval(timer); window.removeEventListener('focus', refreshExecution); };
+  }, [currentId, convVersion]);
+  const backendInvocations = backendExecution?.conversationId === currentId ? backendExecution.snapshot.invocations : [];
+  const backendJobs = backendExecution?.conversationId === currentId ? backendExecution.snapshot.jobs?.filter(job => ['running', 'stopping'].includes(job.status)) ?? [] : [];
+  const backendBusy = backendInvocations.length > 0 || backendJobs.length > 0 || (backendExecution?.conversationId === currentId && backendExecution.snapshot.agentRunning === true);
 
   // L5: history is collapsed behind ONE icon (🗂). That single button opens
   // a dropdown that holds: a search/filter box, the full conversation list,
@@ -633,10 +663,11 @@ export const AIPane: React.FC<{
     if (aiStartup.status !== 'ready') return;
     if (!currentId) return;
     if (historyLoaded.has(currentId)) return;
+    if (activeStreamRef.current?.conversationId === currentId) return;
     let alive = true;
     (async () => {
       const res = await window.todoList.conversation.history(currentId);
-      if (!alive) return;
+      if (!alive || activeStreamRef.current?.conversationId === currentId) return;
       if (res.ok) {
         const turns = res.data.turns.map(historyToTurn);
         setTurnsByConv((prev) => ({ ...prev, [currentId]: turns }));
@@ -644,7 +675,7 @@ export const AIPane: React.FC<{
       }
     })();
     return () => { alive = false; };
-  }, [currentId, historyLoaded, aiStartup.status]);
+  }, [currentId, historyLoaded, aiStartup.status, streamingConvId, streamingTurnId]);
 
   // Re-derive the streaming turn through one pure adapter. Keeping the DSH
   // event projection outside this component makes live/history parity and
@@ -850,7 +881,7 @@ export const AIPane: React.FC<{
     () => currentId ? turnsByConv[currentId] ?? [] : [],
     [currentId, turnsByConv],
   );
-  const busy = streamingTurnId !== null;
+  const busy = streamingTurnId !== null || backendBusy || stoppingConversation !== null;
   const awaitingAnswer = activeQuestion?.convId === currentId;
   const awaitingApproval = activeApproval?.convId === currentId;
   const providerStatus = useProviderStatus();
@@ -1264,34 +1295,27 @@ export const AIPane: React.FC<{
     }
   };
 
-  // L3-B (extended): stop the in-flight turn. We must settle the OLD
-  // turn synchronously here — the projection useEffect that updates
-  // blocks (lines 388-428) gates on `streamingTurnId` and bails once
-  // we clear it. Without the synchronous mutate below, the OLD
-  // turn's blocks freeze at whatever state they were in at Stop, and
-  // any tool/result event that arrives AFTER Stop but BEFORE the
-  // agent finishes shutting down (DSH's dispatch() promise doesn't
-  // observe abort — see node_modules @deepseek-ai/dsh-agent-loop
-  // runGroup:592) is dropped on the floor, leaving the tool block
-  // permanently `running`. We also clear HITL mirrors locally as a
-  // belt-and-braces guard before the cancel IPC round-trip; main
-  // pushes `ai:user-*-cancelled` once its listeners settle, but
-  // those events may race the Stop click and we want the composer
-  // gate (which checks activeApproval / activeQuestion) to release
-  // synchronously.
+  // Keep projecting late tool results during cancellation. Only settle
+  // locally after main acknowledges that the invocation and jobs stopped.
   const stop = async (): Promise<void> => {
-    const conv = streamingConvId;
-    const turnId = streamingTurnId;
-    if (!conv) return;
+    const conv = backendBusy ? currentId : streamingConvId;
+    const turnId = conv === streamingConvId ? streamingTurnId : backendInvocations[0]?.invocationId;
+    if (!conv || stoppingConversation === conv) return;
     setQueuePaused((previous) => ({ ...previous, [conv]: true }));
+    setStoppingConversation(conv);
+    try {
+      const cancelled = await window.todoList.ai.cancel(conv, turnId ?? undefined);
+      if (!cancelled.ok) { setQueueNotice(`停止失败：${cancelled.message}`); return; }
+    } catch (error) {
+      setQueueNotice(`停止失败：${String(error)}`); return;
+    } finally { setStoppingConversation(null); }
+    // Only acknowledge cancellation after main has awaited the real turn.
+    setBackendExecution(previous => previous?.conversationId === conv ? null : previous);
     dispatchLockRef.current = null;
     activeStreamRef.current = null;
 
-    // 1) Settle the OLD turn right now. We don't have access to a
-    //    fresh projection after Stop (the useEffect bailed), so we
-    //    use the LAST projected blocks we already have and flip any
-    //    tool block that's still `'running'` / `'missing-result'` to
-    //    `'stopped'` so the user sees the cancel was applied.
+    // Settle this invocation after the backend acknowledgement, preserving
+    // any result records received while cancellation was in progress.
     if (turnId) {
       setTurnsByConv((prev) => {
         const list = prev[conv] ?? [];
@@ -1321,14 +1345,10 @@ export const AIPane: React.FC<{
     //    the UI to a sensible final state.
     setActiveStream((current) => current?.invocationId === turnId ? null : current);
 
-    // 3) Clear any HITL mirrors synchronously so runSubmit's gate
-    //    (which checks activeApproval / activeQuestion) releases
-    //    before the main-side cancel IPC round-trip completes.
+    // Clear any remaining HITL mirrors after confirmed cancellation.
     setActiveApproval((request) => request?.convId === conv ? null : request);
     setActiveQuestion((request) => request?.convId === conv ? null : request);
 
-    // 4) Tell main to actually stop the agent.
-    await window.todoList.ai.cancel(conv, turnId ?? undefined);
     void refreshList();
   };
 
@@ -2343,6 +2363,9 @@ export const AIPane: React.FC<{
           <span className="muted">当前回复结束后依次发送；停止或失败时暂停队列。</span>
         </div>
       )}
+      {(backendBusy || stoppingConversation === currentId) && <div className="aipane__queue-notice" role="status" aria-label="实际执行状态">
+        {stoppingConversation === currentId || backendInvocations.some(item => item.phase === 'stopping') || backendJobs.some(job => job.status === 'stopping') ? '正在停止，等待后台执行结束…' : backendJobs.length ? `后台正在执行…（${backendJobs.length} 个后台任务）` : '后台正在执行…'}
+      </div>}
       {queueNotice && <div className="aipane__queue-notice" role="status">{queueNotice}</div>}
       {current !== null && (
         <AIComposer

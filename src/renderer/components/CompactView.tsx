@@ -25,7 +25,6 @@ export const CompactView: React.FC = () => {
     void window.todoList.app.compactConfigure({}).then(result => { if (result.ok) setInteraction(previous => ({ ...previous, opacity: result.data.opacity })); });
     return off;
   }, []);
-  const [menu, setMenu] = useState<Todo | null>(null);
   const [progressTask, setProgressTask] = useState<Todo | null>(null);
   const [percent, setPercent] = useState(0);
   const [note, setNote] = useState('');
@@ -64,6 +63,17 @@ export const CompactView: React.FC = () => {
     const result = await window.todoList.app.compact(false, todoId);
     if (!result.ok) setError(result.message ?? '打开主窗口失败');
   };
+  const openTaskMenu = async (todo: Todo): Promise<void> => {
+    if (busy.current) return;
+    try {
+      const result = await window.todoList.app.compactTaskMenu(todo.id);
+      if (!result.ok) throw new Error(result.message);
+      const action = result.data;
+      if (action?.kind === 'status') await update(todo, { status: action.value });
+      else if (action?.kind === 'priority') await update(todo, { priority: action.value });
+      else if (action?.kind === 'progress') { setProgressTask(todo); setPercent(todo.progress); setNote(''); }
+    } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
+  };
   const today = localDateKey();
   const idleOpacity = interaction.opacity;
   return <main className="compact-view" aria-label="精简待办" data-active={interaction.active} style={{ '--compact-body-opacity': interaction.active ? 1 : idleOpacity, '--compact-title-opacity': interaction.active || interaction.titleHovered ? 1 : 1 - (1 - idleOpacity) / 2 } as React.CSSProperties}>
@@ -85,9 +95,10 @@ export const CompactView: React.FC = () => {
     {error && <div className="compact-view__error" role="alert"><span>{error}</span><button onClick={() => void refresh()}>重试</button></div>}
     <ul ref={listRef} className="compact-view__list">
       {todos.slice(0, capacity).map((todo) => <li key={todo.id} className={`compact-view__row priority-${todo.priority}`}>
-        <button type="button" className="compact-view__task" aria-label={`${todo.title}，优先级 ${todo.priority}`} title={`${todo.title} · 右键操作`} onContextMenu={event => { event.preventDefault(); setMenu(todo); }} onKeyDown={event => { if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) { event.preventDefault(); setMenu(todo); } }} onClick={() => void restore(todo.id)}>
+        <button type="button" className="compact-view__task" aria-label={`${todo.title}，优先级 ${todo.priority}`} title={`${todo.title} · 右键操作`} onContextMenu={event => { event.preventDefault(); void openTaskMenu(todo); }} onKeyDown={event => { if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) { event.preventDefault(); void openTaskMenu(todo); } }} onClick={() => void restore(todo.id)}>
           <span className="compact-view__task-dot" aria-hidden="true" /><span className="compact-view__title">{todo.title}</span>
           <span className="compact-view__meta">
+            {todo.parentId && <span className="compact-view__subtask" title="子任务">子</span>}
             {todo.plannedFor === today && <span className="compact-view__today" title="今日待办">今</span>}
             {todo.dueAt !== null ? <time className={todo.dueAt < Date.now() ? 'is-overdue' : ''} dateTime={new Date(todo.dueAt).toISOString()}>
               {new Date(todo.dueAt).toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' })}
@@ -96,17 +107,6 @@ export const CompactView: React.FC = () => {
         </button>
       </li>)}
     </ul>
-    {menu && <div className="compact-task-overlay" onClick={() => setMenu(null)} onKeyDown={event => { if (event.key === 'Escape') setMenu(null); }}>
-      <div className="compact-task-menu" role="dialog" aria-label="任务快捷操作" onClick={event => event.stopPropagation()}>
-        <strong>{menu.title}</strong>
-        {([['done', '标记完成'], ['doing', '开始处理'], ['blocked', '标记阻塞'], ['next', '恢复待办'], ['cancelled', '取消任务']] as const).map(([status, label]) => <button autoFocus={status === 'done'} key={status} disabled={busyId !== null} onClick={() => { void update(menu, { status }); setMenu(null); }}>{label}</button>)}
-        <label>优先级<select aria-label="修改优先级" value={menu.priority} disabled={busyId !== null} onChange={event => { void update(menu, { priority: event.target.value as Todo['priority'] }); setMenu(null); }}>
-          {(['very-high', 'high', 'medium', 'low', 'very-low'] as const).map((priority, index) => <option key={priority} value={priority}>{['极高', '高', '中', '低', '极低'][index]}</option>)}
-        </select></label>
-        <button onClick={() => { setProgressTask(menu); setPercent(menu.progress); setNote(''); setMenu(null); }}>录入进展</button>
-        <button onClick={() => setMenu(null)}>关闭菜单</button>
-      </div>
-    </div>}
     {progressTask && <form className="compact-progress" aria-label="录入进展" onSubmit={async event => {
       event.preventDefault(); if (busy.current) return; busy.current = true; setBusyId(progressTask.id);
       try { const result = await window.todoList.progress.log(progressTask.id, percent, note.trim() || undefined); if (!result.ok) throw new Error(result.message); setProgressTask(null); await refresh(); }

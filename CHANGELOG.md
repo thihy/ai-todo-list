@@ -4,6 +4,16 @@ All notable changes to todo-list are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0-rc17] - 2026-10-31
+
+### Fixed
+
+- Prevent delayed history responses from erasing live AI output; reconcile running state with the native agent and owned background jobs after reload.
+- Wait for actual cancellation and persisted session events before reporting completion or loading history.
+- Distinguish empty tool output, missing result records and interruptions; expose diagnostics for missing results and label background shell dispatches honestly.
+- Show the native `todo_write` tool as “更新执行计划” with step progress.
+- Include active subtasks and grandchildren in floating tasks, and use a native task context menu that remains complete at minimum window height.
+
 ## [1.0.0-rc16] - 2026-10-31
 
 ### Added

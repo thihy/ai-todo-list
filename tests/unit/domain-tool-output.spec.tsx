@@ -20,7 +20,7 @@ vi.mock('@deepseek-ai/dsh-client-ui-primitives', () => {
     DiffBlock: ({ diffs }: DiffBlockProps) => <pre>{JSON.stringify(diffs)}</pre>,
     JsonTree: ({ data }: JsonTreeProps) => <pre>{JSON.stringify(data)}</pre>,
     TerminalBlock: ({ output, exitCode, signal }: TerminalBlockProps) => <pre>{output} exit={exitCode} {signal}</pre>,
-    DisclosureRow: ({ open, onToggle, children, title }: DisclosureRowProps) => <div><button onClick={onToggle}>{title}</button>{open && children}</div>,
+    DisclosureRow: ({ open, onToggle, children, title, collapsedContent }: DisclosureRowProps) => <div><button onClick={onToggle}>{title}</button>{!open && collapsedContent}{open && children}</div>,
   };
 });
 vi.mock('../../src/renderer/dsh/ui-tool/tool/components/AskQuestionCard', () => ({ AskQuestionCard: () => null }));
@@ -34,6 +34,35 @@ beforeEach(() => {
   element = document.createElement('div'); document.body.append(element); root = createRoot(element);
 });
 afterEach(() => { act(() => root.unmount()); element.remove(); });
+
+it.each([
+  ['done', true, true, '工具已返回，无文本输出'],
+  ['error', true, false, '工具返回失败，未提供错误详情'],
+  ['missing-result', false, false, '未收到工具执行结果，执行状态未知'],
+  ['stopped', false, false, '工具执行已中止，未收到输出'],
+] as const)('distinguishes %s from unrecorded output', (state, resultKnown, ok, expected) => {
+  act(() => root.render(<DomainToolRow callId="ps-42" toolName="pwsh" args={{ command: '$null' }} argsKnown result={undefined} resultKnown={resultKnown} ok={ok} state={state} />));
+  act(() => element.querySelector('button')!.click());
+  expect(element.textContent).toContain(expected);
+  expect(element.textContent).not.toContain('未记录输出');
+});
+
+it('offers diagnostic details when a named PowerShell call is missing its result', () => {
+  act(() => root.render(<DomainToolRow callId="ps-42" toolName="pwsh" args={{ command: '$null' }} argsKnown result={undefined} resultKnown={false} ok={false} state="missing-result" />));
+  const trigger = element.querySelector<HTMLButtonElement>('[aria-label="查看工具定位信息"]')!;
+  expect(trigger).not.toBeNull();
+  act(() => trigger.click());
+  const dialog = document.querySelector('[aria-label="定位信息"]')!;
+  expect(dialog.textContent).toContain('pwsh');
+  expect(dialog.textContent).toContain('ps-42');
+  expect(dialog.textContent).toContain('缺少结果记录');
+});
+
+it('does not label a background PowerShell dispatch as completed execution', () => {
+  act(() => root.render(<DomainToolRow callId="ps-bg" toolName="pwsh" args={{ command: 'Start-Sleep 10', run_in_background: true }} argsKnown result="started background job pwsh-1" resultKnown ok state="done" />));
+  expect(element.querySelector('[data-tool="pwsh"]')?.getAttribute('data-state')).toBe('background');
+  expect(element.textContent).toContain('已提交后台任务');
+});
 
 it('opens long input and output separately, copies original text, and closes', async () => {
   const text = 'not JSON\n  indented\n'.repeat(1000) + 'LAST LINE';

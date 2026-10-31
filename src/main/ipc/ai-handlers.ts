@@ -13,6 +13,7 @@
 import { register, okResult, failResult } from './router';
 import type { AIAskReq, AIAskRes, IpcResult } from '../../shared/ipc-schema';
 import { observeAiCreatedTasks, notifyAiCreatedTask } from '../notification/ai-created-tasks';
+import { AIExecutionRegistry } from '../ai/execution-state';
 import type { DshHandle } from '../dsh/types';
 import { resolveEndpoint, healthCheck } from '../dsh/endpoints';
 import { getDshRuntime, peekDshRuntime, answerUserQuestion, answerUserApproval, revokeSessionTool, listSessionGranted, type DshRuntimeDeps } from '../dsh/dsh-runtime';
@@ -51,6 +52,7 @@ interface HandlerDeps {
 }
 
 let deps: HandlerDeps | null = null;
+const executions = new AIExecutionRegistry();
 
 /** Shared request entry for interactive chat and scheduled instructions. */
 export let askAi: (req: AIAskReq) => Promise<IpcResult<AIAskRes>> = async () => failResult('ai_not_ready', 'AI 尚未就绪');
@@ -76,6 +78,7 @@ function buildRuntimeDeps(): DshRuntimeDeps | null {
 }
 
 export function registerAiHandlers(dsh: DshHandle): void {
+  register('ai.execution', (_event, req) => okResult({ ...executions.snapshot(req.conversationId), agentRunning: peekDshRuntime()?.isConversationRunning?.(req.conversationId) ?? false, jobs: peekDshRuntime()?.backgroundJobs?.(req.conversationId) ?? [] }));
   // The remaining deps are pulled in lazily because the IPC router is wired before
   // DSH is initialised in bootstrap(). They live on globals set in main/index.ts.
   // We bind a thin wrapper that re-fetches the deps on each call.
@@ -112,8 +115,12 @@ export function registerAiHandlers(dsh: DshHandle): void {
     // a stale renderer / RPC race.
     if (!peekDshRuntime()) return failResult('ai_not_ready', 'DSH not initialised');
     if (!req.conversationId) return failResult('no_conversation_id', 'conversationId required');
+    if (req.invocationId && !executions.snapshot(req.conversationId).invocations.some(item => item.invocationId === req.invocationId)) {
+      return okResult({ ok: true }); // A late Stop must not cancel a replacement turn.
+    }
     try {
       const runtime = await getDshRuntime(buildRuntimeDeps()!);
+      executions.stopping(req.conversationId);
       if (runtime) await runtime.cancel(req.conversationId);
       return okResult({ ok: true });
     } catch (err) {
@@ -236,6 +243,8 @@ export function registerAiHandlers(dsh: DshHandle): void {
     // broadcasts fire from `tool/call` (we know the toolName there) so
     // we don't need to wait for the matching result.
 
+    const finishExecution = executions.begin(req.conversationId, invocationId);
+    broadcastDataChanged('conversations');
     try {
       const turnResult = await runtime.runTurn({
         prompt: req.prompt,
@@ -307,6 +316,9 @@ export function registerAiHandlers(dsh: DshHandle): void {
       const message = (err as Error).message;
       send({ type: 'error', invocationId, message });
       return failResult('invoke_failed', message);
+    } finally {
+      finishExecution();
+      broadcastDataChanged('conversations');
     }
   };
   register('ai.ask', (_e, req) => askAi(req));

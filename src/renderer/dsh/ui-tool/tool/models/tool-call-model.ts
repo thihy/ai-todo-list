@@ -18,7 +18,7 @@ export type { ToolCallBlock } from '@deepseek-ai/dsh-client-ui-chat/client'
 export type ToolRowVariant = 'search' | 'read' | 'bash' | 'write' | 'edit' | 'code' | 'others'
 
 /** Row state semantic; colors self-supplied via StateDot (design gives none). */
-export type ToolRowState = 'running' | 'ok' | 'error' | 'stopped'
+export type ToolRowState = 'running' | 'ok' | 'error' | 'stopped' | 'background'
 
 type ToolTitleKey = Extract<LocaleKeysOf<'conversation'>, `tool.title.${string}`>
 

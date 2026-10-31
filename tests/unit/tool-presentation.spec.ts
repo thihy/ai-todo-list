@@ -25,6 +25,7 @@ import {
 
 describe('assistant capability tool descriptions', () => {
   it.each([
+    ['todo_write', '更新执行计划', 'edit', {}],
     ['todo_metadata', '更新任务附加信息', 'edit', { id: 'real-id' }],
     ['skill', '使用技能', 'read', { name: 'example' }],
     ['skill_list', '查看技能清单', 'search', {}],
@@ -38,6 +39,7 @@ describe('assistant capability tool descriptions', () => {
     expect(presentToolResult(name as string, args, '失败原因', false)).toMatchObject({ title: `${title} — 失败` });
   });
   it('summarizes actual skill results and automation edit intent', () => {
+    expect(summarizeToolCall('todo_write', { todos: [{ content: '读取画布', status: 'completed' }, { content: '检查布局', status: 'in_progress' }] }, {}, true)).toBe('共 2 步，已完成 1 步；进行中：检查布局');
     expect(summarizeToolCall('skill_list', {}, [{ name: 'one' }, { name: 'two' }], true)).toBe('找到 2 项可用技能');
     expect(summarizeToolCall('automation_save', { id: 'real-id', name: '每日整理' }, {}, true)).toBe('更新：每日整理');
     expect(summarizeToolCall('todo_metadata', { id: 'real-id' }, { title: '备份文件' }, true)).toBe('备份文件');

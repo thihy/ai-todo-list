@@ -205,6 +205,7 @@ function leadingFor(state: ToolRowState, icon: ReactNode): ReactNode {
  *  summary already describe a settled row). */
 function stateStatus(state: ToolRowState, t: TranslateNS<'conversation'>): string | null {
   switch (state) {
+    case 'background': return '已提交后台任务，尚不能据此判断执行完成';
     case 'running': return t('row.running')
     case 'error': return t('row.failed')
     case 'stopped': return t('row.stopped')

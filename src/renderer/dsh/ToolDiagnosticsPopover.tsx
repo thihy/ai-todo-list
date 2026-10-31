@@ -26,7 +26,7 @@ export function ToolDiagnosticsPopover({ text }: { text: string }) {
     {position && createPortal(<div ref={panel} role="dialog" aria-label="定位信息" className="tool-diagnostics-popover" style={{ ...position, maxHeight: Math.max(80, window.innerHeight - position.top - 8) }} onClick={event => event.stopPropagation()}>
       <header><strong>定位信息</strong><button type="button" aria-label="关闭定位信息" onClick={() => { setPosition(null); anchor.current?.focus(); }}>×</button></header>
       <dl><dt>工具名称</dt><dd>{String(data.toolName ?? '未记录')}</dd><dt>调用 ID</dt><dd>{String(data.callId ?? '未记录')}</dd>
-        <dt>状态</dt><dd><span className="tool-diagnostics-status">{data.state === 'missing-result' ? '缺少结果记录' : '缺少调用记录'}</span></dd>
+        <dt>状态</dt><dd><span className="tool-diagnostics-status">{({ 'missing-result': '缺少结果记录', 'missing-call': '缺少调用记录', stopped: '执行已中止', error: '执行失败' } as Record<string, string>)[String(data.state)] ?? '记录不完整'}</span></dd>
         <dt>输入</dt><dd>{data.argsKnown === true ? '已记录' : '未记录'}</dd><dt>输出</dt><dd>{data.resultKnown === true ? '已记录' : '未记录'}</dd></dl>
       <details><summary>技术详情</summary><pre>{text}</pre></details>
     </div>, document.body)}

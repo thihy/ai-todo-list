@@ -98,6 +98,39 @@ async function send(text: string) {
 }
 
 describe('AIPane Stop followed immediately by Send', () => {
+  it('does not let a late history response erase a live streaming turn', async () => {
+    await act(async () => { root.unmount(); });
+    const history = deferred<unknown>();
+    vi.mocked(window.todoList.conversation.history).mockReturnValueOnce(history.promise as never);
+    root = createRoot(container);
+    await act(async () => { root.render(React.createElement(AIPane)); });
+    await send('keep streaming');
+    const invocationId = ask.mock.calls[0]![0].invocationId as string;
+    await act(async () => {
+      harness.events = [{ type: 'token', invocationId, token: 'first live chunk' }];
+      harness.subscribers.forEach(listener => listener());
+    });
+    expect(container.querySelector('output')?.textContent).toBe('first live chunk');
+    await act(async () => { history.resolve({ ok: true, data: { turns: [] } }); });
+    await act(async () => {
+      harness.events = [...harness.events, { type: 'token', invocationId, token: ' second live chunk' }];
+      harness.subscribers.forEach(listener => listener());
+    });
+    expect(container.querySelector('output')?.textContent).toBe('first live chunk second live chunk');
+    expect(harness.composer!.busy).toBe(true);
+  });
+  it('keeps the turn busy and stopping until main acknowledges cancellation', async () => {
+    const cancel = deferred<{ ok: true }>();
+    vi.mocked(window.todoList.ai.cancel).mockReturnValueOnce(cancel.promise as never);
+    await send('slow command');
+    await act(async () => { harness.composer!.onStop(); });
+    expect(harness.composer!.busy).toBe(true);
+    expect(container.querySelector('output')?.getAttribute('data-status')).toBe('streaming');
+    expect(container.textContent).toContain('正在停止，等待后台执行结束');
+    await act(async () => { cancel.resolve({ ok: true }); });
+    expect(container.querySelector('output')?.getAttribute('data-status')).toBe('cancelled');
+    expect(harness.composer!.busy).toBe(false);
+  });
   it('does not bind another conversation\'s question to the current composer', async () => {
     await act(async () => {
       harness.appListeners.get('ai:user-question-request')!({

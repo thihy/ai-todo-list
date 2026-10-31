@@ -580,6 +580,7 @@ export interface IpcRegistry {
   'app.compactSize': IpcChannel<{ count: number }, IpcResult<void>>;
   'app.compactConfigure': IpcChannel<{ enabled?: boolean; opacity?: number; alwaysOnTop?: boolean }, IpcResult<import('./compact-preferences').CompactPreferences>>;
   'app.compactMenu': IpcChannel<undefined, IpcResult<void>>;
+  'app.compactTaskMenu': IpcChannel<{ todoId: string }, IpcResult<import('./compact-task-menu').CompactTaskAction>>;
   'todo.list': IpcChannel<TodoListReq, IpcResult<Todo[]>>;
   'todo.get': IpcChannel<TodoGetReq, IpcResult<Todo | null>>;
   'todo.create': IpcChannel<TodoCreateReq, IpcResult<{ id: ULID; todo: Todo }>>;
@@ -640,6 +641,7 @@ export interface IpcRegistry {
   'inbox.remove': IpcChannel<InboxIdReq, IpcResult<null>>;
 
   'ai.cancel': IpcChannel<AIStreamCancelReq, IpcResult<{ ok: boolean }>>;
+  'ai.execution': IpcChannel<{ conversationId: string }, IpcResult<import('./ai-execution').AIExecutionSnapshot>>;
   'ai.ask': IpcChannel<AIAskReq, IpcResult<AIAskRes>>;
   'ai.steer': IpcChannel<{ conversationId: string; invocationId: string; prompt: string }, IpcResult<{ accepted: boolean }>>;
   'ai.health': IpcChannel<undefined, IpcResult<AIHealthRes>>;

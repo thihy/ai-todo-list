@@ -29,6 +29,11 @@ The app SHALL show a draggable always-on-top compact window whenever its persist
 ### Requirement: Shared actions and window lifecycle
 Compact mode SHALL use the existing task API to complete tasks and SHALL refresh on task changes. Users SHALL be able to restore the main window or open a task's details. Hiding compact mode SHALL leave main-window visibility unchanged. Repeated entry SHALL reuse a single window.
 
+#### Scenario: Task menu at minimum height
+- **WHEN** a user right-clicks a task or presses Shift+F10 in a minimum-height floating window
+- **THEN** a native menu presents all status actions, the complete priority submenu and progress entry without clipping to the floating window
+- **AND** dismissing the menu without selecting an action leaves the task unchanged
+
 #### Scenario: Complete and restore
 - **WHEN** a user completes a compact task and opens another task
 - **THEN** completion is reflected in both windows and the main window opens the selected task
