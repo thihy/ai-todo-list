@@ -138,6 +138,7 @@ interface Turn {
 }
 
 interface ConversationRow {
+  createdAt?: number;
   automationId?: string | null;
   id: string;
   title: string;
@@ -336,11 +337,13 @@ export const AIPane: React.FC<{
   // a toggle for showing archived, and a "new conversation" entry.
   const [showHistory, setShowHistory] = useState(false);
   const [automationGroups, setAutomationGroups] = useState<Array<{ id: string; name: string }>>([]);
+  const [automationRuns, setAutomationRuns] = useState<import('../../shared/automation-types').AutomationRun[]>([]);
+  const [historySnippets, setHistorySnippets] = useState<Record<string, { preview: string; search: string }>>({});
   const automationVersion = useDataVersion(['automations']);
   useEffect(() => {
     let alive = true;
     if (!window.todoList.automation?.list) return;
-    void window.todoList.automation.list().then(result => { if (alive && result.ok) setAutomationGroups(result.data.automations.map(item => ({ id: item.id, name: item.name }))); }).catch(() => {});
+    void window.todoList.automation.list().then(result => { if (alive && result.ok) { setAutomationGroups(result.data.automations.map(item => ({ id: item.id, name: item.name }))); setAutomationRuns(result.data.runs); } }).catch(() => {});
     return () => { alive = false; };
   }, [automationVersion]);
   const [renaming, setRenaming] = useState(false);
@@ -369,6 +372,24 @@ export const AIPane: React.FC<{
   const [presetBusy, setPresetBusy] = useState(false);
   // L3-H: search/filter for the history dropdown. Cleared on dropdown close.
   const [switcherQuery, setSwitcherQuery] = useState('');
+  useEffect(() => {
+    if (!showHistory) return;
+    let cancelled = false; let cursor = 0;
+    const worker = async () => {
+      while (!cancelled && cursor < conversations.length) {
+        const conversation = conversations[cursor++]!;
+        try {
+          const result = await window.todoList.conversation.history(conversation.id);
+          if (cancelled || !result.ok) continue;
+          const messages = result.data.turns.filter(turn => turn.type === 'user' || turn.type === 'assistant').map(turn => ('text' in turn ? String(turn.text ?? '') : '').replace(/<think>[\s\S]*?<\/think>/g, '').trim()).filter(Boolean);
+          const preview = (messages.at(-1) ?? '').replace(/\s+/g, ' ').slice(0, 140);
+          setHistorySnippets(previous => ({ ...previous, [conversation.id]: { preview, search: messages.join('\n').slice(-100000).toLowerCase() } }));
+        } catch { /* History discovery never blocks opening the menu. */ }
+      }
+    };
+    void Promise.all([worker(), worker()]);
+    return () => { cancelled = true; };
+  }, [showHistory, conversations]);
   // 「显示更多」分页：listTotal 是后端返回的命中行数；listRemaining 是
   // 当前页之后还剩多少条可加载；loadingMore 防连点。
   const [listTotal, setListTotal] = useState(0);
@@ -560,10 +581,6 @@ export const AIPane: React.FC<{
     if (!presetsApi) return;
     setPresetBusy(true);
     try {
-      if (value === 'danger-full-access') {
-        const confirm = await presetsApi.confirm({ preset: value });
-        if (!confirm.ok || !confirm.data.confirmed) return;
-      }
       if (!currentId) {
         // 新对话：先记住，等首轮建行时写进去。
         setDraftPreset(value);
@@ -907,7 +924,7 @@ export const AIPane: React.FC<{
   }, [recomputeActiveQuestion, currentTurns, currentId]);
 
   const filteredConversations: ConversationRow[] = switcherQuery
-    ? conversations.filter((c) => c.title.toLowerCase().includes(switcherQuery.toLowerCase()))
+    ? conversations.filter((c) => (c.title + '\n' + (historySnippets[c.id]?.search ?? '') + '\n' + (automationGroups.find(group => group.id === c.automationId)?.name ?? '') + '\n' + (automationRuns.find(run => run.conversationId === c.id)?.result ?? '')).toLowerCase().includes(switcherQuery.toLowerCase()))
     : conversations;
 
   // 批量删除勾选集的派生值。
@@ -1882,9 +1899,10 @@ export const AIPane: React.FC<{
                 <IconHistory />
               </button>
               {showHistory && (
-                <div className="aipane__menu aipane__menu--right" role="listbox">
+                <div className="aipane__menu aipane__menu--right aipane__history-menu" role="listbox">
                   <div className="aipane__menu-head">
                     <span className="aipane__menu-head-title">对话历史</span>
+                    <button type="button" className="history-close" aria-label="关闭对话历史" onClick={() => setShowHistory(false)}>×</button>
                     {loadedIds.length > 0 && (
                       <button
                         type="button"
@@ -1898,11 +1916,12 @@ export const AIPane: React.FC<{
                     )}
                   </div>
                   <div className="aipane__search">
+                    <svg className="history-search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><circle cx="10" cy="10" r="7" /><path d="m15 15 6 6" /></svg>
                     <input
                       ref={historySearchRef}
                       type="search"
                       className="aipane__search-input"
-                      placeholder="搜索对话标题…"
+                      placeholder="搜索对话（支持内容关键词）"
                       value={switcherQuery}
                       onChange={(e) => setSwitcherQuery(e.target.value)}
                       onKeyDown={(e) => {
@@ -1934,8 +1953,8 @@ export const AIPane: React.FC<{
                     </div>
                   )}
                   <div className="aipane__menu-list">
-                    {[{ id: '', name: '普通对话 / 未分组' }, ...automationGroups].map(group => <details className="aipane__conversation-group" key={group.id} open={group.id === '' || !!switcherQuery || filteredConversations.some(c => c.id === currentId && c.automationId === group.id)}>
-                      <summary>{group.id ? '自动化 · ' : ''}{group.name}<span> · {filteredConversations.filter(c => group.id ? c.automationId === group.id : !automationGroups.some(item => item.id === c.automationId)).length}</span>{group.id && <span title="分组随自动化任务管理，不支持单独编辑或删除"> · 自动管理</span>}</summary>
+                    {[{ id: '', name: '普通对话 / 未分组' }, ...automationGroups].map(group => <details className="aipane__conversation-group" data-automation-id={group.id || undefined} key={group.id} open={group.id === '' || !!switcherQuery || filteredConversations.some(c => c.id === currentId && c.automationId === group.id)}>
+                      <summary><span className="history-group-name">{group.id ? '自动化 · ' : ''}{group.name}</span><span className="history-group-count">（{filteredConversations.filter(c => group.id ? c.automationId === group.id : !automationGroups.some(item => item.id === c.automationId)).length}）</span>{group.id && <><svg aria-hidden="true" className="history-lock" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><rect x="5" y="10" width="14" height="11" rx="2" /><path d="M8 10V6a4 4 0 0 1 8 0v4M12 14v3" /></svg><span className="history-managed" title="分组随自动化任务管理，不支持单独编辑或删除">自动管理</span></>}</summary>
                     {filteredConversations.filter(c => group.id ? c.automationId === group.id : !automationGroups.some(item => item.id === c.automationId)).map((c) => (
                       <div
                         key={c.id}
@@ -1961,14 +1980,17 @@ export const AIPane: React.FC<{
                         onClick={() => switchTo(c.id)}
                         title={c.title}
                       >
-                        <span className="aipane__menu-line">
-                          <span className="aipane__menu-title">{c.title}</span>
+                        <svg className="history-chat-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true"><path d="M5 4h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H9l-6 4V6a2 2 0 0 1 2-2Z" /></svg>
+                        <span className="aipane__menu-line" data-automation={!!c.automationId}>
+                          <span className="aipane__menu-title">{c.automationId && automationGroups.some(group => group.id === c.automationId) ? new Date(c.createdAt ?? c.updatedAt).toLocaleString('zh-CN', { month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }) : c.title}</span>
+                          {automationRuns.find(run => run.conversationId === c.id) && <span className={'history-run-state is-' + automationRuns.find(run => run.conversationId === c.id)!.status}>{({ succeeded: '已完成', failed: '失败', running: '执行中', interrupted: '已中断' })[automationRuns.find(run => run.conversationId === c.id)!.status]}</span>}
+                          <time className="history-time">{new Date(c.updatedAt).toLocaleString('zh-CN', { month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })}</time>
                           {c.archived && <span className="aipane__menu-tag">已归档</span>}
                         </span>
-                        {(c.lastMessagePreview || typeof c.messageCount === 'number') && (
+                        {(historySnippets[c.id]?.preview || c.lastMessagePreview || typeof c.messageCount === 'number') && (
                           <span className="aipane__menu-preview">
-                            {c.lastMessagePreview && (
-                              <span className="aipane__menu-preview-text">{c.lastMessagePreview}</span>
+                            {(historySnippets[c.id]?.preview || c.lastMessagePreview) && (
+                              <span className="aipane__menu-preview-text">{historySnippets[c.id]?.preview || c.lastMessagePreview}</span>
                             )}
                             {typeof c.messageCount === 'number' && (
                               <span className="aipane__menu-count" title={`${c.messageCount} 条对话`}>
@@ -2006,6 +2028,8 @@ export const AIPane: React.FC<{
                     </div>
                   ))}</details>)}
                   </div>
+                  <div className="history-managed-note">ⓘ 分组名称与生命周期跟随自动化任务，无法手动编辑或删除。</div>
+                  {switcherQuery && <div className="history-search-note">搜索已加载的 {conversations.length} 条对话；显示更多可扩展搜索范围。</div>}
                   {/* 批量操作条 —— 仅在有勾选时出现；位置在列表（滚动容器）
                       下方、「显示更多」分页按钮上方，不会随列表一起滚动。
                       显示 N / 共选 M 的提示在搜索过滤导致可见 ≠ 选中全集

@@ -49,6 +49,7 @@ export type AppEvent =
   | 'app:data-changed'
   | 'app:settings-changed'
   | 'app:plan-guide'
+  | 'app:compact-interaction'
   | 'app:startup'
   // Tag catalog changes (DB-backed since v17). Fired whenever a tag
   // mutation lands (rename / merge / cleanup / reactivate). The
@@ -82,6 +83,7 @@ export type AppEvent =
 export type DataScope = 'todos' | 'content' | 'drawings' | 'conversations' | 'tags' | 'automations';
 
 export interface AppEventMap {
+  'app:compact-interaction': { active: boolean; opacity: number; titleHovered: boolean };
   'app:todo-created': { id: string };
   'app:navigate': { route: string };
   'app:update-available': { version: string };

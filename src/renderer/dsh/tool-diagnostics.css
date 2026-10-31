@@ -1,0 +1,12 @@
+.tool-diagnostics-trigger { display:inline-flex; align-items:center; justify-content:center; margin-left:auto; flex-shrink:0; width:26px; height:26px; color:#008366; border-radius:6px; cursor:pointer; }
+.tool-diagnostics-trigger:hover { background:#e8f4ef; }
+.tool-diagnostics-trigger:focus-visible { outline:2px solid #008366; outline-offset:2px; }
+.tool-diagnostics-popover { position:fixed; z-index:1600; width:min(300px,calc(100vw - 16px)); max-height:calc(100vh - 16px); overflow:auto; padding:16px; border:1px solid #e2e6eb; border-radius:14px; background:#fff; color:#29313c; box-shadow:0 8px 30px #17212c18; font-size:12px; }
+.tool-diagnostics-popover header { display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; font-size:14px; }
+.tool-diagnostics-popover header button { width:24px; height:24px; color:#8b939e; cursor:pointer; }
+.tool-diagnostics-popover dl { display:grid; grid-template-columns:76px minmax(0,1fr); gap:7px 10px; margin:0 0 12px; }
+.tool-diagnostics-popover dt { color:#8a929d; }
+.tool-diagnostics-popover dd { margin:0; overflow-wrap:anywhere; }
+.tool-diagnostics-status { padding:2px 5px; border-radius:4px; color:#dc4149; background:#fff0f0; }
+.tool-diagnostics-popover summary { color:#7a8390; cursor:pointer; }
+.tool-diagnostics-popover pre { white-space:pre-wrap; overflow-wrap:anywhere; font-size:11px; padding-top:8px; }

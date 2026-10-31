@@ -12,10 +12,10 @@ The assistant SHALL expose accessible automation and Skill buttons in its header
 - **THEN** the same popover shows its existing name, complete required execution instruction and schedule, with save/cancel actions returning to the list
 - **AND** disabled definitions show no next execution time
 ### Requirement: Composer permission control
-The existing permission selector SHALL appear beside the composer's attachment control, with an upward menu and visible full-access state, while preserving selection, confirmation and draft-session behavior.
+The existing permission selector SHALL appear beside the composer's attachment control, with an upward menu and visible full-access state, while preserving selection and draft-session behavior without an additional confirmation dialog.
 #### Scenario: Permission selection
 - **WHEN** a user opens the permission selector in an existing or draft conversation
-- **THEN** its choices remain available inside the composer toolbar and full-access confirmation remains required
+- **THEN** its choices remain available inside the composer toolbar and full-access selection takes effect directly without a confirmation dialog
 ### Requirement: Conversational automation management
 The assistant SHALL use tools backed by the same scheduler as the UI to list, save and remove definitions. The assistant MUST query real IDs before editing and MUST NOT invent schedules or enable recurring work without an explicit user request.
 #### Scenario: Explicit recurring request

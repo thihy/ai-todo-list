@@ -9,6 +9,12 @@ export const CompactView: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [interaction, setInteraction] = useState({ active: false, opacity: .6, titleHovered: false });
+  useEffect(() => {
+    const off = window.todoList.on('app:compact-interaction', setInteraction);
+    void window.todoList.app.compactConfigure({}).then(result => { if (result.ok) setInteraction(previous => ({ ...previous, opacity: result.data.opacity })); });
+    return off;
+  }, []);
   const [menu, setMenu] = useState<Todo | null>(null);
   const [progressTask, setProgressTask] = useState<Todo | null>(null);
   const [percent, setPercent] = useState(0);
@@ -50,7 +56,8 @@ export const CompactView: React.FC = () => {
     if (!result.ok) setError(result.message ?? '打开主窗口失败');
   };
   const today = localDateKey();
-  return <main className="compact-view" aria-label="精简待办">
+  const idleOpacity = interaction.opacity;
+  return <main className="compact-view" aria-label="精简待办" data-active={interaction.active} style={{ '--compact-body-opacity': interaction.active ? 1 : idleOpacity, '--compact-title-opacity': interaction.active || interaction.titleHovered ? 1 : 1 - (1 - idleOpacity) / 2 } as React.CSSProperties}>
     <header className="compact-view__header" title="置顶显示 · 今日优先 · 按截止时间排序 · 拖动可移动">
       <span className="compact-view__brand-dot" />
       <strong>待办</strong><span className="compact-view__count">{todos.length}</span>
@@ -65,6 +72,7 @@ export const CompactView: React.FC = () => {
         </button>
       </div>
     </header>
+    <div className="compact-view__content">
     {error && <div className="compact-view__error" role="alert"><span>{error}</span><button onClick={() => void refresh()}>重试</button></div>}
     <ul className="compact-view__list">
       {todos.map((todo) => <li key={todo.id} className={`compact-view__row priority-${todo.priority}`}>
@@ -99,5 +107,6 @@ export const CompactView: React.FC = () => {
       <button disabled={busyId !== null} type="submit">保存进展</button><button disabled={busyId !== null} type="button" onClick={() => setProgressTask(null)}>取消</button>
     </form>}
     {!todos.length && !error && <div className="compact-view__empty">{loading ? '正在读取待办…' : '暂时没有待办，轻松一下。'}</div>}
+    </div>
   </main>;
 };

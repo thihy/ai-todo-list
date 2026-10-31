@@ -4,6 +4,15 @@ Keep actionable tasks visible in a small desktop window while users work in othe
 
 ## ADDED Requirements
 
+### Requirement: Inactive pass-through and regional transparency
+The inactive floating window SHALL pass pointer input through its content while retaining a reachable title strip. The content SHALL use the configured transparency, and the title SHALL use half that transparency. Hovering the title SHALL make only the title opaque. Activating the window SHALL make both regions opaque and disable pass-through; losing focus SHALL restore the inactive state.
+
+#### Scenario: Sixty percent transparency
+- **WHEN** the configured transparency is 60 percent and the window is inactive
+- **THEN** the content opacity is 0.4 and title opacity is 0.7
+- **AND** hovering the title changes only title opacity to 1
+- **AND** activating the window changes both opacities to 1 and disables mouse pass-through
+
 ### Requirement: Compact floating task surface
 The app SHALL automatically show a draggable always-on-top compact window when the main window is minimized, displaying at most five active tasks, without a title-bar compact button or stealing focus. The main window SHALL remain available in the taskbar; restoring it SHALL keep the compact window visible. The tray shortcut remains available. It SHALL place local-today tasks first, then sort by ascending due date with undated tasks last and recent updates as a tie-breaker. Done, cancelled, archived and deleted tasks SHALL be excluded.
 

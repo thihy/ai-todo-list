@@ -48,12 +48,20 @@ afterEach(() => { act(() => root.unmount()); element.remove(); });
 describe('ToolPayloadDialog survives React StrictMode dev double-invoke', () => {
   it('opens missing-call diagnostics from the right-side icon without expanding the row', () => {
     root = createRoot(element);
-    act(() => root.render(<ToolRow t={conversationT} variant="read" icon={null} title="工具调用信息缺失" summary="" state="missing-call" missingInputHint="未记录输入" diagnosticsText={'toolName: glob\ncallId: orphan-42\nargsKnown: false'} />));
+    act(() => root.render(<ToolRow t={conversationT} variant="read" icon={null} title="工具调用信息缺失" summary="" state="missing-call" missingInputHint="未记录输入" diagnosticsText={JSON.stringify({ toolName: 'glob', callId: 'orphan-42', argsKnown: false, resultKnown: true, state: 'missing-call' })} />));
     const button = element.querySelector<HTMLButtonElement>('[aria-label="查看工具定位信息"]')!;
     expect(button).not.toBeNull();
     act(() => button.click());
-    expect(element.querySelector('dialog[open]')?.textContent).toContain('glob');
-    expect(element.querySelector('dialog[open]')?.textContent).toContain('orphan-42');
+    const dialog = document.querySelector('[role="dialog"][aria-label="定位信息"]');
+    expect(dialog?.textContent).toContain('glob');
+    expect(dialog?.textContent).toContain('orphan-42');
+    expect(dialog?.querySelector('dd')?.textContent).toBe('glob');
+    expect(dialog?.textContent).toContain('缺少调用记录');
+    act(() => document.querySelector<HTMLButtonElement>('[aria-label="关闭定位信息"]')!.click());
+    act(() => button.click());
+    act(() => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
+    expect(document.querySelector('[role="dialog"][aria-label="定位信息"]')).toBeNull();
+    expect(document.activeElement).toBe(button);
   });
   it('inspect button still opens a visible dialog under StrictMode', () => {
     const text = 'not JSON\n'.repeat(200);

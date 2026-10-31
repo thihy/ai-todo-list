@@ -194,25 +194,24 @@ describe('AIPane 权限预设选择器', () => {
     expect(presetButton()!.textContent).toContain('只读');
   });
 
-  it('选 danger-full-access 先弹确认，确认后才 set', async () => {
+  it('选 danger-full-access 直接生效，不弹确认', async () => {
     await mount();
     await act(async () => { presetButton()!.click(); });
     await act(async () => { menuItems()[3]!.click(); });
-    expect(confirm).toHaveBeenCalledWith({ preset: 'danger-full-access' });
+    expect(confirm).not.toHaveBeenCalled();
     expect(set).toHaveBeenCalledWith({ conversationId: 'conv', preset: 'danger-full-access' });
   });
 
-  it('danger-full-access 确认被取消时不 set，当前值不变', async () => {
+  it('切换完全访问不依赖旧确认接口', async () => {
     await mount();
     confirm.mockResolvedValue({ ok: true, data: { confirmed: false } });
     await act(async () => { presetButton()!.click(); });
     await act(async () => { menuItems()[3]!.click(); });
-    expect(confirm).toHaveBeenCalledOnce();
-    expect(set).not.toHaveBeenCalled();
-    // 取消 = 什么都没发生：菜单留在原地让用户改选别的，显示值仍是 auto。
-    expect(menuItems()).toHaveLength(4);
-    expect(presetButton()!.textContent).toContain('Auto');
-    expect(presetButton()!.className).not.toContain('--danger');
+    expect(confirm).not.toHaveBeenCalled();
+    expect(set).toHaveBeenCalledWith({ conversationId: 'conv', preset: 'danger-full-access' });
+    expect(menuItems()).toHaveLength(0);
+    expect(presetButton()!.textContent).toContain('完全访问');
+    expect(presetButton()!.className).toContain('--danger');
   });
 
   it('options 为空（插件没挂载）→ 整个控件不渲染', async () => {
@@ -275,20 +274,20 @@ describe('AIPane 权限预设选择器 — 新对话（draft）', () => {
     expect(menuItems()).toHaveLength(0);
   });
 
-  it('draft 里选 danger-full-access 仍要过二次确认', async () => {
+  it('draft 里选 danger-full-access 直接生效', async () => {
     await mount(DRAFT);
     await act(async () => { presetButton()!.click(); });
     await act(async () => { menuItems()[3]!.click(); });
-    expect(confirm).toHaveBeenCalledWith({ preset: 'danger-full-access' });
+    expect(confirm).not.toHaveBeenCalled();
     expect(presetButton()!.textContent).toContain('完全访问');
   });
 
-  it('draft 里选 danger-full-access 被取消则不记，标签不变', async () => {
+  it('draft 里选完全访问不依赖旧确认接口', async () => {
     await mount(DRAFT);
     confirm.mockResolvedValue({ ok: true, data: { confirmed: false } });
     await act(async () => { presetButton()!.click(); });
     await act(async () => { menuItems()[3]!.click(); });
-    expect(presetButton()!.textContent).toContain('Auto');
+    expect(presetButton()!.textContent).toContain('完全访问');
   });
 
   it('提交首轮时先落库预设、再发起 ai.ask（顺序是承重的）', async () => {

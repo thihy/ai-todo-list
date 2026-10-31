@@ -11,7 +11,7 @@ export function normaliseCompactPreferences(raw: unknown): CompactPreferences {
   const bounds = value.bounds;
   return {
     enabled: value.enabled !== false,
-    opacity: typeof value.opacity === 'number' && Number.isFinite(value.opacity) ? Math.max(.4, Math.min(1, value.opacity)) : 1,
+    opacity: typeof value.opacity === 'number' && Number.isFinite(value.opacity) ? Math.max(.4, Math.min(1, value.opacity)) : .6,
     alwaysOnTop: value.alwaysOnTop !== false,
     manualSize: value.manualSize === true,
     bounds: bounds && [bounds.x, bounds.y, bounds.width, bounds.height].every(Number.isFinite)

@@ -1,3 +1,4 @@
+import { ToolDiagnosticsPopover } from '../../../ToolDiagnosticsPopover'
 import { useMemo, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react'
 import clsx from 'clsx'
 import {
@@ -356,7 +357,7 @@ export function ToolRow({
               <span className={clsx(css.summarySuffix, suffix === diffStat && css.diffStat)}>{suffix}</span>
             )}
           </>
-        )}{diagnosticsText && <button type="button" aria-label="查看工具定位信息" title="查看工具定位信息" style={{ marginLeft: 'auto', flexShrink: 0, padding: 3, display: 'inline-flex', color: 'inherit' }} onKeyDown={event => event.stopPropagation()} onClick={event => { event.stopPropagation(); setPayload({ title: '工具调用定位信息', text: diagnosticsText }); }}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 11v6M12 7v1" /></svg></button>}</>}
+        )}{diagnosticsText && <ToolDiagnosticsPopover text={diagnosticsText} />}</>}
       >
         <div className={css.bodyWrap}>
           {wireName && (

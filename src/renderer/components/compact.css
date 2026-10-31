@@ -40,3 +40,7 @@ html:has(.compact-view), body:has(.compact-view), #root:has(.compact-view) { min
 .compact-task-menu label { display: flex; justify-content: space-between; }
 .compact-progress { position: fixed; inset: 4px; z-index: 21; }
 .compact-progress input, .compact-progress textarea { width: 100%; border: 1px solid var(--border-strong); border-radius: 4px; padding: 4px; }
+html:has(.compact-view),body:has(.compact-view),#root:has(.compact-view) { background:transparent !important; }
+.compact-view { background:transparent; padding:0; overflow:hidden; }
+.compact-view__header { margin:0; padding:3px 7px 0; height:34px; background:var(--bg-canvas); opacity:var(--compact-title-opacity,1); }
+.compact-view__content { display:flex; flex-direction:column; flex:1; min-height:0; padding:0 7px 5px; background:var(--bg-canvas); opacity:var(--compact-body-opacity,1); }

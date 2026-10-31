@@ -43,6 +43,7 @@ function invoke<C extends IpcChannelName>(
 // Channel-list listeners: map event name to renderer-side listener.
 // Each `app:*` event coming from main is re-emitted on window.todoList.on*.
 const APP_EVENTS: AppEvent[] = [
+  'app:compact-interaction',
   'app:todo-created',
   'app:navigate',
   'app:update-available',

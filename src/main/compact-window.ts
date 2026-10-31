@@ -11,6 +11,23 @@ export class CompactWindowController {
   private saveTimer: ReturnType<typeof setTimeout> | undefined;
   private count = 5;
   private requested = false;
+  private interactive = false;
+  private pointerTimer: ReturnType<typeof setInterval> | undefined;
+  private ignoringMouse = false;
+  private interactionKey = '';
+  private updateInteraction = (): void => {
+    const window = this.window;
+    if (!window || window.isDestroyed()) return;
+    const point = screen.getCursorScreenPoint(); const bounds = window.getBounds();
+    // Keep only the title strip reachable while inactive. Coordinates are
+    // Electron DIP units, so this also works across display scaling levels.
+    const overTitle = point.x >= bounds.x && point.x < bounds.x + bounds.width && point.y >= bounds.y && point.y < bounds.y + 34;
+    const state = { active: this.interactive, opacity: this.preferences.opacity, titleHovered: overTitle };
+    const key = JSON.stringify(state);
+    if (key !== this.interactionKey) { this.interactionKey = key; window.webContents.send('app:compact-interaction', state); }
+    const ignore = !this.interactive && !overTitle;
+    if (ignore !== this.ignoringMouse) { window.setIgnoreMouseEvents(ignore, { forward: true }); this.ignoringMouse = ignore; }
+  };
   private onMinimize = (): void => { if (this.preferences.enabled) this.show(); };
   constructor(private main: BrowserWindow, private settings: SettingsStore) {
     this.preferences = normaliseCompactPreferences(settings.get().compactWindow);
@@ -26,7 +43,8 @@ export class CompactWindowController {
   };
   configure(patch: { enabled?: boolean; opacity?: number; alwaysOnTop?: boolean }): CompactPreferences {
     this.preferences = normaliseCompactPreferences({ ...this.preferences, ...patch });
-    this.window?.setOpacity(this.preferences.opacity);
+    this.interactionKey = '';
+    this.updateInteraction();
     this.window?.setAlwaysOnTop(this.preferences.alwaysOnTop);
     this.persist();
     if (patch.enabled === true) this.show();
@@ -65,12 +83,17 @@ export class CompactWindowController {
         ...this.preferences.bounds,
         minWidth: 200, minHeight: 64,
         frame: false, resizable: true, maximizable: false, fullscreenable: false,
-        alwaysOnTop: this.preferences.alwaysOnTop, opacity: this.preferences.opacity, skipTaskbar: true, show: false,
-        backgroundColor: '#F6F7F9', title: 'AI待办 · 精简模式',
+        alwaysOnTop: this.preferences.alwaysOnTop, opacity: 1, skipTaskbar: true, show: false, transparent: true,
+        backgroundColor: '#00000000', title: 'AI待办 · 精简模式',
         webPreferences: { preload: join(__dirname, '../preload/index.cjs'),
           contextIsolation: true, nodeIntegration: false, sandbox: false },
       });
       this.window = window;
+      this.interactive = false;
+      window.on('focus', () => { this.interactive = true; this.updateInteraction(); });
+      window.on('blur', () => { this.interactive = false; this.updateInteraction(); });
+      this.pointerTimer = setInterval(() => { if (window.isVisible()) this.updateInteraction(); }, 80);
+      this.updateInteraction();
       const savedArea = screen.getDisplayMatching(window.getBounds()).workArea;
       const saved = window.getBounds();
       window.setBounds({ width: Math.min(saved.width, savedArea.width), height: Math.min(saved.height, savedArea.height),
@@ -81,6 +104,7 @@ export class CompactWindowController {
       window.on('move', this.scheduleSave);
       window.setMenu(null);
       window.once('ready-to-show', () => {
+        this.interactionKey = ''; this.updateInteraction();
         if (!this.destroying && this.requested && !window.isDestroyed() && this.window === window) window.showInactive();
       });
       window.on('close', (event) => {
@@ -114,6 +138,7 @@ export class CompactWindowController {
     this.requested = false;
     this.main.removeListener('minimize', this.onMinimize);
     clearTimeout(this.saveTimer);
+    clearInterval(this.pointerTimer);
     this.persist();
     this.window?.destroy();
     this.window = null;

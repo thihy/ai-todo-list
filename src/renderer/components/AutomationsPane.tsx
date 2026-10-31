@@ -124,7 +124,6 @@ export const AutomationsPane: React.FC<{ onCompose?: (prompt: string) => void }>
           {draft.schedule.kind === 'calendar' && draft.schedule.frequency === 'monthly' && <p className="automation-field-hint">当月没有该日期时跳过。</p>}
           <label>执行权限<select className="input" aria-label="自动化执行权限" value={draft.permissionPreset ?? 'auto'} onChange={async event => {
             const value = event.target.value as AutomationInput['permissionPreset'];
-            if (value === 'danger-full-access') { const result = await window.todoList.aiPermissionPreset.confirm({ preset: value }); if (!result.ok || !result.data.confirmed) return; }
             setDraft(previous => ({ ...previous, permissionPreset: value }));
           }}><option value="auto">Auto</option><option value="read-only">只读</option><option value="workspace-write">工作区可写</option><option value="danger-full-access">完全访问</option></select></label>
           <label>时区<input className="input" required value={draft.timezone} onChange={(event) => setDraft({ ...draft, timezone: event.target.value })} placeholder="Asia/Shanghai" /></label>
