@@ -18,6 +18,7 @@ import { LiveDrawingEngine } from '../drawing/live-engine';
 import { CaptureUpdateAction } from '@excalidraw/excalidraw';
 import { drawingDocumentState } from '../drawing/scene-state';
 import { exportDrawingPng } from '../drawing/export';
+import { DrawingAnnotations } from './DrawingAnnotations';
 
 // Excalidraw's vendor CSS. The package ships its CSS as a separate
 // `index.css` entry (not auto-injected by the JS bundle), so it must be
@@ -85,6 +86,7 @@ export const ExcalidrawEditor: React.FC<{
   const toast = useToastBus();
   const hostRef = useRef<HTMLDivElement>(null);
   const apiRef = useRef<MinimalExcalidrawApi | null>(null);
+  const [annotationApi, setAnnotationApi] = useState<MinimalExcalidrawApi | null>(null);
   const latestScene = useRef(scene);
   latestScene.current = scene;
   const mountedScene = useRef(scene);
@@ -176,6 +178,10 @@ export const ExcalidrawEditor: React.FC<{
       try {
         if (!api) throw new Error('画布尚未就绪');
         const context = await readLiveDrawingContext(api, drawingId);
+        if (payload.includeActions) {
+          if (!api.getNativeActions) throw Error('原生 action 桥接不可用，请检查应用构建版本');
+          context.nativeActions = api.getNativeActions();
+        }
         await window.todoList.drawing.contextResult({ ...payload, ok: true, context });
       } catch (cause) {
         await window.todoList.drawing.contextResult({ ...payload, ok: false, error: cause instanceof Error ? cause.message : String(cause) });
@@ -192,7 +198,7 @@ export const ExcalidrawEditor: React.FC<{
       try {
         const result = engine ? await engine.execute(payload) : { drawingId, opId: payload.opId, ok: false, state: 'completed' as const, code: 'unavailable' as const, error: '画布尚未就绪', liveChanged: false };
         if (engineRef.current === engine && result.liveChanged) {
-          if (payload.kind === 'apply' && result.checkpointId) setLastAiCheckpoint(result.checkpointId);
+          if ((payload.kind === 'apply' || payload.kind === 'native-action') && result.checkpointId) setLastAiCheckpoint(result.checkpointId);
           if (payload.kind === 'restore' && result.ok) setLastAiCheckpoint(null);
         }
         await window.todoList.drawing.engineResult(result);
@@ -255,12 +261,20 @@ export const ExcalidrawEditor: React.FC<{
         excalidrawAPI: (api) => {
           if (cancelled) return;
           apiRef.current = api as unknown as MinimalExcalidrawApi;
-          engineRef.current = new LiveDrawingEngine(apiRef.current, drawingId, (id, value) => saveRef.current(id, value), () => autosaveRef.current?.cancel());
+          setAnnotationApi(apiRef.current);
+          const mountedApi = apiRef.current;
+          engineRef.current = new LiveDrawingEngine(mountedApi, drawingId, (id, value) => {
+            if (cancelled || apiRef.current !== mountedApi) throw Error('画布已关闭，未保存旧编辑器的快照');
+            return saveRef.current(id, value);
+          }, () => {
+            if (cancelled || apiRef.current !== mountedApi) throw Error('画布已关闭，不能继续修改');
+            autosaveRef.current?.cancel();
+          });
           reportReady();
         },
         handleKeyboardGlobally: false,
         autoFocus: false,
-        UIOptions: { canvasActions: { saveToActiveFile: false } },
+        UIOptions: { canvasActions: { saveToActiveFile: true } },
         onChange: (elements, state) => {
           if (cancelled || !ready || state.isLoading) return;
           autosave(elements as unknown[], state as unknown as Record<string, unknown>);
@@ -293,6 +307,7 @@ export const ExcalidrawEditor: React.FC<{
       if (autosaveRef.current === autosave) autosaveRef.current = null;
       removeKeyDown?.();
       apiRef.current = null;
+      setAnnotationApi(null);
       engineRef.current = null;
       void window.todoList.drawing.canvasGone(drawingId);
       mountNode?.remove();
@@ -335,6 +350,7 @@ export const ExcalidrawEditor: React.FC<{
     </div>
     {error && <div role="alert">绘图加载失败：{error}</div>}
     <div ref={hostRef} style={{ height: '100%', position: 'relative', zIndex: 0 }} aria-label="绘图画布" />
+    <DrawingAnnotations key={drawingId} api={annotationApi} drawingId={drawingId} host={hostRef} />
   </div>;
 };
 

@@ -31,6 +31,9 @@ export interface MinimalExcalidrawApi {
   getSceneElements(): unknown[];
   getAppState(): Record<string, unknown>;
   getFiles?(): Record<string, unknown>;
+  onChange?(callback: () => void): () => void;
+  getNativeActions?(): import('../../shared/drawing-engine').NativeDrawingAction[];
+  executeNativeAction?(name: string, value?: unknown): Promise<import('../../shared/drawing-engine').NativeDrawingActionResult>;
   addFiles?(files: unknown[]): void;
   scrollToContent?(elements: unknown[], opts?: Record<string, unknown>): void;
 }

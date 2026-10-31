@@ -23,6 +23,7 @@ import {
   todayDateKey,
 } from './components/PlanGuideModal';
 import { Composer, type ExternalAiSubmitDetail } from './components/Composer';
+import { DRAWING_AI_SUBMIT_EVENT } from './drawing/annotations';
 import { TodoListPane } from './panes/TodoListPane';
 import { TaskListPanel } from './layout/TaskListPanel';
 import type { Todo } from '../shared/todo-types';
@@ -106,7 +107,7 @@ export const App: React.FC = () => {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [composing, setComposing] = useState(false);
-  const [pendingAiCreate, setPendingAiCreate] = useState<ExternalAiSubmitDetail | null>(null);
+  const [pendingAiSubmits, setPendingAiSubmits] = useState<ExternalAiSubmitDetail[]>([]);
   const [listFilter, setListFilter] = useState<ListFilter>({ kind: 'all' });
   const [listSort, setListSort] = useState<SortKey>('alpha');
   // Fullscreen document mode: hides the task list + basic-info/links/activity
@@ -275,6 +276,22 @@ export const App: React.FC = () => {
     toggleAi,
     toggleList,
   } = usePaneVisibility(initialAiOpen, initialListOpen);
+  const pendingDrawingSubmit = React.useRef<string | null>(null);
+  useEffect(() => {
+    const submitDrawing = (event: Event) => {
+      const detail = (event as CustomEvent<ExternalAiSubmitDetail>).detail;
+      if (!detail || detail.intent !== 'chat' || !detail.requestId) return;
+      if (pendingDrawingSubmit.current) { detail.onRejected?.('上一批标注正在进入 AI 助手，请稍后重试；标注已保留。'); return; }
+      pendingDrawingSubmit.current = detail.requestId;
+      setPendingAiSubmits(previous => [...previous, { ...detail,
+        onAdmitted: () => { pendingDrawingSubmit.current = null; detail.onAdmitted?.(); },
+        onRejected: message => { pendingDrawingSubmit.current = null; detail.onRejected?.(message); },
+      }]);
+      openAi();
+    };
+    window.addEventListener(DRAWING_AI_SUBMIT_EVENT, submitDrawing);
+    return () => window.removeEventListener(DRAWING_AI_SUBMIT_EVENT, submitDrawing);
+  }, [openAi]);
 
   // 旧折叠语义迁移：必须在 useEffect 里跑，而不是模块顶层 —— Fast Refresh
   // 保留 state，模块顶层迁移后 useEffect 会把旧 state (false) 又写回
@@ -511,7 +528,7 @@ export const App: React.FC = () => {
                   composing={composing}
                   onCloseCompose={() => setComposing(false)}
                   onAiSubmit={(detail) => {
-                    setPendingAiCreate(detail);
+                    setPendingAiSubmits(previous => [...previous, detail]);
                     openAi();
                   }}
                   navigate={navigate}
@@ -541,8 +558,8 @@ export const App: React.FC = () => {
             open={aiOpen}
             width={aiWidth}
             onToggle={toggleAi}
-            externalSubmit={pendingAiCreate}
-            onExternalSubmitConsumed={() => setPendingAiCreate(null)}
+            externalSubmit={pendingAiSubmits[0] ?? null}
+            onExternalSubmitConsumed={() => setPendingAiSubmits(previous => previous.slice(1))}
           />
         </div>
         <Statusbar route={route} />

@@ -4,6 +4,23 @@ All notable changes to todo-list are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0-rc20] - 2026-10-31
+
+### Added
+
+- Offer a selection-anchored AI annotation composer, persistent per-drawing drafts and one batch submission through the assistant's ordinary-chat queue.
+- Expose all 93 actions registered by Excalidraw 0.18.1 through native action discovery/execution, with typed form guidance, permissions, revision checks, deduplication and actual-state persistence.
+- Open floating-task progress entry in a separate opaque window beside the task list, with usable minimum size and explicit save/cancel.
+
+### Fixed
+
+- Remove model-facing drawing_read and full-scene drawing_save tools; prohibit file/JSON fallback for drawing assistance.
+- Support validated bound-text container IDs and horizontal/vertical alignment through official conversion and bindings.
+- Wait for the target selection to commit before native actions, and await native paste/image/clipboard work before acknowledging completion. Failed clipboard copy cannot delete a cut selection.
+- Keep nonserializable file-picker handles out of persisted drawing preferences and reject old-editor saves after the canvas closes.
+- Preserve external request order during cold startup, retain annotation drafts on failed admission and queue batches while AI is busy.
+- Do not display a stopping banner for an empty conversation.
+
 ## [1.0.0-rc19] - 2026-10-31
 
 ### Added

@@ -46,6 +46,6 @@ describe('Permission tiers', () => {
   it('list/read are safe', () => {
     expect(tierFor('todo_list')).toBe('auto');
     expect(tierFor('todo_get')).toBe('auto');
-    expect(tierFor('drawing_read')).toBe('auto');
+    expect(tierFor('drawing_list')).toBe('auto');
   });
 });

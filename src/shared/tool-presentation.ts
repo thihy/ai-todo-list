@@ -110,6 +110,8 @@ export type ToolName =
   | 'drawing_draw'
   | 'drawing_render'
   | 'mcp__drawing__get_context'
+  | 'mcp__drawing__get_actions'
+  | 'mcp__drawing__execute_action'
   | 'mcp__drawing__read_elements'
   | 'mcp__drawing__apply_operations'
   | 'mcp__drawing__get_operation'
@@ -176,6 +178,8 @@ const kindByTool: Record<ToolName, ToolCallKind> = {
   'drawing_draw': 'edit',
   'drawing_render': 'read',
   'mcp__drawing__get_context': 'read',
+  'mcp__drawing__get_actions': 'read',
+  'mcp__drawing__execute_action': 'edit',
   'mcp__drawing__read_elements': 'read',
   'mcp__drawing__apply_operations': 'edit',
   'mcp__drawing__get_operation': 'read',
@@ -313,6 +317,8 @@ export function summarizeToolCall(
   const resultTitle = (): string | undefined => stringField(result, 'title');
   switch (toolName) {
     case 'mcp__drawing__get_context': return `${asArray((result as Record<string, unknown> | null)?.selectedElementIds).length} 个选中元素`;
+    case 'mcp__drawing__get_actions': return `${asArray((result as Record<string, unknown> | null)?.actions).length} 个原生操作`;
+    case 'mcp__drawing__execute_action': return `${stringField(a, 'action') ?? '原生操作'}${(result as Record<string, unknown> | null)?.liveChanged ? ' · 已更新画布' : ''}`;
     case 'mcp__drawing__read_elements': return `${asArray((result as Record<string, unknown> | null)?.elements).length} 个元素`;
     case 'mcp__drawing__apply_operations': {
       if ((result as Record<string, unknown> | null)?.durable === true) return `已保存 · ${asArray((result as Record<string, unknown>).affectedIds).length} 个元素`;
@@ -534,6 +540,8 @@ function titleFor(toolName: string): string {
   'drawing_draw': 'AI 画图',
   'drawing_render': '查看绘图效果',
     'mcp__drawing__get_context': '读取实时画布',
+    'mcp__drawing__get_actions': '查看绘图操作',
+    'mcp__drawing__execute_action': '执行绘图操作',
     'mcp__drawing__read_elements': '读取绘图元素',
     'mcp__drawing__apply_operations': '修改当前绘图',
     'mcp__drawing__get_operation': '查询绘图执行结果',

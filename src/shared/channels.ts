@@ -137,6 +137,7 @@ const RUNTIME_CHANNEL_KEYS = [
   'app.compactConfigure',
   'app.compactMenu',
   'app.compactTaskMenu',
+  'app.compactProgress',
   'app.popupMenuCategory',
   'app.pickFile',
   'app.screenshot',

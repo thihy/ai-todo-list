@@ -29,7 +29,7 @@ it('uses actual SDK HTTP initialize/list/call and enforces bearer and browser-or
   client = new Client({ name: 'test', version: '1' });
   await client.connect(new StreamableHTTPClientTransport(new URL(service!.url), { requestInit: { headers: { Authorization: `Bearer ${service!.token}` } } }));
   const tools = await client.listTools();
-  expect(tools.tools.map(tool => tool.name)).toEqual(['get_context', 'read_elements', 'apply_operations', 'get_operation', 'restore_checkpoint', 'render_snapshot']);
+  expect(tools.tools.map(tool => tool.name)).toEqual(['get_actions', 'execute_action', 'get_context', 'read_elements', 'apply_operations', 'get_operation', 'restore_checkpoint', 'render_snapshot']);
   const live = await client.callTool({ name: 'get_context', arguments: { drawingId: 'drawing' } });
   expect(JSON.parse((live.content as any)[0].text)).toMatchObject({ revision: 'live', selectedElementIds: ['a'] });
   const read = await client.callTool({ name: 'read_elements', arguments: { drawingId: 'drawing' } });

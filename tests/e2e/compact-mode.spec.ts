@@ -133,6 +133,8 @@ test('inactive floating content passes through while its title can activate the 
   try {
     await handle.win.evaluate(() => window.todoList.app.compactConfigure({ enabled: true, opacity: .4 }));
     await expect.poll(() => handle.app.windows().find(page => page.url().endsWith('#/compact'))?.url()).toContain('#/compact');
+    const page = handle.app.windows().find(page => page.url().endsWith('#/compact'))!;
+    await expect(page.locator('.compact-view__content')).toBeVisible({ timeout: 15_000 });
     await handle.app.evaluate(({ BrowserWindow, screen }) => {
       const win = BrowserWindow.getAllWindows().find(win => win.webContents.getURL().endsWith('#/compact'))!;
       const bounds = win.getBounds();
@@ -145,7 +147,6 @@ test('inactive floating content passes through while its title can activate the 
       win.emit('blur');
     });
     await expect.poll(() => handle.app.evaluate(() => (globalThis as any).__compactIgnoring)).toBe(true);
-    const page = handle.app.windows().find(page => page.url().endsWith('#/compact'))!;
     await expect.poll(() => page.locator('.compact-view__content').evaluate(element => getComputedStyle(element).opacity)).toBe('0.4');
     await expect.poll(() => page.locator('.compact-view__header').evaluate(element => getComputedStyle(element).opacity)).toBe('0.7');
     await handle.app.evaluate(({ BrowserWindow }) => { const bounds = BrowserWindow.getAllWindows().find(win => win.webContents.getURL().endsWith('#/compact'))!.getBounds(); (globalThis as any).__idlePoint = { x: bounds.x + 40, y: bounds.y + 12 }; });
@@ -180,11 +181,30 @@ test('floating task menu updates priority, status and progress, and can be disab
     await expect(page.locator('.priority-very-high .compact-view__title')).toHaveText('悬浮任务操作测试');
     await chooseTaskMenu(handle, '标记阻塞'); await task.click({ button: 'right' });
     await chooseTaskMenu(handle, '录入进展'); await task.click({ button: 'right' });
-    await page.getByLabel('进度百分比').fill('45'); await page.getByLabel('进展说明').fill('已完成第一阶段');
-    await page.getByRole('button', { name: '保存进展' }).click();
-    await expect(page.getByRole('form', { name: '录入进展' })).toHaveCount(0);
+    await expect.poll(() => handle.app.windows().find(window => window.url().includes('#/compact-progress/'))?.url()).toContain('#/compact-progress/');
+    const editor = handle.app.windows().find(window => window.url().includes('#/compact-progress/'))!;
+    await expect(editor.getByLabel('进度百分比')).toBeVisible();
+    const sizes = await handle.app.evaluate(({ BrowserWindow }) => {
+      const floating = BrowserWindow.getAllWindows().find(window => window.webContents.getURL().endsWith('#/compact'))!;
+      const progress = BrowserWindow.getAllWindows().find(window => window.webContents.getURL().includes('#/compact-progress/'))!;
+      return { floating: floating.getContentSize(), progress: progress.getBounds(), opacity: progress.getOpacity() };
+    });
+    expect(sizes.floating).toEqual([240, 92]); expect(sizes.progress.height).toBeGreaterThanOrEqual(360); expect(sizes.opacity).toBe(1);
+    await editor.getByLabel('进度百分比').fill('45'); await editor.getByLabel('进展说明').fill('已完成第一阶段');
+    await editor.screenshot({ path: test.info().outputPath('compact-independent-progress.png') });
+    await editor.getByRole('button', { name: '保存进展' }).click();
+    await expect.poll(() => editor.isClosed()).toBe(true);
+    await expect(page.locator('.compact-progress')).toHaveCount(0);
     const result = await handle.win.evaluate(() => window.todoList.todo.list({ status: ['blocked'] }));
     expect(result.ok && result.data.some(todo => todo.title === '悬浮任务操作测试' && todo.progress === 45 && todo.priority === 'very-high')).toBe(true);
+    await chooseTaskMenu(handle, '录入进展'); await task.click({ button: 'right' });
+    await expect.poll(() => handle.app.windows().find(window => window.url().includes('#/compact-progress/'))?.url()).toContain('#/compact-progress/');
+    const cancelled = handle.app.windows().find(window => window.url().includes('#/compact-progress/'))!;
+    await cancelled.getByLabel('进度百分比').fill('90');
+    await cancelled.getByRole('button', { name: '取消', exact: true }).click();
+    await expect.poll(() => cancelled.isClosed()).toBe(true);
+    const unchanged = await handle.win.evaluate(() => window.todoList.todo.list({ status: ['blocked'] }));
+    expect(unchanged.ok && unchanged.data.find(todo => todo.title === '悬浮任务操作测试')?.progress).toBe(45);
     await page.getByRole('button', { name: '关闭悬浮窗', exact: true }).click();
     expect((await handle.win.evaluate(() => window.todoList.app.compactConfigure({}))).ok).toBe(true);
     await expect.poll(() => handle.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find(w => w.webContents.getURL().endsWith('#/compact'))!.isVisible())).toBe(false);
@@ -196,6 +216,7 @@ test('floating task menu updates priority, status and progress, and can be disab
 test('compact mode stays small and on top, completes real tasks and returns to detail', async () => {
   const handle = await launchApp();
   try {
+    await expect(handle.win.locator('.task-list__add-btn')).toBeVisible({ timeout: 30000 });
     const ids = await handle.win.evaluate(async () => {
       const now = new Date();
       const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
@@ -214,7 +235,7 @@ test('compact mode stays small and on top, completes real tasks and returns to d
     await handle.win.evaluate(() => window.todoList.app.compactConfigure({ enabled: true }));
     await expect.poll(() => handle.app.windows().find(page => page.url().endsWith('#/compact'))?.url()).toContain('#/compact');
     const compact = handle.app.windows().find(page => page.url().endsWith('#/compact'))!;
-    await expect(compact.getByRole('main', { name: '精简待办' })).toBeVisible();
+    await expect(compact.getByRole('main', { name: '精简待办' })).toBeVisible({ timeout: 15000 });
     await expect(compact.locator('.compact-view__row')).toHaveCount(5);
     await compact.screenshot({ path: test.info().outputPath('compact-mode.png') });
     await expect(compact.locator('.compact-view__title').first()).toHaveText('今日最先');

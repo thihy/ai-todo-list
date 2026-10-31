@@ -44,7 +44,7 @@ const nextNeverCalled = (): Promise<PreToolDecision> => {
 };
 
 describe('handlePreExecute — 实时绘图 MCP 权限', () => {
-  it.each(['mcp__drawing__apply_operations', 'mcp__drawing__restore_checkpoint'])('只读模式拒绝 %s', async name => {
+  it.each(['mcp__drawing__apply_operations', 'mcp__drawing__restore_checkpoint', 'mcp__drawing__execute_action'])('只读模式拒绝 %s', async name => {
     expect(await handlePreExecute({ name, arguments: {} } as never, nextNeverCalled, makeDeps('read-only'))).toMatchObject({ kind: 'deny', reason: expect.stringContaining('只读') });
   });
   it('工作区模式审批绘图修改，完全访问直通，读取实时选区不要求写权限', async () => {

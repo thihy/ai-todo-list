@@ -33,8 +33,8 @@ export const SKILLS: DshSkill[] = [
     id: 'drawing-ops',
     name: '绘图',
     description: '列出、读取、创建 Excalidraw 绘图',
-    tools: ['drawing_list', 'drawing_read', 'drawing_save', 'drawing_delete', 'drawing_setThumb'],
-    promptFragment: '你可以读取和保存 Excalidraw 绘图；绘图以 JSON scene 形式存储。',
+    tools: ['drawing_list', 'drawing_draw', 'drawing_render', 'drawing_delete', 'drawing_setThumb'],
+    promptFragment: '通过实时画布引擎读取和编辑 Excalidraw 绘图；禁止降级为读写场景 JSON 文件。',
     enabledByDefault: false,
   },
   {

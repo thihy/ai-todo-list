@@ -581,6 +581,7 @@ export interface IpcRegistry {
   'app.compactConfigure': IpcChannel<{ enabled?: boolean; opacity?: number; alwaysOnTop?: boolean }, IpcResult<import('./compact-preferences').CompactPreferences>>;
   'app.compactMenu': IpcChannel<undefined, IpcResult<void>>;
   'app.compactTaskMenu': IpcChannel<{ todoId: string }, IpcResult<import('./compact-task-menu').CompactTaskAction>>;
+  'app.compactProgress': IpcChannel<{ todoId: string }, IpcResult<void>>;
   'todo.list': IpcChannel<TodoListReq, IpcResult<Todo[]>>;
   'todo.get': IpcChannel<TodoGetReq, IpcResult<Todo | null>>;
   'todo.create': IpcChannel<TodoCreateReq, IpcResult<{ id: ULID; todo: Todo }>>;

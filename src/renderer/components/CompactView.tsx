@@ -25,9 +25,6 @@ export const CompactView: React.FC = () => {
     void window.todoList.app.compactConfigure({}).then(result => { if (result.ok) setInteraction(previous => ({ ...previous, opacity: result.data.opacity })); });
     return off;
   }, []);
-  const [progressTask, setProgressTask] = useState<Todo | null>(null);
-  const [percent, setPercent] = useState(0);
-  const [note, setNote] = useState('');
   const request = useRef(0);
   const busy = useRef(false);
   const refresh = useCallback(async () => {
@@ -71,7 +68,10 @@ export const CompactView: React.FC = () => {
       const action = result.data;
       if (action?.kind === 'status') await update(todo, { status: action.value });
       else if (action?.kind === 'priority') await update(todo, { priority: action.value });
-      else if (action?.kind === 'progress') { setProgressTask(todo); setPercent(todo.progress); setNote(''); }
+      else if (action?.kind === 'progress') {
+        const opened = await window.todoList.app.compactProgress(todo.id);
+        if (!opened.ok) throw Error(opened.message ?? '无法打开进展编辑窗');
+      }
     } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
   };
   const today = localDateKey();
@@ -91,7 +91,7 @@ export const CompactView: React.FC = () => {
         </button>
       </div>
     </header>
-    <div className="compact-view__content">
+    <div className="compact-view__content" aria-busy={busyId !== null}>
     {error && <div className="compact-view__error" role="alert"><span>{error}</span><button onClick={() => void refresh()}>重试</button></div>}
     <ul ref={listRef} className="compact-view__list">
       {todos.slice(0, capacity).map((todo) => <li key={todo.id} className={`compact-view__row priority-${todo.priority}`}>
@@ -107,14 +107,6 @@ export const CompactView: React.FC = () => {
         </button>
       </li>)}
     </ul>
-    {progressTask && <form className="compact-progress" aria-label="录入进展" onSubmit={async event => {
-      event.preventDefault(); if (busy.current) return; busy.current = true; setBusyId(progressTask.id);
-      try { const result = await window.todoList.progress.log(progressTask.id, percent, note.trim() || undefined); if (!result.ok) throw new Error(result.message); setProgressTask(null); await refresh(); }
-      catch (cause) { setError(String(cause)); } finally { busy.current = false; setBusyId(null); }
-    }}><strong>{progressTask.title}</strong><label>进度 %<input autoFocus aria-label="进度百分比" type="number" min="0" max="100" required value={percent} onChange={event => setPercent(Number(event.target.value))} /></label>
-      <textarea aria-label="进展说明" placeholder="记录本次进展" value={note} onChange={event => setNote(event.target.value)} />
-      <button disabled={busyId !== null} type="submit">保存进展</button><button disabled={busyId !== null} type="button" onClick={() => setProgressTask(null)}>取消</button>
-    </form>}
     {!todos.length && !error && <div className="compact-view__empty">{loading ? '正在读取待办…' : '暂时没有待办，轻松一下。'}</div>}
     </div>
   </main>;

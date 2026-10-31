@@ -7,6 +7,7 @@ describe('drawingDocumentState', () => {
       openDialog: { name: 'help' }, editingTextElement: { id: 'text' },
       selectedElementIds: { text: true }, isLoading: true, width: 800,
       collaborators: new Map(), cursorButton: 'down',
+      fileHandle: { createWritable() {} }, userToFollow: { socketId: 'live-user' }, followedBy: new Set(['live-user']),
     })).toEqual({ viewBackgroundColor: '#fff', zoom: { value: 2 } });
   });
 });

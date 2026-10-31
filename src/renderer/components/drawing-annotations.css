@@ -1,0 +1,26 @@
+.drawing-annotations { position:absolute; inset:0; z-index:3; pointer-events:none; font-size:12px; color:var(--fg-primary); }
+.drawing-annotation-composer,.drawing-annotation-batch { position:absolute; pointer-events:auto; background:var(--bg-canvas); border:1px solid var(--border-default); border-radius:11px; box-shadow:0 4px 18px #00000012; overflow:hidden; }
+.drawing-annotation-composer header,.drawing-annotation-batch header { display:flex; justify-content:space-between; align-items:center; gap:8px; padding:8px 10px; }
+.drawing-annotations button { cursor:pointer; background:transparent; border:0; color:inherit; border-radius:6px; font:inherit; min-height:28px; }
+.drawing-annotations button:hover { background:var(--bg-surface); }
+.drawing-annotations button:focus-visible,.drawing-annotations textarea:focus-visible { outline:2px solid var(--accent-primary); outline-offset:-2px; }
+.drawing-annotations button:disabled { cursor:default; opacity:.5; }
+.drawing-annotation-composer header>button:first-child { font-weight:600; text-align:left; }
+.drawing-annotation-composer header span { font-weight:400; color:var(--fg-muted); }
+.drawing-annotations textarea { box-sizing:border-box; width:100%; color:inherit; background:transparent; font:inherit; line-height:1.6; resize:vertical; min-height:55px; padding:4px 12px 8px; border:0; }
+.drawing-annotation-composer textarea { height:72px; resize:none; }
+.drawing-annotation-composer footer { display:flex; align-items:center; justify-content:space-between; gap:5px; padding:0 10px 8px; }
+.drawing-annotation-composer footer>span { color:var(--fg-muted); font-size:10px; }
+.drawing-annotation-composer footer>button { color:var(--accent-primary); font-weight:600; padding:2px 8px; }
+.drawing-annotation-batch { right:16px; top:72px; max-width:calc(100% - 32px); max-height:calc(100% - 96px); width:280px; display:flex; flex-direction:column; }
+.drawing-annotation-batch header { flex-shrink:0; }
+.drawing-annotation-batch header>button:first-child { display:flex; align-items:center; gap:8px; }
+.drawing-annotation-batch strong { background:var(--accent-primary-soft); color:var(--accent-primary); padding:1px 6px; border-radius:6px; }
+.drawing-annotations .drawing-annotation-submit { padding:4px 10px; background:var(--accent-primary); color:var(--fg-on-accent); font-weight:600; }
+.drawing-annotations .drawing-annotation-submit:hover { background:var(--accent-primary-strong); }
+.drawing-annotation-batch ol { margin:0; padding:0 10px 10px; max-height:260px; overflow:auto; list-style:none; }
+.drawing-annotation-batch li { border-top:1px solid var(--border-subtle); padding-top:6px; }
+.drawing-annotation-batch li>div { display:flex; justify-content:space-between; color:var(--fg-muted); }
+.drawing-annotation-batch li textarea { padding:3px 0 8px; }
+.drawing-annotation-notice { position:absolute; bottom:64px; left:16px; right:16px; width:max-content; max-width:calc(100% - 32px); box-sizing:border-box; padding:8px 10px; border-radius:8px; background:var(--bg-canvas); border:1px solid var(--border-default); box-shadow:0 2px 10px #0001; pointer-events:auto; }
+.drawing-annotation-notice button { margin-left:8px; }

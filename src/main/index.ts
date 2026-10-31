@@ -290,6 +290,12 @@ function bootstrap(): void {
     // array — both paths are idempotent (INSERT OR IGNORE on name).
     const tagRepo = new TagRepo(handle.db);
     const repo = new TodoRepo(handle.db, (names) => tagRepo.activateUsedNames(names));
+    register('app.compactProgress', (_event, req) => {
+      const todo = repo.get(req.todoId);
+      if (!todo || todo.deletedAt !== null) return failResult('todo_not_found', '任务不存在或已删除');
+      compact.showProgress(todo.id);
+      return okResult(undefined);
+    });
     register('app.compactTaskMenu', async (_event, req) => {
       const todo = repo.get(req.todoId);
       if (!todo || todo.deletedAt !== null) return failResult('todo_not_found', '任务不存在或已删除');

@@ -192,6 +192,7 @@ const api: TodoListApi = {
     compactConfigure: (patch) => invoke('app.compactConfigure', patch),
     compactMenu: () => invoke('app.compactMenu', undefined),
     compactTaskMenu: (todoId) => invoke('app.compactTaskMenu', { todoId }),
+    compactProgress: (todoId) => invoke('app.compactProgress', { todoId }),
     popupMenu: () => invoke('app.popupMenu', undefined as never),
     popupMenuCategory: (category: string) => invoke('app.popupMenuCategory', { category }),
     pickFile: () => invoke('app.pickFile', undefined as never),

@@ -38,6 +38,7 @@ vi.mock('@excalidraw/excalidraw', async () => {
   );
   return {
     ...excalMock,
+    getCommonBounds: () => [0, 0, 100, 100],
     // 假的 Excalidraw 组件：挂载时把假 API 交给 excalidrawAPI 回调。
     Excalidraw: (props: {
       excalidrawAPI?: (api: unknown) => void;

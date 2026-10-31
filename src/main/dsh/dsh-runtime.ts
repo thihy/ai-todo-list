@@ -559,7 +559,7 @@ export function __seedPendingApprovalForTest(conversationId: string, reqId: stri
 //
 // 工具白名单（应在 approval/request 之前过的 read 类工具名 + mutate 类工具名）
 // 由 `PRE_APPROVE_TOOLS` / `READ_CLASS_TOOLS` 两个常量维护；新增工具时同步。
-const DRAWING_MCP_MUTATIONS = new Set(['mcp__drawing__apply_operations', 'mcp__drawing__restore_checkpoint']);
+const DRAWING_MCP_MUTATIONS = new Set(['mcp__drawing__apply_operations', 'mcp__drawing__restore_checkpoint', 'mcp__drawing__execute_action']);
 const PRE_APPROVE_TOOLS: ReadonlySet<string> = new Set(['write', 'edit', 'bash', 'pwsh', 'skill_install', 'automation_remove', ...DRAWING_MCP_MUTATIONS]);
 const READ_CLASS_TOOLS: ReadonlySet<string> = new Set(['read', 'read_image', 'grep', 'glob']);
 
@@ -2859,37 +2859,10 @@ function registerDomainTools(
   reg(defineTool({
     name: 'drawing_list',
     ...wire('drawing_list'),
-    description: 'List Excalidraw drawings attached to a TODO. Returns metadata (id, title, thumb path, timestamps). Use drawing_read to get the scene JSON.',
+    description: 'List Excalidraw drawings attached to a TODO. Returns metadata (id, title, thumb path, timestamps). Use live drawing tools to inspect and native actions to edit the real canvas. Never fall back to reading or rewriting scene JSON files.',
     parameters: { description: { type: 'string', description: '一句中文意图说明；展示在 UI 卡片标题旁（DSH 原生约定，可选；不填则由 summarizeToolCall 从结果/参数结构化字段派生）' }, todoId: { type: 'string', required: true, description: 'TODO id' } },
     output: jsonOutput,
     async execute(args: { todoId: string }) { return drawings.list(args.todoId as never); },
-  }));
-
-  reg(defineTool({
-    name: 'drawing_read',
-    ...wire('drawing_read'),
-    description: 'Read the last saved Excalidraw drawing file by id. Returns scene JSON (elements, appState). For live unsaved elements, current selection and an edit revision use mcp__drawing__get_context / mcp__drawing__read_elements instead. Throws if the id or file is missing.',
-    parameters: { description: { type: 'string', description: '一句中文意图说明；展示在 UI 卡片标题旁（DSH 原生约定，可选；不填则由 summarizeToolCall 从结果/参数结构化字段派生）' }, id: { type: 'string', required: true, description: 'Drawing id' } },
-    output: jsonOutput,
-    async execute(args: { id: string }) { return drawings.read(args.id as never); },
-  }));
-
-  reg(defineTool({
-    name: 'drawing_save',
-    ...wire('drawing_save'),
-    description: 'IMPORT ONLY — import an externally authored Excalidraw scene JSON. For a new generated diagram use drawing_draw. For edits to an existing live drawing use mcp__drawing__get_context and mcp__drawing__apply_operations, never replace its full scene. Pass `id` only for an explicitly requested file import over an existing drawing; omit to create a new drawing (label defaults to 绘图). Changing `title` renames the drawing AND its file on disk.',
-    parameters: {
-      description: { type: 'string', description: '一句中文意图说明；展示在 UI 卡片标题旁（DSH 原生约定，可选；不填则由 summarizeToolCall 从结果/参数结构化字段派生）' },
-      todoId: { type: 'string', required: true, description: 'TODO id this drawing belongs to' },
-      scene: { type: 'string', required: true, description: 'Serialized Excalidraw scene JSON string, equivalent to JSON.stringify({ elements: [...], appState: {...} }). Preserve arrays, numeric and boolean types inside the JSON. Never encode arrays as {item: ...} or XML. Invalid scenes are rejected without overwriting the drawing.' },
-      id: { type: 'string', description: 'Existing drawing id to update (omit to create)' },
-      title: { type: 'string', description: 'Label for the drawing; also renames the file. Omit on update to keep the current label, omit on create to get the default 绘图.' },
-    },
-    output: jsonOutput,
-    async execute(args: { todoId: string; scene: unknown; id?: string; title?: string }) {
-      const scene = typeof args.scene === 'string' ? JSON.parse(args.scene) : args.scene;
-      return drawings.save(args.todoId as never, scene, args.id as never, args.title);
-    },
   }));
 
   // drawing_draw —— 画流程图 / 架构图的**首选**工具。
@@ -2932,7 +2905,7 @@ function registerDomainTools(
       description: [
         'Draw a diagram (flowchart / architecture / mind map) into an Excalidraw drawing on a task.',
         'For editing an existing live selection or existing nodes, use mcp__drawing__get_context and mcp__drawing__apply_operations instead.',
-        'PREFER THIS OVER drawing_save for any generated diagram — describe WHAT to draw, not the Excalidraw JSON.',
+        'Describe WHAT to draw. Never generate or rewrite full scene JSON as a fallback.',
         'You supply nodes (shape + label + grid position) and edges (from/to + optional edge label); the app computes',
         'coordinates, arrow geometry, and every Excalidraw element field. Give each node a short unique `key` (lowercase',
         'ascii, e.g. "start", "check") and reference it from edges. `column` runs left-to-right, `row` top-to-bottom;',
@@ -3295,7 +3268,7 @@ function registerDomainTools(
   reg(defineTool({
     name: 'app_currentContext',
     ...wire('app_currentContext'),
-    description: 'Read the user\'s current focus (what they have open right now — a task, document, or drawing). Returns the full row(s) so you can act on them with todo_update / content_writeBody / drawing_save etc. without a separate lookup. Returns null when nothing is focused — the user is on the list/stats view, in which case call todo_list to find a candidate. A non-null task focus is the strongest signal for a bare report like "搞定了" / "处理完了": it almost always refers to that task, so prefer it over guessing from keywords — but name the task you claimed in your reply so a wrong guess is obvious.',
+    description: 'Read the user\'s current focus (task, document, or drawing metadata). Use todo_update / content_writeBody for those domains and live drawing tools for the canvas. Returns null when nothing is focused; call todo_list to find a candidate. A focused task is the strongest signal for "搞定了" / "处理完了"; name the real task in the reply rather than guessing or creating a stand-in.',
     parameters: { description: { type: 'string', description: '一句中文意图说明；展示在 UI 卡片标题旁（DSH 原生约定，可选；不填则由 summarizeToolCall 从结果/参数结构化字段派生）' } },
     output: jsonOutput,
     async execute() {

@@ -16,7 +16,6 @@ export const SAFE_TOOLS: ReadonlySet<string> = new Set([
   'content_readBody',
   'content_history',
   'drawing_list',
-  'drawing_read',
   // DSH 自带工具——读类工具经 host `tools/pre-execute` 监听器（path 校验）
   // 直通；越界会被 host 强制 return { kind: 'deny' }，不在 tier 表里管。
   'read',

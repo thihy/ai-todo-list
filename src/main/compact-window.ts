@@ -4,10 +4,12 @@ import type { SettingsStore } from './settings/store';
 import type { Todo } from '../shared/todo-types';
 import type { CompactTaskAction } from '../shared/compact-task-menu';
 import { normaliseCompactPreferences, type CompactPreferences } from '../shared/compact-preferences';
+import { compactProgressBounds } from '../shared/compact-progress';
 
 /** Presentation-only controller; task actions use the existing IPC API. */
 export class CompactWindowController {
   private window: BrowserWindow | null = null;
+  private readonly progressWindows = new Map<string, BrowserWindow>();
   private destroying = false;
   private preferences: CompactPreferences;
   private saveTimer: ReturnType<typeof setTimeout> | undefined;
@@ -157,6 +159,23 @@ export class CompactWindowController {
     this.main.show(); this.main.focus();
     if (todoId) this.main.webContents.send('app:navigate', { route: `todo/${todoId}` });
   }
+  showProgress(todoId: string): void {
+    const previous = this.progressWindows.get(todoId);
+    if (previous && !previous.isDestroyed()) { previous.show(); previous.focus(); return; }
+    const anchor = this.window && !this.window.isDestroyed() ? this.window.getBounds() : this.main.getBounds();
+    const area = screen.getDisplayMatching(anchor).workArea;
+    const window = new BrowserWindow({ ...compactProgressBounds(anchor, area),
+      minWidth: Math.min(360, area.width), minHeight: Math.min(360, area.height),
+      show: false, alwaysOnTop: true, skipTaskbar: true, maximizable: false, fullscreenable: false,
+      title: '录入进展', backgroundColor: '#ffffff', opacity: 1, transparent: false,
+      webPreferences: { preload: join(__dirname, '../preload/index.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: false } });
+    this.progressWindows.set(todoId, window); window.setMenu(null);
+    window.once('closed', () => this.progressWindows.delete(todoId));
+    window.once('ready-to-show', () => { if (!this.destroying && !window.isDestroyed()) { window.show(); window.focus(); } });
+    window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+    const devUrl = process.env['ELECTRON_RENDERER_URL'];
+    void window.loadURL(`${devUrl ? `${devUrl.replace(/\/$/, '')}/` : 'app://todo-list/index.html'}#/compact-progress/${encodeURIComponent(todoId)}`);
+  }
   fit(_count: number): void {
     if (this.window && !this.window.isDestroyed() && !this.preferences.manualSize) {
       this.window.setContentSize(this.window.getContentSize()[0], 172);
@@ -169,6 +188,8 @@ export class CompactWindowController {
     clearInterval(this.pointerTimer);
     this.persist();
     this.window?.destroy();
+    for (const window of this.progressWindows.values()) if (!window.isDestroyed()) window.destroy();
+    this.progressWindows.clear();
     this.window = null;
   }
 }

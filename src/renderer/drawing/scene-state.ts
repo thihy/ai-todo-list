@@ -1,6 +1,7 @@
 /** Persist document preferences, never an editor interaction or focus trap. */
 const transient = new Set([
   'width', 'height', 'offsetLeft', 'offsetTop', 'collaborators',
+  'fileHandle', 'userToFollow', 'followedBy',
   'openDialog', 'openSidebar', 'contextMenu', 'errorMessage', 'toast',
   'openMenu', 'openPopup', 'pasteDialog', 'activeEmbeddable', 'editingGroupId',
   'previousSelectedElementIds', 'hoveredElementIds', 'pendingImageElementId',

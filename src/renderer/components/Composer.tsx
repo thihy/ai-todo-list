@@ -46,9 +46,11 @@ export interface ExternalAiSubmitDetail {
    *  block in the wire prompt. The AI uses DSH `read_image` to stream
    *  the file from disk — the prompt body stays tiny. */
   images: { name: string; mime: string; path: string; size: number }[];
-  /** Explicit source contract: the receiver must wrap this as a task-create
-   * request instead of treating it as ordinary assistant chat. */
-  intent: 'create-task';
+  /** Only the task composer sends create-task. Drawing batches are ordinary chat. */
+  intent: 'create-task' | 'chat';
+  requestId?: string;
+  onAdmitted?: () => void;
+  onRejected?: (message: string) => void;
 }
 
 /** Fired on `window` when the user presses Enter (or clicks 发送给 AI 助手).

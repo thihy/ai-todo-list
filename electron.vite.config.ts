@@ -1,6 +1,7 @@
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite';
 import react from '@vitejs/plugin-react';
 import { resolve } from 'node:path';
+import { excalidrawNativeActionsPlugin } from './build/excalidraw-native-actions';
 
 // `externalizeDepsPlugin()` externalizes every package.json dependency —
 // including the `@deepseek-ai/*` DSH tree (dsh-base pulls ~273 ESM packages).
@@ -51,7 +52,8 @@ export default defineConfig({
         '@renderer': resolve('src/renderer'),
       },
     },
-    plugins: [react()],
+    plugins: [excalidrawNativeActionsPlugin(), react()],
+    optimizeDeps: { exclude: ['@excalidraw/excalidraw'] },
     server: {
       port: 8001,
       strictPort: true,

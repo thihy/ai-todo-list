@@ -30,6 +30,32 @@ function harness() {
 }
 
 describe('live drawing engine with official Excalidraw conversion', () => {
+  it('waits for a delayed native selection commit before invoking the action', async () => {
+    const h = harness(); const originalUpdate = h.updateScene.getMockImplementation()!;
+    h.updateScene.mockImplementation((data: any) => {
+      if (data.appState) requestAnimationFrame(() => requestAnimationFrame(() => Object.assign(h.state, data.appState)));
+      else originalUpdate(data);
+    });
+    const invoke = vi.fn(async () => {
+      expect(h.state.selectedElementIds).toEqual({ b: true });
+      return { result: 'native-result-applied', ui: {} };
+    });
+    Object.assign(h.api, { getNativeActions: () => [{ name: 'copy', enabled: true, available: true, viewMode: true, label: 'copy' }], executeNativeAction: invoke });
+    const command = { drawingId: 'd1', opId: 'delayed', kind: 'native-action' as const, baseRevision: (await h.context()).revision, action: 'copy', elementIds: ['b'] };
+    expect(await h.engine.execute(command)).toMatchObject({ ok: true, liveChanged: false });
+    expect(await h.engine.execute(command)).toMatchObject({ ok: true }); expect(invoke).toHaveBeenCalledTimes(1);
+  });
+  it('adds text to a real container with the reported alignment fields and rejects duplicate or invalid containers', async () => {
+    const h = harness();
+    const result = await h.engine.execute(await h.command([{ kind: 'add', element: { id: 'bound-b', type: 'text', containerId: 'b', x: 400, y: 0, text: '绑定文字', textAlign: 'right', verticalAlign: 'bottom' } }]));
+    expect(result).toMatchObject({ ok: true, durable: true });
+    const after = await h.context();
+    expect(after.elements.find((element: any) => element.id === 'bound-b')).toMatchObject({ containerId: 'b', originalText: '绑定文字', textAlign: 'right', verticalAlign: 'bottom' });
+    expect(after.elements.find((element: any) => element.id === 'b')).toMatchObject({ boundElements: expect.arrayContaining([{ id: 'bound-b', type: 'text' }]) });
+    expect(await h.engine.execute(await h.command([{ kind: 'add', element: { id: 'duplicate', type: 'text', containerId: 'b', x: 0, y: 0, text: '重复' } }]))).toMatchObject({ ok: false, liveChanged: false });
+    expect(await h.engine.execute(await h.command([{ kind: 'add', element: { id: 'missing', type: 'text', containerId: 'missing-id', x: 0, y: 0, text: '错误' } }]))).toMatchObject({ ok: false, liveChanged: false });
+    expect(await h.context()).toEqual(after);
+  });
   it('edits the bound label, connects existing nodes and preserves unrelated elements and viewport', async () => {
     const h = harness(); const before = await h.context();
     const result = await h.engine.execute(await h.command([

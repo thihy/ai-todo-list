@@ -4,7 +4,8 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { z } from 'zod';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import { drawingApplyFields, drawingEngineId, drawingOutcomeFields, drawingRestoreFields } from '../../shared/drawing-engine-schema';
+import { drawingApplyFields, drawingEngineId, drawingOutcomeFields, drawingRestoreFields, drawingNativeActionFields } from '../../shared/drawing-engine-schema';
+import { DECLARED_NATIVE_ACTIONS, nativeActionGuidance } from '../../shared/drawing-native-actions';
 import type { DrawingCanvasHost } from './canvas-host';
 import type { DrawingStore } from '../files/drawings';
 import { getFocus } from '../app-context';
@@ -37,6 +38,29 @@ function createDrawingMcp(deps: DrawingMcpDependencies): McpServer {
     try { return await fn(...args); }
     catch (cause) { return response({ ok: false, error: cause instanceof Error ? cause.message : String(cause) }, true); }
   };
+  server.registerTool('get_actions', {
+    description: '读取当前 Excalidraw 实际注册的全部原生 action、可用前提和 value 示例。包括组合/解组、对齐/分布、层级、复制/粘贴、原生撤销/重做、文字/颜色/连线样式、框架、锁定、缩放、菜单、导入/导出等。此清单来自实际引擎，不是固定子集；enabled/available 反映当前选区与配置。需要用户交互的动作会打开其原生界面。先查询清单再 execute_action，不能猜动作名或退回 JSON 文件操作。',
+    inputSchema: { drawingId: drawingEngineId.optional() }, annotations: readAnnotations,
+  }, safe(async ({ drawingId }: { drawingId?: string }) => {
+    const meta = drawing(drawingId);
+    const result = await deps.host.readContext(meta.todoId, meta.id, undefined, true);
+    if (!result.ok) throw Error(result.error);
+    if (!result.context.nativeActions) throw Error('编辑器没有返回原生 action 清单，请更新构建');
+    const registered = new Set(result.context.nativeActions.map(action => action.name));
+    return response({ engineVersion: '0.18.1', drawingId: meta.id, revision: result.context.revision,
+      selectedElementIds: result.context.selectedElementIds,
+      actions: result.context.nativeActions.map(action => ({ ...action, ...nativeActionGuidance(action.name) })),
+      declaredButNotRegistered: DECLARED_NATIVE_ACTIONS.filter(name => !registered.has(name)),
+      unexpectedRegistered: [...registered].filter(name => !DECLARED_NATIVE_ACTIONS.includes(name)) });
+  }));
+  server.registerTool('execute_action', {
+    description: '在同一个实时 Excalidraw 中执行 get_actions 清单里的任意原生 action。elementIds 可指定真实目标，省略使用当前选区；value 严格遵循 get_actions 的示例，没有输入的动作省略 value。baseRevision 来自最新实时查询，opId 唯一且重试复用。原生 UI/导入/导出/剪贴板动作可能要求用户继续操作或返回 no-scene-update；必须报告真实结果，不能假装完成。超时查询原 opId，禁止重放。正常绘图失败仅修正引擎请求，禁止读写完整场景 JSON 降级。',
+    inputSchema: drawingNativeActionFields, annotations: { ...editAnnotations, openWorldHint: true },
+  }, safe(async args => {
+    const meta = drawing(args.drawingId);
+    const result = await deps.host.runEngineCommand(meta.todoId, { kind: 'native-action', ...args });
+    return response(result, !result.ok);
+  }));
   server.registerTool('get_context', {
     description: '读取用户当前嵌入式绘图的实时上下文，包括未保存元素、真实选中元素 ID、视口和 revision。省略 drawingId 时使用当前打开的绘图。仅查询，不修改或保存。修改前先调用此工具；不要用文件内容代替实时场景。',
     inputSchema: { drawingId: drawingEngineId.optional() }, annotations: readAnnotations,
@@ -69,7 +93,7 @@ function createDrawingMcp(deps: DrawingMcpDependencies): McpServer {
     return response({ drawingId: meta.id, revision: live.revision, elements: elements.filter(element => wanted.has(element.id)) });
   }));
   server.registerTool('apply_operations', {
-    description: '对当前嵌入式画布执行一批增量修改：add 创建矩形/椭圆/菱形/文字；update 修改真实元素的文字、位置或样式；connect 连接真实节点（也可引用本批新增节点）；delete 删除指定元素并清理绑定。baseRevision 必须来自 get_context/read_elements；opId 必须唯一，重复相同 opId 返回原结果。整批先校验，冲突不应用；不覆盖无关元素，不移动视口。durable=true 才表示已保存；超时结果未知时调用 get_operation 查询原 opId，禁止换 opId 盲目重放。',
+    description: '对当前嵌入式画布执行一批增量修改：add 创建矩形/椭圆/菱形/文字；update 修改真实元素的文字、位置或样式；connect 连接真实节点（也可引用本批新增节点）；delete 删除指定元素并清理绑定。新增绑定文字可用 add text 的 containerId 指向真实容器，支持 textAlign=left/center/right、verticalAlign=top/middle/bottom；容器已有文字时用 update 容器的 text，不可重复绑定。组合/层级等用 execute_action 原生操作，不要传内部字段。baseRevision 必须来自 get_context/read_elements；opId 唯一，重试复用。整批校验，冲突不应用，不覆盖无关元素。durable=true 才表示已保存；超时查询 get_operation，禁止盲目重放。',
     inputSchema: drawingApplyFields, annotations: editAnnotations,
   }, safe(async args => {
     const meta = drawing(args.drawingId);

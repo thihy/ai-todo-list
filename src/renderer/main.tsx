@@ -173,6 +173,8 @@ async function mountApp(snap: StartupSnapshot): Promise<void> {
     // react-dom, the global stylesheet, and the bulk of the app shell.
     const App = location.hash === '#/compact'
       ? (await import('./components/CompactView')).CompactView
+      : location.hash.startsWith('#/compact-progress/')
+      ? (await import('./components/CompactProgressEditor')).CompactProgressEditor
       : (await import('./App')).App;
     const rootEl = document.getElementById('root');
     if (!rootEl) {

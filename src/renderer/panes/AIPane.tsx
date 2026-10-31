@@ -1409,7 +1409,7 @@ export const AIPane: React.FC<{
       activeQuestion?.convId === currentId ||
       activeApproval?.convId === currentId ||
       needsAiSetup
-    ) return;
+    ) { override?.onRejected?.('AI 助手尚未就绪或正在等待交互，请先处理助手提示；标注已保留。'); return; }
     const dispatchToken = Symbol('submit');
     dispatchLockRef.current = { token: dispatchToken, conversationId: targetId ?? currentId };
     try {
@@ -1567,6 +1567,7 @@ export const AIPane: React.FC<{
     // (convId resolved, message added). Invalid submits (empty / blocked /
     // AI-not-configured) bailed out earlier, so this is safe.
     requestFollow(convId);
+    override?.onAdmitted?.();
     const res = await window.todoList.ai.ask({ prompt: finalWire, conversationId: convId, invocationId: id, retryGroupId, history: priorTurns, tools: undefined, intent: userIntent })
       .catch((err: unknown) => ({ ok: false as const, message: err instanceof Error ? err.message : String(err) }));
     if (!res.ok && activeStreamRef.current?.invocationId === id) setQueuePaused((previous) => ({ ...previous, [convId!]: true }));
@@ -1652,7 +1653,9 @@ export const AIPane: React.FC<{
       window.dispatchEvent(new CustomEvent('assistant:capability', { detail: input.trim().slice(1) }));
       setInput(''); return;
     }
-    if (admissionLockRef.current || composerBlock || showAiRetryBanner) return;
+    if (admissionLockRef.current || composerBlock || showAiRetryBanner || needsAiSetup) {
+      override?.onRejected?.('AI 助手当前无法接收，请先配置模型或处理助手提示；标注已保留。'); return;
+    }
     admissionLockRef.current = true;
     const draft = input;
     const target = currentIdRef.current;
@@ -1670,7 +1673,7 @@ export const AIPane: React.FC<{
         // Release input admission while the response streams; dispatch has its
         // own synchronous lock, so subsequent sends can enter the queue.
         admissionLockRef.current = false;
-        await runSubmit({ prompt, images: attached, intent: override?.intent }, undefined, target ?? undefined);
+        await runSubmit({ prompt, images: attached, intent: override?.intent, onAdmitted: override?.onAdmitted, onRejected: override?.onRejected }, undefined, target ?? undefined);
         return;
       }
       if (mode === 'steer' && !prompt.startsWith('/') && active?.conversationId === target && !override?.intent) {
@@ -1686,11 +1689,13 @@ export const AIPane: React.FC<{
         }
       } else {
         updateQueue((items) => [...items, message]);
+        override?.onAdmitted?.();
         setQueueNotice('');
       }
       if (!override) { setInput((value) => value === draft ? '' : value); setAttachments((items) => items.filter((item) => !attached.some((sent) => sent.path === item.path))); }
     } catch (error) {
       setQueueNotice(error instanceof Error ? error.message : '发送失败，草稿已保留');
+      override?.onRejected?.(error instanceof Error ? error.message : '发送失败，标注已保留');
       if (!override && currentIdRef.current === target) {
         setInput((value) => value || draft);
         setAttachments((items) => [...items, ...capturedAttachments.filter((item) => !items.some((other) => other.path === item.path))]);
@@ -1744,35 +1749,35 @@ export const AIPane: React.FC<{
   // App queues AI-create requests while opening/lazy-loading this panel, so
   // submissions are not lost when the panel was collapsed at send time.
   //
-  // STARTUP-AI-ASYNC-002 — during the DSH cold-boot window we
-  // additionally queue external submits in a local state slot so
-  // they're not silently consumed. See `pendingExternalSubmit`
-  // below.
-  const [pendingExternalSubmit, setPendingExternalSubmit] =
-    useState<ExternalAiSubmitDetail | null>(null);
+  // During cold boot keep requests in App's ordered queue until admission.
+  const handledExternalSubmits = useRef(new WeakSet<ExternalAiSubmitDetail>());
+  const [externalAdmissionTick, setExternalAdmissionTick] = useState(0);
   useEffect(() => {
-    // 1) Drain queued request first when ai becomes ready.
-    if (aiStartup.status === 'ready' && pendingExternalSubmit) {
-      const queued = pendingExternalSubmit;
-      setPendingExternalSubmit(null);
-      void submitMessage('queue', queued);
-      return;
-    }
-    // 2) Otherwise pick up a fresh external submission from App.
-    if (!externalSubmit) return;
+    // App retains the whole queue while DSH boots; a single local slot would
+    // overwrite earlier drawing batches or task requests during cold startup.
+    if (!externalSubmit || handledExternalSubmits.current.has(externalSubmit)) return;
     if (
       activeQuestion?.convId === currentId ||
       activeApproval?.convId === currentId
     ) return;
-    if (dshNotReady) {
-      setPendingExternalSubmit(externalSubmit);
+    if (aiStartup.status === 'failed' && externalSubmit.onRejected) {
+      handledExternalSubmits.current.add(externalSubmit);
       onExternalSubmitConsumed?.();
+      externalSubmit.onRejected('AI 助手启动失败，请重试启动后再次提交；标注已保留。');
       return;
     }
+    if (dshNotReady) return;
+    if (admissionLockRef.current) {
+      const timer = window.setTimeout(() => setExternalAdmissionTick(value => value + 1), 50);
+      return () => window.clearTimeout(timer);
+    }
+    if (needsAiSetup && !externalSubmit.onRejected) return;
+    handledExternalSubmits.current.add(externalSubmit);
     onExternalSubmitConsumed?.();
     void submitMessage('queue', externalSubmit);
+    return;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [externalSubmit, streamingTurnId, activeQuestion, activeApproval, currentId, dshNotReady, aiStartup.status, pendingExternalSubmit]);
+  }, [externalSubmit, streamingTurnId, activeQuestion, activeApproval, currentId, dshNotReady, aiStartup.status, needsAiSetup, externalAdmissionTick]);
 
   const permissionControl = <>{/* 权限预设选择器。只在 DSH 报出选项表时渲染 —— presetState
                 为 null 说明插件没挂载或 DSH 没起来，此时显示一个点了没
@@ -2363,8 +2368,8 @@ export const AIPane: React.FC<{
           <span className="muted">当前回复结束后依次发送；停止或失败时暂停队列。</span>
         </div>
       )}
-      {(backendBusy || stoppingConversation === currentId) && <div className="aipane__queue-notice" role="status" aria-label="实际执行状态">
-        {stoppingConversation === currentId || backendInvocations.some(item => item.phase === 'stopping') || backendJobs.some(job => job.status === 'stopping') ? '正在停止，等待后台执行结束…' : backendJobs.length ? `后台正在执行…（${backendJobs.length} 个后台任务）` : '后台正在执行…'}
+      {(backendBusy || (currentId !== null && stoppingConversation === currentId)) && <div className="aipane__queue-notice" role="status" aria-label="实际执行状态">
+        {(currentId !== null && stoppingConversation === currentId) || backendInvocations.some(item => item.phase === 'stopping') || backendJobs.some(job => job.status === 'stopping') ? '正在停止，等待后台执行结束…' : backendJobs.length ? `后台正在执行…（${backendJobs.length} 个后台任务）` : '后台正在执行…'}
       </div>}
       {queueNotice && <div className="aipane__queue-notice" role="status">{queueNotice}</div>}
       {current !== null && (

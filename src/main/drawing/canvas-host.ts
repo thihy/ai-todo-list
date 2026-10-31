@@ -185,7 +185,7 @@ export class DrawingCanvasHost {
     return promise;
   }
 
-  async readContext(todoId: string, drawingId: string, target?: DrawingCanvasTarget): Promise<DrawingContextResult> {
+  async readContext(todoId: string, drawingId: string, target?: DrawingCanvasTarget, includeActions?: boolean): Promise<DrawingContextResult> {
     const opId = randomUUID();
     const failure = (error: string): DrawingContextResult => ({ drawingId, opId, ok: false, error });
     if (!this.opts.sendContext) return failure('实时画布查询未连接');
@@ -202,7 +202,7 @@ export class DrawingCanvasHost {
         clearTimeout(timer);
         resolve(target && !this.isTargetLive(target) ? failure('本轮关联的画布已关闭或重新打开') : result);
       } });
-      try { this.opts.sendContext!({ drawingId, opId }, ownerId); }
+      try { this.opts.sendContext!({ drawingId, opId, ...(includeActions ? { includeActions: true } : {}) }, ownerId); }
       catch (cause) { clearTimeout(timer); this.contextRequests.delete(opId); resolve(failure(cause instanceof Error ? cause.message : String(cause))); }
     });
   }

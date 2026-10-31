@@ -346,6 +346,7 @@ export interface TodoListApi {
     compactConfigure(patch: { enabled?: boolean; opacity?: number; alwaysOnTop?: boolean }): Promise<IpcResponse<'app.compactConfigure'>>;
     compactMenu(): Promise<IpcResponse<'app.compactMenu'>>;
     compactTaskMenu(todoId: string): Promise<IpcResponse<'app.compactTaskMenu'>>;
+    compactProgress(todoId: string): Promise<IpcResponse<'app.compactProgress'>>;
     /** Pop the native application menu at the cursor (title-bar 菜单 button). */
     popupMenu(): Promise<IpcResponse<'app.popupMenu'>>;
     /** Pop a single category's submenu (flat topbar buttons). */

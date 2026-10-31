@@ -5,6 +5,7 @@ import type { DrawingElementChanges, DrawingEngineCommand, DrawingEngineResult, 
 import type { MinimalExcalidrawApi, SceneSaver } from './apply';
 import { readLiveDrawingContext } from './live-context';
 import { drawingDocumentState } from './scene-state';
+import { validateNativeActionValue } from '../../shared/drawing-native-actions';
 
 type Element = ExcalidrawElement;
 type RecordElement = Record<string, unknown> & { id: string; type: string; x: number; y: number; width: number; height: number };
@@ -50,7 +51,7 @@ export function prepareDrawingOperations(before: Element[], operations: DrawingO
     if (Object.keys(differences).length) { get(key); put(update(previous, differences)); }
   };
   const labelFor = (element: Element) => [...elements.values()].find(value => value.type === 'text' && value.containerId === element.id);
-  const editText = (target: Element, textChanges: DrawingElementChanges): void => {
+  const editText = (target: Element, textChanges: DrawingElementChanges, newLabelId?: string): void => {
     if (target.type === 'text' && target.containerId) {
       const container = get(target.containerId);
       editText(container, textChanges);
@@ -63,7 +64,7 @@ export function prepareDrawingOperations(before: Element[], operations: DrawingO
       delete (skeleton as Partial<RecordElement>).height;
       const converted = convert([skeleton])[0];
       if (!converted || converted.type !== 'text') throw Error('文本转换失败');
-      revise(target.id, { text: converted.text, originalText: converted.originalText, width: converted.width, height: converted.height, fontSize: converted.fontSize });
+      revise(target.id, { text: converted.text, originalText: converted.originalText, width: converted.width, height: converted.height, fontSize: converted.fontSize, textAlign: converted.textAlign, verticalAlign: converted.verticalAlign });
       return;
     }
     if (!shapeTypes.has(target.type) && target.type !== 'arrow') throw Error(`此元素不支持绑定文字：${target.id}`);
@@ -76,7 +77,9 @@ export function prepareDrawingOperations(before: Element[], operations: DrawingO
     const { boundElements, ...container } = record(target);
     const labelText = textChanges.text ?? (label?.type === 'text' ? label.originalText : '');
     const result = convert([{ ...container, boundElements: (boundElements as Array<{ id: string; type: string }> | null)?.filter(value => value.type !== 'text') ?? [],
-      label: { ...(label ? record(label) : {}), id: label?.id ?? crypto.randomUUID(), text: labelText, originalText: labelText, fontSize: textChanges.fontSize ?? (label?.type === 'text' ? label.fontSize : 20) } }]);
+      label: { ...(label ? record(label) : {}),
+        ...Object.fromEntries(Object.entries(textChanges).filter(([key, value]) => ['textAlign', 'verticalAlign', 'strokeColor', 'opacity'].includes(key) && value !== undefined)),
+        id: label?.id ?? newLabelId ?? crypto.randomUUID(), text: labelText, originalText: labelText, fontSize: textChanges.fontSize ?? (label?.type === 'text' ? label.fontSize : 20) } }]);
     const convertedContainer = result.find(value => value.id === target.id);
     const convertedLabel = result.find(value => value.type === 'text' && value.containerId === target.id);
     if (!convertedContainer || !convertedLabel) throw Error('绑定文字转换失败');
@@ -89,8 +92,16 @@ export function prepareDrawingOperations(before: Element[], operations: DrawingO
   for (const operation of operations) {
     if (operation.kind === 'add') {
       if (elements.has(operation.element.id)) throw Error(`绘图元素 id 已存在：${operation.element.id}`);
-      const { text, fontSize, ...base } = operation.element;
-      const skeleton = base.type === 'text' ? { ...base, text: text ?? '', fontSize } : { ...base, ...(text ? { label: { text, fontSize } } : {}) };
+      const { text, fontSize, textAlign, verticalAlign, containerId, ...base } = operation.element;
+      if (containerId) {
+        if (base.type !== 'text') throw Error('containerId 只适用于新增绑定文字');
+        const container = get(containerId);
+        if (labelFor(container)) throw Error('容器已有绑定文字，请 update 该容器的 text，不能重复添加');
+        if (!text) throw Error('新增绑定文字不能为空');
+        editText(container, { text, fontSize, textAlign, verticalAlign, strokeColor: base.strokeColor, opacity: base.opacity }, base.id);
+        continue;
+      }
+      const skeleton = base.type === 'text' ? { ...base, text: text ?? '', fontSize, textAlign, verticalAlign } : { ...base, ...(text ? { label: { text, fontSize, textAlign, verticalAlign } } : {}) };
       for (const element of convert([skeleton])) {
         if (elements.has(element.id)) throw Error(`转换产生重复元素 id：${element.id}`);
         put(element);
@@ -98,15 +109,15 @@ export function prepareDrawingOperations(before: Element[], operations: DrawingO
     } else if (operation.kind === 'update') {
       const target = get(operation.id);
       if (!shapeTypes.has(target.type) && target.type !== 'text' && target.type !== 'arrow') throw Error(`暂不支持修改此元素类型：${target.type}`);
-      const { text, fontSize, ...changes } = operation.changes;
+      const { text, fontSize, textAlign, verticalAlign, ...changes } = operation.changes;
       if (target.type === 'arrow' && ['x', 'y', 'width', 'height'].some(key => key in changes)) throw Error('请通过修改端点节点来调整绑定连线');
       if (target.type === 'text' && target.containerId && ['x', 'y', 'width', 'height'].some(key => key in changes)) throw Error('请移动文字所属的容器');
       if (target.type === 'text' && ('width' in changes || 'height' in changes)) throw Error('文字大小由内容和字号决定');
       revise(target.id, changes);
       if (['x', 'y', 'width', 'height'].some(key => key in changes)) changedGeometry.add(target.id);
       const current = get(target.id);
-      if (text !== undefined || fontSize !== undefined || (labelFor(current) && changedGeometry.has(current.id))) {
-        editText(current, { text, fontSize });
+      if (text !== undefined || fontSize !== undefined || textAlign !== undefined || verticalAlign !== undefined || (labelFor(current) && changedGeometry.has(current.id))) {
+        editText(current, { text, fontSize, textAlign, verticalAlign });
         changedGeometry.add(target.id);
       }
     } else if (operation.kind === 'connect') {
@@ -208,11 +219,47 @@ export class LiveDrawingEngine {
       const context = await readLiveDrawingContext(this.api, this.drawingId);
       if (context.revision !== command.baseRevision || !equal(context.elements, this.api.getSceneElements())) return { ...result, code: 'conflict', error: '画布已经变化，请重新读取当前版本后再修改' };
       const state = this.api.getAppState();
-      if (state.isDragging || state.isResizing || state.isRotating || state.editingTextElement || state.editingLinearElement) return { ...result, code: 'conflict', error: '用户正在编辑画布，请稍后重新读取' };
+      if (state.isDragging || state.isResizing || state.isRotating || (command.kind !== 'native-action' && (state.editingTextElement || state.editingLinearElement))) return { ...result, code: 'conflict', error: '用户正在编辑画布，请稍后重新读取' };
       const before = context.elements as Element[];
       if (JSON.stringify(before).length > 5_000_000) return { ...result, code: 'capacity', error: '当前场景超过撤销快照容量，未应用修改' };
       let after: Element[];
-      if (command.kind === 'restore') {
+      let nativeError: string | undefined;
+      if (command.kind === 'native-action') {
+        if (!this.api.executeNativeAction || !this.api.getNativeActions) return { ...result, code: 'unavailable', error: '原生动作桥接不可用，请更新应用' };
+        if (!this.api.getNativeActions().some(action => action.name === command.action)) return { ...result, code: 'invalid', error: `引擎未注册此动作：${command.action}，请读取 get_actions 清单` };
+        const value = validateNativeActionValue(command.action, command.value);
+        const previousSelection = clone((state.selectedElementIds ?? {}) as Record<string, boolean>);
+        const previousGroups = clone((state.selectedGroupIds ?? {}) as Record<string, boolean>);
+        if (command.action === 'goToCollaborator' && (value as { socketId?: string }).socketId && !(state.collaborators instanceof Map && state.collaborators.has((value as { socketId: string }).socketId))) return { ...result, code: 'invalid', error: '协作者不存在，不能猜测协作者 ID' };
+        if (command.elementIds) {
+          const wanted = new Set(command.elementIds);
+          if ([...wanted].some(id => !before.some(element => element.id === id))) return { ...result, code: 'invalid', error: '目标元素已不存在，请重新读取实时画布' };
+          const groups = new Set(before.filter(element => wanted.has(element.id)).flatMap(element => element.groupIds));
+          const selectedGroupIds = Object.fromEntries([...groups].filter(group => before.filter(element => element.groupIds.includes(group) && !(element.type === 'text' && element.containerId)).every(element => wanted.has(element.id))).map(group => [group, true]));
+          this.api.updateScene({ appState: { selectedElementIds: Object.fromEntries([...wanted].map(id => [id, true])), selectedGroupIds }, captureUpdate: CaptureUpdateAction.NEVER });
+          const requested = [...wanted].sort();
+          const selectionCommitted = () => equal(Object.entries((this.api.getAppState().selectedElementIds ?? {}) as Record<string, boolean>).filter(([, selected]) => selected).map(([id]) => id).sort(), requested);
+          // React's class state can commit after the first animation frame. Do not
+          // execute a native action against the preceding selection in that gap.
+          for (let attempt = 0; !selectionCommitted() && attempt < 30; attempt++) await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+          if (!selectionCommitted()) return { ...result, code: 'conflict', error: '引擎尚未接受目标选区，请重新读取后再执行动作' };
+        }
+        try { result.nativeAction = { name: command.action, result: await this.api.executeNativeAction(command.action, value) }; }
+        catch (cause) { nativeError = message(cause); result.nativeAction = { name: command.action, error: nativeError }; }
+        const keepsSelection = /^(change|align|distribute|flip)/.test(command.action)
+          || ['copy', 'copyAsPng', 'copyAsSvg', 'copyText', 'copyStyles', 'pasteStyles', 'bindText', 'unbindText', 'autoResize', 'increaseFontSize', 'decreaseFontSize'].includes(command.action);
+        if (command.elementIds && keepsSelection) {
+          const selected = (map: Record<string, boolean>) => Object.keys(map).filter(id => map[id]).sort();
+          const currentSelection = (this.api.getAppState().selectedElementIds ?? {}) as Record<string, boolean>;
+          if (equal(selected(currentSelection), [...new Set(command.elementIds)].sort()) && !equal(selected(currentSelection), selected(previousSelection))) {
+            this.api.updateScene({ appState: { selectedElementIds: previousSelection, selectedGroupIds: previousGroups }, captureUpdate: CaptureUpdateAction.NEVER });
+            for (let attempt = 0; attempt < 30 && !equal(selected((this.api.getAppState().selectedElementIds ?? {}) as Record<string, boolean>), selected(previousSelection)); attempt++) await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+          }
+        }
+        after = clone(this.api.getSceneElements()) as Element[];
+        liveChanged = !equal(before, after);
+        if (command.action === 'paste' && !liveChanged && !result.nativeAction?.result?.ui.pasteDialog && !nativeError) nativeError = '剪贴板未产生可粘贴内容，画布未改变，请检查剪贴板后重试';
+      } else if (command.kind === 'restore') {
         const checkpoint = this.checkpoints.get(command.checkpointId);
         if (!checkpoint) return { ...result, code: 'invalid', error: '撤销快照已失效或不属于当前画布' };
         if (checkpoint.afterRevision !== context.revision) return { ...result, code: 'conflict', error: 'AI 修改后画布已有其他变化，不能覆盖后续编辑' };
@@ -221,7 +268,7 @@ export class LiveDrawingEngine {
       } else after = prepareDrawingOperations(before, command.operations);
       const checkpointId = crypto.randomUUID();
       this.beforeMutation?.();
-      this.api.updateScene({ elements: after, captureUpdate: CaptureUpdateAction.NEVER });
+      if (command.kind !== 'native-action') this.api.updateScene({ elements: after, captureUpdate: CaptureUpdateAction.NEVER });
       const actual = clone(this.api.getSceneElements()) as Element[];
       liveChanged = !equal(before, actual);
       if (!equal(after.map(element => element.id), actual.map(element => element.id))) throw Error('画布未完整应用元素修改');
@@ -229,17 +276,19 @@ export class LiveDrawingEngine {
       // Enqueue the real read-back save before yielding to the hash calculation, so a
       // later manual autosave cannot be overwritten by this older snapshot.
       let saveOutcome: Promise<{ ok: true } | { ok: false; cause: unknown }>;
-      try { saveOutcome = Promise.resolve(this.save(this.drawingId, { elements: actual, appState: drawingDocumentState(state), files: this.api.getFiles?.() })).then(() => ({ ok: true as const }), cause => ({ ok: false as const, cause })); }
+      const actualState = command.kind === 'native-action' ? this.api.getAppState() : state;
+      try { saveOutcome = Promise.resolve(this.save(this.drawingId, { elements: actual, appState: drawingDocumentState(actualState), files: this.api.getFiles?.() })).then(() => ({ ok: true as const }), cause => ({ ok: false as const, cause })); }
       catch (cause) { saveOutcome = Promise.resolve({ ok: false, cause }); }
-      const appliedContext = await readLiveDrawingContext({ ...this.api, getSceneElements: () => actual, getAppState: () => state }, this.drawingId);
+      const appliedContext = await readLiveDrawingContext({ ...this.api, getSceneElements: () => actual, getAppState: () => actualState }, this.drawingId);
       const previous = new Map(before.map(element => [element.id, element]));
       const current = new Map(actual.map(element => [element.id, element]));
       const affectedIds = [...new Set([...previous.keys(), ...current.keys()])].filter(key => !equal(previous.get(key), current.get(key)));
-      this.checkpoints.set(checkpointId, { id: checkpointId, elements: before, afterRevision: appliedContext.revision });
+      if (liveChanged) this.checkpoints.set(checkpointId, { id: checkpointId, elements: before, afterRevision: appliedContext.revision });
       if (this.checkpoints.size > 3) this.checkpoints.delete(this.checkpoints.keys().next().value!);
-      Object.assign(result, { liveChanged, revision: appliedContext.revision, affectedIds, checkpointId });
+      Object.assign(result, { liveChanged, revision: appliedContext.revision, affectedIds, ...(liveChanged ? { checkpointId } : {}) });
       const saved = await saveOutcome;
       if (!saved.ok) return { ...result, code: 'save_failed', error: `画布已修改，但保存失败：${message(saved.cause)}` };
+      if (nativeError) return { ...result, durable: true, code: 'apply_failed', error: nativeError };
       return { ...result, ok: true, durable: true };
     } catch (cause) { return { ...result, liveChanged, code: liveChanged ? 'apply_failed' : 'invalid', error: message(cause) }; }
   }
