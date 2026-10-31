@@ -40,6 +40,9 @@ test('automation popover matches the compact list and contextual editor design',
     const instruction = panel.getByRole('textbox', { name: '任务描述 / 执行指令' });
     await expect(instruction).toBeVisible();
     await expect(instruction).toHaveValue(/查询今日待办/);
+    const permissionPreset = panel.getByLabel('自动化执行权限', { exact: true });
+    await expect(permissionPreset).toHaveValue('auto');
+    await permissionPreset.selectOption('read-only');
     await instruction.fill('');
     await expect(panel.getByRole('button', { name: '保存修改', exact: true })).toBeDisabled();
     await instruction.fill('整理今日未完成任务，列出临近截止事项，并生成一份行动清单。');
@@ -47,6 +50,7 @@ test('automation popover matches the compact list and contextual editor design',
     await panel.screenshot({ path: test.info().outputPath('automation-editor-detail.png') });
     await panel.getByRole('button', { name: '保存修改', exact: true }).click();
     await expect(daily).toContainText('整理今日未完成任务');
+    await expect(daily).toContainText('执行权限：只读');
     await panel.getByRole('button', { name: '查看运行记录 →' }).click();
     await expect(panel).toContainText('暂无执行记录');
     await panel.getByRole('button', { name: '运行记录', exact: true }).click();

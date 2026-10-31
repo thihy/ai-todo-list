@@ -2476,6 +2476,13 @@ function registerDomainTools(
     presentationMeta: (_args: unknown, value: unknown): unknown => value,
   };
   for (const definition of assistantToolDefinitions()) reg(defineTool({ ...definition, output: jsonOutput }));
+  reg(defineTool({ name: 'skill_list', description: 'List the actual installed native DSH skills. Use when asked which skills are available. This is discovery; do not invoke skill with the invented name skills.', parameters: {}, output: jsonOutput,
+    execute: async () => {
+      const registry = ctx.get('skills') as SkillRegistry | undefined;
+      if (!registry) throw new Error('Skill 服务尚未就绪，请稍后重试');
+      const skills = await registry.list({ cwd: process.env.DSH_WORKSPACE_ROOT });
+      return skills.map(skill => ({ name: skill.name, description: skill.description, source: skill.source, userInvocable: skill.invocation.userInvocable }));
+    } }));
 
   // L5-A: 工具级 presentCall/presentResult helper。每个 defineTool 加
   // `...wire('tool.name')` 即可声明——DSH web frontend 的 drop-in 组件

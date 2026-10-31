@@ -23,20 +23,24 @@ describe('automation AI integration', () => {
     vi.clearAllMocks(); mocks.handlers.clear(); mocks.ready = true;
     directory = mkdtempSync(join(tmpdir(), 'automation-service-'));
     create.mockReturnValue({ id: 'database-generated-conversation' });
+    setPermissionPreset.mockReturnValue(true);
     mocks.ask.mockResolvedValue({ ok: true, data: { content: '周报完成' } });
   });
   afterEach(() => { stop?.(); rmSync(directory, { recursive: true, force: true }); });
-  const setup = () => { stop = registerAutomations(directory, { create } as never); };
+  const setPermissionPreset = vi.fn().mockReturnValue(true);
+  const setup = () => { stop = registerAutomations(directory, { create, setPermissionPreset } as never); };
   const save = () => call('save', { input: { name: '周报', prompt: '使用周报 Skill 读取 D:\\Work\\Report.md', timezone: 'Asia/Shanghai', enabled: false,
     schedule: { kind: 'interval', minutes: 60 } } }).data;
 
   it('routes the saved instruction through the existing AI request implementation with a real conversation', async () => {
     setup(); const item = save();
     await call('run', { id: item.id });
-    expect(create).toHaveBeenCalledWith({ title: '自动化 · 周报' });
+    expect(create).toHaveBeenCalledWith({ title: '自动化 · 周报', automationId: item.id });
+    expect(setPermissionPreset).toHaveBeenCalledWith('database-generated-conversation', 'auto');
     expect(mocks.ask).toHaveBeenCalledWith({ conversationId: 'database-generated-conversation', prompt: '使用周报 Skill 读取 D:\\Work\\Report.md', intent: 'chat' });
     expect(call('list').data.runs[0]).toMatchObject({ status: 'succeeded', result: '周报完成', conversationId: 'database-generated-conversation' });
     expect(mocks.send).toHaveBeenCalledWith('app:data-changed', { scope: 'conversations' });
+    expect(mocks.send.mock.calls.filter(call => call[0] === 'app:data-changed' && call[1]?.scope === 'conversations')).toHaveLength(2);
   });
 
   it('uses the same scheduler for conversational tools and UI management', async () => {
@@ -56,10 +60,43 @@ describe('automation AI integration', () => {
     expect(call('list').data.automations).toHaveLength(0);
   });
 
+  it.each(['auto', 'read-only', 'workspace-write', 'danger-full-access'])('pins %s before starting the AI', async permissionPreset => {
+    setup(); const base = save();
+    const item = call('save', { id: base.id, input: { ...base, permissionPreset } }).data;
+    mocks.ask.mockImplementation(async () => {
+      expect(setPermissionPreset).toHaveBeenCalledWith('database-generated-conversation', permissionPreset);
+      return { ok: true, data: { content: 'done' } };
+    });
+    await call('run', { id: item.id });
+    expect(call('list').data.runs[0].status).toBe('succeeded');
+  });
+
+  it('does not start AI when permission application fails', async () => {
+    setup(); const item = save(); setPermissionPreset.mockReturnValue(false);
+    await call('run', { id: item.id });
+    expect(mocks.ask).not.toHaveBeenCalled();
+    expect(call('list').data.runs[0]).toMatchObject({ status: 'failed', conversationId: 'database-generated-conversation' });
+  });
+
+  it('stays running until the AI result arrives and then publishes completed history', async () => {
+    setup(); const item = save();
+    let finish!: (value: unknown) => void;
+    mocks.ask.mockReturnValue(new Promise(resolve => { finish = resolve; }));
+    const running = call('run', { id: item.id });
+    await vi.waitFor(() => expect(mocks.ask).toHaveBeenCalledOnce());
+    expect(call('list').data.runs[0]).toMatchObject({ status: 'running' });
+    expect(mocks.send.mock.calls.filter(call => call[1]?.scope === 'conversations')).toHaveLength(1);
+    finish({ ok: true, data: { content: 'AI 实际执行完成' } });
+    await running;
+    expect(call('list').data.runs[0]).toMatchObject({ status: 'succeeded', result: 'AI 实际执行完成' });
+    expect(mocks.send.mock.calls.filter(call => call[1]?.scope === 'conversations')).toHaveLength(2);
+  });
+
   it('preserves the conversation reference and records an AI failure', async () => {
     setup(); const item = save(); mocks.ask.mockResolvedValue({ ok: false, message: '请设置 API Key' });
     await call('run', { id: item.id });
     expect(call('list').data.runs[0]).toMatchObject({ status: 'failed', result: '请设置 API Key', conversationId: 'database-generated-conversation' });
+    expect(mocks.send.mock.calls.filter(call => call[0] === 'app:data-changed' && call[1]?.scope === 'conversations')).toHaveLength(2);
   });
   it('does not announce a catalog change when a tool rejects invalid input', async () => {
     setup(); mocks.send.mockClear();

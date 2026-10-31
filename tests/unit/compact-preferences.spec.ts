@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { normaliseCompactPreferences } from '../../src/shared/compact-preferences';
 describe('compact preferences', () => {
   it('defaults to floating, opaque, auto-size without stored bounds', () => {
-    expect(normaliseCompactPreferences(null)).toEqual({ opacity: 1, alwaysOnTop: true, manualSize: false, bounds: null });
+    expect(normaliseCompactPreferences(null)).toEqual({ enabled: true, opacity: 1, alwaysOnTop: true, manualSize: false, bounds: null });
+    expect(normaliseCompactPreferences({ enabled: false }).enabled).toBe(false);
   });
   it('keeps enough opacity to recover the window and repairs invalid geometry', () => {
     expect(normaliseCompactPreferences({ opacity: 0 }).opacity).toBe(.4);

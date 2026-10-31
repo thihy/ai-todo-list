@@ -14,6 +14,11 @@ afterEach(() => rmSync(directory, { recursive: true, force: true }));
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 describe('automation schedules', () => {
+  it('defaults legacy definitions to Auto and validates explicit permission presets', () => {
+    expect(validateAutomation(input(), now).permissionPreset).toBe('auto');
+    expect(validateAutomation(input({ permissionPreset: 'danger-full-access' }), now).permissionPreset).toBe('danger-full-access');
+    expect(() => validateAutomation(input({ permissionPreset: 'invented' as never }), now)).toThrow('权限预设');
+  });
   it('computes calendar and Cron occurrences in the stored timezone', () => {
     const daily = input({ schedule: { kind: 'calendar', frequency: 'daily', time: '09:00' } });
     expect(new Date(nextRun(daily, now)).toISOString()).toBe('2026-10-30T01:00:00.000Z');

@@ -34,6 +34,20 @@ describe('ConversationRepo — pagination', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
+  it('persists automation ownership independently of titles, history pruning and later reassociation', () => {
+    const first = repo.create({ title: '同名任务', automationId: 'automation-a' });
+    const second = repo.create({ title: '同名任务', automationId: 'automation-b' });
+    const legacy = repo.create({ title: '原有对话' });
+    repo.associateAutomation(legacy.id, 'automation-a');
+    repo.associateAutomation(first.id, 'automation-b');
+    repo.rename(first.id, '独立重命名');
+    expect(repo.get(first.id)?.automationId).toBe('automation-a');
+    expect(repo.get(second.id)?.automationId).toBe('automation-b');
+    expect(repo.list().find(row => row.id === legacy.id)?.automationId).toBe('automation-a');
+    const reopened = new ConversationRepo(handle.db);
+    expect(reopened.get(legacy.id)?.automationId).toBe('automation-a');
+  });
+
   it('returns the default page size when no limit is given', () => {
     // 造 25 条，按 repo.create 默认同毫秒内 updated_at 撞值会让 ORDER BY
     // 不确定。直接 INSERT + 显式 updated_at 才能稳定断言。

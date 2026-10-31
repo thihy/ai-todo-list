@@ -138,6 +138,7 @@ interface Turn {
 }
 
 interface ConversationRow {
+  automationId?: string | null;
   id: string;
   title: string;
   updatedAt: number;
@@ -312,6 +313,10 @@ export const AIPane: React.FC<{
   const queueRef = useRef<QueuedMessage[]>([]);
   const [queuePaused, setQueuePaused] = useState<Record<string, boolean>>({});
   const [queueNotice, setQueueNotice] = useState('');
+  const [queueCollapsed, setQueueCollapsed] = useState(false);
+  const [editingQueue, setEditingQueue] = useState<string | null>(null);
+  const [queueDraft, setQueueDraft] = useState('');
+  const [steeringQueue, setSteeringQueue] = useState<string | null>(null);
   const updateQueue = (update: (items: QueuedMessage[]) => QueuedMessage[]): void => {
     queueRef.current = update(queueRef.current);
     setMessageQueue(queueRef.current);
@@ -330,6 +335,14 @@ export const AIPane: React.FC<{
   // a dropdown that holds: a search/filter box, the full conversation list,
   // a toggle for showing archived, and a "new conversation" entry.
   const [showHistory, setShowHistory] = useState(false);
+  const [automationGroups, setAutomationGroups] = useState<Array<{ id: string; name: string }>>([]);
+  const automationVersion = useDataVersion(['automations']);
+  useEffect(() => {
+    let alive = true;
+    if (!window.todoList.automation?.list) return;
+    void window.todoList.automation.list().then(result => { if (alive && result.ok) setAutomationGroups(result.data.automations.map(item => ({ id: item.id, name: item.name }))); }).catch(() => {});
+    return () => { alive = false; };
+  }, [automationVersion]);
   const [renaming, setRenaming] = useState(false);
   const [renameDraft, setRenameDraft] = useState('');
   const [historyLoaded, setHistoryLoaded] = useState<Set<string>>(new Set());
@@ -583,6 +596,11 @@ export const AIPane: React.FC<{
     setSwitcherQuery('');
     return;
   }, [showHistory]);
+
+  useEffect(() => {
+    if (!currentId || activeStreamRef.current?.conversationId === currentId) return;
+    setHistoryLoaded(previous => { if (!previous.has(currentId)) return previous; const next = new Set(previous); next.delete(currentId); return next; });
+  }, [convVersion, currentId]);
 
   // When currentId changes, lazy-load history (only once per conversation).
   // STARTUP-AI-ASYNC-002 — gate on `aiStartup.status === 'ready'`.
@@ -1644,7 +1662,7 @@ export const AIPane: React.FC<{
   };
 
   useEffect(() => {
-    if (busy || dispatchLockRef.current || composerBlock || showAiRetryBanner) return;
+    if (busy || dispatchLockRef.current || composerBlock || showAiRetryBanner || steeringQueue) return;
     const message = messageQueue.find((item) => item.conversationId && !queuePaused[item.conversationId] && conversations.some((conv) => conv.id === item.conversationId && !conv.archived));
     if (!message) return;
     if (!message.prompt.trim() && message.attached.length === 0) {
@@ -1658,7 +1676,7 @@ export const AIPane: React.FC<{
       if (message.conversationId) setQueuePaused((previous) => ({ ...previous, [message.conversationId!]: true }));
       setQueueNotice('发送失败，消息保留在队列中。');
     });
-  }, [busy, messageQueue, queuePaused, currentId, conversations, composerBlock?.reason, showAiRetryBanner]);
+  }, [busy, messageQueue, queuePaused, currentId, conversations, composerBlock?.reason, showAiRetryBanner, steeringQueue]);
 
   const retryTurn = async (turn: Turn): Promise<void> => {
     if (retryLockRef.current || turn.status !== 'error' || busy || composerBlock || showAiRetryBanner) return;
@@ -1916,7 +1934,9 @@ export const AIPane: React.FC<{
                     </div>
                   )}
                   <div className="aipane__menu-list">
-                    {filteredConversations.map((c) => (
+                    {[{ id: '', name: '普通对话 / 未分组' }, ...automationGroups].map(group => <details className="aipane__conversation-group" key={group.id} open={group.id === '' || !!switcherQuery || filteredConversations.some(c => c.id === currentId && c.automationId === group.id)}>
+                      <summary>{group.id ? '自动化 · ' : ''}{group.name}<span> · {filteredConversations.filter(c => group.id ? c.automationId === group.id : !automationGroups.some(item => item.id === c.automationId)).length}</span>{group.id && <span title="分组随自动化任务管理，不支持单独编辑或删除"> · 自动管理</span>}</summary>
+                    {filteredConversations.filter(c => group.id ? c.automationId === group.id : !automationGroups.some(item => item.id === c.automationId)).map((c) => (
                       <div
                         key={c.id}
                         className={`aipane__menu-row${selectedIds.has(c.id) ? ' aipane__menu-row--selected' : ''}`}
@@ -1984,7 +2004,7 @@ export const AIPane: React.FC<{
                         </div>
                       )}
                     </div>
-                  ))}
+                  ))}</details>)}
                   </div>
                   {/* 批量操作条 —— 仅在有勾选时出现；位置在列表（滚动容器）
                       下方、「显示更多」分页按钮上方，不会随列表一起滚动。
@@ -2270,13 +2290,29 @@ export const AIPane: React.FC<{
           card / .composer-actions); the host only needs to position it. */}
       {messageQueue.some((item) => item.conversationId === currentId) && (
         <div className="aipane__queue" aria-label="消息队列">
-          <div className="aipane__queue-header"><span>待发送 · {messageQueue.filter((item) => item.conversationId === currentId).length}</span>
-            {currentId && queuePaused[currentId] && <button type="button" className="btn-secondary" onClick={() => setQueuePaused((previous) => ({ ...previous, [currentId]: false }))}>继续发送队列</button>}
+          <div className="aipane__queue-header"><button type="button" aria-expanded={!queueCollapsed} onClick={() => setQueueCollapsed(value => !value)}>待发送 · {messageQueue.filter((item) => item.conversationId === currentId).length} {queueCollapsed ? '⌄' : '⌃'}</button>
+            {currentId && <button type="button" className="btn-secondary" onClick={() => setQueuePaused((previous) => ({ ...previous, [currentId]: !previous[currentId] }))}>{queuePaused[currentId] ? '继续发送队列' : '暂停队列'}</button>}
           </div>
-          {messageQueue.filter((item) => item.conversationId === currentId).map((item, index) => <div className="aipane__queue-item" key={item.id}>
+          {!queueCollapsed && messageQueue.filter((item) => item.conversationId === currentId).map((item, index) => <div className="aipane__queue-item" key={item.id}>
             <span>{index + 1}</span>
-            <textarea className="input" rows={1} aria-label={`编辑排队消息 ${index + 1}`} value={item.prompt} onChange={(event) => updateQueue((items) => items.map((queued) => queued.id === item.id ? { ...queued, prompt: event.target.value } : queued))} />
+            {editingQueue === item.id ? <div className="aipane__queue-edit"><textarea autoFocus className="input" rows={2} aria-label={`编辑排队消息 ${index + 1}`} value={queueDraft} onChange={event => setQueueDraft(event.target.value)} />
+              <button type="button" onClick={() => setEditingQueue(null)}>取消</button><button type="button" disabled={!queueDraft.trim() && !item.attached.length} onClick={() => { updateQueue(items => items.map(queued => queued.id === item.id ? { ...queued, prompt: queueDraft } : queued)); setEditingQueue(null); }}>保存</button></div>
+              : <button type="button" className="aipane__queue-preview" aria-label={`编辑排队消息 ${index + 1}`} onClick={() => { if (currentId) setQueuePaused(previous => ({ ...previous, [currentId]: true })); setEditingQueue(item.id); setQueueDraft(item.prompt); }}>{item.prompt || '附件消息'} <span aria-hidden="true">✎</span></button>}
             {item.attached.length > 0 && <span title={item.attached.map((file) => file.name).join('\n')}>{item.attached.length} 个附件</span>}
+            <button type="button" disabled={steeringQueue !== null || !!composerBlock || editingQueue === item.id || !!item.intent || item.prompt.startsWith('/')} onClick={async () => {
+              const active = activeStreamRef.current;
+              if (!active || active.conversationId !== item.conversationId) { setQueueNotice('当前任务已结束，消息保留在队列等待发送。'); return; }
+              setSteeringQueue(item.id);
+              try {
+                const wire = item.attached.length ? `${item.prompt}\n\n${item.attached.map(file => `${attachmentHeader(file)}\n${file.path}`).join('\n\n')}` : item.prompt;
+                const result = await window.todoList.ai.steer({ conversationId: active.conversationId, invocationId: active.invocationId, prompt: wire });
+                if (!result.ok) { setQueueNotice(result.message ?? '引导失败，消息仍保留在队列'); return; }
+                if (!result.data.accepted) { setQueueNotice('当前任务已结束，消息仍保留在队列'); return; }
+                updateQueue(items => items.filter(queued => queued.id !== item.id));
+                setTurnsByConv(previous => ({ ...previous, [active.conversationId]: (previous[active.conversationId] ?? []).map(turn => turn.id === active.invocationId ? { ...turn, steering: [...(turn.steering ?? []), { id: item.id, text: item.prompt, attached: [...item.attached] }] } : turn) }));
+                setQueueNotice('引导已提交，将在当前任务的下一步生效。');
+              } catch (cause) { setQueueNotice(`引导失败，消息仍保留在队列：${String(cause)}`); } finally { setSteeringQueue(null); }
+            }}>立即引导</button>
             <button type="button" className="btn-secondary" aria-label={`移除排队消息 ${index + 1}`} onClick={() => updateQueue((items) => items.filter((queued) => queued.id !== item.id))}>移除</button>
           </div>)}
           <span className="muted">当前回复结束后依次发送；停止或失败时暂停队列。</span>

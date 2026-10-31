@@ -917,6 +917,11 @@ const MIGRATIONS: ReadonlyArray<{ version: number; sql: string; run?: (db: Datab
     },
   },
   { version: 24, sql: '', run: migrateFileDocuments },
+  { version: 25, sql: '', run: db => {
+    const columns = db.prepare('PRAGMA table_info(conversations)').all() as Array<{ name: string }>;
+    if (!columns.some(column => column.name === 'automation_id')) db.exec('ALTER TABLE conversations ADD COLUMN automation_id TEXT');
+    db.exec('CREATE INDEX IF NOT EXISTS idx_conversations_automation ON conversations(automation_id)');
+  } },
 ];
 
 // Some previously shipped databases reached v22 while retaining the v20

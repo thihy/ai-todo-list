@@ -335,7 +335,7 @@ export interface TodoListApi {
   app: {
     compact(enabled: boolean, todoId?: string): Promise<IpcResponse<'app.compact'>>;
     compactSize(count: number): Promise<IpcResponse<'app.compactSize'>>;
-    compactConfigure(patch: { opacity?: number; alwaysOnTop?: boolean }): Promise<IpcResponse<'app.compactConfigure'>>;
+    compactConfigure(patch: { enabled?: boolean; opacity?: number; alwaysOnTop?: boolean }): Promise<IpcResponse<'app.compactConfigure'>>;
     compactMenu(): Promise<IpcResponse<'app.compactMenu'>>;
     /** Pop the native application menu at the cursor (title-bar 菜单 button). */
     popupMenu(): Promise<IpcResponse<'app.popupMenu'>>;

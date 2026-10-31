@@ -27,3 +27,16 @@ html:has(.compact-view), body:has(.compact-view), #root:has(.compact-view) { min
 .compact-view button:focus-visible { outline: 2px solid var(--accent-primary); outline-offset: 2px; }
 .compact-view { padding-bottom: 5px; }
 .compact-view__header { margin-top: 3px; }
+.priority-very-high .compact-view__title { color: #cf2440; font-weight: 650; }
+.priority-high .compact-view__title { color: #d14b29; }
+.priority-medium .compact-view__title { color: #946000; }
+.priority-low .compact-view__title { color: #6154b7; }
+.priority-very-low .compact-view__title { color: #69727d; }
+.compact-task-overlay { position: fixed; inset: 0; z-index: 20; background: #0002; display: grid; place-items: center; padding: 5px; }
+.compact-task-menu, .compact-progress { padding: 9px; border: 1px solid var(--border-strong); border-radius: 9px; background: var(--bg-canvas); overflow: auto; max-height: 100%; display: flex; flex-direction: column; gap: 5px; }
+.compact-task-menu { width: 100%; }
+.compact-task-menu strong, .compact-progress strong { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.compact-task-menu button, .compact-progress button { padding: 5px; text-align: left; border-radius: 5px; background: var(--bg-soft); cursor: pointer; }
+.compact-task-menu label { display: flex; justify-content: space-between; }
+.compact-progress { position: fixed; inset: 4px; z-index: 21; }
+.compact-progress input, .compact-progress textarea { width: 100%; border: 1px solid var(--border-strong); border-radius: 4px; padding: 4px; }

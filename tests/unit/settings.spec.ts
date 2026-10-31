@@ -16,9 +16,9 @@ beforeEach(() => {
 
 describe('SettingsStore', () => {
   it('persists compact size, placement, floating preference and opacity', () => {
-    store.patch({ compactWindow: { opacity: .6, alwaysOnTop: false, manualSize: true,
+    store.patch({ compactWindow: { enabled: false, opacity: .6, alwaysOnTop: false, manualSize: true,
       bounds: { x: -250, y: 100, width: 300, height: 200 } } });
-    expect(new SettingsStore(dir).get().compactWindow).toEqual({ opacity: .6, alwaysOnTop: false, manualSize: true,
+    expect(new SettingsStore(dir).get().compactWindow).toEqual({ enabled: false, opacity: .6, alwaysOnTop: false, manualSize: true,
       bounds: { x: -250, y: 100, width: 300, height: 200 } });
   });
   it('persists external access and exposes standard skill paths', () => {

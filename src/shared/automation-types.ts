@@ -4,6 +4,7 @@ export type AutomationSchedule =
   | { kind: 'cron'; expression: string };
 
 export interface AutomationInput {
+  permissionPreset?: 'auto' | 'read-only' | 'workspace-write' | 'danger-full-access';
   name: string;
   prompt: string;
   timezone: string;

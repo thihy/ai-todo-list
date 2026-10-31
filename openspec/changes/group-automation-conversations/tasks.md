@@ -1,0 +1,3 @@
+- [x] Persist automation ownership on conversations, migrate existing database and backfill explicit run references.
+- [x] Show automatic, collapsible groups in conversation history with catalog-driven lifecycle.
+- [x] Verify same-name groups, ownership persistence, deletion preserving history, and rendered UI behavior.

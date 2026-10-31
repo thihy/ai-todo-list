@@ -81,6 +81,8 @@ export const AIComposer = forwardRef<HTMLTextAreaElement, AIComposerProps>(funct
   ref,
 ) {
   const blocked = block !== undefined;
+  const [sendAction, setSendAction] = useState(enterAction);
+  useEffect(() => setSendAction(enterAction), [enterAction]);
   const menuId = useId();
   const [commands, setCommands] = useState<AssistantCommand[]>([]);
   const [commandError, setCommandError] = useState('');
@@ -215,7 +217,7 @@ export const AIComposer = forwardRef<HTMLTextAreaElement, AIComposerProps>(funct
             if (event.key === 'Enter' && !event.shiftKey) {
               event.preventDefault();
               if (blocked) return;
-              const action = event.ctrlKey || event.metaKey ? (enterAction === 'queue' ? 'steer' : 'queue') : enterAction;
+              const action = event.ctrlKey || event.metaKey ? (sendAction === 'queue' ? 'steer' : 'queue') : sendAction;
               if (busy && action === 'steer' && onSteer) onSteer();
               else onSubmit();
               return;
@@ -228,7 +230,7 @@ export const AIComposer = forwardRef<HTMLTextAreaElement, AIComposerProps>(funct
           placeholder={block
             ? block.reason
             : busy
-              ? (enterAction === 'queue' ? 'Enter 排队 · Ctrl+Enter 引导 · Esc 停止' : 'Enter 引导 · Ctrl+Enter 排队 · Esc 停止')
+              ? (sendAction === 'queue' ? 'Enter 排队 · Ctrl+Enter 引导 · Esc 停止' : 'Enter 引导 · Ctrl+Enter 排队 · Esc 停止')
               : hasConversation
                 ? '输入消息，或输入 / 查看命令'
                 : '和 AI 助手一起工作'}
@@ -256,8 +258,10 @@ export const AIComposer = forwardRef<HTMLTextAreaElement, AIComposerProps>(funct
           </div>
           {busy ? (
             <div className="aipane__send-actions">
-              <Button variant="toolbar" type="button" onClick={onSubmit} disabled={blocked || (!value.trim() && attachments.length === 0)} aria-label="加入消息队列" title={enterAction === 'queue' ? '排队（Enter）' : '排队（Ctrl+Enter）'}>排队</Button>
-              {onSteer && <Button variant="toolbar" type="button" onClick={onSteer} disabled={blocked || (!value.trim() && attachments.length === 0)} aria-label="引导当前任务" title={enterAction === 'steer' ? '引导（Enter）' : '引导（Ctrl+Enter）'}>引导</Button>}
+              <select aria-label="消息发送方式" value={sendAction} disabled={blocked} onChange={event => setSendAction(event.target.value as 'queue' | 'steer')}>
+                <option value="queue">加入队列</option>{onSteer && <option value="steer">引导当前任务</option>}
+              </select>
+              <Button variant="primary" type="button" className="aipane__send" onClick={sendAction === 'steer' && onSteer ? onSteer : onSubmit} disabled={blocked || (!value.trim() && attachments.length === 0)} aria-label={sendAction === 'steer' ? '引导当前任务' : '加入消息队列'} title={sendAction === 'steer' ? '在当前任务下一步生效' : '当前回复结束后发送'}><IconSendOutline16 size={16} /></Button>
             <Button
               variant="primary"
               type="button"

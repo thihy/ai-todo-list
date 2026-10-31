@@ -36,7 +36,8 @@ export function validateAutomation(raw: AutomationInput, now: number): Automatio
       typeof raw.prompt !== 'string' || !raw.prompt.trim() || raw.prompt.length > 100000 ||
       typeof raw.enabled !== 'boolean' || typeof raw.timezone !== 'string' || !raw.timezone.trim() || !raw.schedule) throw new Error('自动化名称、指令或调度参数无效');
   new Intl.DateTimeFormat('en', { timeZone: raw.timezone }).format(now);
-  const input = structuredClone({ name: raw.name.trim(), prompt: raw.prompt.trim(), timezone: raw.timezone, enabled: raw.enabled, schedule: raw.schedule });
+  if (raw.permissionPreset !== undefined && !['auto', 'read-only', 'workspace-write', 'danger-full-access'].includes(raw.permissionPreset)) throw new Error('自动化权限预设无效');
+  const input: AutomationInput = structuredClone({ name: raw.name.trim(), prompt: raw.prompt.trim(), timezone: raw.timezone, enabled: raw.enabled, schedule: raw.schedule, permissionPreset: raw.permissionPreset ?? 'auto' });
   nextRun(input, now);
   return input;
 }

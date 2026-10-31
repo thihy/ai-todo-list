@@ -8,16 +8,15 @@ const result = (isError: boolean, text: string, callId = 'call-1') => ({
 });
 
 describe('filesystem turn failure', () => {
-  it.each(['read', 'read_image', 'write', 'edit', 'grep', 'glob', 'bash', 'pwsh'])('cancels %s failures once and retains the original error', name => {
+  it.each(['read', 'read_image', 'write', 'edit', 'grep', 'glob', 'bash', 'pwsh'])('keeps %s failures available to the model without cancelling the turn', name => {
     const cancel = vi.fn();
     const guard = new TurnFailureGuard(cancel);
     guard.observe(call(name));
     guard.observe(result(true, 'EACCES: permission denied'));
     guard.observe({ type: 'turn/end', data: { reason: { kind: 'aborted' } } });
     guard.observe(result(true, 'second failure'));
-    expect(cancel).toHaveBeenCalledTimes(1);
-    expect(guard.error?.message).toContain('EACCES: permission denied');
-    expect(guard.error?.message).toContain(name);
+    expect(cancel).not.toHaveBeenCalled();
+    expect(guard.error).toBeUndefined();
   });
 
   it('allows successful file operations, domain errors and user cancellation', () => {
@@ -39,7 +38,7 @@ describe('filesystem turn failure', () => {
     a.observe(call('edit')); b.observe(call('read'));
     a.observe(result(true, 'old text not found'));
     b.observe(result(false, 'contents'));
-    expect(cancelA).toHaveBeenCalledOnce();
+    expect(cancelA).not.toHaveBeenCalled();
     expect(cancelB).not.toHaveBeenCalled();
     expect(b.error).toBeUndefined();
   });

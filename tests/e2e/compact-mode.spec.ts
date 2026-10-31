@@ -3,6 +3,33 @@ import { launchApp } from './helpers';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
+test('floating task menu updates priority, status and progress, and can be disabled', async () => {
+  const handle = await launchApp();
+  try {
+    await handle.win.evaluate(async () => { const now = new Date(); const today = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`; await window.todoList.todo.create({ title: '悬浮任务操作测试', priority: 'high', plannedFor: today }); await window.todoList.app.compactConfigure({ enabled: true }); });
+    await expect.poll(() => handle.app.windows().find(page => page.url().endsWith('#/compact'))?.url()).toContain('#/compact');
+    const page = handle.app.windows().find(page => page.url().endsWith('#/compact'))!;
+    const task = page.getByRole('button', { name: /^悬浮任务操作测试/ });
+    await expect(task).toBeVisible();
+    await expect(page.locator('.priority-high .compact-view__title')).toHaveText('悬浮任务操作测试');
+    await task.click({ button: 'right' });
+    await page.getByLabel('修改优先级').selectOption('very-high');
+    await expect(page.locator('.priority-very-high .compact-view__title')).toHaveText('悬浮任务操作测试');
+    await task.click({ button: 'right' }); await page.getByRole('button', { name: '标记阻塞' }).click();
+    await task.click({ button: 'right' }); await page.getByRole('button', { name: '录入进展', exact: true }).click();
+    await page.getByLabel('进度百分比').fill('45'); await page.getByLabel('进展说明').fill('已完成第一阶段');
+    await page.getByRole('button', { name: '保存进展' }).click();
+    await expect(page.getByRole('form', { name: '录入进展' })).toHaveCount(0);
+    const result = await handle.win.evaluate(() => window.todoList.todo.list({ status: ['blocked'] }));
+    expect(result.ok && result.data.some(todo => todo.title === '悬浮任务操作测试' && todo.progress === 45 && todo.priority === 'very-high')).toBe(true);
+    await page.getByRole('button', { name: '关闭悬浮窗', exact: true }).click();
+    expect((await handle.win.evaluate(() => window.todoList.app.compactConfigure({}))).ok).toBe(true);
+    await expect.poll(() => handle.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find(w => w.webContents.getURL().endsWith('#/compact'))!.isVisible())).toBe(false);
+    await handle.win.evaluate(() => window.todoList.app.compactConfigure({ enabled: true }));
+    await expect(task).toBeVisible();
+  } finally { await handle.app.close(); }
+});
+
 test('compact mode stays small and on top, completes real tasks and returns to detail', async () => {
   const handle = await launchApp();
   try {
@@ -36,13 +63,15 @@ test('compact mode stays small and on top, completes real tasks and returns to d
     expect(state.bounds.width).toBeGreaterThanOrEqual(240); expect(state.bounds.width).toBeLessThanOrEqual(256);
     expect(state.bounds.height).toBeLessThanOrEqual(190);
     expect(state.onTop).toBe(true); expect(state.resizable).toBe(true);
-    // Native taskbar restore hides the compact surface; minimizing again reuses it.
+    // Native restore keeps the compact surface visible; minimizing reuses it.
     await handle.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find((w) => !w.webContents.getURL().endsWith('#/compact'))!.restore());
-    await expect.poll(() => handle.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().endsWith('#/compact'))!.isVisible())).toBe(false);
+    await expect.poll(() => handle.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().endsWith('#/compact'))!.isVisible())).toBe(true);
     await handle.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find((w) => !w.webContents.getURL().endsWith('#/compact'))!.minimize());
     await expect(compact.getByRole('main', { name: '精简待办' })).toBeVisible();
     expect(await handle.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().filter((w) => w.webContents.getURL().endsWith('#/compact')).length)).toBe(1);
-    await compact.getByRole('button', { name: '完成 今日最先', exact: true }).click();
+    await expect(compact.locator('.compact-view__check')).toHaveCount(0);
+    await compact.getByRole('button', { name: /^今日最先/ }).click({ button: 'right' });
+    await compact.getByRole('button', { name: '标记完成', exact: true }).click();
     await expect(compact.locator('.compact-view__title')).not.toContainText(['今日最先']);
     await expect(compact.locator('.compact-view__row')).toHaveCount(5);
     const result = await handle.win.evaluate((id) => window.todoList.todo.get(id), ids[0]!);

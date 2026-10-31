@@ -63,7 +63,7 @@ export const AutomationsPane: React.FC<{ onCompose?: (prompt: string) => void }>
   };
   const schedule = (value: AutomationSchedule) => setDraft({ ...draft, schedule: value });
   const edit = (item?: Automation) => {
-    setError(''); setEditing(item?.id); setDraft(item ? { name: item.name, prompt: item.prompt, timezone: item.timezone, enabled: item.enabled, schedule: item.schedule } : fresh()); setView('editor');
+    setError(''); setEditing(item?.id); setDraft(item ? { name: item.name, prompt: item.prompt, timezone: item.timezone, enabled: item.enabled, schedule: item.schedule, permissionPreset: item.permissionPreset ?? 'auto' } : fresh()); setView('editor');
   };
   const back = () => { setError(''); setView('list'); setEditing(undefined); };
   const trigger = draft.schedule.kind === 'calendar' ? draft.schedule.frequency : draft.schedule.kind;
@@ -91,6 +91,7 @@ export const AutomationsPane: React.FC<{ onCompose?: (prompt: string) => void }>
                 onClick={() => void action(() => window.todoList.automation.save({ ...item, enabled: !item.enabled }, item.id))}><span /></button>
             </div>
             <p className="automation-row__description" title={item.prompt}>{item.prompt}</p>
+            <span className="muted">执行权限：{({ auto: 'Auto', 'read-only': '只读', 'workspace-write': '工作区可写', 'danger-full-access': '完全访问' })[item.permissionPreset ?? 'auto']}</span>
             <div className="automation-row__schedule"><Glyph kind="clock" /><span>{automationScheduleLabel(item.schedule)}{item.schedule.kind !== 'interval' ? ' · ' + zoneLabel(item.timezone) : ''}</span></div>
             <div className="automation-row__bottom"><span>{item.enabled ? '下次执行：' + (item.nextRunAt ? dateLabel(item.nextRunAt, item.timezone) : '待安排') : '启用后恢复执行'}</span>
               <div className="automation-row__actions">
@@ -121,6 +122,11 @@ export const AutomationsPane: React.FC<{ onCompose?: (prompt: string) => void }>
           {draft.schedule.kind === 'interval' && <label>间隔（分钟）<input className="input" type="number" min={1} max={525600} required value={draft.schedule.minutes} onChange={(event) => schedule({ kind: 'interval', minutes: Number(event.target.value) })} /></label>}
           {draft.schedule.kind === 'cron' && <label>Cron 表达式<input className="input mono" required value={draft.schedule.expression} onChange={(event) => schedule({ kind: 'cron', expression: event.target.value })} /><span className="automation-field-hint">分 时 日 月 周，例如 0 9 * * 1-5。</span></label>}
           {draft.schedule.kind === 'calendar' && draft.schedule.frequency === 'monthly' && <p className="automation-field-hint">当月没有该日期时跳过。</p>}
+          <label>执行权限<select className="input" aria-label="自动化执行权限" value={draft.permissionPreset ?? 'auto'} onChange={async event => {
+            const value = event.target.value as AutomationInput['permissionPreset'];
+            if (value === 'danger-full-access') { const result = await window.todoList.aiPermissionPreset.confirm({ preset: value }); if (!result.ok || !result.data.confirmed) return; }
+            setDraft(previous => ({ ...previous, permissionPreset: value }));
+          }}><option value="auto">Auto</option><option value="read-only">只读</option><option value="workspace-write">工作区可写</option><option value="danger-full-access">完全访问</option></select></label>
           <label>时区<input className="input" required value={draft.timezone} onChange={(event) => setDraft({ ...draft, timezone: event.target.value })} placeholder="Asia/Shanghai" /></label>
           <label className="automation-editor__enabled"><input type="checkbox" checked={draft.enabled} onChange={(event) => setDraft({ ...draft, enabled: event.target.checked })} />启用自动触发</label>
         </fieldset>

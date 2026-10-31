@@ -1,9 +1,25 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { spawn } from 'node:child_process';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { configureElectronSubprocess, configureElectronSandboxRunner } from '../../src/main/dsh/subprocess-compat';
 import type { SubprocessRuntime, SubprocessSpawnSpec } from '@deepseek-ai/dsh-subprocess';
 
 describe('Electron ACL sandbox runner environment', () => {
+  it('passes a physical unpacked ripgrep executable to the native runner', () => {
+    const root = mkdtempSync(join(tmpdir(), 'rg-asar-'));
+    try {
+      const real = join(root, 'app.asar.unpacked', 'node_modules', 'rg.exe');
+      mkdirSync(join(root, 'app.asar.unpacked', 'node_modules'), { recursive: true }); writeFileSync(real, 'fixture');
+      const original = vi.fn(); const service = { spawn: original } as unknown as Pick<SubprocessRuntime, 'spawn'>;
+      const restore = configureElectronSandboxRunner(service, '44.2.0');
+      const spec = { argv: [join(root, 'app.asar', 'node_modules', 'rg.exe'), '--files'], cwd: root, signal: new AbortController().signal } as SubprocessSpawnSpec;
+      service.spawn(spec);
+      expect(original).toHaveBeenCalledWith({ ...spec, argv: [real, '--files'] });
+      expect(spec.argv[0]).toContain('app.asar'); restore();
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
   it('sets the target IPC environment without changing argv, containment, or cancellation', () => {
     const original = vi.fn();
     const service = { spawn: original } as unknown as Pick<SubprocessRuntime, 'spawn'>;

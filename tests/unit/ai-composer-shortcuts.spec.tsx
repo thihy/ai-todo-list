@@ -17,10 +17,19 @@ async function setup(enterAction: 'queue' | 'steer', busy = true, block?: { reas
   const root = createRoot(node); hosts.push({ root, node });
   await act(async () => root.render(<AIComposer value="message" onChange={() => {}} attachments={[]} onRemoveAttachment={() => {}} onPickAttachment={() => {}} onPasteFiles={() => {}} onSubmit={queue} onSteer={steer} onStop={() => {}} busy={busy} enterAction={enterAction} hasConversation block={block} />));
   const key = async (options: KeyboardEventInit = {}) => { await act(async () => node.querySelector('textarea')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true, ...options }))); };
-  return { queue, steer, key };
+  return { queue, steer, key, node };
 }
 
 describe('AI queue and steer shortcuts', () => {
+  it('keeps selected send action, primary button and keyboard shortcuts aligned', async () => {
+    const h = await setup('queue');
+    const select = h.node.querySelector<HTMLSelectElement>('[aria-label="消息发送方式"]')!;
+    await act(async () => { select.value = 'steer'; select.dispatchEvent(new Event('change', { bubbles: true })); });
+    await h.key(); expect(h.steer).toHaveBeenCalledOnce();
+    await h.key({ ctrlKey: true }); expect(h.queue).toHaveBeenCalledOnce();
+    await act(async () => h.node.querySelector<HTMLButtonElement>('[aria-label="引导当前任务"]')!.click());
+    expect(h.steer).toHaveBeenCalledTimes(2);
+  });
   it('groups attachment actions and native skills in the add menu while preserving the draft', async () => {
     Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
     (window as any).todoList = { skill: { list: vi.fn().mockResolvedValue({ ok: true, data: [

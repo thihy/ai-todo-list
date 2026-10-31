@@ -55,6 +55,7 @@ export interface ConversationListOpts {
 }
 
 export interface Conversation {
+  automationId?: string | null;
   id: string;
   title: string;
   createdAt: number;
@@ -69,6 +70,7 @@ export interface Conversation {
 }
 
 interface Row {
+  automation_id: string | null;
   id: string;
   title: string;
   created_at: number;
@@ -79,6 +81,7 @@ interface Row {
 
 function rowToConversation(r: Row): Conversation {
   return {
+    automationId: r.automation_id ?? null,
     id: r.id,
     title: r.title,
     createdAt: r.created_at,
@@ -96,6 +99,11 @@ function clampLimit(raw: number | undefined): number {
 
 export class ConversationRepo {
   constructor(private readonly db: Database.Database) {}
+
+  /** Backfill only explicit run references; never infer ownership from titles. */
+  associateAutomation(id: string, automationId: string): void {
+    this.db.prepare('UPDATE conversations SET automation_id = ? WHERE id = ? AND automation_id IS NULL').run(automationId, id);
+  }
 
   /** 命中行数；{@link ConversationListOpts.includeArchived} 与 `list()` 一致。 */
   count(includeArchived = false): number {
@@ -115,15 +123,15 @@ export class ConversationRepo {
       ? Math.floor(opts.offset as number)
       : 0;
     const sql = includeArchived
-      ? 'SELECT id, title, created_at, updated_at, archived, permission_preset FROM conversations ORDER BY updated_at DESC LIMIT ? OFFSET ?'
-      : 'SELECT id, title, created_at, updated_at, archived, permission_preset FROM conversations WHERE archived = 0 ORDER BY updated_at DESC LIMIT ? OFFSET ?';
+      ? 'SELECT id, title, created_at, updated_at, archived, permission_preset, automation_id FROM conversations ORDER BY updated_at DESC LIMIT ? OFFSET ?'
+      : 'SELECT id, title, created_at, updated_at, archived, permission_preset, automation_id FROM conversations WHERE archived = 0 ORDER BY updated_at DESC LIMIT ? OFFSET ?';
     const rows = this.db.prepare(sql).all(limit, offset) as Row[];
     return rows.map(rowToConversation);
   }
 
   get(id: string): Conversation | undefined {
     const row = this.db
-      .prepare('SELECT id, title, created_at, updated_at, archived, permission_preset FROM conversations WHERE id = ?')
+      .prepare('SELECT id, title, created_at, updated_at, archived, permission_preset, automation_id FROM conversations WHERE id = ?')
       .get(id) as Row | undefined;
     return row ? rowToConversation(row) : undefined;
   }
@@ -134,16 +142,16 @@ export class ConversationRepo {
    * sidebar before the user renames either. The caller can pass an explicit
    * title to skip the default.
    */
-  create(opts?: { title?: string }): Conversation {
+  create(opts?: { title?: string; automationId?: string }): Conversation {
     const id = newId();
     const now = Date.now();
     const title = opts?.title ?? `新对话 ${new Date(now).toLocaleString('zh-CN', { hour12: false })}`;
     this.db
       .prepare(
-        'INSERT INTO conversations(id, title, created_at, updated_at, archived) VALUES (?, ?, ?, ?, 0)',
+        'INSERT INTO conversations(id, title, created_at, updated_at, archived, automation_id) VALUES (?, ?, ?, ?, 0, ?)',
       )
-      .run(id, title, now, now);
-    return { id, title, createdAt: now, updatedAt: now, archived: false, permissionPreset: null };
+      .run(id, title, now, now, opts?.automationId ?? null);
+    return { id, title, createdAt: now, updatedAt: now, archived: false, permissionPreset: null, automationId: opts?.automationId ?? null };
   }
 
   rename(id: string, title: string): boolean {

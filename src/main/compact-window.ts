@@ -11,17 +11,10 @@ export class CompactWindowController {
   private saveTimer: ReturnType<typeof setTimeout> | undefined;
   private count = 5;
   private requested = false;
-  private onMinimize = (): void => { this.show(); };
-  private onMainVisible = (): void => {
-    if (this.main.isMinimized()) return;
-    this.requested = false;
-    this.window?.hide();
-  };
+  private onMinimize = (): void => { if (this.preferences.enabled) this.show(); };
   constructor(private main: BrowserWindow, private settings: SettingsStore) {
     this.preferences = normaliseCompactPreferences(settings.get().compactWindow);
     main.on('minimize', this.onMinimize);
-    main.on('restore', this.onMainVisible);
-    main.on('show', this.onMainVisible);
   }
   private persist(): void {
     if (this.window && !this.window.isDestroyed()) this.preferences.bounds = this.window.getBounds();
@@ -31,11 +24,13 @@ export class CompactWindowController {
     clearTimeout(this.saveTimer);
     this.saveTimer = setTimeout(() => this.persist(), 180);
   };
-  configure(patch: { opacity?: number; alwaysOnTop?: boolean }): CompactPreferences {
+  configure(patch: { enabled?: boolean; opacity?: number; alwaysOnTop?: boolean }): CompactPreferences {
     this.preferences = normaliseCompactPreferences({ ...this.preferences, ...patch });
     this.window?.setOpacity(this.preferences.opacity);
     this.window?.setAlwaysOnTop(this.preferences.alwaysOnTop);
     this.persist();
+    if (patch.enabled === true) this.show();
+    if (patch.enabled === false) { this.requested = false; this.window?.hide(); }
     return this.preferences;
   }
   popupMenu(): void {
@@ -55,12 +50,13 @@ export class CompactWindowController {
         this.persist();
       } },
       { label: '展开主窗口', click: () => this.restore() },
+      { label: '关闭悬浮窗', click: () => this.configure({ enabled: false }) },
     ]).popup({ window: this.window });
   }
   show(): void {
     if (this.destroying || this.main.isDestroyed()) return;
-    // Keep the main window in the taskbar. Native restore also dismisses compact mode.
-    if (!this.main.isMinimized()) { this.main.minimize(); return; }
+    // The floating window remains independent of main-window visibility.
+    if (!this.preferences.enabled) { this.preferences.enabled = true; this.persist(); }
     this.requested = true;
     if (!this.window || this.window.isDestroyed()) {
       const area = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea;
@@ -85,10 +81,10 @@ export class CompactWindowController {
       window.on('move', this.scheduleSave);
       window.setMenu(null);
       window.once('ready-to-show', () => {
-        if (!this.destroying && this.requested && !window.isDestroyed() && this.window === window && this.main.isMinimized()) window.showInactive();
+        if (!this.destroying && this.requested && !window.isDestroyed() && this.window === window) window.showInactive();
       });
       window.on('close', (event) => {
-        if (!this.destroying) { event.preventDefault(); this.restore(); }
+        if (!this.destroying) { event.preventDefault(); this.configure({ enabled: false }); }
       });
       window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
       const devUrl = process.env['ELECTRON_RENDERER_URL'];
@@ -103,8 +99,6 @@ export class CompactWindowController {
     }
   }
   restore(todoId?: string): void {
-    this.requested = false;
-    this.window?.hide();
     if (this.main.isMinimized()) this.main.restore();
     this.main.show(); this.main.focus();
     if (todoId) this.main.webContents.send('app:navigate', { route: `todo/${todoId}` });
@@ -119,8 +113,6 @@ export class CompactWindowController {
     this.destroying = true;
     this.requested = false;
     this.main.removeListener('minimize', this.onMinimize);
-    this.main.removeListener('restore', this.onMainVisible);
-    this.main.removeListener('show', this.onMainVisible);
     clearTimeout(this.saveTimer);
     this.persist();
     this.window?.destroy();

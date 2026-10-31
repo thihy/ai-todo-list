@@ -1,13 +1,13 @@
 import { toolInterruptionState } from '../../shared/tool-interruption';
 
-/** Stop a failed filesystem turn before the agent can retry it indefinitely. */
+/** Preserve fatal driver errors; tool errors remain normal model-visible results. */
 import { logger } from '../logger';
 
 export class TurnFailureGuard {
   private readonly calls = new Map<string, string>();
   error: Error | undefined;
 
-  constructor(private readonly cancel: () => void) {}
+  constructor(_cancel: () => void) {}
 
   observe(event: { type: string; data?: unknown }): void {
     if (this.error) return;
@@ -30,11 +30,10 @@ export class TurnFailureGuard {
       const detail = block.content?.filter(c => c.type === 'text').map(c => c.text ?? '').join('\n');
       // User cancellation already has its own normal terminal path.
       if (detail?.startsWith('cancelled:')) return;
-      // LLM 日志点：文件系统工具执行失败 → 触发整轮取消。这条是排查
-      // "为什么这轮突然停了 / 接下来又重试又失败" 的关键标记。
+      // Keep diagnostics while allowing the model to consume and recover.
       logger.warn(`[LLM turn] file-tool-failed name=${name} callId=${String(id)} detail=${detail || '(none)'}`);
-      this.error = new Error(`文件工具 ${name} 执行失败，本轮已停止：${detail || '未知错误'}`);
-      this.cancel();
+      // DSH already appends this failed tool result to the model's context.
+      // Do not cancel the agent: it must be able to recover or explain it.
     } else if (event.type === 'turn/end' && data?.reason?.kind === 'error') {
       // DSH contains driver exceptions, so whenIdle() may resolve on error.
       // LLM 日志点：turn/end reason=error。停轮而非自然 done 的另一条路径。

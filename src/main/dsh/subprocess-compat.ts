@@ -1,5 +1,6 @@
 import childProcess, { type SpawnOptions } from 'node:child_process';
 import { syncBuiltinESMExports } from 'node:module';
+import { existsSync } from 'node:fs';
 import type { SubprocessRuntime } from '@deepseek-ai/dsh-subprocess';
 
 const installed = new WeakMap<object, () => void>();
@@ -14,6 +15,14 @@ export function configureElectronSandboxRunner(
   if (!electronVersion) return () => {};
   const original = service.spawn;
   const patched: typeof original = function (this: Pick<SubprocessRuntime, 'spawn'>, spec) {
+    // Electron can resolve virtual ASAR paths, but the native Windows Job
+    // runner cannot execute a binary inside app.asar. Use builder's physical
+    // unpacked binary for ripgrep (and other native tool executables).
+    const executable = spec.argv[0];
+    if (executable && /[\\/]app\.asar[\\/]/i.test(executable)) {
+      const unpacked = executable.replace(/([\\/])app\.asar([\\/])/i, '$1app.asar.unpacked$2');
+      if (existsSync(unpacked)) spec = { ...spec, argv: [unpacked, ...spec.argv.slice(1)] };
+    }
     const runner = spec.argv[1]?.replace(/\\/g, '/');
     if (spec.argv[0] === process.execPath && runner?.endsWith('/@deepseek-ai/dsh-sandbox-windows-acl/lib/runner.js')) {
       return original.call(this, { ...spec, env: { ...spec.env, ELECTRON_RUN_AS_NODE: '1', TODO_LIST_HIDE_CHILD_WINDOWS: '1' } });

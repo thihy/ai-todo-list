@@ -255,6 +255,7 @@ export interface AIForgetMemoryReq { id: ULID }
 // <DSH_SESSIONS_ROOT>/<id>/ and is decoded on-demand by ai.conversation.history.
 
 export interface AIConversation {
+  automationId?: string | null;
   id: string;
   title: string;
   createdAt: number;
@@ -577,7 +578,7 @@ export interface IpcRegistry {
   'automation.run': IpcChannel<{ id: string }, IpcResult<void>>;
   'app.compact': IpcChannel<{ enabled: boolean; todoId?: string }, IpcResult<void>>;
   'app.compactSize': IpcChannel<{ count: number }, IpcResult<void>>;
-  'app.compactConfigure': IpcChannel<{ opacity?: number; alwaysOnTop?: boolean }, IpcResult<import('./compact-preferences').CompactPreferences>>;
+  'app.compactConfigure': IpcChannel<{ enabled?: boolean; opacity?: number; alwaysOnTop?: boolean }, IpcResult<import('./compact-preferences').CompactPreferences>>;
   'app.compactMenu': IpcChannel<undefined, IpcResult<void>>;
   'todo.list': IpcChannel<TodoListReq, IpcResult<Todo[]>>;
   'todo.get': IpcChannel<TodoGetReq, IpcResult<Todo | null>>;

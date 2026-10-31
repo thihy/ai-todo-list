@@ -17,21 +17,33 @@ export function registerAutomations(rootDir: string, conversations: Conversation
   let loadError = '自动化尚未初始化';
   try {
     scheduler = new AutomationScheduler(join(rootDir, 'ai-automations.json'), async (item, reportConversation) => {
-      const conversation = conversations.create({ title: `自动化 · ${item.name}` });
+      const conversation = conversations.create({ title: `自动化 · ${item.name}`, automationId: item.id });
       reportConversation(conversation.id);
+      if (!conversations.setPermissionPreset(conversation.id, item.permissionPreset ?? 'auto')) throw new Error('无法应用自动化权限预设');
       for (const window of BrowserWindow.getAllWindows()) {
         if (!window.isDestroyed()) window.webContents.send('app:data-changed', { scope: 'conversations' });
       }
       // Lazy import keeps AI boot out of the core startup path.
       const { askAi } = await import('../ipc/ai-handlers');
-      const result = await askAi({ conversationId: conversation.id, prompt: item.prompt, intent: 'chat' });
-      if (!result.ok) throw new Error(result.message);
-      return { conversationId: conversation.id, content: result.data.content ?? '' };
+      try {
+        const result = await askAi({ conversationId: conversation.id, prompt: item.prompt, intent: 'chat' });
+        if (!result.ok) throw new Error(result.message);
+        return { conversationId: conversation.id, content: result.data.content ?? '' };
+      } finally {
+        // The renderer does not own background invocations. Invalidate its
+        // cached history after the model has finished, including failures.
+        for (const window of BrowserWindow.getAllWindows()) {
+          if (!window.isDestroyed()) window.webContents.send('app:data-changed', { scope: 'conversations' });
+        }
+      }
     }, () => startupState.snapshot().ai.status === 'ready', (error) => logger.error(`automation: ${String(error)}`), Date.now, () => {
       for (const window of BrowserWindow.getAllWindows()) {
         if (!window.isDestroyed()) window.webContents.send('app:data-changed', { scope: 'automations' });
       }
     });
+    for (const run of scheduler.snapshot().runs) {
+      if (run.conversationId) conversations.associateAutomation?.(run.conversationId, run.automationId);
+    }
     scheduler.start();
     currentScheduler = scheduler;
   } catch (error) {
